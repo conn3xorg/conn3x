@@ -115,7 +115,7 @@ func (c *Client) DeleteRun(ctx context.Context, runID string) error {
 		return err
 	}
 	for _, d := range droplets {
-		if d.Name == name {
+		if d.Name == name || strings.HasPrefix(d.Name, name+"-") {
 			if err := c.DeleteDroplet(ctx, d.ID); err != nil {
 				return err
 			}

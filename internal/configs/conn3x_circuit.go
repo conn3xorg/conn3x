@@ -38,6 +38,8 @@ var circuitModules = map[string]string{
 	"sysctl":         "conn3x_sysctl",
 	"hostname":       "conn3x_hostname",
 	"timezone":       "conn3x_timezone",
+	"firewalld":      "conn3x_firewalld",
+	"ufw":            "conn3x_ufw_rule",
 	"directory":      "conn3x_directory",
 	"link":           "conn3x_link",
 	"line":           "conn3x_line",

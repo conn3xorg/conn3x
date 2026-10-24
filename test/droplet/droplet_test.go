@@ -134,6 +134,8 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		`conn3x_file.sudo_check__marker["web1"] will be created`,
 		`conn3x_sysctl.web__forwarding["web1"] will be created`,
 		`conn3x_hostname.web__name["web1"] will be created`,
+		`conn3x_firewalld.web__http["web1"] will be created`,
+		`conn3x_ufw_rule.edge__http["edge1"] will be created`,
 		"host             = (known after apply)",
 		"Conn3x will perform the following actions",
 	} {
@@ -148,20 +150,14 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 	must("apply", "-auto-approve", "-no-color")
 	ip := strings.TrimSpace(must("output", "-raw", "ip"))
 
+	// Both pages come through a firewall: firewalld on web, ufw on edge.
 	want := "<h1>Hello from web1, set up by Conn3x</h1>\n"
-	var got string
-	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
-		resp, err := http.Get("http://" + ip + "/")
-		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if got = string(body); got == want {
-				break
-			}
-		}
-	}
-	if got != want {
+	if got := fetch("http://"+ip+"/", want); got != want {
 		t.Fatalf("http://%s/ served %q, want %q", ip, got, want)
+	}
+	edgeIP := strings.TrimSpace(must("output", "-raw", "edge_ip"))
+	if got := fetch("http://"+edgeIP+"/", "nginx"); !strings.Contains(got, "nginx") {
+		t.Fatalf("http://%s/ through ufw served %q", edgeIP, got)
 	}
 
 	// The sudo circuit wrote a root-owned file as deploy, through sudo with
@@ -181,19 +177,7 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	run := func(cmd string) string {
-		t.Helper()
-		session, err := client.NewSession()
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer session.Close()
-		out, err := session.Output(cmd)
-		if err != nil {
-			t.Fatalf("%s: %v", cmd, err)
-		}
-		return string(out)
-	}
+	run := func(cmd string) string { t.Helper(); return runOn(t, client, cmd) }
 	if got := run("stat -c '%U %a' /etc/conn3x-sudo-check && cat /etc/conn3x-sudo-check"); got != "root 600\nwritten through sudo\n" {
 		t.Fatalf("sudo marker = %q", got)
 	}
@@ -207,7 +191,56 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		t.Fatalf("hostname = %q", got)
 	}
 
+	if got := run("firewall-cmd --list-services; firewall-cmd --permanent --list-services"); strings.Count(got, "http") != 2 {
+		t.Fatalf("firewalld services = %q", got)
+	}
+
+	edge, err := gossh.Dial("tcp", edgeIP+":22", &gossh.ClientConfig{
+		User:            "root",
+		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback: gossh.FixedHostKey(hostKey),
+		Timeout:         30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer edge.Close()
+	if got := runOn(t, edge, "ufw status"); !strings.Contains(got, "Status: active") || !strings.Contains(got, "80/tcp") {
+		t.Fatalf("ufw status:\n%s", got)
+	}
+
 	if out := must("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 		t.Fatalf("plan after apply is not empty:\n%s", out)
 	}
+}
+
+// fetch polls url until its body contains want or two minutes pass, and
+// returns the last body it saw.
+func fetch(url, want string) string {
+	var got string
+	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
+		resp, err := http.Get(url)
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if got = string(body); strings.Contains(got, want) {
+				break
+			}
+		}
+	}
+	return got
+}
+
+func runOn(t *testing.T, client *gossh.Client, cmd string) string {
+	t.Helper()
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	out, err := session.Output(cmd)
+	if err != nil {
+		t.Fatalf("%s: %v", cmd, err)
+	}
+	return string(out)
 }

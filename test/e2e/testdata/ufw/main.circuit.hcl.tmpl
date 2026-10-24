@@ -1,0 +1,39 @@
+circuit "fw" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "ufw" {
+    package {
+      name = "ufw"
+    }
+  }
+
+  step "ssh" {
+    ufw {
+      action = "allow"
+      port   = "22/tcp"
+    }
+  }
+
+  step "x11" {
+    ufw {
+      action = "deny"
+      port   = "6000:6007/tcp"
+      from   = "10.0.0.0/8"
+    }
+  }
+
+  step "dns" {
+    ufw {
+      action = "allow"
+      port   = "{{.DNSPort}}"
+      from   = "192.0.2.1"
+    }
+  }
+}

@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -18,10 +19,10 @@ import (
 )
 
 // planSynced plans a resource whose computed in_sync says whether the host
-// matches: replace when the name or host changes, update when any setting
-// changed or refresh found the host out of sync. A singleton (one per host,
-// such as its hostname) passes singleton, and its name is a setting.
-func planSynced(req providers.PlanResourceChangeRequest, kind string, singleton bool, settings []string) providers.PlanResourceChangeResponse {
+// matches: replace when a key attribute or the host changes, update when any
+// setting changed or refresh found the host out of sync. A host has only one
+// of a resource with no keys, such as its hostname.
+func planSynced(req providers.PlanResourceChangeRequest, kind string, keys, settings []string) providers.PlanResourceChangeResponse {
 	var resp providers.PlanResourceChangeResponse
 	if req.ProposedNewState.IsNull() {
 		resp.PlannedState = req.ProposedNewState
@@ -31,20 +32,28 @@ func planSynced(req providers.PlanResourceChangeRequest, kind string, singleton 
 	if v, ok := vals["on_remove"]; ok && v.IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 	}
-	host, name := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["name"]
-	switch {
-	case singleton && host.IsKnown():
-		vals["id"] = cty.StringVal(host.AsString() + ":" + kind)
-	case !singleton && host.IsKnown() && name.IsKnown():
-		vals["id"] = cty.StringVal(host.AsString() + ":" + kind + ":" + name.AsString())
-	default:
-		vals["id"] = cty.UnknownVal(cty.String)
+	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
+	vals["id"] = cty.UnknownVal(cty.String)
+	if host.IsKnown() {
+		id := []string{host.AsString(), kind}
+		for _, k := range keys {
+			if !vals[k].IsKnown() {
+				id = nil
+				break
+			}
+			id = append(id, stringOr(vals[k], ""))
+		}
+		if id != nil {
+			vals["id"] = cty.StringVal(strings.Join(id, ":"))
+		}
 	}
 	stale := req.PriorState.IsNull()
 	if !stale {
-		if !singleton && !req.PriorState.GetAttr("name").RawEquals(name) {
-			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("name"))
-			stale = true
+		for _, k := range keys {
+			if !req.PriorState.GetAttr(k).RawEquals(vals[k]) {
+				resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath(k))
+				stale = true
+			}
 		}
 		if !req.PriorState.GetAttr("ssh").GetAttr("host").RawEquals(host) {
 			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("host"))
@@ -109,7 +118,7 @@ func validateCron(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planCron(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "cron", false, cronSettings)
+	return planSynced(req, "cron", []string{"name"}, cronSettings)
 }
 
 func readCron(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -192,7 +201,7 @@ func validateTimer(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planTimer(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "timer", false, timerSettings)
+	return planSynced(req, "timer", []string{"name"}, timerSettings)
 }
 
 func readTimer(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

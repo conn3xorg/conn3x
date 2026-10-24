@@ -47,7 +47,7 @@ func validateSysctl(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planSysctl(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "sysctl", false, []string{"value"})
+	return planSynced(req, "sysctl", []string{"name"}, []string{"value"})
 }
 
 func readSysctl(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -124,7 +124,7 @@ func validateHostname(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planHostname(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "hostname", true, []string{"name"})
+	return planSynced(req, "hostname", nil, []string{"name"})
 }
 
 func readHostname(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -156,7 +156,7 @@ func validateTimezone(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planTimezone(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "timezone", true, []string{"name"})
+	return planSynced(req, "timezone", nil, []string{"name"})
 }
 
 func readTimezone(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

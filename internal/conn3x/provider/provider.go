@@ -45,6 +45,8 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_sysctl":         {sysctlSchema, validateSysctl, planSysctl, readSysctl, applySysctl, upgradeWith(sysctlSchema)},
 	"conn3x_hostname":       {hostnameSchema, validateHostname, planHostname, readHostname, applyHostname, upgradeWith(hostnameSchema)},
 	"conn3x_timezone":       {timezoneSchema, validateTimezone, planTimezone, readTimezone, applyTimezone, upgradeWith(timezoneSchema)},
+	"conn3x_firewalld":      {firewalldSchema, validateFirewalld, planRule("firewalld", []string{"zone", "service", "port"}), readFirewalld, applyFirewalld, upgradeWith(firewalldSchema)},
+	"conn3x_ufw_rule":       {ufwRuleSchema, validateUFWRule, planRule("ufw", []string{"action", "port", "from"}), readUFWRule, applyUFWRule, upgradeWith(ufwRuleSchema)},
 	"conn3x_group":          {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 }
 

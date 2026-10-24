@@ -90,6 +90,27 @@ circuit "web" {
     }
   }
 
+  step "firewalld" {
+    package {
+      name = "firewalld"
+    }
+  }
+
+  step "firewall_up" {
+    service {
+      name    = "firewalld"
+      state   = "started"
+      enabled = true
+    }
+  }
+
+  # The page check below fails unless this rule lets HTTP through.
+  step "http" {
+    firewalld {
+      service = "http"
+    }
+  }
+
   step "forwarding" {
     sysctl {
       name  = "net.ipv4.ip_forward"
@@ -107,6 +128,62 @@ circuit "web" {
   step "name" {
     hostname {
       name = "${each.key}.conn3x-ci.internal"
+    }
+  }
+}
+
+# A second droplet, on Ubuntu, for ufw.
+resource "digitalocean_droplet" "edge" {
+  name     = "conn3x-ci-{{.RunID}}-edge"
+  image    = "ubuntu-24-04-x64"
+  size     = "s-1vcpu-1gb"
+  region   = "nyc3"
+  tags     = ["conn3x-ci"]
+  ssh_keys = [digitalocean_ssh_key.ci.fingerprint]
+
+  user_data = "#cloud-config\n${yamlencode({
+    ssh_deletekeys = true
+    ssh_keys = {
+      ed25519_private = tls_private_key.host.private_key_openssh
+      ed25519_public  = tls_private_key.host.public_key_openssh
+    }
+  })}"
+}
+
+circuit "edge" {
+  hosts = { edge1 = digitalocean_droplet.edge.ipv4_address }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.PrivateKeyFile}}"
+    host_key         = tls_private_key.host.public_key_openssh
+    timeout          = "5m"
+  }
+
+  step "ssh" {
+    ufw {
+      action = "allow"
+      port   = "22/tcp"
+    }
+  }
+
+  step "http" {
+    ufw {
+      action = "allow"
+      port   = "80/tcp"
+    }
+  }
+
+  step "enable" {
+    command {
+      command = "ufw --force enable"
+      unless  = "ufw status | grep -q '^Status: active'"
+    }
+  }
+
+  step "nginx" {
+    package {
+      name = "nginx"
     }
   }
 }
@@ -140,4 +217,8 @@ output "host_key" {
 
 output "ip" {
   value = digitalocean_droplet.web.ipv4_address
+}
+
+output "edge_ip" {
+  value = digitalocean_droplet.edge.ipv4_address
 }
