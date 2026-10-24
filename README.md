@@ -22,8 +22,9 @@ and one state.
 > through sudo, on Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu. One plan can
 > create a server and set it up; we test that against real DigitalOcean droplets.
 > Circuits manage files, templates, directories, symlinks, single lines and marked
-> blocks, packages, systemd services and timers, cron jobs, users, groups and SSH
-> keys. They run guarded commands, and handlers fire only when something changed.
+> blocks, packages, systemd services and timers, cron jobs, users, groups, SSH
+> keys, kernel parameters, the hostname and the time zone. They run guarded
+> commands, and handlers fire only when something changed.
 > Every plan shows the exact diff. Star and watch the repo to follow along. We're
 > building it in public.
 
