@@ -37,6 +37,23 @@ resource "digitalocean_droplet" "web" {
       ed25519_private = tls_private_key.host.private_key_openssh
       ed25519_public  = tls_private_key.host.public_key_openssh
     }
+    # A non-root user whose sudo asks for a password, to prove become
+    # with a password against real sudo and PAM.
+    users = ["default", {
+      name                = "deploy"
+      shell               = "/bin/bash"
+      lock_passwd         = false
+      ssh_authorized_keys = ["{{.PublicKey}}"]
+    }]
+    chpasswd = {
+      expire = false
+      users  = [{ name = "deploy", password = "{{.SudoPassword}}", type = "text" }]
+    }
+    write_files = [{
+      path        = "/etc/sudoers.d/deploy"
+      permissions = "0440"
+      content     = "deploy ALL=(ALL) ALL\n"
+    }]
   })}"
 }
 
@@ -70,6 +87,33 @@ circuit "web" {
       enabled = true
     }
   }
+}
+
+circuit "sudo_check" {
+  hosts = { web1 = digitalocean_droplet.web.ipv4_address }
+
+  ssh {
+    user                 = "deploy"
+    private_key_file     = "{{.PrivateKeyFile}}"
+    host_key             = tls_private_key.host.public_key_openssh
+    timeout              = "5m"
+    become               = true
+    become_password_file = "{{.SudoPasswordFile}}"
+  }
+
+  step "marker" {
+    # The web circuit has finished by now, and with it cloud-init.
+    depends_on = [conn3x_service.web__running]
+    file {
+      path    = "/etc/conn3x-sudo-check"
+      content = "written through sudo\n"
+      mode    = "0600"
+    }
+  }
+}
+
+output "host_key" {
+  value = tls_private_key.host.public_key_openssh
 }
 
 output "ip" {
