@@ -1,0 +1,77 @@
+terraform {
+  required_providers {
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = "~> 2.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+  }
+}
+
+# The droplet's SSH host key is generated here and installed by cloud-init,
+# so Conn3x can pin it and verify the very first connection.
+resource "tls_private_key" "host" {
+  algorithm = "ED25519"
+}
+
+resource "digitalocean_ssh_key" "ci" {
+  name       = "conn3x-ci-{{.RunID}}"
+  public_key = "{{.PublicKey}}"
+}
+
+resource "digitalocean_droplet" "web" {
+  name     = "conn3x-ci-{{.RunID}}"
+  image    = "{{.Image}}"
+  size     = "s-1vcpu-1gb"
+  region   = "nyc3"
+  tags     = ["conn3x-ci"]
+  ssh_keys = [digitalocean_ssh_key.ci.fingerprint]
+
+  # yamlencode keeps the multi-line private key valid YAML.
+  user_data = "#cloud-config\n${yamlencode({
+    ssh_deletekeys = true
+    ssh_keys = {
+      ed25519_private = tls_private_key.host.private_key_openssh
+      ed25519_public  = tls_private_key.host.public_key_openssh
+    }
+  })}"
+}
+
+circuit "web" {
+  hosts = { web1 = digitalocean_droplet.web.ipv4_address }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.PrivateKeyFile}}"
+    host_key         = tls_private_key.host.public_key_openssh
+    timeout          = "5m"
+  }
+
+  step "nginx" {
+    package {
+      name = "nginx"
+    }
+  }
+
+  step "page" {
+    file {
+      path    = "/usr/share/nginx/html/index.html"
+      content = "<h1>Hello from ${each.key}, set up by Conn3x</h1>\n"
+    }
+  }
+
+  step "running" {
+    service {
+      name    = "nginx"
+      state   = "started"
+      enabled = true
+    }
+  }
+}
+
+output "ip" {
+  value = digitalocean_droplet.web.ipv4_address
+}

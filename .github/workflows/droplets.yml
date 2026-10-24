@@ -1,0 +1,36 @@
+name: Real hosts
+
+# Creates billable DigitalOcean droplets, so it runs only on a schedule or
+# by hand, never for pull requests, and the token never reaches PR code.
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: droplets
+  cancel-in-progress: false
+
+jobs:
+  droplets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: One plan for a droplet and its configuration
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+        run: go test -tags droplet -count=1 -timeout 40m -v ./test/droplet/...
+      - name: Sweep anything left behind
+        if: always()
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+        run: go run ./test/droplet/sweep -max-age 1h

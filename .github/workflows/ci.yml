@@ -36,6 +36,8 @@ jobs:
           bash scripts/upstream/commit_payload_test.sh
           bash scripts/upstream/hook-budget_test.sh
           bash scripts/dco-check_test.sh
+      - name: Real-host test helpers
+        run: go test ./test/droplet/...
 
   test:
     runs-on: ubuntu-24.04
