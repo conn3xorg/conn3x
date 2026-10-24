@@ -193,7 +193,7 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		t.Fatalf("hostname = %q", got)
 	}
 
-	if got := run("cat /sys/fs/selinux/booleans/httpd_can_network_connect; semanage boolean -l -C | grep -c '^httpd_can_network_connect '"); got != "1 1\n1\n" {
+	if got := run("echo $(cat /sys/fs/selinux/booleans/httpd_can_network_connect); semanage boolean -l -C | grep -c '^httpd_can_network_connect '"); got != "1 1\n1\n" {
 		t.Fatalf("httpd_can_network_connect, running and persistent = %q", got)
 	}
 	if got := run("stat -c %C /srv/conn3x"); !strings.Contains(got, ":httpd_sys_content_t:") {
