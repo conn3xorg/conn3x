@@ -29,11 +29,12 @@ type resourceType struct {
 }
 
 var resourceTypes = map[string]resourceType{
-	"conn3x_file":    {fileSchema, validateFile, planFile, readFile, applyFile, upgradeFile},
-	"conn3x_package": {packageSchema, validatePackage, planPackage, readPackage, applyPackage, upgradePackage},
-	"conn3x_service": {serviceSchema, validateService, planService, readService, applyService, upgradeService},
-	"conn3x_user":    {userSchema, validateUser, planUser, readUser, applyUser, upgradeWith(userSchema)},
-	"conn3x_group":   {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
+	"conn3x_file":           {fileSchema, validateFile, planFile, readFile, applyFile, upgradeFile},
+	"conn3x_package":        {packageSchema, validatePackage, planPackage, readPackage, applyPackage, upgradePackage},
+	"conn3x_service":        {serviceSchema, validateService, planService, readService, applyService, upgradeService},
+	"conn3x_user":           {userSchema, validateUser, planUser, readUser, applyUser, upgradeWith(userSchema)},
+	"conn3x_service_action": {serviceActionSchema, validateServiceAction, planServiceAction, readServiceAction, applyServiceAction, upgradeWith(serviceActionSchema)},
+	"conn3x_group":          {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 }
 
 // New returns the built-in conn3x provider.

@@ -337,3 +337,102 @@ func TestTemplateStepErrors(t *testing.T) {
 		})
 	}
 }
+
+const handlerCircuit = `
+circuit "web" {
+  hosts = { web1 = "203.0.113.10" }
+  ssh {
+    user = "root"
+  }
+  step "conf" {
+    template {
+      source      = "nginx.conf.tftpl"
+      destination = "/etc/nginx/nginx.conf"
+    }
+    notify = [handler.restart_nginx]
+  }
+  step "site" {
+    file {
+      path    = "/srv/index.html"
+      content = "hi"
+    }
+    notify = [handler.restart_nginx]
+  }
+  handler "restart_nginx" {
+    service {
+      name = "nginx"
+    }
+  }
+}
+`
+
+func TestHandlerLowersToServiceAction(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": handlerCircuit})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	h, ok := mod.ManagedResources["conn3x_service_action.web__restart_nginx"]
+	if !ok {
+		t.Fatalf("no handler resource; have %v", keys(mod.ManagedResources))
+	}
+	if h.ForEach == nil {
+		t.Fatal("handler not repeated over hosts")
+	}
+	content, diags := h.Config.Content(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "name", Required: true}, {Name: "action"}, {Name: "triggers", Required: true}},
+		Blocks:     []hcl.BlockHeaderSchema{{Type: "ssh"}},
+	})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	var refs []string
+	for _, tr := range content.Attributes["triggers"].Expr.Variables() {
+		refs = append(refs, traversalString(tr))
+	}
+	got := strings.Join(refs, ",")
+	for _, want := range []string{"conn3x_file.web__conf", "conn3x_file.web__site", "each"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("triggers reference %q, missing %q", got, want)
+		}
+	}
+	if len(h.DependsOn) != 1 || traversalString(h.DependsOn[0]) != "conn3x_file.web__site" {
+		t.Fatalf("handler should wait for the circuit's last step, depends_on = %v", h.DependsOn)
+	}
+	// notify is consumed by the lowering, not passed to the step's resource.
+	conf := mod.ManagedResources["conn3x_file.web__conf"]
+	if attrs, _ := conf.Config.JustAttributes(); attrs["notify"] != nil {
+		t.Fatal("notify leaked into the step's resource")
+	}
+}
+
+func TestHandlerErrors(t *testing.T) {
+	for name, tc := range map[string]struct{ src, want string }{
+		"unknown handler": {strings.Replace(handlerCircuit, "handler.restart_nginx]\n  }\n  step \"site\"", "handler.restart_apache]\n  }\n  step \"site\"", 1), `No handler "restart_apache"`},
+		"bad reference":   {strings.Replace(handlerCircuit, "notify = [handler.restart_nginx]\n  }\n  step \"site\"", "notify = [step.site]\n  }\n  step \"site\"", 1), "handler.<name>"},
+		"handler module":  {strings.Replace(handlerCircuit, "service {\n      name = \"nginx\"", "file {\n      name = \"nginx\"", 1), "service block"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": tc.src})
+			if !diags.HasErrors() || !strings.Contains(diags.Error(), tc.want) {
+				t.Fatalf("diags = %v, want %q", diags.Error(), tc.want)
+			}
+		})
+	}
+}
+
+func TestUnusedHandlerIsAWarning(t *testing.T) {
+	src := strings.ReplaceAll(handlerCircuit, "    notify = [handler.restart_nginx]\n", "")
+	_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "Unused handler") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no unused-handler warning: %v", diags)
+	}
+}

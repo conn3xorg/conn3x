@@ -148,6 +148,14 @@ func Restart(ctx context.Context, r modules.Runner, name string) error {
 	return run(ctx, r, "systemctl restart -- "+ssh.Quote(Unit(name)))
 }
 
+// Reload asks the unit to reload its configuration.
+func Reload(ctx context.Context, r modules.Runner, name string) error {
+	if !unitPattern.MatchString(name) {
+		return fmt.Errorf("unit name %q is not valid", name)
+	}
+	return run(ctx, r, "systemctl reload -- "+ssh.Quote(Unit(name)))
+}
+
 func run(ctx context.Context, r modules.Runner, cmd string) error {
 	res, err := r.Run(ctx, cmd, nil)
 	if err != nil {

@@ -44,6 +44,7 @@ var circuitSchema = &hcl.BodySchema{
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "ssh"},
 		{Type: "step", LabelNames: []string{"name"}},
+		{Type: "handler", LabelNames: []string{"name"}},
 	},
 }
 
@@ -131,6 +132,8 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	var resources []*Resource
 	steps := map[string]hcl.Range{}
 	var previous *Resource
+	notifiers := map[string][]*Resource{} // handler name => steps that notify it
+	notifyRefs := map[string][]hcl.Range{}
 	for _, step := range content.Blocks.OfType("step") {
 		stepName := step.Labels[0]
 		if !validCircuitName(stepName) {
@@ -158,6 +161,63 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 		if r != nil {
 			resources = append(resources, r)
 			previous = r
+			notified, notifyDiags := stepNotify(step)
+			diags = append(diags, notifyDiags...)
+			for _, n := range notified {
+				notifiers[n.name] = append(notifiers[n.name], r)
+				notifyRefs[n.name] = append(notifyRefs[n.name], n.rng)
+			}
+		}
+	}
+
+	handlers := map[string]bool{}
+	for _, h := range content.Blocks.OfType("handler") {
+		hName := h.Labels[0]
+		if !validCircuitName(hName) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid handler name",
+				Detail:   "A handler name must be a valid identifier without a double underscore.",
+				Subject:  &h.LabelRanges[0],
+			})
+			continue
+		}
+		if handlers[hName] {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Duplicate handler",
+				Detail:   fmt.Sprintf("Circuit %q already has a handler named %q.", name, hName),
+				Subject:  &h.DefRange,
+			})
+			continue
+		}
+		handlers[hName] = true
+		if len(notifiers[hName]) == 0 {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagWarning,
+				Summary:  "Unused handler",
+				Detail:   fmt.Sprintf("No step in circuit %q notifies handler %q, so it never runs.", name, hName),
+				Subject:  &h.DefRange,
+			})
+			continue
+		}
+		r, hDiags := lowerHandler(name, h, hosts, sshAttrs, sshRange, notifiers[hName], previous)
+		diags = append(diags, hDiags...)
+		if r != nil {
+			resources = append(resources, r)
+		}
+	}
+	for hName, ranges := range notifyRefs {
+		if !handlers[hName] {
+			for _, rng := range ranges {
+				rng := rng
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("No handler %q", hName),
+					Detail:   fmt.Sprintf("Circuit %q has no handler named %q.", name, hName),
+					Subject:  &rng,
+				})
+			}
 		}
 	}
 	return resources, diags
@@ -170,12 +230,12 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		return nil, append(diags, nativeSyntaxRequired(step.DefRange))
 	}
 	for attrName, attr := range body.Attributes {
-		if attrName != "depends_on" {
+		if attrName != "depends_on" && attrName != "notify" {
 			rng := attr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported argument in step",
-				Detail:   fmt.Sprintf("A step takes only depends_on and one module block, not %q.", attrName),
+				Detail:   fmt.Sprintf("A step takes only depends_on, notify and one module block, not %q.", attrName),
 				Subject:  &rng,
 			})
 		}
@@ -213,31 +273,11 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		return nil, diags
 	}
 
-	// The step's ssh block: the circuit's settings plus this host's address.
-	ssh := hclsyntax.Attributes{}
-	for k, v := range sshAttrs {
-		ssh[k] = v
-	}
-	ssh["host"] = &hclsyntax.Attribute{
-		Name: "host",
-		Expr: &hclsyntax.ScopeTraversalExpr{
-			Traversal: hcl.Traversal{hcl.TraverseRoot{Name: "each", SrcRange: sshRange}, hcl.TraverseAttr{Name: "value", SrcRange: sshRange}},
-			SrcRange:  sshRange,
-		},
-		SrcRange:  sshRange,
-		NameRange: sshRange,
-	}
 	config := &hclsyntax.Body{
 		Attributes: moduleAttrs,
-		Blocks: append(append(hclsyntax.Blocks{}, module.Body.Blocks...), &hclsyntax.Block{
-			Type:            "ssh",
-			Body:            &hclsyntax.Body{Attributes: ssh, SrcRange: sshRange, EndRange: sshRange},
-			TypeRange:       sshRange,
-			OpenBraceRange:  sshRange,
-			CloseBraceRange: sshRange,
-		}),
-		SrcRange: module.Body.SrcRange,
-		EndRange: module.Body.EndRange,
+		Blocks:     append(append(hclsyntax.Blocks{}, module.Body.Blocks...), sshBlockFor(sshAttrs, sshRange)),
+		SrcRange:   module.Body.SrcRange,
+		EndRange:   module.Body.EndRange,
 	}
 
 	r := &Resource{
@@ -259,6 +299,141 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		r.DependsOn = append(r.DependsOn, hcl.Traversal{
 			hcl.TraverseRoot{Name: previous.Type, SrcRange: step.DefRange},
 			hcl.TraverseAttr{Name: previous.Name, SrcRange: step.DefRange},
+		})
+	}
+	return r, diags
+}
+
+// sshBlockFor is a step's ssh block: the circuit's settings plus this
+// host's address, each.value.
+func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *hclsyntax.Block {
+	ssh := hclsyntax.Attributes{}
+	for k, v := range sshAttrs {
+		ssh[k] = v
+	}
+	ssh["host"] = &hclsyntax.Attribute{
+		Name:      "host",
+		Expr:      eachTraversal("value", sshRange),
+		SrcRange:  sshRange,
+		NameRange: sshRange,
+	}
+	return &hclsyntax.Block{
+		Type:            "ssh",
+		Body:            &hclsyntax.Body{Attributes: ssh, SrcRange: sshRange, EndRange: sshRange},
+		TypeRange:       sshRange,
+		OpenBraceRange:  sshRange,
+		CloseBraceRange: sshRange,
+	}
+}
+
+func eachTraversal(attr string, rng hcl.Range) *hclsyntax.ScopeTraversalExpr {
+	return &hclsyntax.ScopeTraversalExpr{
+		Traversal: hcl.Traversal{hcl.TraverseRoot{Name: "each", SrcRange: rng}, hcl.TraverseAttr{Name: attr, SrcRange: rng}},
+		SrcRange:  rng,
+	}
+}
+
+type notifyRef struct {
+	name string
+	rng  hcl.Range
+}
+
+// stepNotify reads a step's notify = [handler.<name>, ...].
+func stepNotify(step *hcl.Block) ([]notifyRef, hcl.Diagnostics) {
+	body, ok := step.Body.(*hclsyntax.Body)
+	if !ok {
+		return nil, nil
+	}
+	attr, ok := body.Attributes["notify"]
+	if !ok {
+		return nil, nil
+	}
+	var diags hcl.Diagnostics
+	exprs, listDiags := hcl.ExprList(attr.Expr)
+	diags = append(diags, listDiags...)
+	var refs []notifyRef
+	for _, e := range exprs {
+		tr, trDiags := hcl.AbsTraversalForExpr(e)
+		if trDiags.HasErrors() || len(tr) != 2 || tr.RootName() != "handler" {
+			rng := e.Range()
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid notify reference",
+				Detail:   "notify takes a list of handler.<name> references to handlers in the same circuit.",
+				Subject:  &rng,
+			})
+			continue
+		}
+		refs = append(refs, notifyRef{name: tr[1].(hcl.TraverseAttr).Name, rng: e.Range()})
+	}
+	return refs, diags
+}
+
+var handlerServiceSchema = &hcl.BodySchema{
+	Attributes: []hcl.AttributeSchema{{Name: "name", Required: true}, {Name: "action"}},
+}
+
+// lowerHandler turns a handler into a conn3x_service_action whose triggers
+// are the notifying steps on the same host, so it runs only after one of
+// them changed, and always after them.
+func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, notifiers []*Resource, last *Resource) (*Resource, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	body, ok := h.Body.(*hclsyntax.Body)
+	if !ok {
+		return nil, append(diags, nativeSyntaxRequired(h.DefRange))
+	}
+	if len(body.Attributes) != 0 || len(body.Blocks) != 1 || body.Blocks[0].Type != "service" {
+		rng := h.DefRange
+		return nil, append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "A handler needs exactly one service block",
+			Detail:   "Handlers restart or reload a service: handler \"name\" { service { name = \"nginx\" } }, with an optional action = \"reload\".",
+			Subject:  &rng,
+		})
+	}
+	svc := body.Blocks[0]
+	if _, contentDiags := svc.Body.Content(handlerServiceSchema); contentDiags.HasErrors() {
+		return nil, append(diags, contentDiags...)
+	}
+
+	var triggers []hclsyntax.Expression
+	for _, n := range notifiers {
+		triggers = append(triggers, &hclsyntax.IndexExpr{
+			Collection: &hclsyntax.ScopeTraversalExpr{
+				Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: h.DefRange}, hcl.TraverseAttr{Name: n.Name, SrcRange: h.DefRange}},
+				SrcRange:  h.DefRange,
+			},
+			Key:          eachTraversal("key", h.DefRange),
+			SrcRange:     h.DefRange,
+			OpenRange:    h.DefRange,
+			BracketRange: h.DefRange,
+		})
+	}
+	attrs := hclsyntax.Attributes{}
+	for k, v := range svc.Body.Attributes {
+		attrs[k] = v
+	}
+	attrs["triggers"] = &hclsyntax.Attribute{
+		Name:      "triggers",
+		Expr:      &hclsyntax.TupleConsExpr{Exprs: triggers, SrcRange: h.DefRange, OpenRange: h.DefRange},
+		SrcRange:  h.DefRange,
+		NameRange: h.DefRange,
+	}
+	r := &Resource{
+		Mode:      addrs.ManagedResourceMode,
+		Type:      "conn3x_service_action",
+		Name:      circuit + "__" + h.Labels[0],
+		Config:    &hclsyntax.Body{Attributes: attrs, Blocks: hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange)}, SrcRange: svc.Body.SrcRange, EndRange: svc.Body.EndRange},
+		ForEach:   hosts,
+		DeclRange: h.DefRange,
+		TypeRange: svc.TypeRange,
+		Managed:   &ManagedResource{},
+	}
+	// Like Ansible, handlers run after every step in the circuit.
+	if last != nil {
+		r.DependsOn = append(r.DependsOn, hcl.Traversal{
+			hcl.TraverseRoot{Name: last.Type, SrcRange: h.DefRange},
+			hcl.TraverseAttr{Name: last.Name, SrcRange: h.DefRange},
 		})
 	}
 	return r, diags
