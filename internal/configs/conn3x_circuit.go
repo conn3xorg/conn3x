@@ -32,6 +32,7 @@ const circuitFileExt = ".circuit.hcl"
 var circuitModules = map[string]string{
 	"file":    "conn3x_file",
 	"package": "conn3x_package",
+	"service": "conn3x_service",
 }
 
 var circuitSchema = &hcl.BodySchema{

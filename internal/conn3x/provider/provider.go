@@ -31,6 +31,7 @@ type resourceType struct {
 var resourceTypes = map[string]resourceType{
 	"conn3x_file":    {fileSchema, validateFile, planFile, readFile, applyFile, upgradeFile},
 	"conn3x_package": {packageSchema, validatePackage, planPackage, readPackage, applyPackage, upgradePackage},
+	"conn3x_service": {serviceSchema, validateService, planService, readService, applyService, upgradeService},
 }
 
 // New returns the built-in conn3x provider.

@@ -1,0 +1,34 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "unit" {
+    file {
+      path    = "/etc/systemd/system/conn3x-demo.service"
+      content = <<-EOT
+        [Unit]
+        Description=Conn3x demo service
+
+        [Service]
+        ExecStart=/bin/sleep infinity
+
+        [Install]
+        WantedBy=multi-user.target
+      EOT
+    }
+  }
+
+  step "run" {
+    service {
+      name    = "conn3x-demo"
+      state   = "started"
+      enabled = true
+    }
+  }
+}
