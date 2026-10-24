@@ -28,12 +28,13 @@ git -C "$cache" rev-parse -q --verify "refs/tags/$tag" >/dev/null \
   || git -C "$cache" fetch -q --force "$repo" "refs/tags/$tag:refs/tags/$tag"
 
 cd "$root"
-# Upstream mode, blob id and path, minus the trees Conn3x owns and the
-# paths the sync strips (Conn3x replaces those wholesale).
+# Upstream mode, blob id and path, minus the trees Conn3x owns, the paths
+# the sync strips (Conn3x replaces those wholesale), and go.mod/go.sum,
+# which change with every dependency update and can't all carry markers.
 strip=$(sed -e 's#[.]#\\.#g' -e 's#^#^#' "$here/strip-paths.txt" | paste -sd'|' -)
 upstream=$(git -C "$cache" ls-tree -r "$tag" \
   | awk -F'\t' '{split($1, m, " "); print m[1] "\t" m[3] "\t" $2}' \
-  | grep -Ev $'\t(cmd/conn3x/|internal/conn3x/|scripts/|\\.github/|[^/]*\\.md$|NOTICE$)' \
+  | grep -Ev $'\t(cmd/conn3x/|internal/conn3x/|scripts/|\\.github/|[^/]*\\.md$|NOTICE$|go\\.(mod|sum)$)' \
   | awk -F'\t' -v strip="${strip:-^$}" '$3 !~ strip' || true)
 
 # Keep only files still present locally, then compare blob ids. Regular
