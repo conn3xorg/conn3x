@@ -22,8 +22,8 @@ and one state.
 > sudo, on Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu. One plan can create a
 > server and set it up, and we test that against real DigitalOcean droplets. Circuits
 > already cover the everyday work: files and templates, packages, services, users and
-> SSH keys, cron jobs and timers, kernel parameters, the hostname and time zone, and
-> firewalld or ufw rules. Every plan shows the exact diff. Star and watch the repo to
+> SSH keys, cron jobs and timers, kernel parameters, the hostname and time zone,
+> firewalld or ufw rules, and SELinux booleans and file contexts. Every plan shows the exact diff. Star and watch the repo to
 > follow along. We're building it in public.
 
 <p align="center">
