@@ -63,7 +63,9 @@ func (p *Provider) ValidateProviderConfig(_ context.Context, req providers.Valid
 
 func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.ValidateResourceConfigRequest) providers.ValidateResourceConfigResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
-		return providers.ValidateResourceConfigResponse{Diagnostics: rt.validate(req.Config)}
+		diags := rt.validate(req.Config)
+		diags = diags.Append(validateSSH(req.Config))
+		return providers.ValidateResourceConfigResponse{Diagnostics: diags}
 	}
 	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }

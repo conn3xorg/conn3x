@@ -46,6 +46,7 @@ func newFileTest(t *testing.T) *fileTest {
 			"known_hosts_file":     cty.StringVal(s.KnownHosts(t)),
 			"become":               cty.NullVal(cty.Bool),
 			"become_password_file": cty.NullVal(cty.String),
+			"timeout":              cty.NullVal(cty.String),
 		}),
 	}
 }
@@ -299,5 +300,18 @@ func TestBecomeWithoutPasswordFileFailsClearly(t *testing.T) {
 	resp := f.p.ApplyResourceChange(ctx, providers.ApplyResourceChangeRequest{TypeName: "conn3x_file", PriorState: null, PlannedState: planned, Config: cfg})
 	if !resp.Diagnostics.HasErrors() || !strings.Contains(resp.Diagnostics.Err().Error(), "become_password_file") {
 		t.Fatalf("diagnostics = %v", resp.Diagnostics.Err())
+	}
+}
+
+func TestValidateRejectsBadSSHTimeout(t *testing.T) {
+	f := newFileTest(t)
+	vals := f.conn.AsValueMap()
+	vals["timeout"] = cty.StringVal("soon")
+	f.conn = cty.ObjectVal(vals)
+	resp := f.p.ValidateResourceConfig(ctx, providers.ValidateResourceConfigRequest{
+		TypeName: "conn3x_file", Config: f.config(map[string]cty.Value{"content": cty.StringVal("x")}),
+	})
+	if !resp.Diagnostics.HasErrors() {
+		t.Fatal("timeout = \"soon\" accepted")
 	}
 }

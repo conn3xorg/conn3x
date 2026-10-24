@@ -13,12 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
 // connectionBlock is the "ssh" block every host resource carries. It is not
@@ -43,6 +45,11 @@ func connectionBlock() *configschema.NestedBlock {
 				"host_key":         {Type: cty.String, Optional: true, Description: "Pinned host public key, in authorized_keys format."},
 				"known_hosts_file": {Type: cty.String, Optional: true, Description: "known_hosts file to verify the host against. Defaults to ~/.ssh/known_hosts."},
 				"become":           {Type: cty.Bool, Optional: true, Description: "Run commands as root through sudo."},
+				"timeout": {
+					Type:        cty.String,
+					Optional:    true,
+					Description: "How long to keep trying while the host isn't answering yet, such as a machine that is still booting. Defaults to \"3m\".",
+				},
 				"become_password_file": {
 					Type:        cty.String,
 					Optional:    true,
@@ -67,6 +74,8 @@ func (h *hostConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Resul
 
 // Close returns the connection to the pool; it stays open for the run.
 func (h *hostConn) Close() error { return nil }
+
+const defaultConnectWait = 3 * time.Minute
 
 type pooledConn struct {
 	ready chan struct{} // closed once the dial finished
@@ -121,7 +130,13 @@ func dialConnection(ctx context.Context, conn cty.Value) (*hostConn, error) {
 	pool.conns[key] = entry
 	pool.Unlock()
 
-	client, err := ssh.Dial(ctx, cfg)
+	wait := defaultConnectWait
+	if v := stringOr(conn.GetAttr("timeout"), ""); v != "" {
+		if wait, err = time.ParseDuration(v); err != nil {
+			wait = defaultConnectWait
+		}
+	}
+	client, err := ssh.DialWait(ctx, cfg, wait)
 	if err != nil {
 		entry.err = err
 		pool.Lock()
@@ -192,4 +207,24 @@ func expandHome(path string) string {
 		}
 	}
 	return path
+}
+
+// validateSSH checks the ssh block settings every resource shares.
+func validateSSH(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.Type().IsObjectType() || !cfg.Type().HasAttribute("ssh") {
+		return diags
+	}
+	conn := cfg.GetAttr("ssh")
+	if conn.IsNull() || !conn.IsKnown() {
+		return diags
+	}
+	if v := conn.GetAttr("timeout"); known(v) {
+		if d, err := time.ParseDuration(v.AsString()); err != nil || d < 0 {
+			diags = diags.Append(tfdiags.AttributeValue(tfdiags.Error, "Invalid ssh timeout",
+				fmt.Sprintf("timeout must be a duration such as \"90s\" or \"5m\", not %q.", v.AsString()),
+				cty.GetAttrPath("ssh").GetAttr("timeout")))
+		}
+	}
+	return diags
 }

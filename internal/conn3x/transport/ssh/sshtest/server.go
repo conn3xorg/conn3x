@@ -40,8 +40,16 @@ type Server struct {
 // Accepts is how many TCP connections the server has accepted.
 func (s *Server) Accepts() int64 { return s.accepts.Load() }
 
-// New starts a server that stops when the test ends.
-func New(t testing.TB) *Server {
+// Keys are the host key and the client key a test server uses. Creating
+// them first lets a test know a host's key before the host exists.
+type Keys struct {
+	Host      gossh.Signer
+	ClientKey []byte // PEM private key the server accepts
+	client    gossh.PublicKey
+}
+
+// NewKeys generates a host key and a client key.
+func NewKeys(t testing.TB) Keys {
 	t.Helper()
 	_, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
 	hostSigner, err := gossh.NewSignerFromKey(hostPriv)
@@ -54,18 +62,39 @@ func New(t testing.TB) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return Keys{Host: hostSigner, ClientKey: pemEncode(pemBlock), client: clientSigner.PublicKey()}
+}
 
+// KnownHosts writes a known_hosts file trusting these keys at addr.
+func (k Keys) KnownHosts(t testing.TB, addr string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(KnownHostsLine(addr, k.Host.PublicKey())+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// New starts a server on a free port; it stops when the test ends.
+func New(t testing.TB) *Server {
+	t.Helper()
+	return StartWith(t, "127.0.0.1:0", NewKeys(t))
+}
+
+// StartWith starts a server on addr with the given keys.
+func StartWith(t testing.TB, addr string, keys Keys) *Server {
+	t.Helper()
 	cfg := &gossh.ServerConfig{
 		PublicKeyCallback: func(_ gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
-			if string(key.Marshal()) == string(clientSigner.PublicKey().Marshal()) {
+			if string(key.Marshal()) == string(keys.client.Marshal()) {
 				return nil, nil
 			}
 			return nil, errors.New("unknown key")
 		},
 	}
-	cfg.AddHostKey(hostSigner)
+	cfg.AddHostKey(keys.Host)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +104,8 @@ func New(t testing.TB) *Server {
 		Addr:      ln.Addr().String(),
 		Host:      host,
 		Port:      port,
-		HostKey:   hostSigner.PublicKey(),
-		ClientKey: pemEncode(pemBlock),
+		HostKey:   keys.Host.PublicKey(),
+		ClientKey: keys.ClientKey,
 		Dir:       t.TempDir(),
 	}
 	go func() {
