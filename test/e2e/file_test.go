@@ -93,10 +93,13 @@ func TestFileUnknownHostKeyFailsApply(t *testing.T) {
 func TestFileWithSudoPassword(t *testing.T) {
 	h := startHost(t, "rocky10")
 	// A deploy user whose sudo needs a password, logging in with the test key.
+	// sshd skips PAM so non-root logins work in rootless CI containers, where
+	// PAM's account helper can't run; sudo still checks the password with PAM.
 	h.exec("", "sh", "-c", `useradd -m deploy && echo 'deploy:Deploy-Pass-123' | chpasswd &&
 echo 'deploy ALL=(ALL) ALL' > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy &&
 mkdir -p -m 700 /home/deploy/.ssh && cp /root/.ssh/authorized_keys /home/deploy/.ssh/ &&
-chown -R deploy:deploy /home/deploy/.ssh`)
+chown -R deploy:deploy /home/deploy/.ssh &&
+echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl restart sshd`)
 	pw := filepath.Join(t.TempDir(), "sudo-pass")
 	if err := os.WriteFile(pw, []byte("Deploy-Pass-123\n"), 0o600); err != nil {
 		t.Fatal(err)
