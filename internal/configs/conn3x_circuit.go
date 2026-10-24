@@ -31,16 +31,17 @@ const circuitFileExt = ".circuit.hcl"
 
 // circuitModules maps a step's module block name to its resource type.
 var circuitModules = map[string]string{
-	"command":   "conn3x_command",
-	"directory": "conn3x_directory",
-	"link":      "conn3x_link",
-	"line":      "conn3x_line",
-	"block":     "conn3x_block",
-	"file":      "conn3x_file",
-	"package":   "conn3x_package",
-	"service":   "conn3x_service",
-	"user":      "conn3x_user",
-	"group":     "conn3x_group",
+	"authorized_key": "conn3x_authorized_key",
+	"command":        "conn3x_command",
+	"directory":      "conn3x_directory",
+	"link":           "conn3x_link",
+	"line":           "conn3x_line",
+	"block":          "conn3x_block",
+	"file":           "conn3x_file",
+	"package":        "conn3x_package",
+	"service":        "conn3x_service",
+	"user":           "conn3x_user",
+	"group":          "conn3x_group",
 }
 
 var circuitSchema = &hcl.BodySchema{
