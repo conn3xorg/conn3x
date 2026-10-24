@@ -27,6 +27,9 @@ import (
 
 var conn3xBin string
 
+// linuxImages are the test hosts that cross-distro tests run on.
+var linuxImages = []string{"rocky10", "ubuntu2404", "debian13"}
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "conn3x-e2e-bin")
 	if err != nil {

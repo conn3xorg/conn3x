@@ -17,7 +17,7 @@ type accountVars struct {
 }
 
 func TestAccountLifecycle(t *testing.T) {
-	for _, image := range []string{"rocky10", "ubuntu2404"} {
+	for _, image := range linuxImages {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)
 			w := newWorkdir(t, "account")

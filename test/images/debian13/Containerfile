@@ -1,0 +1,13 @@
+# Debian 13 with systemd and sshd, used as a managed host in end-to-end tests.
+FROM docker.io/library/debian:trixie
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd systemd-sysv dbus openssh-server sudo ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && systemctl enable ssh \
+ && systemctl mask systemd-firstboot.service \
+ && mkdir -p -m 700 /root/.ssh
+
+STOPSIGNAL SIGRTMIN+3
+EXPOSE 22
+CMD ["/sbin/init"]

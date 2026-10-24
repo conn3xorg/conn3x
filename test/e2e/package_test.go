@@ -17,7 +17,7 @@ type packageVars struct {
 }
 
 func TestPackageLifecycle(t *testing.T) {
-	for _, image := range []string{"rocky10", "ubuntu2404"} {
+	for _, image := range linuxImages {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)
 			w := newWorkdir(t, "package")
@@ -38,7 +38,7 @@ func TestPackageLifecycle(t *testing.T) {
 
 			// Removing it by hand shows up as drift and apply reinstalls it.
 			remove := "dnf -y -q remove tree"
-			if image != "rocky10" {
+			if image != "rocky10" { // apt-based images
 				remove = "DEBIAN_FRONTEND=noninteractive apt-get -y -q remove tree"
 			}
 			h.exec("", "sh", "-c", remove)
