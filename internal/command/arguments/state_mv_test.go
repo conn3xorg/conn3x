@@ -1,0 +1,190 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package arguments
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
+)
+
+func TestParseStateMv_basicValidation(t *testing.T) {
+	testCases := map[string]struct {
+		args        []string
+		want        *StateMv
+		wantErrText string
+	}{
+		"defaults": {
+			args: []string{"source", "dest"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+		},
+		"dry-run enabled": {
+			args: []string{"-dry-run", "source", "dest"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.DryRun = true
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+		},
+		"custom backup-out path": {
+			args: []string{"-backup-out=/path/to/backup.tfstate", "source", "dest"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.BackupPathOut = "/path/to/backup.tfstate"
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+		},
+		"custom state path": {
+			args: []string{"-state=/path/to/state.tfstate", "source", "dest"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.State.StatePath = "/path/to/state.tfstate"
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+		},
+		"custom state-out path": {
+			args: []string{"-state-out=/path/to/state-out.tfstate", "source", "dest"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.State.StateOutPath = "/path/to/state-out.tfstate"
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+		},
+		"custom backup path": {
+			args: []string{"-backup=/path/to/backup.tfstate", "source", "dest"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.State.BackupPath = "/path/to/backup.tfstate"
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+		},
+		"only lock-timeout": {
+			args: []string{"-lock-timeout=10s", "source", "dest"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				// do not set `stateMv.State.Lock = true` since it's meant to be true already
+				stateMv.State.LockTimeout = 10 * time.Second
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+		},
+		"disable locking": {
+			args: []string{"-lock=false", "source", "dest"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.State.Lock = false
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+		},
+		"all flags combined": {
+			args: []string{
+				"-dry-run",
+				"-backup-out=/path/to/backup-out.tfstate",
+				"-state=/path/to/state.tfstate",
+				"-state-out=/path/to/state-out.tfstate",
+				"-backup=/path/to/backup.tfstate",
+				"-lock-timeout=15s",
+				"-lock=true",
+				"-var=key=value",
+				"-ignore-remote-version=true",
+				"source",
+				"dest",
+			},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.DryRun = true
+				stateMv.BackupPathOut = "/path/to/backup-out.tfstate"
+				stateMv.State.StatePath = "/path/to/state.tfstate"
+				stateMv.State.StateOutPath = "/path/to/state-out.tfstate"
+				stateMv.State.BackupPath = "/path/to/backup.tfstate"
+				stateMv.State.LockTimeout = 15 * time.Second
+				stateMv.State.Lock = true
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+				stateMv.Backend.IgnoreRemoteVersion = true
+				stateMv.Vars = &Vars{{Name: "-var", Value: "key=value"}}
+			}),
+		},
+		"no arguments": {
+			args:        []string{},
+			want:        stateMvArgsWithDefaults(nil),
+			wantErrText: "Expected exactly two positional arguments",
+		},
+		"only one argument": {
+			args: []string{"source"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.RawSrcAddr = "source"
+			}),
+			wantErrText: "Expected exactly two positional arguments",
+		},
+		"too many arguments": {
+			args: []string{"source", "dest", "extra"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+			wantErrText: "Expected exactly two positional arguments.",
+		},
+	}
+
+	cmpOpts := cmp.Options{
+		cmpopts.IgnoreFields(View{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, closer, diags := ParseStateMv(tc.args)
+			defer closer()
+
+			if tc.wantErrText != "" && len(diags) == 0 {
+				t.Errorf("test wanted error but got nothing")
+			} else if tc.wantErrText == "" && len(diags) > 0 {
+				t.Errorf("test didn't expect errors but got some: %s", diags.ErrWithWarnings())
+			} else if tc.wantErrText != "" && len(diags) > 0 {
+				errStr := diags.ErrWithWarnings().Error()
+				if !strings.Contains(errStr, tc.wantErrText) {
+					t.Errorf("the returned diagnostics does not contain the expected error message.\ndiags:\n%s\nwanted: %s\n", errStr, tc.wantErrText)
+				}
+			}
+			if diff := cmp.Diff(tc.want, got, cmpOpts); diff != "" {
+				t.Errorf("unexpected result\n%s", diff)
+			}
+		})
+	}
+}
+
+func stateMvArgsWithDefaults(mutate func(stateMv *StateMv)) *StateMv {
+	ret := &StateMv{
+		DryRun:        false,
+		BackupPathOut: "-",
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        false,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
+		},
+		Backend: &Backend{
+			IgnoreRemoteVersion: false,
+		},
+		State: &State{
+			Lock: true,
+		},
+		Vars: &Vars{},
+	}
+	// Because the default value is different on this command
+	ret.State.BackupPath = "-"
+	if mutate != nil {
+		mutate(ret)
+	}
+	return ret
+}

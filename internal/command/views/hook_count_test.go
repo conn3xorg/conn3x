@@ -1,0 +1,301 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package views
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/zclconf/go-cty/cty"
+
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/plans"
+	"github.com/opentofu/opentofu/internal/states"
+	"github.com/opentofu/opentofu/internal/tofu"
+)
+
+func TestCountHook_impl(t *testing.T) {
+	var _ tofu.Hook = new(countHook)
+}
+
+func TestCountHookPostDiff_DestroyDeposed(t *testing.T) {
+	h := new(countHook)
+
+	resources := []string{"lorem"}
+
+	for _, k := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PostDiff(addr, states.DeposedKey("deadbeef"), plans.Delete, cty.DynamicVal, cty.DynamicVal)
+	}
+
+	expected := new(countHook)
+	expected.ToAdd = 0
+	expected.ToChange = 0
+	expected.ToRemoveAndAdd = 0
+	expected.ToRemove = 1
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected %#v, got %#v instead.", expected, h)
+	}
+}
+
+func TestCountHookPostDiff_DestroyOnly(t *testing.T) {
+	h := new(countHook)
+
+	resources := []string{"foo", "bar", "lorem", "ipsum"}
+
+	for _, k := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PostDiff(addr, states.CurrentGen, plans.Delete, cty.DynamicVal, cty.DynamicVal)
+	}
+
+	expected := new(countHook)
+	expected.ToAdd = 0
+	expected.ToChange = 0
+	expected.ToRemoveAndAdd = 0
+	expected.ToRemove = 4
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected %#v, got %#v instead.", expected, h)
+	}
+}
+
+func TestCountHookPostDiff_AddOnly(t *testing.T) {
+	h := new(countHook)
+
+	resources := []string{"foo", "bar", "lorem"}
+
+	for _, k := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PostDiff(addr, states.CurrentGen, plans.Create, cty.DynamicVal, cty.DynamicVal)
+	}
+
+	expected := new(countHook)
+	expected.ToAdd = 3
+	expected.ToChange = 0
+	expected.ToRemoveAndAdd = 0
+	expected.ToRemove = 0
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected %#v, got %#v instead.", expected, h)
+	}
+}
+
+func TestCountHookPostDiff_ChangeOnly(t *testing.T) {
+	h := new(countHook)
+
+	resources := []string{"foo", "bar", "lorem"}
+
+	for _, k := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PostDiff(addr, states.CurrentGen, plans.Update, cty.DynamicVal, cty.DynamicVal)
+	}
+
+	expected := new(countHook)
+	expected.ToAdd = 0
+	expected.ToChange = 3
+	expected.ToRemoveAndAdd = 0
+	expected.ToRemove = 0
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected %#v, got %#v instead.", expected, h)
+	}
+}
+
+func TestCountHookPostDiff_Mixed(t *testing.T) {
+	h := new(countHook)
+
+	resources := map[string]plans.Action{
+		"foo":   plans.Delete,
+		"bar":   plans.NoOp,
+		"lorem": plans.Update,
+		"ipsum": plans.Delete,
+	}
+
+	for k, a := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PostDiff(addr, states.CurrentGen, a, cty.DynamicVal, cty.DynamicVal)
+	}
+
+	expected := new(countHook)
+	expected.ToAdd = 0
+	expected.ToChange = 1
+	expected.ToRemoveAndAdd = 0
+	expected.ToRemove = 2
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected %#v, got %#v instead.",
+			expected, h)
+	}
+}
+
+func TestCountHookPostDiff_NoChange(t *testing.T) {
+	h := new(countHook)
+
+	resources := []string{"foo", "bar", "lorem", "ipsum"}
+
+	for _, k := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PostDiff(addr, states.CurrentGen, plans.NoOp, cty.DynamicVal, cty.DynamicVal)
+	}
+
+	expected := new(countHook)
+	expected.ToAdd = 0
+	expected.ToChange = 0
+	expected.ToRemoveAndAdd = 0
+	expected.ToRemove = 0
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected %#v, got %#v instead.",
+			expected, h)
+	}
+}
+
+func TestCountHookPostDiff_DataSource(t *testing.T) {
+	h := new(countHook)
+
+	resources := map[string]plans.Action{
+		"foo":   plans.Delete,
+		"bar":   plans.NoOp,
+		"lorem": plans.Update,
+		"ipsum": plans.Delete,
+	}
+
+	for k, a := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.DataResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PostDiff(addr, states.CurrentGen, a, cty.DynamicVal, cty.DynamicVal)
+	}
+
+	expected := new(countHook)
+	expected.ToAdd = 0
+	expected.ToChange = 0
+	expected.ToRemoveAndAdd = 0
+	expected.ToRemove = 0
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected %#v, got %#v instead.",
+			expected, h)
+	}
+}
+
+func TestCountHookPostDiff_Ephemeral(t *testing.T) {
+	h := new(countHook)
+
+	resources := map[string]plans.Action{
+		"foo":   plans.Delete,
+		"bar":   plans.NoOp,
+		"lorem": plans.Update,
+		"ipsum": plans.Delete,
+	}
+
+	for k, a := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.EphemeralResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PostDiff(addr, states.CurrentGen, a, cty.DynamicVal, cty.DynamicVal)
+	}
+
+	expected := new(countHook)
+	expected.ToAdd = 0
+	expected.ToChange = 0
+	expected.ToRemoveAndAdd = 0
+	expected.ToRemove = 0
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected %#v, got %#v instead.",
+			expected, h)
+	}
+}
+
+func TestCountHookApply_ChangeOnly(t *testing.T) {
+	h := new(countHook)
+
+	resources := []string{"foo", "bar", "lorem"}
+
+	for _, k := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PreApply(addr, states.CurrentGen, plans.Update, cty.DynamicVal, cty.DynamicVal)
+		_, _ = h.PostApply(addr, states.CurrentGen, cty.DynamicVal, nil)
+	}
+
+	expected := &countHook{pending: make(map[string]plans.Action)}
+	expected.Added = 0
+	expected.Changed = 3
+	expected.Removed = 0
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected:\n%#v\nGot:\n%#v\n", expected, h)
+	}
+}
+
+func TestCountHookApply_DestroyOnly(t *testing.T) {
+	h := new(countHook)
+
+	resources := []string{"foo", "bar", "lorem", "ipsum"}
+
+	for _, k := range resources {
+		addr := addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: k,
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+		_, _ = h.PreApply(addr, states.CurrentGen, plans.Delete, cty.DynamicVal, cty.DynamicVal)
+		_, _ = h.PostApply(addr, states.CurrentGen, cty.DynamicVal, nil)
+	}
+
+	expected := &countHook{pending: make(map[string]plans.Action)}
+	expected.Added = 0
+	expected.Changed = 0
+	expected.Removed = 4
+
+	if !reflect.DeepEqual(expected, h) {
+		t.Fatalf("Expected:\n%#v\nGot:\n%#v\n", expected, h)
+	}
+}

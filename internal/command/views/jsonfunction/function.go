@@ -1,0 +1,204 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package jsonfunction
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/function"
+
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/tfdiags"
+)
+
+// FormatVersion represents the version of the json format and will be
+// incremented for any change to this format that requires changes to a
+// consuming parser.
+const FormatVersion = "1.0"
+
+// functions is the top-level object returned when exporting function signatures
+type functions struct {
+	FormatVersion string                        `json:"format_version"`
+	Signatures    map[string]*FunctionSignature `json:"function_signatures,omitempty"`
+}
+
+// FunctionSignature represents a function signature.
+type FunctionSignature struct {
+	// Description is an optional human-readable description
+	// of the function
+	Description string `json:"description,omitempty"`
+
+	// ReturnTypes is the ctyjson representation of the function's
+	// return types based on supplying all parameters using
+	// dynamic types. Functions can have dynamic return types.
+	// Use [marshalType] to populate this field.
+	ReturnType json.RawMessage `json:"return_type"`
+
+	// Parameters describes the function's fixed positional parameters.
+	Parameters []*parameter `json:"parameters,omitempty"`
+
+	// VariadicParameter describes the function's variadic
+	// parameters, if any are supported.
+	VariadicParameter *parameter `json:"variadic_parameter,omitempty"`
+}
+
+func newFunctions() *functions {
+	signatures := make(map[string]*FunctionSignature)
+	return &functions{
+		FormatVersion: FormatVersion,
+		Signatures:    signatures,
+	}
+}
+
+func Marshal(f map[string]function.Function) ([]byte, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+	signatures := newFunctions()
+
+	for name, v := range f {
+		// Even though it's not possible to have a provider namespaced function end up in here,
+		// we want to qualify the function name to be sure that we check exactly for the
+		// function that we have custom marshaller for.
+		fqFuncAddr := addrs.ParseFunction(name).FullyQualified().String()
+		switch fqFuncAddr {
+		case addrs.ParseFunction("can").FullyQualified().String():
+			signatures.Signatures[name] = marshalCan(v)
+		case addrs.ParseFunction("try").FullyQualified().String():
+			signatures.Signatures[name] = marshalTry(v)
+		case addrs.ParseFunction("convert").FullyQualified().String():
+			signatures.Signatures[name] = marshalConvert(v)
+		default:
+			signature, err := marshalFunction(v)
+			if err != nil {
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					fmt.Sprintf("Failed to serialize function %q", name),
+					err.Error(),
+				))
+			}
+			signatures.Signatures[name] = signature
+		}
+	}
+
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	ret, err := json.Marshal(signatures)
+	if err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to serialize functions",
+			err.Error(),
+		))
+		return nil, diags
+	}
+	return ret, nil
+}
+
+func marshalFunction(f function.Function) (*FunctionSignature, error) {
+	var err error
+	var vp *parameter
+	if f.VarParam() != nil {
+		vp = marshalParameter(f.VarParam())
+	}
+
+	var p []*parameter
+	if len(f.Params()) > 0 {
+		p = marshalParameters(f.Params())
+	}
+
+	r, err := getReturnType(f)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FunctionSignature{
+		Description:       f.Description(),
+		ReturnType:        marshalType(r),
+		Parameters:        p,
+		VariadicParameter: vp,
+	}, nil
+}
+
+// marshalType returns the JSON representation of the given type.
+//
+// This only supports the subset of [cty.Type] values that we use in the
+// parameters and return values of built-in functions, and will panic if
+// given something unexpected.
+func marshalType(ty cty.Type) json.RawMessage {
+	ret, err := ty.MarshalJSON()
+	if err != nil {
+		panic(err.Error())
+	}
+	return ret
+}
+
+// marshalTry returns a static function signature for the try function.
+// We need this exception because the function implementation uses capsule
+// types that we can't marshal.
+func marshalTry(try function.Function) *FunctionSignature {
+	return &FunctionSignature{
+		Description: try.Description(),
+		ReturnType:  marshalType(cty.DynamicPseudoType),
+		VariadicParameter: &parameter{
+			Name:        try.VarParam().Name,
+			Description: try.VarParam().Description,
+			IsNullable:  try.VarParam().AllowNull,
+			Type:        marshalType(cty.DynamicPseudoType),
+		},
+	}
+}
+
+// marshalCan returns a static function signature for the can function.
+// We need this exception because the function implementation uses capsule
+// types that we can't marshal.
+func marshalCan(can function.Function) *FunctionSignature {
+	return &FunctionSignature{
+		Description: can.Description(),
+		ReturnType:  marshalType(cty.Bool),
+		Parameters: []*parameter{
+			{
+				Name:        can.Params()[0].Name,
+				Description: can.Params()[0].Description,
+				IsNullable:  can.Params()[0].AllowNull,
+				Type:        marshalType(cty.DynamicPseudoType),
+			},
+		},
+	}
+}
+
+// marshalConvert returns a static function signature for the "convert" function.
+// We need this exception because the function implementation wants a type
+// constraint as its second argument and our usual strategy for sniffing for
+// the return type doesn't know how to provide that argument correctly.
+func marshalConvert(convert function.Function) *FunctionSignature {
+	return &FunctionSignature{
+		Description: convert.Description(),
+		ReturnType:  marshalType(cty.DynamicPseudoType),
+		Parameters: []*parameter{
+			{
+				Name:        convert.Params()[0].Name,
+				Description: convert.Params()[0].Description,
+				IsNullable:  convert.Params()[0].AllowNull,
+				Type:        marshalType(cty.DynamicPseudoType),
+			},
+			{
+				Name:        convert.Params()[1].Name,
+				Description: convert.Params()[1].Description,
+				IsNullable:  convert.Params()[1].AllowNull,
+				// This parameter has a special custom-decoded type that
+				// interprets the syntax as a type expression instead of a
+				// value expression, which we represent as "type" when
+				// describing it as JSON. We specify that directly here
+				// because each instantiation of the real "convert" function
+				// has a distinct cty.Type in this position.
+				Type: []byte(`"type"`),
+			},
+		},
+	}
+}

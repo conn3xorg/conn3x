@@ -1,0 +1,186 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package arguments
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
+)
+
+func TestParseReplaceProvider_basicValidation(t *testing.T) {
+	testCases := map[string]struct {
+		args        []string
+		want        *StateReplaceProvider
+		wantErrText string
+	}{
+		"defaults": {
+			args: []string{"source", "dest"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+		},
+		"auto-approve enabled": {
+			args: []string{"-auto-approve", "source", "dest"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.AutoApprove = true
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+		},
+		"custom backup path": {
+			args: []string{"-backup=/path/to/backup.tfstate", "source", "dest"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.State.BackupPath = "/path/to/backup.tfstate"
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+		},
+		"custom state path": {
+			args: []string{"-state=/path/to/state.tfstate", "source", "dest"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.State.StatePath = "/path/to/state.tfstate"
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+		},
+		"only lock-timeout": {
+			args: []string{"-lock-timeout=10s", "source", "dest"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.State.Lock = true
+				srp.State.LockTimeout = 10 * time.Second
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+		},
+		"disable locking": {
+			args: []string{"-lock=false", "source", "dest"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.State.Lock = false
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+		},
+		"all flags combined": {
+			args: []string{
+				"-auto-approve",
+				"-backup=/path/to/backup.tfstate",
+				"-state=/path/to/state.tfstate",
+				"-lock-timeout=15s",
+				"-lock=true",
+				"-var=key=value",
+				"source",
+				"dest",
+			},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.AutoApprove = true
+				srp.State.BackupPath = "/path/to/backup.tfstate"
+				srp.State.StatePath = "/path/to/state.tfstate"
+				srp.State.LockTimeout = 15 * time.Second
+				srp.State.Lock = true
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+				srp.Vars = &Vars{{Name: "-var", Value: "key=value"}}
+			}),
+		},
+		"no arguments": {
+			args:        []string{},
+			want:        stateReplaceProviderArgsWithDefaults(nil),
+			wantErrText: "Expected exactly two positional arguments",
+		},
+		"only one argument": {
+			args: []string{"source"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.RawSrcAddr = "source"
+			}),
+			wantErrText: "Expected exactly two positional arguments",
+		},
+		"too many arguments": {
+			args: []string{"source", "dest", "extra"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+			wantErrText: "Expected exactly two positional arguments",
+		},
+		"json without auto-approve": {
+			args: []string{"-json", "source", "dest"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.View.ViewType = ViewJSON
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+			wantErrText: "Invalid usage: OpenTofu cannot ask user input when `-json` flag is used. Therefore, `-auto-approve` is required too",
+		},
+		"json with auto-approve": {
+			args: []string{"-json", "-auto-approve", "source", "dest"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.View.ViewType = ViewJSON
+				srp.AutoApprove = true
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+		},
+	}
+
+	cmpOpts := cmp.Options{
+		cmpopts.IgnoreFields(View{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, closer, diags := ParseReplaceProvider(tc.args)
+			defer closer()
+
+			if tc.wantErrText != "" && len(diags) == 0 {
+				t.Errorf("test wanted error but got nothing")
+			} else if tc.wantErrText == "" && len(diags) > 0 {
+				t.Errorf("test didn't expect errors but got some: %s", diags.ErrWithWarnings())
+			} else if tc.wantErrText != "" && len(diags) > 0 {
+				errStr := diags.ErrWithWarnings().Error()
+				if !strings.Contains(errStr, tc.wantErrText) {
+					t.Errorf("the returned diagnostics does not contain the expected error message.\ndiags:\n%s\nwanted: %s\n", errStr, tc.wantErrText)
+				}
+			}
+			if diff := cmp.Diff(tc.want, got, cmpOpts); diff != "" {
+				t.Errorf("unexpected result\n%s", diff)
+			}
+		})
+	}
+}
+
+func stateReplaceProviderArgsWithDefaults(mutate func(srp *StateReplaceProvider)) *StateReplaceProvider {
+	ret := &StateReplaceProvider{
+		AutoApprove: false,
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        false,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
+		},
+		Backend: &Backend{
+			IgnoreRemoteVersion: false,
+		},
+		Vars: &Vars{},
+		State: &State{
+			Lock: true,
+			// Because the backup flag is registered with a different default value
+			BackupPath: "-",
+		},
+	}
+	// Because the default value is different on this command
+	if mutate != nil {
+		mutate(ret)
+	}
+	return ret
+}

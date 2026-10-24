@@ -1,0 +1,411 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package execgraph
+
+import (
+	"fmt"
+
+	"github.com/zclconf/go-cty/cty"
+
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/engine/internal/exec"
+	"github.com/opentofu/opentofu/internal/lang/eval"
+	"github.com/opentofu/opentofu/internal/states"
+)
+
+// Builder is a helper for gradually constructing an execution graph.
+//
+// Builder is not concurrency-safe, and so it's the caller's responsibility that
+// at most one method of this type is running at a time across all goroutines.
+//
+// The methods of this type each add exactly one item to the execution graph,
+// returning an opaque reference representing its resulting value which can
+// then be used as an argument to other methods. These opaque reference values
+// are specific to the builder that returned them; using a reference returned
+// by some other builder will at best cause a nonsense graph and at worse could
+// cause panics.
+type Builder struct {
+	graph          *Graph
+	emptyWaiterRef ResultRef[struct{}]
+
+	// Note that we intentionally don't have any other singletons here beyond
+	// the simple emptyWaiterRef, because this builder is intentionally
+	// low-level with minimal "magic". The planning engine has its own
+	// higher-level wrapper around this type that deals with problems such as
+	// making sure that each provider instance only has one set of nodes in the
+	// execution graph, etc, because the planning engine has access to more
+	// context about how the various different higher-level objects relate to
+	// each other.
+}
+
+func NewBuilder() *Builder {
+	return &Builder{
+		graph: &Graph{
+			resourceInstanceResults: addrs.MakeMap[addrs.AbsResourceInstance, ResourceInstanceResultRef](),
+		},
+		emptyWaiterRef: nil, // will be populated on first request for an empty waiter
+	}
+}
+
+// Finish returns the graph that has been built, which is then immutable.
+//
+// After calling this function the Builder is invalid and must not be used
+// anymore.
+func (b *Builder) Finish() *Graph {
+	ret := b.graph
+	b.graph = nil
+	return ret
+}
+
+// ConstantValue adds a constant [cty.Value] as a source node. The result
+// can be used as an operand to a subsequent operation.
+func (b *Builder) ConstantValue(v cty.Value) ResultRef[cty.Value] {
+	idx := appendIndex(&b.graph.constantVals, v)
+	return valueResultRef{idx}
+}
+
+// ConstantResourceInstAddr adds a constant [addrs.AbsResourceInstance]
+// address as a source node. The result can be used as an operand to a
+// subsequent operation.
+func (b *Builder) ConstantResourceInstAddr(addr addrs.AbsResourceInstance) ResultRef[addrs.AbsResourceInstance] {
+	idx := appendIndex(&b.graph.resourceInstAddrs, addr)
+	ret := resourceInstAddrResultRef{idx}
+	return ret
+}
+
+// ConstantDeposedKey adds a constant [states.DeposedKey] as a source node.
+// The result can be used as an operand to a subsequent operation.
+func (b *Builder) ConstantDeposedKey(key states.DeposedKey) ResultRef[states.DeposedKey] {
+	idx := appendIndex(&b.graph.deposedKeys, key)
+	ret := deposedKeyResultRef{idx}
+	return ret
+}
+
+// ConstantProviderInstAddr adds a constant [addrs.AbsProviderInstanceCorrect]
+// address as a source node. The result can be used as an operand to a
+// subsequent operation.
+func (b *Builder) ConstantProviderInstAddr(addr addrs.AbsProviderInstanceCorrect) ResultRef[addrs.AbsProviderInstanceCorrect] {
+	idx := appendIndex(&b.graph.providerInstAddrs, addr)
+	ret := providerInstAddrResultRef{idx}
+	return ret
+}
+
+// ResourceInstanceCurrentMeta asks the evaluator for the configured metadata
+// for the current object of the identified resource instance and then combines
+// it with the prior state of that object (if any) to produce the effective
+// metadata for that resource instance object.
+//
+// For objects that exist in the prior state, set "prior" to the result of a
+// call to [Builder.ResourceInstancePrior]. Otherwise leave it set to nil to
+// indicate that there is no prior state available.
+func (b *Builder) ResourceInstanceCurrentMeta(
+	addr ResultRef[addrs.AbsResourceInstance],
+	prior ResourceInstanceResultRef,
+) ResultRef[*exec.ResourceInstanceObjectMeta] {
+	return operationRef[*exec.ResourceInstanceObjectMeta](b, operationDesc{
+		opCode:   opResourceInstanceCurrentMeta,
+		operands: []AnyResultRef{addr, prior},
+	})
+}
+
+// ResourceInstanceDesired asks the evaluator for the desired state of the
+// resource instance object whose metadata is provided.
+//
+// This operation automatically blocks awaiting the results of any upstream
+// resource instances that the requested instance's configuration depends on,
+// and prevents execution of anything that depends on its result if there
+// are any evaluation errors, even if those errors originate upstream in one
+// of the configuration's dependencies and thus would get reported separately
+// by another return path.
+//
+// Only current (i.e. not "deposed") objects can be "desired", so this operation
+// must not be sent a result from [Builder.ManagedDeposedMeta].
+func (b *Builder) ResourceInstanceDesired(
+	meta ResultRef[*exec.ResourceInstanceObjectMeta],
+) ResultRef[*eval.DesiredResourceInstance] {
+	return operationRef[*eval.DesiredResourceInstance](b, operationDesc{
+		opCode:   opResourceInstanceDesired,
+		operands: []AnyResultRef{meta},
+	})
+}
+
+// ResourceInstancePrior returns the prior state of the resource instance that
+// has the given address.
+//
+// If the instance has no current object in the prior state then this returns
+// an object whose value is null, but not that such an object is not an
+// acceptable input to all operations that accept resource instance results,
+// and we expect that the planning engine would just skip including this
+// operation completely for any resource instance which is known during planning
+// to have no prior state because it's being created.
+//
+// Because this operation just reads static values directly from the state, it
+// does not automatically block for the completion of changes for other resource
+// instances recorded as dependencies in the prior state. Instead we expect that
+// the planning engine would record those as explicit dependencies on a
+// subsequent call to [Builder.ManagedApply] or [Builder.ManagedPerformDepose]
+// so that we constrain the ordering only of the externally-visible changes
+// and not of internal-only work.
+func (b *Builder) ResourceInstancePrior(
+	addr ResultRef[addrs.AbsResourceInstance],
+) ResourceInstanceResultRef {
+	return operationRef[*exec.ResourceInstanceObject](b, operationDesc{
+		opCode:   opResourceInstancePrior,
+		operands: []AnyResultRef{addr},
+	})
+}
+
+// ManagedFinalPlan registers an operation to decide the "final plan" for a
+// managed resource instance object, which may or may not be "desired".
+//
+// If the object is not "desired" then the desiredInst result is a nil pointer.
+// The underlying provider API represents that situation by setting the
+// "configuration value" to null.
+//
+// Similarly, if the object did not previously exist but is now desired then
+// the priorState result is a nil pointer, which should be represented in the
+// provider API by setting the prior state value to null.
+//
+// If the planning phase learned that the provider needs to handle a change
+// as a "replace" then in the execution graph there should be two separate
+// "final plan" and "apply changes" chains, where one has a nil desiredInst
+// and the other has a nil priorState. desiredInst and priorState should only
+// both be set when handling an in-place update.
+func (b *Builder) ManagedFinalPlan(
+	metadata ResultRef[*exec.ResourceInstanceObjectMeta],
+	desiredInst ResultRef[*eval.DesiredResourceInstance],
+	priorState ResourceInstanceResultRef,
+	plannedVal ResultRef[cty.Value],
+) ResultRef[*exec.ManagedResourceObjectFinalPlan] {
+	return operationRef[*exec.ManagedResourceObjectFinalPlan](b, operationDesc{
+		opCode:   opManagedFinalPlan,
+		operands: []AnyResultRef{metadata, desiredInst, priorState, plannedVal},
+	})
+}
+
+// ManagedApply registers an operation to apply a "final plan" for a managed
+// resource instance object.
+//
+// The finalPlan argument should typically be something returned by a previous
+// call to [Builder.ManagedFinalPlan] with the same provider client.
+//
+// fallbackObj is usually a [NilResultRef], but should be set for the "create"
+// leg of a "create then destroy" replace operation to be the result of a
+// call to [Builder.ManagedPerformDepose] so that the deposed object can be
+// restored to current if the create call completely fails to create a new
+// object.
+func (b *Builder) ManagedApply(
+	finalPlan ResultRef[*exec.ManagedResourceObjectFinalPlan],
+	fallbackObj ResourceInstanceResultRef,
+	waitFor AnyResultRef,
+) ResourceInstanceResultRef {
+	waiter := b.ensureWaiterRef(waitFor)
+	return operationRef[*exec.ResourceInstanceObject](b, operationDesc{
+		opCode:   opManagedApply,
+		operands: []AnyResultRef{finalPlan, fallbackObj, waiter},
+	})
+}
+
+// ManagedPrepareDepose performs the first half of the work to "depose" a
+// resource instance object as part of a create-before-destroy replace
+// operation.
+//
+// The final plan given as input must be a plan to destroy a "current" object.
+// The result is an equivalent plan whose only difference is that it's set
+// up to destroy the deposed object which has the given deposed key.
+//
+// The result of this operation should then be sent to both
+// [Builder.ManagedPerformDepose] and [Builder.ManagedApply] as part of the
+// overall subgraph handling the replace operation.
+//
+// This operation is an intrinsic, meaning that its behavior lives directly
+// in the execution graph runner rather than being delegated to an external
+// [exec.Operations] implementation.
+func (b *Builder) ManagedPrepareDepose(
+	finalPlan ResultRef[*exec.ManagedResourceObjectFinalPlan],
+	deposedKey ResultRef[addrs.DeposedKey],
+) ResultRef[*exec.ManagedResourceObjectFinalPlan] {
+	return operationRef[*exec.ManagedResourceObjectFinalPlan](b, operationDesc{
+		opCode:   opManagedPrepareDepose,
+		operands: []AnyResultRef{finalPlan, deposedKey},
+	})
+}
+
+func (b *Builder) ManagedPerformDepose(
+	currentObj ResourceInstanceResultRef,
+	finalDeletePlan ResultRef[*exec.ManagedResourceObjectFinalPlan],
+	waitFor AnyResultRef,
+) ResourceInstanceResultRef {
+	return operationRef[*exec.ResourceInstanceObject](b, operationDesc{
+		opCode:   opManagedPerformDepose,
+		operands: []AnyResultRef{currentObj, finalDeletePlan, waitFor},
+	})
+}
+
+func (b *Builder) ManagedDeposedMeta(
+	instAddr ResultRef[addrs.AbsResourceInstance],
+	deposedKey ResultRef[states.DeposedKey],
+	prior ResourceInstanceResultRef,
+) ResultRef[*exec.ResourceInstanceObjectMeta] {
+	return operationRef[*exec.ResourceInstanceObjectMeta](b, operationDesc{
+		opCode:   opManagedDesposedMeta,
+		operands: []AnyResultRef{instAddr, deposedKey, prior},
+	})
+}
+
+func (b *Builder) ManagedAlreadyDeposed(
+	instAddr ResultRef[addrs.AbsResourceInstance],
+	deposedKey ResultRef[states.DeposedKey],
+) ResourceInstanceResultRef {
+	return operationRef[*exec.ResourceInstanceObject](b, operationDesc{
+		opCode:   opManagedAlreadyDeposed,
+		operands: []AnyResultRef{instAddr, deposedKey},
+	})
+}
+
+func (b *Builder) ManagedChangeAddr(
+	currentObj ResourceInstanceResultRef,
+	newAddr ResultRef[addrs.AbsResourceInstance],
+) ResourceInstanceResultRef {
+	return operationRef[*exec.ResourceInstanceObject](b, operationDesc{
+		opCode:   opManagedChangeAddr,
+		operands: []AnyResultRef{currentObj, newAddr},
+	})
+}
+
+func (b *Builder) DataRead(
+	metadata ResultRef[*exec.ResourceInstanceObjectMeta],
+	desiredInst ResultRef[*eval.DesiredResourceInstance],
+	plannedVal ResultRef[cty.Value],
+	waitFor AnyResultRef,
+) ResourceInstanceResultRef {
+	waiter := b.ensureWaiterRef(waitFor)
+	return operationRef[*exec.ResourceInstanceObject](b, operationDesc{
+		opCode:   opDataRead,
+		operands: []AnyResultRef{metadata, desiredInst, plannedVal, waiter},
+	})
+}
+
+// SetResourceInstanceFinalStateResult records which result should be treated
+// as the "final state" for the given resource instance, for purposes such as
+// propagating the result value back into the evaluation system to allow
+// downstream expressions to derive from it.
+//
+// Only one call is allowed per distinct [addrs.AbsResourceInstance] value. If
+// two callers try to register for the same address then the second call will
+// panic.
+func (b *Builder) SetResourceInstanceFinalStateResult(addr addrs.AbsResourceInstance, result ResourceInstanceResultRef) {
+	if b.graph.resourceInstanceResults.Has(addr) {
+		panic(fmt.Sprintf("duplicate registration for %s final state result", addr))
+	}
+	b.graph.resourceInstanceResults.Put(addr, result)
+}
+
+// ResourceInstanceFinalStateResult returns the result reference for the given
+// resource instance that should previously have been registered using
+// [Builder.SetResourceInstanceFinalStateResult].
+//
+// The return type is [AnyResultRef] because this is intended for use as
+// an argument to [Builder.Waiter] or to a function returned by
+// [Builder.MutableWaiter] when explicitly representing the dependencies
+// between different resource and provider instances. The actual final state
+// result for the source instance travels indirectly through the evaluator
+// rather than directly within the execution graph.
+//
+// This function panics if a result reference for the given resource instance
+// was not previously registered, because that suggests a bug elsewhere in the
+// system that caused the construction of subgraphs for different resource
+// instances to happen in the wrong order.
+func (b *Builder) ResourceInstanceFinalStateResult(addr addrs.AbsResourceInstance) AnyResultRef {
+	ret, ok := b.graph.resourceInstanceResults.GetOk(addr)
+	if !ok {
+		panic(fmt.Sprintf("requested result for %s, which has not yet been registered", addr))
+	}
+	return ret
+}
+
+// Waiter creates a "fan-in" node where a single result depends on the
+// completion of an arbitrary number of other results.
+//
+// The values produced by the dependencies are discarded; this only creates
+// a "must happen after" relationship with the given dependencies.
+func (b *Builder) Waiter(dependencies ...AnyResultRef) AnyResultRef {
+	return b.makeWaiter(dependencies)
+}
+
+// MutableWaiter is like [Builder.Waiter] except that the returned waiter
+// initially has no dependencies and then dependencies can be added to it
+// separately by calling the returned function.
+//
+// This is intended for situations where an item with dependencies must be
+// added to the graph before its dependencies are known, and then the caller
+// gradually discovers all of the dependencies in later work.
+//
+// The registration function is not concurrency safe, so callers are responsible
+// for ensuring that there is only at most one call to each returned distinct
+// registration function across all goroutines.
+func (b *Builder) MutableWaiter() (AnyResultRef, func(AnyResultRef)) {
+	idx := appendIndex(&b.graph.waiters, []AnyResultRef{})
+	ref := waiterResultRef{idx}
+	registerFunc := func(ref AnyResultRef) {
+		if ref == nil {
+			// Letting a nil be registered here causes us to have a malformed
+			// graph that misbehaves when round-tripping through
+			// marshal/unmarshal, so we'll reject it early to avoid a confusing
+			// error later.
+			panic("attempt to register nil result ref in waiter")
+		}
+		b.graph.waiters[idx] = append(b.graph.waiters[idx], ref)
+	}
+	return ref, registerFunc
+}
+
+// operationRef is a helper used by all of the [Builder] methods that produce
+// "operation" nodes, dealing with the common registration part.
+//
+// Callers MUST ensure all of the following before calling this function:
+// - They already hold a lock on builder.mu and retain it throughout the call.
+// - The specified T is the correct result type for the operation being described.
+//
+// This is effectively a method on [Builder], but written as a package-level
+// function just so it can have a type parameter.
+func operationRef[T any](builder *Builder, op operationDesc) ResultRef[T] {
+	idx := appendIndex(&builder.graph.ops, op)
+	return operationResultRef[T]{idx}
+}
+
+// ensureWaiterRef exists to make it more convenient for callers of Builder
+// to populate "waitFor" arguments, by normalizing whatever was provided
+// so that it's definitely a waiter reference.
+//
+// The given ref can be nil to represent waiting for nothing, in which case
+// the result is a reference to an empty waiter. If the given ref is not nil
+// but is also not of the correct result type for a waiter then it'll be
+// wrapped in a waiter with only a single dependency and the result will
+// be a reference to that waiter.
+func (b *Builder) ensureWaiterRef(given AnyResultRef) ResultRef[struct{}] {
+	if ret, ok := given.(waiterResultRef); ok {
+		return ret
+	}
+	if given == nil {
+		return b.makeWaiter(nil)
+	}
+	return b.makeWaiter([]AnyResultRef{given})
+}
+
+func (b *Builder) makeWaiter(waitFor []AnyResultRef) ResultRef[struct{}] {
+	if len(waitFor) == 0 {
+		// Empty waiters tend to appear in multiple places, so we'll just
+		// allocate a single one on request and reuse it.
+		if b.emptyWaiterRef == nil {
+			idx := appendIndex(&b.graph.waiters, nil)
+			b.emptyWaiterRef = waiterResultRef{idx}
+		}
+		return b.emptyWaiterRef
+	}
+	idx := appendIndex(&b.graph.waiters, waitFor)
+	return waiterResultRef{idx}
+}

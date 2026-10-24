@@ -1,0 +1,249 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package command
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"slices"
+	"strings"
+
+	"github.com/opentofu/opentofu/internal/command/arguments"
+	"github.com/opentofu/opentofu/internal/command/clistate"
+	"github.com/opentofu/opentofu/internal/command/views"
+	"github.com/opentofu/opentofu/internal/encryption"
+	"github.com/opentofu/opentofu/internal/states/statefile"
+	"github.com/opentofu/opentofu/internal/tfdiags"
+)
+
+func WorkspaceNewCommander(legacyName bool) Command {
+	cmd := Command{
+		Name:  "new",
+		Short: "Create a new workspace",
+		Long:  `Create a new OpenTofu workspace.`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindWorkspaceNew(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return WorkspaceNewCommand{meta, legacyName}.Execute(args, views.NewWorkspace(args.View, meta.View))
+	}
+
+	return cmd
+}
+
+type WorkspaceNewCommand struct {
+	Meta
+	LegacyName bool
+}
+
+func (c *WorkspaceNewCommand) Run(rawArgs []string) int {
+	return RunCommand(WorkspaceNewCommander(c.LegacyName), c.Meta, rawArgs)
+}
+func (c WorkspaceNewCommand) Execute(args *arguments.WorkspaceNew, view views.Workspace) int {
+	var diags tfdiags.Diagnostics
+
+	ctx := c.CommandContext()
+
+	view.WarnWhenUsedAsEnvCmd(c.LegacyName)
+
+	configPath := c.WorkingDir.NormalizePath(c.WorkingDir.RootModuleDir())
+
+	workspace := args.WorkspaceName
+
+	if !validWorkspaceName(workspace) {
+		view.WorkspaceInvalidName(workspace)
+		return 1
+	}
+
+	// You can't ask to create a workspace when you're overriding the
+	// workspace name to be something different.
+	if current, isOverridden := c.WorkspaceOverridden(ctx); current != workspace && isOverridden {
+		view.WorkspaceIsOverriddenNewError()
+		return 1
+	}
+
+	backendConfig, backendDiags := c.loadBackendConfig(ctx, configPath)
+	diags = diags.Append(backendDiags)
+	if diags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// Load the encryption configuration
+	enc, encDiags := c.EncryptionFromPath(ctx, configPath)
+	diags = diags.Append(encDiags)
+	if encDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// Load the backend
+	backendView := view.Backend()
+	b, backendDiags := c.Backend(ctx, &BackendOpts{
+		Config: backendConfig,
+		View:   backendView,
+	}, enc.State())
+	diags = diags.Append(backendDiags)
+	if backendDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// This command will not write state
+	c.ignoreRemoteVersionConflict(b)
+
+	workspaces, err := b.Workspaces(ctx)
+	if err != nil {
+		view.Diagnostics(tfdiags.Diagnostics{tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error getting existing workspaces",
+			fmt.Sprintf("Failed listing workspaces: %s", err),
+		)})
+		return 1
+	}
+	if slices.Contains(workspaces, workspace) {
+		view.WorkspaceAlreadyExists(workspace)
+		return 1
+	}
+
+	_, err = b.StateMgr(ctx, workspace)
+	if err != nil {
+		view.Diagnostics(tfdiags.Diagnostics{tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error getting the state manager",
+			fmt.Sprintf("Failed getting state manager for workspace %s: %s", workspace, err),
+		)})
+		return 1
+	}
+
+	// now set the current workspace locally
+	if err := c.SetWorkspace(workspace); err != nil {
+		view.Diagnostics(tfdiags.Diagnostics{tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error selecting the new workspace",
+			fmt.Sprintf("Failed selecting the new workspace %s: %s", workspace, err),
+		)})
+		return 1
+	}
+
+	view.WorkspaceCreated(workspace)
+
+	statePath := args.State.StatePath
+	if statePath == "" {
+		// if we're not loading a state, then we're done
+		return 0
+	}
+
+	// load the new Backend state
+	stateMgr, err := b.StateMgr(ctx, workspace)
+	if err != nil {
+		view.Diagnostics(tfdiags.Diagnostics{tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error getting the state manager for the new workspace",
+			fmt.Sprintf("Failed getting state manager for workspace %s: %s", workspace, err),
+		)})
+		return 1
+	}
+
+	if args.State.Lock {
+		stateLocker := clistate.NewLocker(args.State.LockTimeout, backendView.StateLocker())
+		if diags := stateLocker.Lock(stateMgr, "workspace-new"); diags.HasErrors() {
+			view.Diagnostics(diags)
+			return 1
+		}
+		defer func() {
+			if diags := stateLocker.Unlock(); diags.HasErrors() {
+				view.Diagnostics(diags)
+			}
+		}()
+	}
+
+	// read the existing state file
+	f, err := os.Open(statePath)
+	if err != nil {
+		view.Diagnostics(tfdiags.Diagnostics{tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error opening the given state",
+			fmt.Sprintf("Failed opening the given state %q: %s", statePath, err),
+		)})
+		return 1
+	}
+
+	stateFile, err := statefile.Read(f, encryption.StateEncryptionDisabled()) // Assume given statefile is not encrypted
+	if err != nil {
+		view.Diagnostics(tfdiags.Diagnostics{tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error reading the given state",
+			fmt.Sprintf("Failed reading the given state %q: %s", statePath, err),
+		)})
+		return 1
+	}
+
+	// save the existing state in the new Backend.
+	err = stateMgr.WriteState(stateFile.State)
+	if err != nil {
+		view.Diagnostics(tfdiags.Diagnostics{tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error writing the new state to the given state file",
+			fmt.Sprintf("Failed writing the new state to the given state file %q: %s", statePath, err),
+		)})
+		return 1
+	}
+	err = stateMgr.PersistState(context.TODO(), nil)
+	if err != nil {
+		view.Diagnostics(tfdiags.Diagnostics{tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error persisting the new state",
+			fmt.Sprintf("Failed persisting the new state: %s", err),
+		)})
+		return 1
+	}
+
+	return 0
+}
+
+func (c *WorkspaceNewCommand) Help() string {
+	helpText := `
+Usage: tofu [global options] workspace new [OPTIONS] NAME
+
+  Create a new OpenTofu workspace.
+
+Options:
+
+    -lock=false         Don't hold a state lock during the operation. This is
+                        dangerous if others might concurrently run commands
+                        against the same workspace.
+
+    -lock-timeout=0s    Duration to retry a state lock.
+
+    -state=path         Copy an existing state file into the new workspace.
+
+
+    -var 'foo=bar'      Set a value for one of the input variables in the root
+                        module of the configuration. Use this option more than
+                        once to set more than one variable.
+
+    -var-file=filename  Load variable values from the given file, in addition
+                        to the default files terraform.tfvars and *.auto.tfvars.
+                        Use this option more than once to include more than one
+                        variables file.
+    
+    -json               The output of the command is printed in json format.
+
+    -json-into=out.json Produce the same output as -json, but sent directly
+                        to the given file. This allows automation to preserve
+                        the original human-readable output streams, while
+                        capturing more detailed logs for machine analysis.
+`
+	return strings.TrimSpace(helpText)
+}
+
+func (c *WorkspaceNewCommand) Synopsis() string {
+	return "Create a new workspace"
+}

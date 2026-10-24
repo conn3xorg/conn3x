@@ -1,0 +1,171 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package command
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/opentofu/opentofu/internal/backend"
+	"github.com/opentofu/opentofu/internal/command/arguments"
+	"github.com/opentofu/opentofu/internal/command/jsonprovider"
+	"github.com/opentofu/opentofu/internal/command/views"
+	"github.com/opentofu/opentofu/internal/configs/configload"
+	"github.com/opentofu/opentofu/internal/tfdiags"
+)
+
+func ProvidersSchemaCommander() Command {
+	cmd := Command{
+		Name:  "schema",
+		Short: "Show schemas for the providers used in the configuration",
+		Long:  `Prints out a json representation of the schemas for all providers used in the current configuration.`,
+	}
+
+	args := arguments.BindProvidersSchema(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return ProvidersSchemaCommand{meta}.Execute(args, views.NewProvidersSchema(meta.View))
+	}
+
+	return cmd
+}
+
+// ProvidersSchemaCommand is a Command implementation that prints out information
+// about the providers used in the current configuration/state.
+type ProvidersSchemaCommand struct {
+	Meta
+}
+
+func (c *ProvidersSchemaCommand) Help() string {
+	return providersSchemaCommandHelp
+}
+
+func (c *ProvidersSchemaCommand) Synopsis() string {
+	return "Show schemas for the providers used in the configuration"
+}
+
+func (c *ProvidersSchemaCommand) Run(rawArgs []string) int {
+	return RunCommand(ProvidersSchemaCommander(), c.Meta, rawArgs)
+}
+func (c ProvidersSchemaCommand) Execute(args *arguments.ProvidersSchema, view views.ProvidersSchema) int {
+	var diags tfdiags.Diagnostics
+	ctx := c.CommandContext()
+
+	// Check for user-supplied plugin path
+	var err error
+	if c.pluginPath, err = c.loadPluginPath(); err != nil {
+		view.Diagnostics(diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Plugins loading error",
+			fmt.Sprintf("Error loading plugin path: %s", err),
+		)))
+		return 1
+	}
+
+	enc, encDiags := c.Encryption(ctx)
+	diags = diags.Append(encDiags)
+	if encDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// Load the backend
+	b, backendDiags := c.Backend(ctx, nil, enc.State())
+	diags = diags.Append(backendDiags)
+	if backendDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// We require a local backend
+	local, ok := b.(backend.Local)
+	if !ok {
+		view.Diagnostics(diags) // in case of any warnings in here
+		view.UnsupportedLocalOp()
+		return 1
+	}
+
+	// This is a read-only command
+	c.ignoreRemoteVersionConflict(b)
+
+	// we expect that the config dir is the cwd
+	cwd, err := os.Getwd()
+	if err != nil {
+		view.Diagnostics(diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Error getting cwd",
+			err.Error(),
+		)))
+		return 1
+	}
+
+	// Build the operation
+	opReq := c.Operation(ctx, b, view.Backend(), enc)
+	opReq.ConfigDir = cwd
+	opReq.ConfigLoader, err = configload.Initialise(c.configLoader())
+	var callDiags tfdiags.Diagnostics
+	opReq.RootCall, callDiags = c.rootModuleCall(ctx, opReq.ConfigDir)
+	diags = diags.Append(callDiags)
+	if callDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	opReq.AllowUnsetVariables = true
+	if err != nil {
+		diags = diags.Append(err)
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// Get the context
+	stopCtx, cancel := c.InterruptibleContext(ctx)
+	defer cancel()
+	lr, _, ctxDiags := local.LocalRun(ctx, stopCtx, opReq)
+	diags = diags.Append(ctxDiags)
+	if ctxDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	schemas, moreDiags := lr.Core.Schemas(ctx, lr.Config, lr.InputState)
+	diags = diags.Append(moreDiags)
+	if moreDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	jsonSchemas, err := jsonprovider.Marshal(schemas)
+	if err != nil {
+		view.Diagnostics(diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to marshal provider schemas to json",
+			err.Error(),
+		)))
+		return 1
+	}
+
+	view.Output(string(jsonSchemas))
+
+	return 0
+}
+
+const providersSchemaCommandHelp = `
+Usage: tofu [global options] providers schema [options] -json
+
+  Prints out a json representation of the schemas for all providers used 
+  in the current configuration.
+
+Options:
+
+  -var 'foo=bar'     Set a value for one of the input variables in the root
+                     module of the configuration. Use this option more than
+                     once to set more than one variable.
+
+  -var-file=filename Load variable values from the given file, in addition
+                     to the default files terraform.tfvars and *.auto.tfvars.
+                     Use this option more than once to include more than one
+                     variables file.
+`

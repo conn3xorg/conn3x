@@ -1,0 +1,10 @@
+Conn3x
+Copyright (c) The Conn3x Authors
+
+Conn3x is licensed under the Mozilla Public License, version 2.0.
+
+This product includes software from OpenTofu
+(https://github.com/opentofu/opentofu), licensed under the Mozilla Public
+License, version 2.0. Copyright (c) The OpenTofu Authors and
+Copyright (c) HashiCorp, Inc. Files taken from OpenTofu keep their
+original copyright and license headers.

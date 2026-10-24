@@ -1,0 +1,160 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package arguments
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/davecgh/go-spew/spew"
+	"github.com/google/go-cmp/cmp"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
+
+	"github.com/opentofu/opentofu/internal/tfdiags"
+)
+
+func TestParseValidate_valid(t *testing.T) {
+	testCases := map[string]struct {
+		args []string
+		want *Validate
+	}{
+		"defaults": {
+			nil,
+			&Validate{
+				Path:          ".",
+				TestDirectory: "tests",
+				View: &View{
+					ConsolidateWarnings: true, ViewType: ViewHuman,
+					LintInclude: make(collections.Set[linting.RuleAddr]),
+					LintExclude: make(collections.Set[linting.RuleAddr]),
+				},
+			},
+		},
+		"json": {
+			[]string{"-json"},
+			&Validate{
+				Path:          ".",
+				TestDirectory: "tests",
+				View: &View{
+					ConsolidateWarnings: true, ViewType: ViewJSON,
+					LintInclude: make(collections.Set[linting.RuleAddr]),
+					LintExclude: make(collections.Set[linting.RuleAddr]),
+				},
+			},
+		},
+		"path": {
+			[]string{"-json", "foo"},
+			&Validate{
+				Path:          "foo",
+				TestDirectory: "tests",
+				View: &View{
+					ConsolidateWarnings: true, ViewType: ViewJSON,
+					LintInclude: make(collections.Set[linting.RuleAddr]),
+					LintExclude: make(collections.Set[linting.RuleAddr]),
+				},
+			},
+		},
+		"test-directory": {
+			[]string{"-test-directory", "other"},
+			&Validate{
+				Path:          ".",
+				TestDirectory: "other",
+				View: &View{
+					ConsolidateWarnings: true, ViewType: ViewHuman,
+					LintInclude: make(collections.Set[linting.RuleAddr]),
+					LintExclude: make(collections.Set[linting.RuleAddr]),
+				},
+			},
+		},
+		"no-tests": {
+			[]string{"-no-tests"},
+			&Validate{
+				Path:          ".",
+				TestDirectory: "tests",
+				View: &View{
+					ConsolidateWarnings: true, ViewType: ViewHuman,
+					LintInclude: make(collections.Set[linting.RuleAddr]),
+					LintExclude: make(collections.Set[linting.RuleAddr]),
+				},
+				NoTests: true,
+			},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, _, diags := ParseValidate(tc.args)
+			if len(diags) > 0 {
+				t.Fatalf("unexpected diags: %v", diags)
+			}
+			got.Vars = nil
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("unexpected result\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseValidate_invalid(t *testing.T) {
+	testCases := map[string]struct {
+		args      []string
+		want      *Validate
+		wantDiags tfdiags.Diagnostics
+	}{
+		"unknown flag": {
+			[]string{"-boop"},
+			&Validate{
+				Path:          ".",
+				TestDirectory: "tests",
+				View: &View{
+					ConsolidateWarnings: true, ViewType: ViewHuman,
+					LintInclude: make(collections.Set[linting.RuleAddr]),
+					LintExclude: make(collections.Set[linting.RuleAddr]),
+				},
+			},
+			tfdiags.Diagnostics{
+				tfdiags.Sourceless(
+					tfdiags.Error,
+					"Failed to parse command-line options",
+					"flag provided but not defined: -boop",
+				),
+			},
+		},
+		"too many arguments": {
+			[]string{"-json", "bar", "baz"},
+			&Validate{
+				Path:          "bar",
+				TestDirectory: "tests",
+				View: &View{
+					ConsolidateWarnings: true, ViewType: ViewJSON,
+					LintInclude: make(collections.Set[linting.RuleAddr]),
+					LintExclude: make(collections.Set[linting.RuleAddr]),
+				},
+			},
+			tfdiags.Diagnostics{
+				tfdiags.Sourceless(
+					tfdiags.Error,
+					"Unexpected argument",
+					"Too many command line arguments. Expected at most one positional argument.",
+				),
+			},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, _, gotDiags := ParseValidate(tc.args)
+			got.Vars = nil
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("unexpected result\n%s", diff)
+			}
+			if !reflect.DeepEqual(gotDiags, tc.wantDiags) {
+				t.Errorf("wrong result\ngot: %s\nwant: %s", spew.Sdump(gotDiags), spew.Sdump(tc.wantDiags))
+			}
+		})
+	}
+}

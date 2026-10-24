@@ -1,0 +1,305 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package planning
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/zclconf/go-cty/cty"
+
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/plans"
+)
+
+// TestExecGraphBuilder_ManagedResourceInstanceSubgraph is a unit test for
+// the ManagedResourceInstanceSubgraph method in particular, focused only on
+// the items and relationships that function produces.
+//
+// Interactions between this method and others should be tested elsewhere.
+func TestExecGraphBuilder_ManagedResourceInstanceSubgraph(t *testing.T) {
+	// instAddr is the resource instance address that each test should use
+	// for the resource instance object whose result is returned from the
+	// "Build" function. We set the return value as the result for this
+	// resource instance so that it'll appear in the graph DebugRepr for
+	// comparison.
+	instAddr := addrs.Resource{
+		Mode: addrs.ManagedResourceMode,
+		Type: "test",
+		Name: "placeholder",
+	}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+
+	tests := map[string]struct {
+		Build func(
+			b *execGraphBuilder,
+		) resourceInstanceObjectSubgraph
+		WantRepr string
+	}{
+		"create": {
+			func(b *execGraphBuilder) resourceInstanceObjectSubgraph {
+				return b.ManagedResourceInstanceSubgraph(
+					&plans.ResourceInstanceChange{
+						Addr:        instAddr,
+						PrevRunAddr: instAddr,
+						Action:      plans.Create,
+						Before:      cty.NullVal(cty.EmptyObject),
+						After:       cty.EmptyObjectVal,
+					},
+					replaceDestroyThenCreate,
+				)
+			},
+			`
+				v[0] = cty.EmptyObjectVal;
+
+				r[0] = ResourceInstanceCurrentMeta(test.placeholder, nil);
+				r[1] = ResourceInstanceDesired(r[0]);
+				r[2] = ManagedFinalPlan(r[0], r[1], nil, v[0]);
+				r[3] = ManagedApply(r[2], nil, await());
+
+				test.placeholder = r[3];
+			`,
+		},
+		"update": {
+			func(b *execGraphBuilder) resourceInstanceObjectSubgraph {
+				return b.ManagedResourceInstanceSubgraph(
+					&plans.ResourceInstanceChange{
+						Addr:        instAddr,
+						PrevRunAddr: instAddr,
+						Action:      plans.Update,
+						Before:      cty.StringVal("before"),
+						After:       cty.StringVal("after"),
+					},
+					replaceDestroyThenCreate,
+				)
+			},
+			`
+				v[0] = cty.StringVal("after");
+
+				r[0] = ResourceInstancePrior(test.placeholder);
+				r[1] = ResourceInstanceCurrentMeta(test.placeholder, r[0]);
+				r[2] = ResourceInstanceDesired(r[1]);
+				r[3] = ManagedFinalPlan(r[1], r[2], r[0], v[0]);
+				r[4] = ManagedApply(r[3], nil, await());
+
+				test.placeholder = r[4];
+			`,
+		},
+		"update with move": {
+			func(b *execGraphBuilder) resourceInstanceObjectSubgraph {
+				oldInstAddr := addrs.Resource{
+					Mode: addrs.ManagedResourceMode,
+					Type: "test",
+					Name: "old",
+				}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+				return b.ManagedResourceInstanceSubgraph(
+					&plans.ResourceInstanceChange{
+						Addr:        instAddr,
+						PrevRunAddr: oldInstAddr,
+						Action:      plans.Update,
+						Before:      cty.StringVal("before"),
+						After:       cty.StringVal("after"),
+					},
+					replaceDestroyThenCreate,
+				)
+			},
+			`
+				v[0] = cty.StringVal("after");
+
+				r[0] = ResourceInstancePrior(test.old);
+				r[1] = ResourceInstanceCurrentMeta(test.placeholder, r[0]);
+				r[2] = ResourceInstanceDesired(r[1]);
+				r[3] = ManagedChangeAddr(r[0], test.placeholder);
+				r[4] = ManagedFinalPlan(r[1], r[2], r[3], v[0]);
+				r[5] = ManagedApply(r[4], nil, await());
+
+				test.placeholder = r[5];
+			`,
+		},
+		"delete": {
+			func(b *execGraphBuilder) resourceInstanceObjectSubgraph {
+				return b.ManagedResourceInstanceSubgraph(
+					&plans.ResourceInstanceChange{
+						Addr:        instAddr,
+						PrevRunAddr: instAddr,
+						Action:      plans.Delete,
+						Before:      cty.EmptyObjectVal,
+						After:       cty.NullVal(cty.EmptyObject),
+					},
+					replaceDestroyThenCreate,
+				)
+			},
+			`
+				v[0] = cty.NullVal(cty.EmptyObject);
+				
+				r[0] = ResourceInstancePrior(test.placeholder);
+				r[1] = ResourceInstanceCurrentMeta(test.placeholder, r[0]);
+				r[2] = ManagedFinalPlan(r[1], nil, r[0], v[0]);
+				r[3] = ManagedApply(r[2], nil, await());
+
+				test.placeholder = r[0];
+			`,
+			// NOTE: The result for an object being deleted is set to the
+			// prior state, which is counter-intuitive but correct because:
+			// - In normal planning mode there can't be configuration references
+			//   to something that is being deleted anyway, and so it doesn't
+			//   really matter which value is treated as the result.
+			// - In destroy planning mode ephemeral objects like provider
+			//   instances are expected to be able to rely on the prior state
+			//   of resource instances that are being planned for deletion,
+			//   and so this wiring creates that effect during the apply phase.
+		},
+		"delete then create": {
+			func(b *execGraphBuilder) resourceInstanceObjectSubgraph {
+				return b.ManagedResourceInstanceSubgraph(
+					&plans.ResourceInstanceChange{
+						Addr:        instAddr,
+						PrevRunAddr: instAddr,
+						Action:      plans.DeleteThenCreate,
+						Before:      cty.StringVal("before"),
+						After:       cty.StringVal("after"),
+					},
+					replaceDestroyThenCreate,
+				)
+			},
+			`
+				v[0] = cty.StringVal("after");
+				v[1] = cty.NullVal(cty.String);
+				
+				r[0] = ResourceInstancePrior(test.placeholder);
+				r[1] = ResourceInstanceCurrentMeta(test.placeholder, r[0]);
+				r[2] = ResourceInstanceDesired(r[1]);
+				r[3] = ManagedFinalPlan(r[1], r[2], nil, v[0]);
+				r[4] = ManagedFinalPlan(r[1], nil, r[0], v[1]);
+				r[5] = ManagedApply(r[4], nil, await(r[3]));
+				r[6] = ManagedApply(r[3], nil, await(r[5]));
+
+				test.placeholder = r[6];
+			`,
+		},
+		"delete then create with move": {
+			func(b *execGraphBuilder) resourceInstanceObjectSubgraph {
+				oldInstAddr := addrs.Resource{
+					Mode: addrs.ManagedResourceMode,
+					Type: "test",
+					Name: "old",
+				}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+				return b.ManagedResourceInstanceSubgraph(
+					&plans.ResourceInstanceChange{
+						Addr:        instAddr,
+						PrevRunAddr: oldInstAddr,
+						Action:      plans.DeleteThenCreate,
+						Before:      cty.StringVal("before"),
+						After:       cty.StringVal("after"),
+					},
+					replaceDestroyThenCreate,
+				)
+			},
+			`
+				v[0] = cty.StringVal("after");
+				v[1] = cty.NullVal(cty.String);
+
+				r[0] = ResourceInstancePrior(test.old);
+				r[1] = ResourceInstanceCurrentMeta(test.placeholder, r[0]);
+				r[2] = ResourceInstanceDesired(r[1]);
+				r[3] = ManagedChangeAddr(r[0], test.placeholder);
+				r[4] = ManagedFinalPlan(r[1], r[2], nil, v[0]);
+				r[5] = ManagedFinalPlan(r[1], nil, r[3], v[1]);
+				r[6] = ManagedApply(r[5], nil, await(r[4]));
+				r[7] = ManagedApply(r[4], nil, await(r[6]));
+
+				test.placeholder = r[7];
+			`,
+		},
+		"create then delete": {
+			func(b *execGraphBuilder) resourceInstanceObjectSubgraph {
+				return b.ManagedResourceInstanceSubgraph(
+					&plans.ResourceInstanceChange{
+						Addr:        instAddr,
+						PrevRunAddr: instAddr,
+						Action:      plans.CreateThenDelete,
+						Before:      cty.StringVal("before"),
+						After:       cty.StringVal("after"),
+					},
+					replaceCreateThenDestroy,
+				)
+			},
+			`
+				v[0] = cty.StringVal("after");
+				v[1] = cty.NullVal(cty.String);
+
+				r[0] = ResourceInstancePrior(test.placeholder);
+				r[1] = ResourceInstanceCurrentMeta(test.placeholder, r[0]);
+				r[2] = ResourceInstanceDesired(r[1]);
+				r[3] = ManagedFinalPlan(r[1], r[2], nil, v[0]);
+				r[4] = ManagedFinalPlan(r[1], nil, r[0], v[1]);
+				r[5] = ManagedPrepareDepose(r[4], "00000001");
+				r[6] = ManagedPerformDepose(r[0], r[5], await(r[3]));
+				r[7] = ManagedApply(r[3], r[6], await());
+				r[8] = ManagedApply(r[5], nil, await(r[7]));
+
+				test.placeholder = r[7];
+			`,
+		},
+		"create then delete with move": {
+			func(b *execGraphBuilder) resourceInstanceObjectSubgraph {
+				oldInstAddr := addrs.Resource{
+					Mode: addrs.ManagedResourceMode,
+					Type: "test",
+					Name: "old",
+				}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+				return b.ManagedResourceInstanceSubgraph(
+					&plans.ResourceInstanceChange{
+						Addr:        instAddr,
+						PrevRunAddr: oldInstAddr,
+						Action:      plans.CreateThenDelete,
+						Before:      cty.StringVal("before"),
+						After:       cty.StringVal("after"),
+					},
+					replaceCreateThenDestroy,
+				)
+			},
+			`
+				v[0] = cty.StringVal("after");
+				v[1] = cty.NullVal(cty.String);
+
+				r[0] = ResourceInstancePrior(test.old);
+				r[1] = ResourceInstanceCurrentMeta(test.placeholder, r[0]);
+				r[2] = ResourceInstanceDesired(r[1]);
+				r[3] = ManagedChangeAddr(r[0], test.placeholder);
+				r[4] = ManagedFinalPlan(r[1], r[2], nil, v[0]);
+				r[5] = ManagedFinalPlan(r[1], nil, r[3], v[1]);
+				r[6] = ManagedPrepareDepose(r[5], "00000001");
+				r[7] = ManagedPerformDepose(r[3], r[6], await(r[4]));
+				r[8] = ManagedApply(r[4], r[7], await());
+				r[9] = ManagedApply(r[6], nil, await(r[8]));
+
+				test.placeholder = r[8];
+			`,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			builder := newExecGraphBuilderForTesting()
+			// FIXME: We're currently ignoring all but the first result
+			// because this test was originally written for an older variant
+			// of this function which only had one result. We should find a
+			// nice way to restructure this test so that it can check whether
+			// _all_ of the return values are correct.
+			subgraph := test.Build(builder)
+			resultRef := subgraph.valueRef
+			builder.lower.SetResourceInstanceFinalStateResult(instAddr, resultRef)
+
+			graph := builder.lower.Finish()
+			gotGraphRepr := strings.TrimSpace(graph.DebugRepr())
+			wantGraphRepr := strings.TrimSpace(stripCommonLeadingTabs(test.WantRepr))
+			if diff := cmp.Diff(wantGraphRepr, gotGraphRepr); diff != "" {
+				t.Error("wrong result\n" + diff)
+			}
+		})
+	}
+}

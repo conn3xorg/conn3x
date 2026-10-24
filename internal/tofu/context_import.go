@@ -1,0 +1,482 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package tofu
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"sync"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
+
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/configs"
+	"github.com/opentofu/opentofu/internal/configs/configschema"
+	"github.com/opentofu/opentofu/internal/instances"
+	"github.com/opentofu/opentofu/internal/states"
+	"github.com/opentofu/opentofu/internal/tfdiags"
+)
+
+// ImportOpts are used as the configuration for Import.
+type ImportOpts struct {
+	// Targets are the targets to import
+	Targets []*ImportTarget
+
+	// SetVariables are the variables set outside of the configuration,
+	// such as on the command line, in variables files, etc.
+	SetVariables InputValues
+}
+
+// CommandLineImportTarget is a target that we need to import, that originated from the CLI command
+// It represents a single resource that we need to import.
+// The resource's ID and Address are fully known when executing the command (unlike when using the `import` block)
+type CommandLineImportTarget struct {
+	// Addr is the address for the resource instance that the new object should
+	// be imported into.
+	Addr addrs.AbsResourceInstance
+
+	// ID is the string ID of the resource to import. This is resource-specific.
+	ID string
+}
+
+// ImportTarget is a target that we need to import.
+// It could either represent a single resource or multiple instances of the same resource, if for_each is used
+// ImportTarget can be either a result of the import CLI command, or the import block
+type ImportTarget struct {
+	// Config is the original import block for this import. This might be null
+	// if the import did not originate in config.
+	// Config is mutually-exclusive with CommandLineImportTarget
+	Config *configs.Import
+
+	// CommandLineImportTarget is the ImportTarget information in the case of an import target origination for the
+	// command line. CommandLineImportTarget is mutually-exclusive with Config
+	*CommandLineImportTarget
+}
+
+// IsFromImportBlock checks whether the import target originates from an `import` block
+// Currently, it should yield the opposite result of IsFromImportCommandLine, as those two are mutually-exclusive
+func (i *ImportTarget) IsFromImportBlock() bool {
+	return i.Config != nil
+}
+
+// IsFromImportCommandLine checks whether the import target originates from a `tofu import` command
+// Currently, it should yield the opposite result of IsFromImportBlock, as those two are mutually-exclusive
+func (i *ImportTarget) IsFromImportCommandLine() bool {
+	return i.CommandLineImportTarget != nil
+}
+
+// StaticAddr returns the static address part of an import target
+// For an ImportTarget originating from the command line, the address is already known
+// However for an ImportTarget originating from an import block, the full address might not be known initially,
+// and could only be evaluated down the line. Here, we create a static representation for the address.
+// This is useful so that we could have information on the ImportTarget early on, such as the Module and Resource of it
+func (i *ImportTarget) StaticAddr() addrs.ConfigResource {
+	if i.IsFromImportCommandLine() {
+		return i.CommandLineImportTarget.Addr.ConfigResource()
+	}
+
+	return i.Config.StaticTo
+}
+
+// ResolvedAddr returns a reference to the resolved address of an import target, if possible. If not possible, it
+// returns nil.
+// For an ImportTarget originating from the command line, the address is already known
+// However for an ImportTarget originating from an import block, the full address might not be known initially,
+// and could only be evaluated down the line.
+func (i *ImportTarget) ResolvedAddr() *addrs.AbsResourceInstance {
+	if i.IsFromImportCommandLine() {
+		return &i.CommandLineImportTarget.Addr
+	} else {
+		return i.Config.ResolvedTo
+	}
+}
+
+// ImportResolver is a struct that maintains a map of all imports as they are being resolved.
+// This is specifically for imports originating from configuration.
+// Import targets' addresses are not fully known from the get-go, and could only be resolved later when walking
+// the graph. This struct helps keep track of the resolved imports, mostly for validation that all imports
+// have been addressed and point to an actual configuration.
+// The key of the map is an AbsResourceInstance, and the value is an EvaluatedConfigImportTarget.
+type ImportResolver struct {
+	mu      sync.RWMutex
+	imports addrs.Map[addrs.AbsResourceInstance, EvaluatedConfigImportTarget]
+}
+
+func NewImportResolver() *ImportResolver {
+	return &ImportResolver{imports: addrs.MakeMap[addrs.AbsResourceInstance, EvaluatedConfigImportTarget]()}
+}
+
+// ValidateImportIDs is used during the validation phase to validate the import IDs/Identities of all import targets.
+// This function works similarly to ExpandAndResolveImport, but it only validates the IDs/Identities of the import targets and does not modify the EvalContext.
+// We only validate the IDs/Identities during the validation phase. Otherwise, we might cause a false positive,
+// since we do not know if the user intends to use the '-generate-config-out' option to generate additional configuration, which would make invalid Addresses valid
+func (ri *ImportResolver) ValidateImportIDs(ctx context.Context, importTarget *ImportTarget, evalCtx EvalContext) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+
+	getIdentitySchemaType := func(ctx context.Context, importTarget *ImportTarget, evalCtx EvalContext, keyData instances.RepetitionData) (cty.Type, tfdiags.Diagnostics) {
+		var diags tfdiags.Diagnostics
+		if importTarget.Config.Provider.Type == "" {
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unable to determine provider for import identity",
+				Detail:   fmt.Sprintf("The provider for import target %q could not be determined. Please ensure the import block has a valid provider configuration.", importTarget.Config.StaticTo),
+				Subject:  importTarget.Config.Identity.Range().Ptr(),
+			})
+			return cty.DynamicPseudoType, diags
+		}
+
+		schema, schemaDiags := getIdentitySchema(
+			ctx, evalCtx,
+			importTarget.Config.Provider,
+			importTarget.Config.StaticTo.Resource.Type,
+			importTarget.Config.Identity.Range(),
+			importTarget.Config.StaticTo.String())
+		diags = diags.Append(schemaDiags)
+		if diags.HasErrors() {
+			return cty.DynamicPseudoType, diags
+		}
+		return schema.SpecType(), diags
+	}
+
+	// The import block expressions are declared within the root module.
+	// We need to explicitly use the context with the path of the root module, so that all references will be
+	// relative to the root module
+	rootCtx := evalCtx.WithPath(addrs.RootModuleInstance)
+
+	if importTarget.Config.ForEach != nil {
+		const unknownsAllowed = true
+		const tupleAllowed = true
+
+		// The import target has a for_each attribute, so we need to expand it
+		forEachVal, evalDiags := evaluateForEachExpressionValue(ctx, importTarget.Config.ForEach, rootCtx, unknownsAllowed, tupleAllowed, nil)
+		diags = diags.Append(evalDiags)
+		if diags.HasErrors() {
+			return diags
+		}
+
+		// We are building an instances.RepetitionData based on each for_each key and val combination
+		var repetitions []instances.RepetitionData
+
+		if !forEachVal.IsKnown() {
+			return diags
+		}
+		it := forEachVal.ElementIterator()
+		for it.Next() {
+			k, v := it.Element()
+			repetitions = append(repetitions, instances.RepetitionData{
+				EachKey:   k,
+				EachValue: v,
+			})
+		}
+
+		for _, keyData := range repetitions {
+			// Validate either ID or Identity depending on which is set
+			if importTarget.Config.ID != nil {
+				evalDiags = validateImportIdExpression(ctx, importTarget.Config.ID, rootCtx, keyData)
+				diags = diags.Append(evalDiags)
+			} else if importTarget.Config.Identity != nil {
+				identityType, identityDiags := getIdentitySchemaType(ctx, importTarget, evalCtx, keyData)
+				diags = diags.Append(identityDiags)
+				if !identityDiags.HasErrors() {
+					evalDiags = validateImportIdentityExpression(ctx, importTarget.Config.Identity, rootCtx, keyData, identityType)
+					diags = diags.Append(evalDiags)
+				}
+			}
+		}
+	} else {
+		// The import target is singular, no need to expand
+		// Validate either ID or Identity depending on which is set
+		if importTarget.Config.ID != nil {
+			evalDiags := validateImportIdExpression(ctx, importTarget.Config.ID, rootCtx, EvalDataForNoInstanceKey)
+			diags = diags.Append(evalDiags)
+		} else if importTarget.Config.Identity != nil {
+			identityType, identityDiags := getIdentitySchemaType(ctx, importTarget, evalCtx, EvalDataForNoInstanceKey)
+			diags = diags.Append(identityDiags)
+			if !identityDiags.HasErrors() {
+				evalDiags := validateImportIdentityExpression(ctx, importTarget.Config.Identity, rootCtx, EvalDataForNoInstanceKey, identityType)
+				diags = diags.Append(evalDiags)
+			}
+		}
+	}
+
+	return diags
+}
+
+// ExpandAndResolveImport is responsible for two operations:
+// 1. Expands the ImportTarget (originating from an import block) if it contains a 'for_each' attribute.
+// 2. Goes over the expanded imports and resolves the ID and address, when we have the context necessary to resolve
+// them. The resolved import target would be an EvaluatedConfigImportTarget.
+// This function mutates the EvalContext's ImportResolver, adding the resolved import target.
+// The function errors if we failed to evaluate the ID or the address.
+func (ri *ImportResolver) ExpandAndResolveImport(ctx context.Context, importTarget *ImportTarget, evalCtx EvalContext) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+
+	// The import block expressions are declared within the root module.
+	// We need to explicitly use the context with the path of the root module, so that all references will be
+	// relative to the root module
+	rootCtx := evalCtx.WithPath(addrs.RootModuleInstance)
+
+	if importTarget.Config.ForEach != nil {
+		const unknownsNotAllowed = false
+		const tupleAllowed = true
+
+		// The import target has a for_each attribute, so we need to expand it
+		forEachVal, evalDiags := evaluateForEachExpressionValue(ctx, importTarget.Config.ForEach, rootCtx, unknownsNotAllowed, tupleAllowed, nil)
+		diags = diags.Append(evalDiags)
+		if diags.HasErrors() {
+			return diags
+		}
+
+		// We are building an instances.RepetitionData based on each for_each key and val combination
+		var repetitions []instances.RepetitionData
+
+		it := forEachVal.ElementIterator()
+		for it.Next() {
+			k, v := it.Element()
+			repetitions = append(repetitions, instances.RepetitionData{
+				EachKey:   k,
+				EachValue: v,
+			})
+		}
+
+		for _, keyData := range repetitions {
+			diags = diags.Append(ri.resolveImport(ctx, importTarget, rootCtx, keyData))
+		}
+	} else {
+		// The import target is singular, no need to expand
+		diags = diags.Append(ri.resolveImport(ctx, importTarget, rootCtx, EvalDataForNoInstanceKey))
+	}
+
+	return diags
+}
+
+// resolveImport resolves the ID/Identity and address of an ImportTarget originating from an import block,
+// when we have the context necessary to resolve them. The resolved import target would be an
+// EvaluatedConfigImportTarget.
+// This function mutates the EvalContext's ImportResolver, adding the resolved import target.
+// The function errors if we failed to evaluate the ID/Identity or the address.
+func (ri *ImportResolver) resolveImport(ctx context.Context, importTarget *ImportTarget, evalCtx EvalContext, keyData instances.RepetitionData) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+
+	// Evaluate the import address first
+	importAddress, addressDiags := evaluateImportAddress(ctx, evalCtx, importTarget.Config.To, keyData)
+	diags = diags.Append(addressDiags)
+	if diags.HasErrors() {
+		return diags
+	}
+
+	// Evaluate either ID or Identity depending on which is set
+	var importId string
+	var importIdentity cty.Value
+
+	if importTarget.Config.ID != nil {
+		// ID-based import
+		var evalDiags tfdiags.Diagnostics
+		importId, evalDiags = evaluateImportIdExpression(ctx, importTarget.Config.ID, evalCtx, keyData)
+		diags = diags.Append(evalDiags)
+		if diags.HasErrors() {
+			return diags
+		}
+	} else if importTarget.Config.Identity != nil {
+		// Identity-based import
+		var evalDiags tfdiags.Diagnostics
+
+		identitySchema, schemaDiags := getIdentitySchema(
+			ctx, evalCtx,
+			importTarget.Config.Provider,
+			importAddress.Resource.Resource.Type,
+			importTarget.Config.Identity.Range(),
+			importAddress.String(),
+		)
+		diags = diags.Append(schemaDiags)
+		if diags.HasErrors() {
+			return diags
+		}
+
+		resourceIdentityType := identitySchema.SpecType()
+		importIdentity, evalDiags = evaluateImportIdentityExpression(ctx, importTarget.Config.Identity, evalCtx, keyData, resourceIdentityType)
+		diags = diags.Append(evalDiags)
+		if diags.HasErrors() {
+			return diags
+		}
+	}
+
+	ri.mu.Lock()
+	defer ri.mu.Unlock()
+
+	if existing, exists := ri.imports.GetOk(importAddress); exists {
+		return diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("Duplicate import configuration for %q", importAddress),
+			Detail:   fmt.Sprintf("An import block for the resource %q was already declared at %s. A resource can have only one import block.", importAddress, existing.Config.DeclRange),
+			Subject:  existing.Config.DeclRange.Ptr(),
+		})
+	}
+
+	ri.imports.Put(importAddress, EvaluatedConfigImportTarget{
+		Config:   importTarget.Config,
+		Addr:     importAddress,
+		ID:       importId,
+		Identity: importIdentity,
+	})
+
+	// Just for trace logging purposes we'll generate a slightly different log
+	// message when each.key/each.value are not being set, making the assumption
+	// that this means for_each wasn't used. This is an imprecise signal that
+	// should not be used for anything other than debug logging.
+	if keyData.HasSymbolValues() {
+		log.Printf("[TRACE] importResolver: resolved an expanded import target %s", importAddress)
+	} else {
+		log.Printf("[TRACE] importResolver: resolved a singular import target %s", importAddress)
+	}
+
+	return diags
+}
+
+// getIdentitySchema resolves the identity schema for a resource type by looking it up
+// from the provider schema. It is used during both validation and resolution of identity-based
+// imports to avoid duplicating the provider lookup and schema existence checks.
+// Returns nil with diagnostics if the provider schema cannot be fetched or if the
+// resource type does not support identity-based import.
+func getIdentitySchema(
+	ctx context.Context,
+	evalCtx EvalContext,
+	provider addrs.Provider,
+	resourceType string,
+	identityRange hcl.Range,
+	subjectStr string,
+) (*configschema.Object, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	// We are assuming that the provider schema should have the resource identity schema attached here,
+	// so we need to look up the provider schema first
+	providerSchema, schemaDiags := evalCtx.Providers().GetProviderSchema(ctx, provider)
+	diags = diags.Append(schemaDiags)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	// Find the resource type to get its schema for us to pull the RI schema from
+	resourceSchema, exists := providerSchema.ResourceTypes[resourceType]
+	if !exists || resourceSchema.IdentitySchema == nil {
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Unable to determine identity schema for import identity",
+			Detail:   fmt.Sprintf("The provider %q does not provide an identity schema for the resource type %q, which is required when trying to import the resource %q using identity-based import. Please ensure the resource type supports identity-based import.", provider, resourceType, subjectStr),
+			Subject:  identityRange.Ptr(),
+		})
+		return nil, diags
+	}
+
+	return resourceSchema.IdentitySchema, diags
+}
+
+// GetAllImports returns all resolved imports
+func (ri *ImportResolver) GetAllImports() []EvaluatedConfigImportTarget {
+	ri.mu.RLock()
+	defer ri.mu.RUnlock()
+
+	return ri.imports.Values()
+}
+
+func (ri *ImportResolver) GetImport(address addrs.AbsResourceInstance) *EvaluatedConfigImportTarget {
+	ri.mu.RLock()
+	defer ri.mu.RUnlock()
+
+	if importTarget, exists := ri.imports.GetOk(address); exists {
+		return &importTarget
+	}
+	return nil
+}
+
+// addCLIImportTarget adds a new import target originating from the CLI
+// this is done to reuse Context.postExpansionImportValidation for CLI import validation
+func (ri *ImportResolver) addCLIImportTarget(importTarget *ImportTarget) {
+	ri.mu.Lock()
+	defer ri.mu.Unlock()
+	importAddress := importTarget.CommandLineImportTarget.Addr
+	// Since this import target originates from the CLI, and we have no config block for it
+	// setting nil value to Config here to reuse Context.postExpansionImportValidation,
+	// and there should be no possible paths to dereference this with a nil value during the import command
+	ri.imports.Put(importAddress, EvaluatedConfigImportTarget{
+		Config: nil,
+		Addr:   importAddress,
+		ID:     importTarget.CommandLineImportTarget.ID,
+	})
+}
+
+// Import takes already-created external resources and brings them
+// under OpenTofu management. Import requires the exact type, name, and ID
+// of the resources to import.
+//
+// This operation is idempotent. If the requested resource is already
+// imported, no changes are made to the state.
+//
+// Further, this operation also gracefully handles partial state. If during
+// an import there is a failure, all previously imported resources remain
+// imported.
+func (c *Context) Import(ctx context.Context, config *configs.Config, prevRunState *states.State, opts *ImportOpts) (*states.State, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	// Hold a lock since we can modify our own state here
+	defer c.acquireRun("import")()
+
+	// Don't modify our caller's state
+	state := prevRunState.DeepCopy()
+
+	log.Printf("[DEBUG] Building and walking import graph")
+
+	variables := opts.SetVariables
+
+	providerFunctionTracker := make(ProviderFunctionMapping)
+
+	// Initialize our graph builder
+	builder := &PlanGraphBuilder{
+		ImportTargets:           opts.Targets,
+		Config:                  config,
+		State:                   state,
+		RootVariableValues:      variables,
+		Plugins:                 c.plugins,
+		Operation:               walkImport,
+		ProviderFunctionTracker: providerFunctionTracker,
+	}
+
+	// Build the graph
+	graph, graphDiags := builder.Build(ctx, addrs.RootModuleInstance)
+	diags = diags.Append(graphDiags)
+	if graphDiags.HasErrors() {
+		return state, diags
+	}
+
+	// Walk it
+	walker, walkDiags := c.walk(ctx, graph, walkImport, &graphWalkOpts{
+		Config:                  config,
+		InputState:              state,
+		ProviderFunctionTracker: providerFunctionTracker,
+	})
+	diags = diags.Append(walkDiags)
+	if walkDiags.HasErrors() {
+		return state, diags
+	}
+
+	// Once we have all instances expanded, we are able to do a complete validation for import targets
+	// This part validates imports of both types (import blocks and CLI imports)
+	allInstances := walker.InstanceExpander.AllInstances()
+	importValidateDiags := c.postExpansionImportValidation(walker.ImportResolver, allInstances)
+	if importValidateDiags.HasErrors() {
+		return nil, importValidateDiags
+	}
+
+	// Data sources which could not be read during the import plan will be
+	// unknown. We need to strip those objects out so that the state can be
+	// serialized.
+	walker.State.RemovePlannedResourceInstanceObjects()
+
+	newState := walker.State.Close()
+	return newState, diags
+}

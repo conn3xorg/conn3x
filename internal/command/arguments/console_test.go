@@ -1,0 +1,120 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package arguments
+
+import (
+	"fmt"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
+)
+
+func TestParseConsole_basicValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	testCases := map[string]struct {
+		args []string
+		want *Console
+	}{
+		"defaults": {
+			args: nil,
+			want: consoleArgsWithDefaults(nil),
+		},
+		"custom state path": {
+			args: []string{"-state=/path/to/state.tfstate"},
+			want: consoleArgsWithDefaults(func(console *Console) {
+				console.State.StatePath = "/path/to/state.tfstate"
+			}),
+		},
+		"json-into with input enabled": {
+			args: []string{fmt.Sprintf("-json-into=%s", filepath.Join(tempDir, "json-into"))},
+			want: consoleArgsWithDefaults(func(console *Console) {
+				// ViewOptions would be updated, but we ignore it in cmp
+			}),
+		},
+		"single var": {
+			args: []string{"-var=key=value"},
+			want: consoleArgsWithDefaults(func(console *Console) {
+				console.Vars = &Vars{{Name: "-var", Value: "key=value"}}
+			}),
+		},
+		"multiple vars": {
+			args: []string{"-var=key1=value1", "-var=key2=value2"},
+			want: consoleArgsWithDefaults(func(console *Console) {
+				console.Vars = &Vars{{Name: "-var", Value: "key1=value1"}, {Name: "-var", Value: "key2=value2"}}
+			}),
+		},
+		"var-file": {
+			args: []string{"-var-file=test.tfvars"},
+			want: consoleArgsWithDefaults(func(console *Console) {
+				console.Vars = &Vars{{Name: "-var-file", Value: "test.tfvars"}}
+			}),
+		},
+		"mixed vars and var-files": {
+			args: []string{"-var=key=value", "-var-file=test.tfvars", "-var=another=val"},
+			want: consoleArgsWithDefaults(func(console *Console) {
+				console.Vars = &Vars{{Name: "-var", Value: "key=value"}, {Name: "-var-file", Value: "test.tfvars"}, {Name: "-var", Value: "another=val"}}
+			}),
+		},
+		"only lock-timeout": {
+			args: []string{"-lock-timeout=10s"},
+			want: consoleArgsWithDefaults(func(console *Console) {
+				// do not set `console.Backend.StateLock = true` since it's meant to be true already
+				console.State.LockTimeout = 10 * time.Second
+			}),
+		},
+		"disable locking": {
+			args: []string{"-lock=false"},
+			want: consoleArgsWithDefaults(func(console *Console) {
+				console.State.Lock = false
+			}),
+		},
+	}
+
+	cmpOpts := cmp.Options{
+		cmpopts.IgnoreFields(View{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, closer, diags := ParseConsole(tc.args)
+			defer closer()
+
+			if len(diags) > 0 {
+				t.Fatalf("unexpected diags: %v", diags)
+			}
+			if diff := cmp.Diff(tc.want, got, cmpOpts); diff != "" {
+				t.Errorf("unexpected result\n%s", diff)
+			}
+		})
+	}
+}
+
+func consoleArgsWithDefaults(mutate func(console *Console)) *Console {
+	ret := &Console{
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        true,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
+		},
+		Vars: &Vars{},
+		State: &State{
+			Lock: true,
+			// Because the state flag is registered with a different default value
+			StatePath: DefaultStateFilename,
+		},
+	}
+	if mutate != nil {
+		mutate(ret)
+	}
+	return ret
+}

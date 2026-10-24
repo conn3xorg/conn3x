@@ -1,0 +1,291 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package views
+
+import (
+	"maps"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/mitchellh/colorstring"
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/command/arguments"
+	"github.com/opentofu/opentofu/internal/command/format"
+	"github.com/opentofu/opentofu/internal/linting"
+	"github.com/opentofu/opentofu/internal/terminal"
+	"github.com/opentofu/opentofu/internal/tfdiags"
+)
+
+// View is the base layer for command views, encapsulating a set of I/O
+// streams, a colorize implementation, and implementing a human friendly view
+// for diagnostics.
+type View struct {
+	streams  *terminal.Streams
+	colorize *colorstring.Colorize
+
+	compactWarnings     bool
+	consolidateWarnings bool
+	consolidateErrors   bool
+
+	// lintInclude and lintExclude contains the linting rules that are used later
+	// to determine if a specific diagnostic should be shown or not based on the
+	// linting rule IDs (or/and groupIDs) that diagnostic is configured with.
+	lintInclude, lintExclude collections.Set[linting.RuleAddr]
+
+	// When this is true it's a hint that OpenTofu is being run indirectly
+	// via a wrapper script or other automation and so we may wish to replace
+	// direct examples of commands to run with more conceptual directions.
+	// However, we only do this on a best-effort basis, typically prioritizing
+	// the messages that users are most likely to see.
+	runningInAutomation bool
+
+	// Concise is used to reduce the level of noise in the output and display
+	// only the important details.
+	concise bool
+
+	// ModuleDeprecationWarnLvl is used to filter out deprecation warnings for outputs and variables as requested by the user.
+	ModuleDeprecationWarnLvl arguments.DeprecationWarningLevel
+
+	// showSensitive is used to display the value of variables marked as sensitive.
+	showSensitive bool
+
+	// Because some commands used before the UI to print diagnostics, those were printed using an [*ln] function, so
+	// we want to be able to configure this for some of the commands to be able to keep the behavior consistent.
+	diagsPrinter func(severity tfdiags.Severity, msg string)
+
+	// This unfortunate wart is required to enable rendering of diagnostics which
+	// have associated source code in the configuration. This function pointer
+	// will be dereferenced as late as possible when rendering diagnostics in
+	// order to access the config loader cache.
+	configSources func() map[string]*hcl.File
+
+	// These other unfortunate warts are required to enable correct deduplication
+	// and filtering of deprecation diagnostics
+	isRemoteModuleSource func(addrs.Module) bool
+	moduleSourceAddrs    func(addrs.Module) addrs.ModuleSource
+}
+
+// Initialize a View with the given streams, a disabled colorize object, and a
+// no-op configSources callback.
+func NewView(streams *terminal.Streams) *View {
+	return &View{
+		streams: streams,
+		colorize: &colorstring.Colorize{
+			Colors:  colorstring.DefaultColors,
+			Disable: true,
+			Reset:   true,
+		},
+		configSources:        func() map[string]*hcl.File { return nil },
+		isRemoteModuleSource: func(addrs.Module) bool { return false },
+		moduleSourceAddrs:    func(addrs.Module) addrs.ModuleSource { return nil },
+		diagsPrinter: func(severity tfdiags.Severity, msg string) {
+			if severity == tfdiags.Error {
+				_, _ = streams.Eprint(msg)
+			} else {
+				_, _ = streams.Print(msg)
+			}
+		},
+	}
+}
+
+// SetRunningInAutomation modifies the view's "running in automation" flag,
+// which causes some slight adjustments to certain messages that would normally
+// suggest specific OpenTofu commands to run, to make more conceptual gestures
+// instead for situations where the user isn't running OpenTofu directly.
+//
+// For convenient use during initialization (in conjunction with NewView),
+// SetRunningInAutomation returns the receiver after modifying it.
+func (v *View) SetRunningInAutomation(new bool) *View {
+	v.runningInAutomation = new
+	return v
+}
+
+func (v *View) RunningInAutomation() bool {
+	return v.runningInAutomation
+}
+
+// Configure applies the global view configuration flags.
+func (v *View) Configure(view *arguments.View) {
+	colors := maps.Clone(colorstring.DefaultColors)
+	colors["purple"] = "38;5;57" // Add also purple to the colorise colors set
+
+	v.colorize.Disable = view.NoColor
+	v.colorize.Colors = colors
+	v.compactWarnings = view.CompactWarnings
+	v.consolidateWarnings = view.ConsolidateWarnings
+	v.consolidateErrors = view.ConsolidateErrors
+	v.concise = view.Concise
+	v.showSensitive = view.ShowSensitive
+	v.ModuleDeprecationWarnLvl = view.ModuleDeprecationWarnLvl
+
+	v.lintInclude = view.LintInclude
+	v.lintExclude = view.LintExclude
+}
+
+func (v *View) DiagsWithNewline() {
+	v.diagsPrinter = func(severity tfdiags.Severity, msg string) {
+		if severity == tfdiags.Error {
+			_, _ = v.streams.Eprintln(msg)
+		} else {
+			_, _ = v.streams.Println(msg)
+		}
+	}
+}
+
+// SetConfigSources overrides the default no-op callback with a new function
+// pointer, and should be called when the config loader is initialized.
+func (v *View) SetConfigSources(cb func() map[string]*hcl.File) {
+	v.configSources = cb
+}
+
+func (v *View) SetIsRemoteModuleSource(cb func(addrs.Module) bool) {
+	v.isRemoteModuleSource = cb
+}
+
+func (v *View) SetModuleSourceAddrs(cb func(addrs.Module) addrs.ModuleSource) {
+	v.moduleSourceAddrs = cb
+}
+
+// Diagnostics renders a set of warnings and errors in human-readable form.
+// Warnings are printed to stdout, and errors to stderr.
+func (v *View) Diagnostics(diags tfdiags.Diagnostics) {
+	diags.Sort()
+
+	if len(diags) == 0 {
+		return
+	}
+
+	// Filter the deprecation warnings based on the cli arg.
+	var newDiags tfdiags.Diagnostics
+	seen := DeprecationDiagnosticAllowedSeen{}
+	for _, diag := range diags {
+		if !v.DeprecationDiagnosticAllowed(diag, seen) {
+			continue
+		}
+		newDiags = append(newDiags, diag)
+	}
+	diags = newDiags
+
+	var lintDiags tfdiags.Diagnostics
+	// Since linting related diagnostics use the Warning severity, we want to extract those out of the
+	// main diagnostics slice before consolidating warning diagnostics. These are merged again later.
+	diags, lintDiags = diags.SplitLint()
+	// Because of the in-context linting hints, this should not be necessary but it's just a guard in case
+	// there is any linting rule included without using the in-context linting hints.
+	lintDiags = lintDiags.FilterLint(v.lintInclude, v.lintExclude)
+
+	if v.consolidateWarnings {
+		diags = diags.Consolidate(1, tfdiags.Warning, func(diag tfdiags.Diagnostic) string {
+			// Check to see if we have a DeprecationCause
+			depExtra := v.DeprecationKeyExtra(diag)
+			if depExtra != "" {
+				return depExtra
+			}
+			return tfdiags.DefaultDiagnosticsConsolidation(diag)
+		}, tfdiags.ConsolidationOptDefault)
+	}
+	if v.consolidateErrors {
+		diags = diags.Consolidate(1, tfdiags.Error, tfdiags.DefaultDiagnosticsConsolidation, tfdiags.ConsolidationOptDefault)
+	}
+
+	// Since warning messages are generally competing
+	if v.compactWarnings {
+		// If the user selected compact warnings and all of the diagnostics are
+		// warnings then we'll use a more compact representation of the warnings
+		// that only includes their summaries.
+		// We show full warnings if there are also errors, because a warning
+		// can sometimes serve as good context for a subsequent error.
+		useCompact := true
+		for _, diag := range diags {
+			if diag.Severity() != tfdiags.Warning {
+				useCompact = false
+				break
+			}
+		}
+		if useCompact {
+			msg := format.DiagnosticWarningsCompact(diags, v.colorize)
+			msg = "\n" + msg + "\nTo see the full warning notes, run OpenTofu without -compact-warnings.\n"
+			v.streams.Print(msg)
+			return
+		}
+	}
+
+	// This slice is built with lint diagnostics in front of everything, to keep the order applied at the begining
+	// of this method. This is to follow the reasoning described on diags.Sort().
+	allDiags := append(lintDiags, diags...)
+	for _, diag := range allDiags {
+		var msg string
+		if v.colorize.Disable {
+			msg = format.DiagnosticPlain(diag, v.configSources(), v.streams.Stderr.Columns())
+		} else {
+			msg = format.Diagnostic(diag, v.configSources(), v.colorize, v.streams.Stderr.Columns())
+		}
+
+		// TODO meta-refactor: once we are done with migrating all the commands to views, we should get rid
+		// of the check and just allow the diagsPrinter to be called directly.
+		if v.diagsPrinter != nil {
+			v.diagsPrinter(diag.Severity(), msg)
+			continue
+		}
+		if diag.Severity() == tfdiags.Error {
+			v.streams.Eprint(msg)
+		} else {
+			v.streams.Print(msg)
+		}
+	}
+}
+
+// HelpPrompt is intended to be called from commands which fail to parse all
+// of their CLI arguments successfully. It refers users to the full help output
+// rather than rendering it directly, which can be overwhelming and confusing.
+func (v *View) HelpPrompt(command string) {
+	v.streams.Eprintf(helpPrompt, command)
+}
+
+const helpPrompt = `
+For more help on using this command, run:
+  tofu %s -help
+`
+
+// outputColumns returns the number of text character cells any non-error
+// output should be wrapped to.
+//
+// This is the number of columns to use if you are calling v.streams.Print or
+// related functions.
+func (v *View) outputColumns() int {
+	return v.streams.Stdout.Columns()
+}
+
+// errorColumns returns the number of text character cells any error
+// output should be wrapped to.
+//
+// This is the number of columns to use if you are calling v.streams.Eprint
+// or related functions.
+func (v *View) errorColumns() int {
+	return v.streams.Stderr.Columns()
+}
+
+// outputHorizRule will call v.streams.Println with enough horizontal line
+// characters to fill an entire row of output.
+//
+// If UI color is enabled, the rule will get a dark grey coloring to try to
+// visually de-emphasize it.
+func (v *View) outputHorizRule() {
+	v.streams.Println(format.HorizontalRule(v.colorize, v.outputColumns()))
+}
+
+// Colorize returns the [colorstring.Colorize] object within to be used in other places.
+// TODO meta-refactor: this is a temporary solution. This should not be exposed. Whoever needs to use this
+//
+//	should do it through a View implementation instead.
+func (v *View) Colorize() *colorstring.Colorize {
+	return v.colorize
+}
+
+// StdinPiped returns true if the input is piped.
+func (v *View) StdinPiped() bool {
+	return !v.streams.Stdin.IsTerminal()
+}

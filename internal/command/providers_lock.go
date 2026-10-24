@@ -1,0 +1,504 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package command
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"os"
+
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/command/arguments"
+	"github.com/opentofu/opentofu/internal/command/cliconfig/ociauthconfig"
+	"github.com/opentofu/opentofu/internal/command/views"
+	"github.com/opentofu/opentofu/internal/depsfile"
+	"github.com/opentofu/opentofu/internal/getproviders"
+	"github.com/opentofu/opentofu/internal/oci"
+	"github.com/opentofu/opentofu/internal/providercache"
+	"github.com/opentofu/opentofu/internal/tfdiags"
+	"github.com/opentofu/opentofu/internal/tracing"
+	"github.com/opentofu/opentofu/internal/tracing/traceattrs"
+	"github.com/opentofu/svchost/uritemplates"
+)
+
+type providersLockChangeType string
+
+const (
+	providersLockChangeTypeNoChange    providersLockChangeType = "providersLockChangeTypeNoChange"
+	providersLockChangeTypeNewProvider providersLockChangeType = "providersLockChangeTypeNewProvider"
+	providersLockChangeTypeNewHashes   providersLockChangeType = "providersLockChangeTypeNewHashes"
+)
+
+func ProvidersLockCommander() Command {
+	cmd := Command{
+		Name:  "lock",
+		Short: "Write out dependency locks for the configured providers",
+		Long: `Normally the dependency lock file (.terraform.lock.hcl) is updated automatically by "tofu init", but the information available to the normal provider installer can be constrained when you're installing providers from filesystem or network mirrors, and so the generated lock file can end up incomplete.
+
+The "providers lock" subcommand addresses that by updating the lock file based on the official packages available in the origin registry, ignoring the currently-configured installation strategy.
+
+After this command succeeds, the lock file will contain suitable checksums to allow installation of the providers needed by the current configuration on all of the selected platforms.
+
+By default this command updates the lock file for every provider declared in the configuration. You can override that behavior by providing one or more provider source addresses on the command line.`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindProvidersLock(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return ProvidersLockCommand{meta}.Execute(args, views.NewProvidersLock(args.View, meta.View))
+	}
+
+	return cmd
+}
+
+// ProvidersLockCommand is a Command implementation that implements the
+// "tofu providers lock" command, which creates or updates the current
+// configuration's dependency lock file using information from upstream
+// registries, regardless of the provider installation configuration that
+// is configured for normal provider installation.
+type ProvidersLockCommand struct {
+	Meta
+}
+
+func (c *ProvidersLockCommand) Synopsis() string {
+	return "Write out dependency locks for the configured providers"
+}
+
+func (c *ProvidersLockCommand) Run(rawArgs []string) int {
+	return RunCommand(ProvidersLockCommander(), c.Meta, rawArgs)
+}
+func (c ProvidersLockCommand) Execute(args *arguments.ProvidersLock, view views.ProvidersLock) int {
+	var diags tfdiags.Diagnostics
+
+	ctx := c.CommandContext()
+	ctx, span := tracing.Tracer().Start(ctx, "Providers lock")
+	defer span.End()
+
+	span.SetAttributes(traceattrs.StringSlice("opentofu.provider.lock.targetplatforms", args.OptPlatforms))
+	if args.FsMirrorDir != "" {
+		span.SetAttributes(traceattrs.String("opentofu.provider.lock.fsmirror", args.FsMirrorDir))
+	}
+	if args.NetMirrorURL != "" {
+		span.SetAttributes(traceattrs.String("opentofu.provider.lock.netmirror", args.NetMirrorURL))
+	}
+	if args.OciMirrorTemplate != "" {
+		span.SetAttributes(traceattrs.String("opentofu.provider.lock.ocimirror", args.OciMirrorTemplate))
+	}
+
+	providerStrs := args.Providers
+
+	var platforms []getproviders.Platform
+	if len(args.OptPlatforms) == 0 {
+		platforms = []getproviders.Platform{getproviders.CurrentPlatform}
+		span.SetAttributes(
+			traceattrs.StringSlice("opentofu.provider.lock.targetplatforms", []string{getproviders.CurrentPlatform.String()}),
+		)
+	} else {
+		platforms = make([]getproviders.Platform, 0, len(args.OptPlatforms))
+		for _, platformStr := range args.OptPlatforms {
+			platform, err := getproviders.ParsePlatform(platformStr)
+			if err != nil {
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Invalid target platform",
+					fmt.Sprintf("The string %q given in the -platform option is not a valid target platform: %s.", platformStr, err),
+				))
+				continue
+			}
+			platforms = append(platforms, platform)
+		}
+	}
+
+	// Installation steps can be cancelled by SIGINT and similar.
+	ctx, done := c.InterruptibleContext(ctx)
+	defer done()
+
+	// Unlike other commands, this command ignores the installation methods
+	// selected in the CLI configuration and instead chooses an installation
+	// method based on CLI options.
+	//
+	// This is so that folks who use a local mirror for everyday use can
+	// use this command to populate their lock files from upstream so
+	// subsequent "tofu init" calls can then verify the local mirror
+	// against the upstream checksums.
+	var source getproviders.Source
+	switch {
+	case args.FsMirrorDir != "":
+		source = getproviders.NewFilesystemMirrorSource(ctx, args.FsMirrorDir)
+	case args.NetMirrorURL != "":
+		u, err := url.Parse(args.NetMirrorURL)
+		if err != nil || u.Scheme != "https" {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Invalid network mirror URL",
+				"The -net-mirror option requires a valid https: URL as the mirror base URL.",
+			))
+			tracing.SetSpanError(span, diags)
+			view.Diagnostics(diags)
+			return 1
+		}
+		// For historical reasons, we use the registry client timeout for this
+		// even though this isn't actually a registry. The other behavior of
+		// this client is not suitable for the HTTP mirror source, so we
+		// don't use this client directly.
+		httpTimeout := c.registryHTTPClient(ctx).HTTPClient.Timeout
+		source = getproviders.NewHTTPMirrorSource(ctx, u, c.Services.CredentialsSource(), httpTimeout, c.ProviderSourceLocationConfig)
+	case args.OciMirrorTemplate != "":
+		source = getproviders.NewOCIRegistryMirrorSource(
+			ctx,
+			func(addr addrs.Provider) (registryDomain string, repositoryName string, err error) {
+				uri, err := uritemplates.ExpandLevel1(args.OciMirrorTemplate, map[string]string{
+					"hostname":  addr.Hostname.String(),
+					"namespace": addr.Namespace,
+					"type":      addr.Type,
+				})
+				if err != nil {
+					return "", "", fmt.Errorf("error while expanding uri template: %w", err)
+				}
+
+				return ociauthconfig.ParseRepositoryAddressPrefix(uri)
+			},
+			func(ctx context.Context, registryDomain, repositoryName string) (getproviders.OCIRepositoryStore, error) {
+				credsPolicy, err := c.OCICredentialsPolicyBuilder(ctx)
+				if err != nil {
+					// This deals with only a small number of errors that we can't catch during CLI config validation
+					return nil, fmt.Errorf("invalid credentials configuration for OCI registries: %w", err)
+				}
+				return oci.GetOCIRepositoryStore(ctx, registryDomain, repositoryName, credsPolicy)
+			},
+		)
+	default:
+		// With no special options we consult upstream registries directly,
+		// because that gives us the most information to produce as complete
+		// and portable as possible a lock entry.
+		source = getproviders.NewRegistrySource(ctx, c.Services, c.registryHTTPClient(ctx), c.ProviderSourceLocationConfig)
+	}
+
+	config, confDiags := c.loadConfig(ctx, ".")
+	diags = diags.Append(confDiags)
+	reqs, _, hclDiags := config.ProviderRequirements()
+	diags = diags.Append(hclDiags)
+
+	// If we have explicit provider selections on the command line then
+	// we'll modify "reqs" to only include those. Modifying this is okay
+	// because config.ProviderRequirements generates a fresh map result
+	// for each call.
+	if len(providerStrs) != 0 {
+		providers := map[addrs.Provider]struct{}{}
+		for _, raw := range providerStrs {
+			addr, moreDiags := addrs.ParseProviderSourceString(raw)
+			diags = diags.Append(moreDiags)
+			if moreDiags.HasErrors() {
+				continue
+			}
+			providers[addr] = struct{}{}
+			if _, exists := reqs[addr]; !exists {
+				// Can't request a provider that isn't required by the
+				// current configuration.
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Invalid provider argument",
+					fmt.Sprintf("The provider %s is not required by the current configuration.", addr.String()),
+				))
+			}
+		}
+
+		for addr := range reqs {
+			if _, exists := providers[addr]; !exists {
+				delete(reqs, addr)
+			}
+		}
+	}
+
+	// We'll also ignore any providers that don't participate in locking.
+	for addr := range reqs {
+		if !depsfile.ProviderIsLockable(addr) {
+			delete(reqs, addr)
+		}
+	}
+
+	// We'll start our work with whatever locks we already have, so that
+	// we'll honor any existing version selections and just add additional
+	// hashes for them.
+	oldLocks, moreDiags := c.lockedDependenciesWithPredecessorRegistryShimmed()
+	diags = diags.Append(moreDiags)
+
+	// If we have any error diagnostics already then we won't proceed further.
+	if diags.HasErrors() {
+		tracing.SetSpanError(span, diags)
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// Our general strategy here is to install the requested providers into
+	// a separate temporary directory -- thus ensuring that the results won't
+	// ever be inadvertently executed by other OpenTofu commands -- and then
+	// use the results of that installation to update the lock file for the
+	// current working directory. Because we throwaway the packages we
+	// downloaded after completing our work, a subsequent "tofu init" will
+	// then respect the CLI configuration's provider installation strategies
+	// but will verify the packages against the hashes we found upstream.
+
+	// Because our Installer abstraction is a per-platform idea, we'll
+	// instantiate one for each of the platforms the user requested, and then
+	// merge all of the generated locks together at the end.
+	updatedLocks := map[getproviders.Platform]*depsfile.Locks{}
+	selectedVersions := map[addrs.Provider]getproviders.Version{}
+	for _, platform := range platforms {
+		tempDir, err := os.MkdirTemp("", "terraform-providers-lock")
+		if err != nil {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Could not create temporary directory",
+				fmt.Sprintf("Failed to create a temporary directory for staging the requested provider packages: %s.", err),
+			))
+			break
+		}
+		defer os.RemoveAll(tempDir)
+
+		evts := &providercache.InstallerEvents{
+			// Our output from this command is minimal just to show that
+			// we're making progress, rather than just silently hanging.
+			FetchPackageBegin: func(provider addrs.Provider, version getproviders.Version, loc getproviders.PackageLocation, inCacheDirectory bool) {
+				view.InstallationFetching(provider.ForDisplay(), version.String(), platform.String())
+				if prevVersion, exists := selectedVersions[provider]; exists && version != prevVersion {
+					// This indicates a weird situation where we ended up
+					// selecting a different version for one platform than
+					// for another. We won't be able to merge the result
+					// in that case, so we'll generate an error.
+					//
+					// This could potentially happen if there's a provider
+					// we've not previously recorded in the lock file and
+					// the available versions change while we're running. To
+					// avoid that would require pre-locking all of the
+					// providers, which is complicated to do with the building
+					// blocks we have here, and so we'll wait to do it only
+					// if this situation arises often in practice.
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						"Inconsistent provider versions",
+						fmt.Sprintf(
+							"The version constraint for %s selected inconsistent versions for different platforms, which is unexpected.\n\nThe upstream registry may have changed its available versions during OpenTofu's work. If so, re-running this command may produce a successful result.",
+							provider,
+						),
+					))
+				}
+				selectedVersions[provider] = version
+			},
+			FetchPackageSuccess: func(provider addrs.Provider, version getproviders.Version, localDir string, auth *getproviders.PackageAuthenticationResult) {
+				var keyID string
+				if auth != nil && auth.Signed() {
+					keyID = auth.GPGKeyIDsString()
+				}
+				view.FetchPackageSuccess(keyID, provider.ForDisplay(), version.String(), platform.String(), auth.String())
+			},
+		}
+		// Ensure that events emitted on multiple routines do not trigger race conditions
+		evts = evts.Sync()
+		ctx := evts.OnContext(ctx)
+
+		dir := providercache.NewDirWithPlatform(tempDir, platform)
+		installer := providercache.NewInstaller(dir, source)
+
+		newLocks, err := installer.EnsureProviderVersions(ctx, oldLocks, reqs, providercache.InstallNewProvidersForce)
+		if err != nil {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Could not retrieve providers for locking",
+				fmt.Sprintf("OpenTofu failed to fetch the requested providers for %s in order to calculate their checksums: %s.", platform, err),
+			))
+			break
+		}
+		updatedLocks[platform] = newLocks
+	}
+
+	// If we have any error diagnostics from installation then we won't
+	// proceed to merging and updating the lock file on disk.
+	if diags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// Track whether we've made any changes to the lock file as part of this
+	// operation. We can customise the final message based on our actions.
+	madeAnyChange := false
+
+	// We now have a separate updated locks object for each platform. We need
+	// to merge those all together so that the final result has the union of
+	// all of the checksums we saw for each of the providers we've worked on.
+	//
+	// We'll copy the old locks first because we want to retain any existing
+	// locks for providers that we _didn't_ visit above.
+	newLocks := oldLocks.DeepCopy()
+	for provider := range reqs {
+		oldLock := oldLocks.Provider(provider)
+
+		var version getproviders.Version
+		var constraints getproviders.VersionConstraints
+		var hashes []getproviders.Hash
+		if oldLock != nil {
+			version = oldLock.Version()
+			constraints = oldLock.VersionConstraints()
+			hashes = append(hashes, oldLock.AllHashes()...)
+		}
+		for platform, platformLocks := range updatedLocks {
+			platformLock := platformLocks.Provider(provider)
+			if platformLock == nil {
+				continue // weird, but we'll tolerate it to avoid crashing
+			}
+			version = platformLock.Version()
+			constraints = platformLock.VersionConstraints()
+
+			// We don't make any effort to deduplicate hashes between different
+			// platforms here, because the SetProvider method we call below
+			// handles that automatically.
+			hashes = append(hashes, platformLock.AllHashes()...)
+
+			// At this point, we've merged all the hashes for this (provider, platform)
+			// combo into the combined hashes for this provider. Let's take this
+			// opportunity to print out a summary for this particular combination.
+			switch providersLockCalculateChangeType(oldLock, platformLock) {
+			case providersLockChangeTypeNewProvider:
+				madeAnyChange = true
+				view.LockUpdateNewProvider(provider.ForDisplay(), platform.String())
+			case providersLockChangeTypeNewHashes:
+				madeAnyChange = true
+				view.LockUpdateNewHashForProvider(provider.ForDisplay(), platform.String())
+			case providersLockChangeTypeNoChange:
+				view.LockUpdateNoChange(provider.ForDisplay(), platform.String())
+			}
+		}
+		newLocks.SetProvider(provider, version, constraints, hashes)
+	}
+
+	moreDiags = c.replaceLockedDependencies(ctx, newLocks)
+	diags = diags.Append(moreDiags)
+
+	view.Diagnostics(diags)
+	if diags.HasErrors() {
+		return 1
+	}
+
+	view.UpdatedSuccessfully(madeAnyChange)
+	return 0
+}
+
+func (c *ProvidersLockCommand) Help() string {
+	return `
+Usage: tofu [global options] providers lock [options] [providers...]
+
+  Normally the dependency lock file (.terraform.lock.hcl) is updated
+  automatically by "tofu init", but the information available to the
+  normal provider installer can be constrained when you're installing providers
+  from filesystem or network mirrors, and so the generated lock file can end
+  up incomplete.
+
+  The "providers lock" subcommand addresses that by updating the lock file
+  based on the official packages available in the origin registry, ignoring
+  the currently-configured installation strategy.
+
+  After this command succeeds, the lock file will contain suitable checksums
+  to allow installation of the providers needed by the current configuration
+  on all of the selected platforms.
+
+  By default this command updates the lock file for every provider declared
+  in the configuration. You can override that behavior by providing one or
+  more provider source addresses on the command line.
+
+Options:
+
+  -fs-mirror=dir     Consult the given filesystem mirror directory instead
+                     of the origin registry for each of the given providers.
+
+                     This would be necessary to generate lock file entries for
+                     a provider that is available only via a mirror, and not
+                     published in an upstream registry. In this case, the set
+                     of valid checksums will be limited only to what OpenTofu
+                     can learn from the data in the mirror directory.
+
+  -net-mirror=url    Consult the given network mirror (given as a base URL)
+                     instead of the origin registry for each of the given
+                     providers.
+
+                     This would be necessary to generate lock file entries for
+                     a provider that is available only via a mirror, and not
+                     published in an upstream registry. In this case, the set
+                     of valid checksums will be limited only to what OpenTofu
+                     can learn from the data in the mirror indices.
+
+  -oci-mirror=tmpl   Consult the given OCI registry mirror (given as a template)
+					 instead of the origin registry for each of the given
+					 providers.
+
+                     This would be necessary to generate lock file entries for
+                     a provider that is available only via an OCI mirror, and
+                     not published in an upstream registry.
+
+					 The argument is a Level 1 URI template as defined by RFC 6570,
+					 used to map provider source addresses to OCI repository
+					 addresses. The template can contain {hostname} {namespace}
+					 and {type}.
+
+  -platform=os_arch  Choose a target platform to request package checksums
+                     for.
+
+                     By default OpenTofu will request package checksums
+                     suitable only for the platform where you run this
+                     command. Use this option multiple times to include
+                     checksums for multiple target systems.
+
+                     Target names consist of an operating system and a CPU
+                     architecture. For example, "linux_amd64" selects the
+                     Linux operating system running on an AMD64 or x86_64
+                     CPU. Each provider is available only for a limited
+                     set of target platforms.
+
+  -var 'foo=bar'     Set a value for one of the input variables in the root
+                     module of the configuration. Use this option more than
+                     once to set more than one variable.
+
+  -var-file=filename Load variable values from the given file, in addition
+                     to the default files terraform.tfvars and *.auto.tfvars.
+                     Use this option more than once to include more than one
+                     variables file.
+
+  -json               Produce output in a machine-readable JSON format,
+                      suitable for use in text editor integrations and other
+                      automated systems. Always disables color.
+
+  -json-into=out.json Produce the same output as -json, but sent directly
+                      to the given file. This allows automation to preserve
+                      the original human-readable output streams, while
+                      capturing more detailed logs for machine analysis.
+`
+}
+
+// providersLockCalculateChangeType works out whether there is any difference
+// between oldLock and newLock and returns a variable the main function can use
+// to decide on which message to print.
+//
+// One assumption made here that is not obvious without the context from the
+// main function is that while platformLock contains the lock information for a
+// single platform after the current run, oldLock contains the combined
+// information of all platforms from when the versions were last checked. A
+// simple equality check is not sufficient for deciding on change as we expect
+// that oldLock will be a superset of platformLock if no new hashes have been
+// found.
+//
+// We've separated this function out so we can write unit tests around the
+// logic. This function assumes the platformLock is not nil, as the main
+// function explicitly checks this before calling this function.
+func providersLockCalculateChangeType(oldLock *depsfile.ProviderLock, platformLock *depsfile.ProviderLock) providersLockChangeType {
+	if oldLock == nil {
+		return providersLockChangeTypeNewProvider
+	}
+	if oldLock.ContainsAll(platformLock) {
+		return providersLockChangeTypeNoChange
+	}
+	return providersLockChangeTypeNewHashes
+}
