@@ -1,0 +1,33 @@
+circuit "jobs" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "crond" {
+    package {
+      name = "{{.CronPackage}}"
+    }
+  }
+
+  step "cleanup" {
+    cron {
+      name     = "conn3x-cleanup"
+      schedule = "15 3 * * *"
+      command  = "find /tmp -mtime +7 -delete"
+    }
+  }
+
+  step "report" {
+    timer {
+      name        = "conn3x-report"
+      on_calendar = "hourly"
+      command     = "/bin/sh -c 'date > /var/tmp/conn3x-report'"
+      persistent  = true
+    }
+  }
+}

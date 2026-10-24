@@ -33,6 +33,8 @@ const circuitFileExt = ".circuit.hcl"
 var circuitModules = map[string]string{
 	"authorized_key": "conn3x_authorized_key",
 	"command":        "conn3x_command",
+	"cron":           "conn3x_cron",
+	"timer":          "conn3x_timer",
 	"directory":      "conn3x_directory",
 	"link":           "conn3x_link",
 	"line":           "conn3x_line",
@@ -42,6 +44,15 @@ var circuitModules = map[string]string{
 	"service":        "conn3x_service",
 	"user":           "conn3x_user",
 	"group":          "conn3x_group",
+}
+
+// Conn3xStepResourceTypes lists the resource types circuit steps lower to.
+func Conn3xStepResourceTypes() []string {
+	types := make([]string, 0, len(circuitModules))
+	for _, rt := range circuitModules {
+		types = append(types, rt)
+	}
+	return types
 }
 
 var circuitSchema = &hcl.BodySchema{

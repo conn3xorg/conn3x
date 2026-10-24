@@ -51,7 +51,6 @@ func (p *Provider) GetProviderSchema(_ context.Context) providers.GetProviderSch
 	}
 }
 
-
 // ValidateProviderConfig is used to validate the configuration values.
 func (p *Provider) ValidateProviderConfig(_ context.Context, req providers.ValidateProviderConfigRequest) providers.ValidateProviderConfigResponse {
 	// At this moment there is nothing to configure for the tofu provider,

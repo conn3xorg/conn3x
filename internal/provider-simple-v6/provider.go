@@ -112,7 +112,6 @@ func (s simple) GetProviderSchema(_ context.Context) providers.GetProviderSchema
 	return s.schema
 }
 
-
 func (s simple) ValidateProviderConfig(_ context.Context, req providers.ValidateProviderConfigRequest) (resp providers.ValidateProviderConfigResponse) {
 	return resp
 }

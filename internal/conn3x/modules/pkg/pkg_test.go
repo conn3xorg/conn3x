@@ -223,3 +223,22 @@ func (h *fnHost) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error
 	h.ran = append(h.ran, cmd)
 	return h.fn(cmd), nil
 }
+
+func TestApplyDebRefreshesListsWhenNoCandidate(t *testing.T) {
+	calls := 0
+	h := &fnHost{fn: func(cmd string) ssh.Result {
+		if strings.Contains(cmd, " install ") {
+			calls++
+			if calls == 1 {
+				return ssh.Result{ExitCode: 100, Stderr: []byte("E: Package 'cron' has no installation candidate\n")}
+			}
+		}
+		return ok("")
+	}}
+	if err := Apply(ctx, h, Deb, Desired{Name: "cron", State: Present}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("install ran %d times, want a retry after apt-get update", calls)
+	}
+}

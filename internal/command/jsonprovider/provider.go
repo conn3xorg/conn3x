@@ -24,12 +24,12 @@ type Providers struct {
 }
 
 type Provider struct {
-	Provider                 *Schema                                `json:"provider,omitempty"`
-	ResourceSchemas          map[string]*Schema                     `json:"resource_schemas,omitempty"`
-	DataSourceSchemas        map[string]*Schema                     `json:"data_source_schemas,omitempty"`
-	EphemeralResourceSchemas map[string]*Schema                     `json:"ephemeral_resource_schemas,omitempty"`
-	Functions                map[string]*Function                   `json:"functions,omitempty"`
-	ResourceIdentitySchemas  map[string]*ResourceIdentitySchema     `json:"resource_identity_schemas,omitempty"`
+	Provider                 *Schema                            `json:"provider,omitempty"`
+	ResourceSchemas          map[string]*Schema                 `json:"resource_schemas,omitempty"`
+	DataSourceSchemas        map[string]*Schema                 `json:"data_source_schemas,omitempty"`
+	EphemeralResourceSchemas map[string]*Schema                 `json:"ephemeral_resource_schemas,omitempty"`
+	Functions                map[string]*Function               `json:"functions,omitempty"`
+	ResourceIdentitySchemas  map[string]*ResourceIdentitySchema `json:"resource_identity_schemas,omitempty"`
 }
 
 func newProviders() *Providers {

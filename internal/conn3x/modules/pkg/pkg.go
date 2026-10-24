@@ -224,7 +224,7 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			return run(ctx, r, aptGet+" remove "+ssh.Quote(d.Name))
 		}
 		err := run(ctx, r, aptGet+" install "+ssh.Quote(spec))
-		if err != nil && strings.Contains(err.Error(), "Unable to locate package") {
+		if err != nil && (strings.Contains(err.Error(), "Unable to locate package") || strings.Contains(err.Error(), "has no installation candidate")) {
 			// Fresh hosts often have no package lists yet.
 			if err := run(ctx, r, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err != nil {
 				return err

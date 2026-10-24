@@ -227,7 +227,7 @@ func testProvider() providers.ProviderSchema {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Version: 42,
+				Version:               42,
 				IdentitySchemaVersion: 1,
 				IdentitySchema: &configschema.Object{
 					Nesting: configschema.NestingSingle,

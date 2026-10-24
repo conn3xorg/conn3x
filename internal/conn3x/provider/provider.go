@@ -40,6 +40,8 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_line":           {lineKind.schema, lineKind.validate, lineKind.plan, lineKind.read, lineKind.apply, upgradeWith(lineKind.schema)},
 	"conn3x_block":          {blockKind.schema, blockKind.validate, blockKind.plan, blockKind.read, blockKind.apply, upgradeWith(blockKind.schema)},
 	"conn3x_authorized_key": {authorizedKeySchema, validateAuthorizedKey, planAuthorizedKey, readAuthorizedKey, applyAuthorizedKey, upgradeWith(authorizedKeySchema)},
+	"conn3x_cron":           {cronSchema, validateCron, planCron, readCron, applyCron, upgradeWith(cronSchema)},
+	"conn3x_timer":          {timerSchema, validateTimer, planTimer, readTimer, applyTimer, upgradeWith(timerSchema)},
 	"conn3x_group":          {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 }
 
@@ -162,4 +164,13 @@ func resourceSchemas() map[string]providers.Schema {
 		out[name] = rt.schema()
 	}
 	return out
+}
+
+// ResourceTypeNames lists the resource types the provider serves.
+func ResourceTypeNames() []string {
+	names := make([]string, 0, len(resourceTypes))
+	for name := range resourceTypes {
+		names = append(names, name)
+	}
+	return names
 }
