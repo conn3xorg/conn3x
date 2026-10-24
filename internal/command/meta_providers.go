@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"strings"
@@ -342,11 +343,14 @@ func (m *Meta) providerFactories() (map[addrs.Provider]providers.Factory, error)
 }
 
 func (m *Meta) internalProviders() map[string]providers.Factory {
-	return map[string]providers.Factory{
+	internal := map[string]providers.Factory{
 		"terraform": func() (providers.Interface, error) {
 			return terraformProvider.NewProvider(), nil
 		},
 	}
+	// CONN3X: add the providers the conn3x binary builds in (see conn3x_hooks.go).
+	maps.Copy(internal, ExtraInternalProviders)
+	return internal
 }
 
 // providerFactory produces a provider factory that runs up the executable
