@@ -50,6 +50,9 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_selinux_boolean":  {selinuxBooleanSchema, validateSELinuxBoolean, planSELinuxBoolean, readSELinuxBoolean, applySELinuxBoolean, upgradeWith(selinuxBooleanSchema)},
 	"conn3x_selinux_fcontext": {selinuxFcontextSchema, validateSELinuxFcontext, planSELinuxFcontext, readSELinuxFcontext, applySELinuxFcontext, upgradeWith(selinuxFcontextSchema)},
 	"conn3x_repository":       {repositorySchema, validateRepository, planRepository, readRepository, applyRepository, upgradeWith(repositorySchema)},
+	"conn3x_download":         {downloadSchema, validateWith("url", func(v cty.Value) error { return downloadFrom(v).Validate() }), planDownload, readDownload, applyDownload, upgradeWith(downloadSchema)},
+	"conn3x_archive":          {archiveSchema, validateWith("src", func(v cty.Value) error { return archiveFrom(v).Validate() }), planArchive, readArchive, applyArchive, upgradeWith(archiveSchema)},
+	"conn3x_git":              {gitSchema, validateWith("repo", func(v cty.Value) error { return gitFrom(v).Validate() }), planGit, readGit, applyGit, upgradeWith(gitSchema)},
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 }
 

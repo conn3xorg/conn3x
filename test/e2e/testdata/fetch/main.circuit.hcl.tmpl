@@ -1,0 +1,54 @@
+circuit "fetch" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tools" {
+    package {
+      name = "wget"
+    }
+  }
+
+  step "git_tool" {
+    package {
+      name = "git"
+    }
+  }
+
+  step "key" {
+    download {
+      url    = "https://nginx.org/keys/nginx_signing.key"
+      dest   = "/opt/conn3x/nginx.key"
+      sha256 = "{{.SHA256}}"
+      mode   = "0600"
+    }
+  }
+
+  step "tarball" {
+    command {
+      command = "tar -czf /tmp/conn3x-src.tgz -C /etc passwd"
+      creates = "/tmp/conn3x-src.tgz"
+    }
+  }
+
+  step "unpack" {
+    archive {
+      src     = "/tmp/conn3x-src.tgz"
+      dest    = "/opt/conn3x/unpacked"
+      creates = "/opt/conn3x/unpacked/passwd"
+    }
+  }
+
+  step "hello" {
+    git {
+      repo = "https://github.com/octocat/Hello-World.git"
+      dest = "/srv/hello"
+      ref  = "master"
+    }
+  }
+}
