@@ -18,10 +18,12 @@ scripts, inventory files and second state that hold the two together. Conn3x is 
 open-source tool we're building to do the whole job, from one binary, with one plan
 and one state.
 
-> **Early development.** Today Conn3x can manage files on Linux hosts over SSH, on
-> their own or in circuits, with plans that show the exact diff. Packages,
-> services and users come next. Star and watch the repo to follow along. We're
-> building it in public.
+> **Early development.** Today Conn3x configures Linux hosts over SSH, as root or
+> through sudo, on Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu. Circuits can
+> manage files, templates, packages, systemd services, users and groups, and run
+> handlers when something changes. Every plan shows the exact diff. Provisioning
+> and configuring a new server in one plan comes next. Star and watch the repo to
+> follow along. We're building it in public.
 
 <p align="center">
   <img alt="conn3x applying a circuit, then planning a fix for a hand-edited file" src=".github/assets/demo.gif" width="100%">
@@ -36,8 +38,47 @@ and one state.
 - **Keep your providers and modules.** Conn3x is built on OpenTofu, so every Terraform and
   OpenTofu provider will work unchanged, and existing modules will load as they are.
 - **Configure servers with Circuits.** Circuits are Conn3x's playbooks, written in HCL
-  rather than YAML and Jinja, with real loops and conditions. Each step reads the
-  server, shows a diff, then applies it.
+  rather than YAML and Jinja. Each step reads the server, shows a diff, then applies
+  it, and handlers run only when a step they watch changed. This part works today:
+
+  ```hcl
+  circuit "web" {
+    hosts = { web1 = "203.0.113.10" }
+    ssh {
+      user             = "deploy"
+      private_key_file = "~/.ssh/id_ed25519"
+      become           = true
+    }
+
+    step "nginx" {
+      package {
+        name = "nginx"
+      }
+    }
+    step "config" {
+      template {
+        source      = "${path.module}/nginx.conf.tftpl"
+        destination = "/etc/nginx/nginx.conf"
+        vars        = { server_name = each.key }
+      }
+      notify = [handler.reload]
+    }
+    step "running" {
+      service {
+        name    = "nginx"
+        state   = "started"
+        enabled = true
+      }
+    }
+
+    handler "reload" {
+      service {
+        name   = "nginx"
+        action = "reload"
+      }
+    }
+  }
+  ```
 - **Leave nothing behind on your servers.** No Python on your hosts. Conn3x will push a
   small helper over SSH, or stick to plain shell commands where that's all you allow.
 
