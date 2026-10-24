@@ -30,6 +30,8 @@ type Server struct {
 	HostKey   gossh.PublicKey
 	ClientKey []byte // PEM private key the server accepts
 	Dir       string
+	// Env is added to the environment of every command the server runs.
+	Env []string
 }
 
 // New starts a server that stops when the test ends.
@@ -115,6 +117,7 @@ func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
 
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = s.Dir
+		cmd.Env = append(os.Environ(), s.Env...)
 		cmd.Stdin = ch
 		cmd.Stdout = ch
 		cmd.Stderr = ch.Stderr()
@@ -173,4 +176,51 @@ func pemEncode(b *pem.Block) []byte { return pem.EncodeToMemory(b) }
 // KnownHostsLine formats a known_hosts entry for addr.
 func KnownHostsLine(addr string, key gossh.PublicKey) string {
 	return knownhosts.Line([]string{knownhosts.Normalize(addr)}, key)
+}
+
+// fakeSudo behaves like sudo for the modes the tests need, chosen with
+// FAKE_SUDO: "nopasswd", "password:<secret>" or "requiretty". It runs the
+// command after "--" and records how it was invoked.
+const fakeSudoScript = `#!/bin/sh
+nonint=0; stdin=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n) nonint=1; shift ;;
+    -S) stdin=1; shift ;;
+    -k) shift ;;
+    -v) validate=1; shift ;;
+    -p) shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+case "$FAKE_SUDO" in
+  requiretty) echo "sudo: sorry, you must have a tty to run sudo" >&2; exit 1 ;;
+  nopasswd) ;;
+  password:*)
+    want=${FAKE_SUDO#password:}
+    if [ $nonint = 1 ]; then echo "sudo: a password is required" >&2; exit 1; fi
+    # Like real sudo, read up to three password attempts from stdin.
+    tries=0
+    while [ $tries -lt 3 ]; do
+      IFS= read -r got || break
+      [ -n "$FAKE_SUDO_LOG" ] && printf '%s\n' "$got" >> "$FAKE_SUDO_LOG"
+      [ "$got" = "$want" ] && break
+      tries=$((tries + 1))
+    done
+    if [ "$got" != "$want" ]; then echo "sudo: $tries incorrect password attempts" >&2; exit 1; fi ;;
+esac
+[ "${validate:-0}" = 1 ] && exit 0
+SUDO_USER=fake exec "$@"
+`
+
+// FakeSudo puts a fake sudo first on the PATH of every command the server
+// runs. mode is "nopasswd", "password:<secret>" or "requiretty".
+func (s *Server) FakeSudo(t testing.TB, mode string) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "sudo"), []byte(fakeSudoScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.Env = append(s.Env, "PATH="+bin+":"+os.Getenv("PATH"), "FAKE_SUDO="+mode)
 }

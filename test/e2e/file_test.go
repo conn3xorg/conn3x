@@ -6,12 +6,15 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 type fileVars struct {
 	Content, OnRemove, Port, KeyFile, KnownHosts string
+	User, PasswordFile                           string
 }
 
 func TestFileLifecycle(t *testing.T) {
@@ -84,5 +87,42 @@ func TestFileUnknownHostKeyFailsApply(t *testing.T) {
 	}
 	if got := h.exec("", "cat", "/etc/motd"); got == "x" {
 		t.Fatal("file was written despite the host key failure")
+	}
+}
+
+func TestFileWithSudoPassword(t *testing.T) {
+	h := startHost(t, "rocky10")
+	// A deploy user whose sudo needs a password, logging in with the test key.
+	h.exec("", "sh", "-c", `useradd -m deploy && echo 'deploy:Deploy-Pass-123' | chpasswd &&
+echo 'deploy ALL=(ALL) ALL' > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy &&
+mkdir -p -m 700 /home/deploy/.ssh && cp /root/.ssh/authorized_keys /home/deploy/.ssh/ &&
+chown -R deploy:deploy /home/deploy/.ssh`)
+	pw := filepath.Join(t.TempDir(), "sudo-pass")
+	if err := os.WriteFile(pw, []byte("Deploy-Pass-123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := newWorkdir(t, "file")
+	w.write(fileVars{Content: `managed through sudo\n`, Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, User: "deploy", PasswordFile: pw})
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := h.exec("", "cat", "/etc/motd"); got != "managed through sudo\n" {
+		t.Fatalf("/etc/motd = %q", got)
+	}
+	if owner := strings.TrimSpace(h.exec("", "stat", "-c", "%U", "/etc/motd")); owner != "root" {
+		t.Fatalf("/etc/motd owner = %s, want root", owner)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("plan through sudo is not empty:\n%s", out)
+	}
+
+	// The wrong password stops apply with a clear error.
+	if err := os.WriteFile(pw, []byte("wrong\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.write(fileVars{Content: `changed\n`, Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, User: "deploy", PasswordFile: pw})
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color")
+	if code == 0 || !strings.Contains(out, "incorrect password") {
+		t.Fatalf("apply with a wrong sudo password: exit %d\n%s", code, out)
 	}
 }

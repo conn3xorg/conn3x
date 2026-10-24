@@ -7,8 +7,10 @@ resource "conn3x_file" "motd" {
   ssh {
     host             = "127.0.0.1"
     port             = {{.Port}}
-    user             = "root"
+    user             = "{{if .User}}{{.User}}{{else}}root{{end}}"
     private_key_file = "{{.KeyFile}}"
     known_hosts_file = "{{.KnownHosts}}"
-  }
+{{if .PasswordFile}}    become               = true
+    become_password_file = "{{.PasswordFile}}"
+{{end}}  }
 }

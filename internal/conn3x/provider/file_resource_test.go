@@ -38,12 +38,14 @@ func newFileTest(t *testing.T) *fileTest {
 		server: s,
 		path:   filepath.Join(s.Dir, "motd"),
 		conn: cty.ObjectVal(map[string]cty.Value{
-			"host":             cty.StringVal(s.Host),
-			"port":             cty.NumberIntVal(int64(s.Port)),
-			"user":             cty.StringVal("test"),
-			"private_key_file": cty.StringVal(s.KeyFile(t)),
-			"host_key":         cty.NullVal(cty.String),
-			"known_hosts_file": cty.StringVal(s.KnownHosts(t)),
+			"host":                 cty.StringVal(s.Host),
+			"port":                 cty.NumberIntVal(int64(s.Port)),
+			"user":                 cty.StringVal("test"),
+			"private_key_file":     cty.StringVal(s.KeyFile(t)),
+			"host_key":             cty.NullVal(cty.String),
+			"known_hosts_file":     cty.StringVal(s.KnownHosts(t)),
+			"become":               cty.NullVal(cty.Bool),
+			"become_password_file": cty.NullVal(cty.String),
 		}),
 	}
 }
@@ -260,5 +262,42 @@ func TestUnknownHostKeyIsAClearError(t *testing.T) {
 	msg := resp.Diagnostics.Err().Error()
 	if !strings.Contains(msg, f.server.Host) || !strings.Contains(msg, "known_hosts") {
 		t.Fatalf("error does not name the host and file: %s", msg)
+	}
+}
+
+func TestApplyWithBecomePassword(t *testing.T) {
+	f := newFileTest(t)
+	f.server.FakeSudo(t, "password:s3cret")
+	pw := filepath.Join(t.TempDir(), "sudo-pass")
+	if err := os.WriteFile(pw, []byte("s3cret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vals := f.conn.AsValueMap()
+	vals["become"] = cty.True
+	vals["become_password_file"] = cty.StringVal(pw)
+	f.conn = cty.ObjectVal(vals)
+
+	state := f.create("as root\n", nil)
+	got, err := os.ReadFile(f.path)
+	if err != nil || string(got) != "as root\n" {
+		t.Fatalf("file content %q, %v", got, err)
+	}
+	if read := f.read(state); !read.RawEquals(state) {
+		t.Fatalf("read through sudo changed state: %#v", read)
+	}
+}
+
+func TestBecomeWithoutPasswordFileFailsClearly(t *testing.T) {
+	f := newFileTest(t)
+	f.server.FakeSudo(t, "password:s3cret")
+	vals := f.conn.AsValueMap()
+	vals["become"] = cty.True
+	f.conn = cty.ObjectVal(vals)
+	cfg := f.config(map[string]cty.Value{"content": cty.StringVal("x")})
+	null := cty.NullVal(cfg.Type())
+	planned := f.plan(null, cfg).PlannedState
+	resp := f.p.ApplyResourceChange(ctx, providers.ApplyResourceChangeRequest{TypeName: "conn3x_file", PriorState: null, PlannedState: planned, Config: cfg})
+	if !resp.Diagnostics.HasErrors() || !strings.Contains(resp.Diagnostics.Err().Error(), "become_password_file") {
+		t.Fatalf("diagnostics = %v", resp.Diagnostics.Err())
 	}
 }

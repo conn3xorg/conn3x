@@ -13,6 +13,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
+	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
@@ -37,18 +38,54 @@ func connectionBlock() *configschema.NestedBlock {
 				"private_key_file": {Type: cty.String, Optional: true, Description: "Path to a private key. Defaults to the SSH agent."},
 				"host_key":         {Type: cty.String, Optional: true, Description: "Pinned host public key, in authorized_keys format."},
 				"known_hosts_file": {Type: cty.String, Optional: true, Description: "known_hosts file to verify the host against. Defaults to ~/.ssh/known_hosts."},
+				"become":           {Type: cty.Bool, Optional: true, Description: "Run commands as root through sudo."},
+				"become_password_file": {
+					Type:        cty.String,
+					Optional:    true,
+					Description: "File holding the sudo password, when sudo needs one. The password itself never goes into configuration or state.",
+				},
 			},
 		},
 	}
 }
 
-// dialConnection opens an SSH connection described by a connection object.
-func dialConnection(ctx context.Context, conn cty.Value) (*ssh.Client, error) {
+// hostConn runs module commands on one host, through sudo when the ssh
+// block asks for become.
+type hostConn struct {
+	client *ssh.Client
+	runner modules.Runner
+}
+
+func (h *hostConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	return h.runner.Run(ctx, cmd, stdin)
+}
+
+func (h *hostConn) Close() error { return h.client.Close() }
+
+// dialConnection opens an SSH connection described by an ssh block.
+func dialConnection(ctx context.Context, conn cty.Value) (*hostConn, error) {
 	cfg, err := sshConfig(conn)
 	if err != nil {
 		return nil, err
 	}
-	return ssh.Dial(ctx, cfg)
+	become := conn.GetAttr("become")
+	var password []byte
+	if file := stringOr(conn.GetAttr("become_password_file"), ""); file != "" {
+		raw, err := os.ReadFile(expandHome(file))
+		if err != nil {
+			return nil, fmt.Errorf("reading become_password_file: %w", err)
+		}
+		password = []byte(strings.TrimRight(string(raw), "\r\n"))
+	}
+	client, err := ssh.Dial(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	h := &hostConn{client: client, runner: client}
+	if !become.IsNull() && become.True() {
+		h.runner = &ssh.Become{Client: client, Password: password}
+	}
+	return h, nil
 }
 
 func sshConfig(conn cty.Value) (ssh.Config, error) {
