@@ -16,7 +16,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
-// connectionBlock is the "connection" block every host resource carries.
+// connectionBlock is the "ssh" block every host resource carries.
 //
 // There is deliberately no inline private key: resource attributes are
 // stored in state, so a key would end up there. Point private_key_file at a
@@ -51,7 +51,7 @@ func dialConnection(ctx context.Context, conn cty.Value) (*ssh.Client, error) {
 
 func sshConfig(conn cty.Value) (ssh.Config, error) {
 	if conn.IsNull() || !conn.IsWhollyKnown() {
-		return ssh.Config{}, fmt.Errorf("connection is not known yet")
+		return ssh.Config{}, fmt.Errorf("the ssh block is not known yet")
 	}
 	cfg := ssh.Config{
 		Host:           conn.GetAttr("host").AsString(),
@@ -62,7 +62,7 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 	if port := conn.GetAttr("port"); !port.IsNull() {
 		p, acc := port.AsBigFloat().Int64()
 		if acc != big.Exact || p < 1 || p > 65535 {
-			return ssh.Config{}, fmt.Errorf("connection port must be between 1 and 65535")
+			return ssh.Config{}, fmt.Errorf("ssh port must be between 1 and 65535")
 		}
 		cfg.Port = int(p)
 	}

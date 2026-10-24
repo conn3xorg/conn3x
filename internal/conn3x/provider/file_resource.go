@@ -40,7 +40,7 @@ func fileSchema() providers.Schema {
 				"sha256":    {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded."},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{
-				"connection": connectionBlock(),
+				"ssh": connectionBlock(),
 			},
 		},
 	}
@@ -93,7 +93,7 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 	} else {
 		vals["sha256"] = cty.UnknownVal(cty.String)
 	}
-	host, path := req.ProposedNewState.GetAttr("connection").GetAttr("host"), vals["path"]
+	host, path := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["path"]
 	if host.IsKnown() && path.IsKnown() {
 		vals["id"] = cty.StringVal(host.AsString() + ":" + path.AsString())
 	} else {
@@ -107,9 +107,9 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 				resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath(attr))
 			}
 		}
-		priorHost := req.PriorState.GetAttr("connection").GetAttr("host")
+		priorHost := req.PriorState.GetAttr("ssh").GetAttr("host")
 		if !priorHost.RawEquals(host) {
-			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("connection").GetAttr("host"))
+			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("host"))
 		}
 	}
 	return resp
@@ -120,9 +120,9 @@ func readFile(ctx context.Context, req providers.ReadResourceRequest) providers.
 	if req.PriorState.IsNull() {
 		return resp
 	}
-	client, err := dialConnection(ctx, req.PriorState.GetAttr("connection"))
+	client, err := dialConnection(ctx, req.PriorState.GetAttr("ssh"))
 	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(attrError("connection", err.Error()))
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
 	defer client.Close()
@@ -148,9 +148,9 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		if req.PriorState.IsNull() || req.PriorState.GetAttr("on_remove").AsString() != onRemoveDelete {
 			return resp
 		}
-		client, err := dialConnection(ctx, req.PriorState.GetAttr("connection"))
+		client, err := dialConnection(ctx, req.PriorState.GetAttr("ssh"))
 		if err != nil {
-			resp.Diagnostics = resp.Diagnostics.Append(attrError("connection", err.Error()))
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 			return resp
 		}
 		defer client.Close()
@@ -161,9 +161,9 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	}
 
 	planned := req.PlannedState
-	client, err := dialConnection(ctx, planned.GetAttr("connection"))
+	client, err := dialConnection(ctx, planned.GetAttr("ssh"))
 	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(attrError("connection", err.Error()))
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
 	defer client.Close()

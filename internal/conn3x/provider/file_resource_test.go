@@ -57,7 +57,7 @@ func (f *fileTest) config(attrs map[string]cty.Value) cty.Value {
 		vals[name] = cty.NullVal(at)
 	}
 	vals["path"] = cty.StringVal(f.path)
-	vals["connection"] = f.conn
+	vals["ssh"] = f.conn
 	for k, v := range attrs {
 		vals[k] = v
 	}
