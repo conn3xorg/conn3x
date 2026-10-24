@@ -221,6 +221,12 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 	}
 }
 
+// Alive reports whether the connection still answers a keepalive.
+func (c *Client) Alive() bool {
+	_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)
+	return err == nil
+}
+
 // Close ends the connection.
 func (c *Client) Close() error {
 	return c.conn.Close()

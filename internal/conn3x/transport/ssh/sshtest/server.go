@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -32,7 +33,12 @@ type Server struct {
 	Dir       string
 	// Env is added to the environment of every command the server runs.
 	Env []string
+
+	accepts atomic.Int64
 }
+
+// Accepts is how many TCP connections the server has accepted.
+func (s *Server) Accepts() int64 { return s.accepts.Load() }
 
 // New starts a server that stops when the test ends.
 func New(t testing.TB) *Server {
@@ -79,6 +85,7 @@ func New(t testing.TB) *Server {
 			if err != nil {
 				return
 			}
+			s.accepts.Add(1)
 			go s.serve(conn, cfg)
 		}
 	}()

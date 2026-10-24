@@ -5,10 +5,14 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -50,7 +54,8 @@ func connectionBlock() *configschema.NestedBlock {
 }
 
 // hostConn runs module commands on one host, through sudo when the ssh
-// block asks for become.
+// block asks for become. Connections are pooled: every resource that names
+// the same host and login in one run shares a single SSH connection.
 type hostConn struct {
 	client *ssh.Client
 	runner modules.Runner
@@ -60,32 +65,90 @@ func (h *hostConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Resul
 	return h.runner.Run(ctx, cmd, stdin)
 }
 
-func (h *hostConn) Close() error { return h.client.Close() }
+// Close returns the connection to the pool; it stays open for the run.
+func (h *hostConn) Close() error { return nil }
 
-// dialConnection opens an SSH connection described by an ssh block.
+type pooledConn struct {
+	ready chan struct{} // closed once the dial finished
+	conn  *hostConn
+	err   error
+}
+
+var pool = struct {
+	sync.Mutex
+	conns map[string]*pooledConn
+}{conns: map[string]*pooledConn{}}
+
+// dialConnection returns a connection to the host an ssh block describes,
+// reusing an open one when it is still alive.
 func dialConnection(ctx context.Context, conn cty.Value) (*hostConn, error) {
 	cfg, err := sshConfig(conn)
 	if err != nil {
 		return nil, err
 	}
 	become := conn.GetAttr("become")
+	useSudo := !become.IsNull() && become.True()
 	var password []byte
-	if file := stringOr(conn.GetAttr("become_password_file"), ""); file != "" {
+	if file := stringOr(conn.GetAttr("become_password_file"), ""); useSudo && file != "" {
 		raw, err := os.ReadFile(expandHome(file))
 		if err != nil {
 			return nil, fmt.Errorf("reading become_password_file: %w", err)
 		}
 		password = []byte(strings.TrimRight(string(raw), "\r\n"))
 	}
+	key := poolKey(cfg, useSudo, password)
+
+	pool.Lock()
+	entry, ok := pool.conns[key]
+	if ok {
+		pool.Unlock()
+		<-entry.ready
+		if entry.err == nil && entry.conn.client.Alive() {
+			return entry.conn, nil
+		}
+		pool.Lock()
+		// Another caller may already have replaced the dead entry.
+		if pool.conns[key] == entry {
+			delete(pool.conns, key)
+		}
+		if again, ok := pool.conns[key]; ok {
+			pool.Unlock()
+			<-again.ready
+			return again.conn, again.err
+		}
+	}
+	entry = &pooledConn{ready: make(chan struct{})}
+	pool.conns[key] = entry
+	pool.Unlock()
+
 	client, err := ssh.Dial(ctx, cfg)
 	if err != nil {
+		entry.err = err
+		pool.Lock()
+		delete(pool.conns, key) // let the next caller retry
+		pool.Unlock()
+		close(entry.ready)
 		return nil, err
 	}
 	h := &hostConn{client: client, runner: client}
-	if !become.IsNull() && become.True() {
+	if useSudo {
 		h.runner = &ssh.Become{Client: client, Password: password}
 	}
+	entry.conn = h
+	close(entry.ready)
 	return h, nil
+}
+
+func poolKey(cfg ssh.Config, become bool, password []byte) string {
+	sum := sha256.New()
+	for _, part := range [][]byte{
+		[]byte(cfg.Host), []byte(strconv.Itoa(cfg.Port)), []byte(cfg.User), cfg.PrivateKey,
+		[]byte(cfg.HostKey), []byte(cfg.KnownHostsFile), []byte(strconv.FormatBool(become)), password,
+	} {
+		sum.Write(part)
+		sum.Write([]byte{0})
+	}
+	return hex.EncodeToString(sum.Sum(nil))
 }
 
 func sshConfig(conn cty.Value) (ssh.Config, error) {
