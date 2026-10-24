@@ -9,12 +9,29 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
 // Provider implements providers.Interface in process.
 type Provider struct{}
+
+// resourceType is everything the provider needs to serve one resource type.
+type resourceType struct {
+	schema   func() providers.Schema
+	validate func(cty.Value) tfdiags.Diagnostics
+	plan     func(providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse
+	read     func(context.Context, providers.ReadResourceRequest) providers.ReadResourceResponse
+	apply    func(context.Context, providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse
+	upgrade  func(providers.UpgradeResourceStateRequest) providers.UpgradeResourceStateResponse
+}
+
+var resourceTypes = map[string]resourceType{
+	"conn3x_file":    {fileSchema, validateFile, planFile, readFile, applyFile, upgradeFile},
+	"conn3x_package": {packageSchema, validatePackage, planPackage, readPackage, applyPackage, upgradePackage},
+}
 
 // New returns the built-in conn3x provider.
 func New() (providers.Interface, error) {
@@ -30,11 +47,9 @@ func unsupported(what string) tfdiags.Diagnostics {
 
 func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchemaResponse {
 	return providers.GetProviderSchemaResponse{
-		Provider: providers.Schema{Block: emptyBlock()},
-		ResourceTypes: map[string]providers.Schema{
-			"conn3x_file": fileSchema(),
-		},
-		DataSources: map[string]providers.Schema{},
+		Provider:      providers.Schema{Block: emptyBlock()},
+		ResourceTypes: resourceSchemas(),
+		DataSources:   map[string]providers.Schema{},
 	}
 }
 
@@ -43,9 +58,8 @@ func (p *Provider) ValidateProviderConfig(_ context.Context, req providers.Valid
 }
 
 func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.ValidateResourceConfigRequest) providers.ValidateResourceConfigResponse {
-	switch req.TypeName {
-	case "conn3x_file":
-		return providers.ValidateResourceConfigResponse{Diagnostics: validateFile(req.Config)}
+	if rt, ok := resourceTypes[req.TypeName]; ok {
+		return providers.ValidateResourceConfigResponse{Diagnostics: rt.validate(req.Config)}
 	}
 	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
@@ -75,8 +89,8 @@ func (p *Provider) Close(context.Context) error { return nil }
 func (p *Provider) Stop(context.Context) error { return nil }
 
 func (p *Provider) UpgradeResourceState(_ context.Context, req providers.UpgradeResourceStateRequest) providers.UpgradeResourceStateResponse {
-	if req.TypeName == "conn3x_file" {
-		return upgradeFile(req)
+	if rt, ok := resourceTypes[req.TypeName]; ok {
+		return rt.upgrade(req)
 	}
 	return providers.UpgradeResourceStateResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
@@ -86,22 +100,22 @@ func (p *Provider) UpgradeResourceIdentity(context.Context, providers.UpgradeRes
 }
 
 func (p *Provider) ReadResource(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
-	if req.TypeName == "conn3x_file" {
-		return readFile(ctx, req)
+	if rt, ok := resourceTypes[req.TypeName]; ok {
+		return rt.read(ctx, req)
 	}
 	return providers.ReadResourceResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
 func (p *Provider) PlanResourceChange(_ context.Context, req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	if req.TypeName == "conn3x_file" {
-		return planFile(req)
+	if rt, ok := resourceTypes[req.TypeName]; ok {
+		return rt.plan(req)
 	}
 	return providers.PlanResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
 func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
-	if req.TypeName == "conn3x_file" {
-		return applyFile(ctx, req)
+	if rt, ok := resourceTypes[req.TypeName]; ok {
+		return rt.apply(ctx, req)
 	}
 	return providers.ApplyResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
@@ -128,4 +142,12 @@ func (p *Provider) CloseEphemeralResource(context.Context, providers.CloseEpheme
 
 func (p *Provider) GetFunctions(context.Context) providers.GetFunctionsResponse {
 	return providers.GetFunctionsResponse{}
+}
+
+func resourceSchemas() map[string]providers.Schema {
+	out := make(map[string]providers.Schema, len(resourceTypes))
+	for name, rt := range resourceTypes {
+		out[name] = rt.schema()
+	}
+	return out
 }

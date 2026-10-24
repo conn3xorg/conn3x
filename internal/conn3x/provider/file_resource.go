@@ -51,11 +51,7 @@ func validateFile(cfg cty.Value) tfdiags.Diagnostics {
 	if cfg.IsNull() {
 		return diags
 	}
-	if v := cfg.GetAttr("on_remove"); v.IsKnown() && !v.IsNull() {
-		if s := v.AsString(); s != onRemoveForget && s != onRemoveDelete {
-			diags = diags.Append(attrError("on_remove", fmt.Sprintf("on_remove must be %q or %q, not %q", onRemoveForget, onRemoveDelete, s)))
-		}
-	}
+	diags = diags.Append(validateOnRemove(cfg))
 	path, mode := cfg.GetAttr("path"), cfg.GetAttr("mode")
 	if path.IsKnown() && !path.IsNull() {
 		d := file.Desired{Path: path.AsString(), Mode: defaultMode}
@@ -227,4 +223,14 @@ func digest(s string) string {
 
 func attrError(attr, msg string) tfdiags.Diagnostic {
 	return tfdiags.AttributeValue(tfdiags.Error, "Invalid "+attr, msg, cty.GetAttrPath(attr))
+}
+
+func validateOnRemove(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if v := cfg.GetAttr("on_remove"); v.IsKnown() && !v.IsNull() {
+		if s := v.AsString(); s != onRemoveForget && s != onRemoveDelete {
+			diags = diags.Append(attrError("on_remove", fmt.Sprintf("on_remove must be %q or %q, not %q", onRemoveForget, onRemoveDelete, s)))
+		}
+	}
+	return diags
 }

@@ -1,0 +1,17 @@
+circuit "tools" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .WithPackage}}
+  step "tree" {
+    package {
+      name      = "tree"
+      on_remove = "delete"
+    }
+  }
+{{end}}}
