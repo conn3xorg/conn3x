@@ -1,0 +1,33 @@
+name: Provider or module compatibility
+description: A Terraform/OpenTofu provider or module, or an Ansible-style task, doesn't work in Conn3x.
+labels: ["compatibility", "needs-triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Conn3x version
+      description: Output of `conn3x version`.
+    validations:
+      required: true
+  - type: input
+    id: subject
+    attributes:
+      label: Provider, module or task
+      description: Name and version, for example `hashicorp/aws 6.20.0`.
+    validations:
+      required: true
+  - type: textarea
+    id: works-elsewhere
+    attributes:
+      label: Does it work in OpenTofu, Terraform or Ansible?
+      description: Which tool and version it works with.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Configuration and output
+      description: The smallest configuration that fails, and the output Conn3x gives. Remove any secrets first.
+      render: shell
+    validations:
+      required: true

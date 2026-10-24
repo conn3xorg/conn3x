@@ -1,0 +1,45 @@
+name: Bug report
+description: Something doesn't work the way the docs say it should.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. If it's a security problem, please don't file it here. See [SECURITY.md](https://github.com/conn3xorg/conn3x/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Conn3x version
+      description: Output of `conn3x version`.
+      placeholder: Conn3x v0.1.0 (built on OpenTofu v1.13.2)
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Where you ran it, and what it targeted
+      description: Your OS and architecture, plus the distro of any target hosts.
+      placeholder: macOS 26 arm64, targeting Rocky Linux 10
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include the full error output if there was one.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest configuration and commands that show the problem. Remove any secrets first.
+    validations:
+      required: true
