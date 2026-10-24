@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/addrs"
 )
@@ -33,6 +34,8 @@ var circuitModules = map[string]string{
 	"command":   "conn3x_command",
 	"directory": "conn3x_directory",
 	"link":      "conn3x_link",
+	"line":      "conn3x_line",
+	"block":     "conn3x_block",
 	"file":      "conn3x_file",
 	"package":   "conn3x_package",
 	"service":   "conn3x_service",
@@ -172,6 +175,8 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			}
 		}
 	}
+
+	diags = append(diags, warnOnConflictingEdits(content.Blocks.OfType("step"))...)
 
 	handlers := map[string]bool{}
 	for _, h := range content.Blocks.OfType("handler") {
@@ -493,6 +498,50 @@ func lowerTemplate(module *hclsyntax.Block) (hclsyntax.Attributes, hcl.Diagnosti
 		NameRange: src.NameRange,
 	}
 	return out, nil
+}
+
+// warnOnConflictingEdits warns when a step writes a whole file that another
+// step edits in part: each apply, one undoes the other.
+func warnOnConflictingEdits(steps hcl.Blocks) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	whole := map[string]hcl.Range{}
+	parts := map[string]hcl.Range{}
+	for _, step := range steps {
+		body, ok := step.Body.(*hclsyntax.Body)
+		if !ok || len(body.Blocks) != 1 {
+			continue
+		}
+		module := body.Blocks[0]
+		attr := module.Body.Attributes["path"]
+		if module.Type == "template" {
+			attr = module.Body.Attributes["destination"]
+		}
+		if attr == nil {
+			continue
+		}
+		v, valDiags := attr.Expr.Value(nil)
+		if valDiags.HasErrors() || !v.Type().Equals(cty.String) || v.IsNull() {
+			continue // only literal paths can be compared here
+		}
+		switch module.Type {
+		case "file", "template":
+			whole[v.AsString()] = step.DefRange
+		case "line", "block":
+			parts[v.AsString()] = step.DefRange
+		}
+	}
+	for path, rng := range parts {
+		if wholeRange, ok := whole[path]; ok {
+			rng := rng
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagWarning,
+				Summary:  "File is both edited and written whole",
+				Detail:   fmt.Sprintf("%s is written in full by the step at %s and edited by this step, so every apply undoes the other. Put the edit into the file's content instead.", path, wholeRange),
+				Subject:  &rng,
+			})
+		}
+	}
+	return diags
 }
 
 func validCircuitName(name string) bool {

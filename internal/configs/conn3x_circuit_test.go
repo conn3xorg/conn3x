@@ -436,3 +436,36 @@ func TestUnusedHandlerIsAWarning(t *testing.T) {
 		t.Fatalf("no unused-handler warning: %v", diags)
 	}
 }
+
+func TestWarnsWhenAFileStepAndAnEditShareAPath(t *testing.T) {
+	src := `
+circuit "a" {
+  hosts = { h = "1.2.3.4" }
+  ssh {
+    user = "root"
+  }
+  step "whole" {
+    file {
+      path    = "/etc/app.conf"
+      content = "x = 1\n"
+    }
+  }
+  step "part" {
+    line {
+      path = "/etc/app.conf"
+      line = "y = 2"
+    }
+  }
+}
+`
+	_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "edited and written whole") {
+			return
+		}
+	}
+	t.Fatalf("no warning: %v", diags)
+}

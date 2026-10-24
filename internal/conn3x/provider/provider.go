@@ -37,6 +37,8 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_command":        {commandSchema, validateCommand, planCommand, readCommand, applyCommand, upgradeWith(commandSchema)},
 	"conn3x_directory":      {directorySchema, validateDirectory, planDirectory, readDirectory, applyDirectory, upgradeWith(directorySchema)},
 	"conn3x_link":           {linkSchema, validateLink, planLink, readLink, applyLink, upgradeWith(linkSchema)},
+	"conn3x_line":           {lineKind.schema, lineKind.validate, lineKind.plan, lineKind.read, lineKind.apply, upgradeWith(lineKind.schema)},
+	"conn3x_block":          {blockKind.schema, blockKind.validate, blockKind.plan, blockKind.read, blockKind.apply, upgradeWith(blockKind.schema)},
 	"conn3x_group":          {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 }
 
