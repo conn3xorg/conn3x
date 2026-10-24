@@ -72,6 +72,9 @@ func startHost(t *testing.T, image string) *host {
 			// Show what sshd and the rest of the host logged, to explain the failure.
 			out, _ := exec.Command("podman", "exec", id, "journalctl", "--no-pager", "-n", "80").CombinedOutput()
 			t.Logf("journal from %s:\n%s", image, out)
+			diag, _ := exec.Command("podman", "exec", id, "sh", "-c",
+				"ls -ln /etc/shadow /etc/passwd /usr/sbin/unix_chkpwd; grep -E '^Cap(Eff|Bnd)' /proc/self/status; cat /proc/self/uid_map").CombinedOutput()
+			t.Logf("host details:\n%s", diag)
 		}
 		_ = exec.Command("podman", "rm", "-f", id).Run()
 	})
