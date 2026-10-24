@@ -1,0 +1,24 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "release" {
+    directory {
+      path = "/opt/app/releases/{{.Release}}"
+      mode = "0750"
+    }
+  }
+
+  step "current" {
+    link {
+      path   = "/opt/app/current"
+      target = "releases/{{.Release}}"
+    }
+  }
+}
