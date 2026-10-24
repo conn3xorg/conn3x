@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 	conn3xBin = filepath.Join(dir, "conn3x")
 	_, here, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(here), "..", "..")
-	build := exec.Command("go", "build", "-o", conn3xBin, "./cmd/conn3x")
+	build := exec.Command("bash", "scripts/build-conn3x.sh", conn3xBin)
 	build.Dir = root
 	build.Stdout, build.Stderr = os.Stdout, os.Stderr
 	if err := build.Run(); err != nil {
@@ -129,7 +129,11 @@ type workdir struct {
 func newWorkdir(t *testing.T, name string) *workdir {
 	t.Helper()
 	_, here, _, _ := runtime.Caller(0)
-	tpl := template.Must(template.ParseFiles(filepath.Join(filepath.Dir(here), "testdata", name, "main.tf.tmpl")))
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(here), "testdata", name, "*.tmpl"))
+	if len(matches) != 1 {
+		t.Fatalf("testdata/%s needs exactly one template, found %v", name, matches)
+	}
+	tpl := template.Must(template.ParseFiles(matches[0]))
 	return &workdir{t: t, dir: t.TempDir(), tpl: tpl}
 }
 
