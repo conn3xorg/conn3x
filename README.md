@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/header-dark.svg">
-    <img alt="Conn3x: one plan for your cloud and the servers it creates" src=".github/assets/header-light.svg" width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/header-dark.gif">
+    <img alt="Conn3x: one plan for your cloud and the servers it creates" src=".github/assets/header-light.gif" width="100%">
   </picture>
 </p>
 
