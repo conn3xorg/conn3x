@@ -16,6 +16,8 @@ git_q init -q "$up"
 mkdir -p "$up/internal/a" "$up/cmd/tofu"
 for f in one two three four; do echo "package a // $f" > "$up/internal/a/$f.go"; done
 echo "package main" > "$up/cmd/tofu/main.go"
+printf 'module example\n' > "$up/go.mod"
+printf 'example v1 h1:x\n' > "$up/go.sum"
 ln -s one.go "$up/internal/a/link.go"
 echo "upstream licence" > "$up/LICENSE"
 git_q -C "$up" add -A && git_q -C "$up" commit -qm v1 && git_q -C "$up" tag v1
@@ -39,6 +41,9 @@ mkdir -p "$t1/internal/conn3x" "$t1/cmd/conn3x"
 echo "package conn3x" > "$t1/internal/conn3x/x.go"
 echo "package new" > "$t1/internal/a/new.go"
 echo "package main // changed copy" > "$t1/cmd/conn3x/main.go"
+# Dependency bumps change go.mod and go.sum without markers; they don't count.
+printf 'module example\n\nrequire x v2\n' > "$t1/go.mod"
+printf 'example v2 h1:y\n' > "$t1/go.sum"
 out=$(run "$t1" 3) || fail "marked edit, symlink or stripped file rejected: $out"
 echo "$out" | grep -q "1 of 3 upstream files changed" || fail "wrong count: $out"
 
