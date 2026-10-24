@@ -63,7 +63,14 @@ func startHost(t *testing.T, image string) *host {
 	run(t, "podman", "build", "-q", "-t", tag, imageDir)
 
 	id := strings.TrimSpace(run(t, "podman", "run", "-d", "--rm", "--systemd=always", "-p", "127.0.0.1::22", tag))
-	t.Cleanup(func() { _ = exec.Command("podman", "rm", "-f", id).Run() })
+	t.Cleanup(func() {
+		if t.Failed() {
+			// Show what sshd and the rest of the host logged, to explain the failure.
+			out, _ := exec.Command("podman", "exec", id, "journalctl", "--no-pager", "-n", "80").CombinedOutput()
+			t.Logf("journal from %s:\n%s", image, out)
+		}
+		_ = exec.Command("podman", "rm", "-f", id).Run()
+	})
 	mapping := strings.TrimSpace(run(t, "podman", "port", id, "22/tcp"))
 	h := &host{t: t, container: id, port: mapping[strings.LastIndex(mapping, ":")+1:]}
 
