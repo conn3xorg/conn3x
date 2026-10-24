@@ -40,6 +40,10 @@ git -C "$cache" diff --binary "$from" "$to" -- ':(top)cmd/tofu' \
   >> "$patch"
 
 cd "$root"
+if ! git diff --quiet HEAD --; then
+  echo "sync: working tree not clean; commit or stash local changes first" >&2
+  exit 1
+fi
 if [ -s "$patch" ]; then
   # The cache holds the preimage blobs that a three-way merge needs.
   if ! GIT_ALTERNATE_OBJECT_DIRECTORIES="$cache/objects" git apply --3way --index "$patch"; then

@@ -31,4 +31,8 @@ base2=$(g rev-parse HEAD)
 git -C "$work" -c user.name="dependabot[bot]" -c user.email="49699333+dependabot[bot]@users.noreply.github.com" -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q --allow-empty -m "build: bump x"
 (cd "$work" && bash "$here/dco-check.sh" "$base2" HEAD >/dev/null) || fail "dependabot commit rejected"
 
+# Email case doesn't matter.
+git -C "$work" -c user.name=Dev -c user.email=Dev@Example.com -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q --allow-empty -m "feat: mixed case" -m "Signed-off-by: Dev <dev@example.com>"
+(cd "$work" && bash "$here/dco-check.sh" "$base2" HEAD >/dev/null) || fail "case-only email difference rejected"
+
 echo "PASS: dco-check_test.sh"

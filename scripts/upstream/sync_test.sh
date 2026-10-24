@@ -67,4 +67,15 @@ set -e
 [ "$code" -ne 0 ] || fail "conflicting sync exited zero"
 echo "$err" | grep -q 'CONFLICT' || fail "no CONFLICT message on stderr: $err"
 
+# Case 3: a dirty working tree is refused before anything is applied.
+t3="$work/t3"; new_target "$t3"
+echo 'package foo // uncommitted' > "$t3/internal/foo.go"
+set +e
+err=$(cd "$t3" && bash scripts/upstream/sync.sh v1 v2 2>&1 >/dev/null)
+code=$?
+set -e
+[ "$code" -ne 0 ] || fail "dirty tree accepted"
+echo "$err" | grep -q 'working tree not clean' || fail "no clean-tree message: $err"
+grep -q 'uncommitted' "$t3/internal/foo.go" || fail "dirty tree was modified"
+
 echo "PASS: sync_test.sh"
