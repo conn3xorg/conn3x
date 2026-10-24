@@ -22,3 +22,11 @@ Dockerfile
 Dockerfile.minimal
 .goreleaser.yaml
 LICENSE
+SUPPORT.md
+NOTICE
+.editorconfig
+scripts/dco-check.sh
+scripts/dco-check_test.sh
+scripts/upstream/
+internal/conn3x/
+cmd/conn3x/

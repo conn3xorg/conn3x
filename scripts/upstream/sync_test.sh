@@ -18,9 +18,11 @@ up="$work/upstream"
 git_q init -q "$up"
 mkdir -p "$up/internal"
 echo 'package foo // v1' > "$up/internal/foo.go"
+mkdir -p "$up/cmd/tofu" && echo 'package main // v1' > "$up/cmd/tofu/x.go"
 git_q -C "$up" add -A && git_q -C "$up" commit -qm v1 && git_q -C "$up" tag v1
 echo 'package foo // v2' > "$up/internal/foo.go"
 echo 'package bar' > "$up/internal/bar.go"
+mkdir -p "$up/cmd/tofu" && echo 'package main // v2' > "$up/cmd/tofu/x.go"
 echo 'agents' > "$up/AGENTS.md"
 mkdir -p "$up/.github" && echo 'x: 1' > "$up/.github/x.yml"
 git_q -C "$up" add -A && git_q -C "$up" commit -qm v2 && git_q -C "$up" tag v2
@@ -31,6 +33,9 @@ new_target() {
   git_q init -q "$t"
   mkdir -p "$t/internal/conn3x/version" "$t/scripts/upstream"
   git -C "$up" show v1:internal/foo.go > "$t/internal/foo.go"
+  mkdir -p "$t/cmd/tofu" "$t/cmd/conn3x"
+  git -C "$up" show v1:cmd/tofu/x.go > "$t/cmd/tofu/x.go"
+  git -C "$up" show v1:cmd/tofu/x.go > "$t/cmd/conn3x/x.go"
   echo v1 > "$t/internal/conn3x/version/UPSTREAM"
   cp "$here/sync.sh" "$here/strip-paths.txt" "$t/scripts/upstream/"
   git_q -C "$t" add -A && git_q -C "$t" commit -qm snapshot
@@ -48,6 +53,8 @@ grep -q 'v2' "$t1/internal/foo.go" || fail "foo.go not updated"
 [ ! -e "$t1/AGENTS.md" ] || fail "AGENTS.md was not stripped"
 [ ! -e "$t1/.github/x.yml" ] || fail ".github/x.yml was not stripped"
 [ "$(cat "$t1/internal/conn3x/version/UPSTREAM")" = v2 ] || fail "UPSTREAM not bumped"
+grep -q 'v2' "$t1/cmd/tofu/x.go" || fail "cmd/tofu/x.go not updated"
+grep -q 'v2' "$t1/cmd/conn3x/x.go" || fail "cmd/conn3x/x.go not updated"
 
 # Case 2: a local edit to an upstream-owned line conflicts and fails loudly.
 t2="$work/t2"; new_target "$t2"
@@ -59,5 +66,16 @@ code=$?
 set -e
 [ "$code" -ne 0 ] || fail "conflicting sync exited zero"
 echo "$err" | grep -q 'CONFLICT' || fail "no CONFLICT message on stderr: $err"
+
+# Case 3: a dirty working tree is refused before anything is applied.
+t3="$work/t3"; new_target "$t3"
+echo 'package foo // uncommitted' > "$t3/internal/foo.go"
+set +e
+err=$(cd "$t3" && bash scripts/upstream/sync.sh v1 v2 2>&1 >/dev/null)
+code=$?
+set -e
+[ "$code" -ne 0 ] || fail "dirty tree accepted"
+echo "$err" | grep -q 'working tree not clean' || fail "no clean-tree message: $err"
+grep -q 'uncommitted' "$t3/internal/foo.go" || fail "dirty tree was modified"
 
 echo "PASS: sync_test.sh"

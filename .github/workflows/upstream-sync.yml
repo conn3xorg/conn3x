@@ -15,19 +15,24 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
+      - name: Require SYNC_TOKEN
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::SYNC_TOKEN is not set. Add a fine-grained token with Contents and Pull requests read/write on this repository."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # A token other than GITHUB_TOKEN lets the opened PR trigger CI.
-          token: ${{ secrets.SYNC_TOKEN || github.token }}
-      - name: Sync and open a pull request
+          persist-credentials: false
+      - name: Sync, commit through the API and open a pull request
         env:
-          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
           TO_TAG: ${{ inputs.to_tag }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           from=$(tr -d '[:space:]' < internal/conn3x/version/UPSTREAM)
@@ -35,13 +40,38 @@ jobs:
           to=${TO_TAG:-$(git ls-remote --tags --refs https://github.com/opentofu/opentofu.git "refs/tags/${series}.*" \
             | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)}
           if [ "$to" = "$from" ]; then echo "Already on $from"; exit 0; fi
+
           branch="chore/sync-opentofu-$to"
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then echo "$branch exists"; exit 0; fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "::error::$branch already exists. Merge or close its pull request, then delete the branch."
+            exit 1
+          fi
+
+          git config user.name "sync" && git config user.email "sync@localhost"
           bash scripts/upstream/sync.sh "$from" "$to"
-          git commit -s -m "chore: sync OpenTofu $to"
-          git push -u origin "$branch"
-          gh pr create --title "chore: sync OpenTofu $to" \
-            --body "Applies upstream OpenTofu changes $from..$to. Review the release notes at https://github.com/opentofu/opentofu/releases/tag/$to."
+          python3 scripts/upstream/commit_payload.py > /tmp/changes.json
+
+          # The commit is created through the API so GitHub signs it, as the
+          # token's owner, who signs off on the upstream changes.
+          IFS=$'\t' read -r login id name email < <(gh api user --jq '[.login, .id, (.name // .login), (.email // "")] | @tsv')
+          [ -n "$email" ] || email="${id}+${login}@users.noreply.github.com"
+          base=$(git rev-parse HEAD)
+          gh api "repos/$REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$base" >/dev/null
+          jq -n --arg repo "$REPO" --arg branch "$branch" --arg base "$base" \
+            --arg headline "chore: sync OpenTofu $to" \
+            --arg body "Applies upstream OpenTofu changes $from..$to.
+
+          Signed-off-by: $name <$email>" \
+            --slurpfile changes /tmp/changes.json \
+            '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: {input: {branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+                                  expectedHeadOid: $base,
+                                  message: {headline: $headline, body: $body},
+                                  fileChanges: $changes[0]}}}' > /tmp/request.json
+          gh api graphql --input /tmp/request.json --jq '.data.createCommitOnBranch.commit.oid'
+
+          gh pr create --repo "$REPO" --base main --head "$branch" \
+            --title "chore: sync OpenTofu $to" \
+            --body "Applies upstream OpenTofu changes $from..$to. Release notes: https://github.com/opentofu/opentofu/releases/tag/$to
+
+          CI runs the full upstream test suite on sync branches."

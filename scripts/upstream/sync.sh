@@ -34,8 +34,16 @@ done < "$here/strip-paths.txt"
 patch=$(mktemp)
 trap 'rm -f "$patch"' EXIT
 git -C "$cache" diff --binary "$from" "$to" -- ':(top)' "${excludes[@]}" > "$patch"
+# cmd/conn3x is a copy of cmd/tofu; carry the same upstream changes into it.
+git -C "$cache" diff --binary "$from" "$to" -- ':(top)cmd/tofu' \
+  | sed -E 's#^(diff --git a/|--- a/|\+\+\+ b/)cmd/tofu/#\1cmd/conn3x/#; s#^(diff --git a/cmd/conn3x/[^ ]* b/)cmd/tofu/#\1cmd/conn3x/#; s#^(rename|copy) (from|to) cmd/tofu/#\1 \2 cmd/conn3x/#' \
+  >> "$patch"
 
 cd "$root"
+if ! git diff --quiet HEAD --; then
+  echo "sync: working tree not clean; commit or stash local changes first" >&2
+  exit 1
+fi
 if [ -s "$patch" ]; then
   # The cache holds the preimage blobs that a three-way merge needs.
   if ! GIT_ALTERNATE_OBJECT_DIRECTORIES="$cache/objects" git apply --3way --index "$patch"; then
