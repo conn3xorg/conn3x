@@ -1,0 +1,47 @@
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: "0 7 * * 2"
+  workflow_dispatch:
+    inputs:
+      to_tag:
+        description: "OpenTofu tag to sync to (default: newest in current series)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # A token other than GITHUB_TOKEN lets the opened PR trigger CI.
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+      - name: Sync and open a pull request
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+          TO_TAG: ${{ inputs.to_tag }}
+        run: |
+          set -euo pipefail
+          from=$(tr -d '[:space:]' < internal/conn3x/version/UPSTREAM)
+          series=$(echo "$from" | cut -d. -f1-2)
+          to=${TO_TAG:-$(git ls-remote --tags --refs https://github.com/opentofu/opentofu.git "refs/tags/${series}.*" \
+            | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)}
+          if [ "$to" = "$from" ]; then echo "Already on $from"; exit 0; fi
+          branch="chore/sync-opentofu-$to"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then echo "$branch exists"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          bash scripts/upstream/sync.sh "$from" "$to"
+          git commit -s -m "chore: sync OpenTofu $to"
+          git push -u origin "$branch"
+          gh pr create --title "chore: sync OpenTofu $to" \
+            --body "Applies upstream OpenTofu changes $from..$to. Review the release notes at https://github.com/opentofu/opentofu/releases/tag/$to."
