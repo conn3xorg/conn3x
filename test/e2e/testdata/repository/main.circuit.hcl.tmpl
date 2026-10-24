@@ -1,0 +1,28 @@
+circuit "repo" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "nginx_org" {
+    repository {
+      name = "nginx-org"
+      url  = "{{.URL}}"
+      key  = file("${path.module}/nginx_signing.key")
+{{- if .Suite}}
+      suites     = ["{{.Suite}}"]
+      components = ["nginx"]
+{{- end}}
+    }
+  }
+
+  step "nginx" {
+    package {
+      name = "nginx"
+    }
+  }
+}

@@ -42,6 +42,7 @@ var circuitModules = map[string]string{
 	"ufw":              "conn3x_ufw_rule",
 	"selinux_boolean":  "conn3x_selinux_boolean",
 	"selinux_fcontext": "conn3x_selinux_fcontext",
+	"repository":       "conn3x_repository",
 	"directory":        "conn3x_directory",
 	"link":             "conn3x_link",
 	"line":             "conn3x_line",
