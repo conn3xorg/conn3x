@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -100,6 +101,14 @@ echo 'deploy ALL=(ALL) ALL' > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/
 mkdir -p -m 700 /home/deploy/.ssh && cp /root/.ssh/authorized_keys /home/deploy/.ssh/ &&
 chown -R deploy:deploy /home/deploy/.ssh &&
 echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl restart sshd`)
+	// Rootless containers on some CI runners can't run PAM's setuid password
+	// helper. Real hosts can; skip here only when the container itself can't
+	// verify a correct password.
+	if err := exec.Command("podman", "exec", h.container, "su", "deploy", "-c",
+		"echo Deploy-Pass-123 | sudo -S -p '' -v").Run(); err != nil {
+		t.Skip("this container can't verify sudo passwords (PAM's unix_chkpwd fails in rootless Podman); password sudo is covered on real hosts")
+	}
+
 	pw := filepath.Join(t.TempDir(), "sudo-pass")
 	if err := os.WriteFile(pw, []byte("Deploy-Pass-123\n"), 0o600); err != nil {
 		t.Fatal(err)
