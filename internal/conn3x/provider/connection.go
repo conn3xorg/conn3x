@@ -16,7 +16,9 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
-// connectionBlock is the "ssh" block every host resource carries.
+// connectionBlock is the "ssh" block every host resource carries. It is not
+// called "connection" because OpenTofu reserves that name in resources for
+// provisioners and strips it before the provider sees the configuration.
 //
 // There is deliberately no inline private key: resource attributes are
 // stored in state, so a key would end up there. Point private_key_file at a
