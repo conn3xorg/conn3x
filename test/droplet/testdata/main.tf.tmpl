@@ -111,6 +111,33 @@ circuit "web" {
     }
   }
 
+  step "semanage" {
+    package {
+      name = "policycoreutils-python-utils"
+    }
+  }
+
+  step "proxy" {
+    selinux_boolean {
+      name  = "httpd_can_network_connect"
+      value = true
+    }
+  }
+
+  # Made before its file context rule, so the rule has to relabel it.
+  step "content_dir" {
+    directory {
+      path = "/srv/conn3x"
+    }
+  }
+
+  step "content_label" {
+    selinux_fcontext {
+      target = "/srv/conn3x(/.*)?"
+      setype = "httpd_sys_content_t"
+    }
+  }
+
   step "forwarding" {
     sysctl {
       name  = "net.ipv4.ip_forward"

@@ -135,6 +135,8 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		`conn3x_sysctl.web__forwarding["web1"] will be created`,
 		`conn3x_hostname.web__name["web1"] will be created`,
 		`conn3x_firewalld.web__http["web1"] will be created`,
+		`conn3x_selinux_boolean.web__proxy["web1"] will be created`,
+		`conn3x_selinux_fcontext.web__content_label["web1"] will be created`,
 		`conn3x_ufw_rule.edge__http["edge1"] will be created`,
 		"host             = (known after apply)",
 		"Conn3x will perform the following actions",
@@ -191,6 +193,12 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		t.Fatalf("hostname = %q", got)
 	}
 
+	if got := run("cat /sys/fs/selinux/booleans/httpd_can_network_connect; semanage boolean -l -C | grep -c '^httpd_can_network_connect '"); got != "1 1\n1\n" {
+		t.Fatalf("httpd_can_network_connect, running and persistent = %q", got)
+	}
+	if got := run("stat -c %C /srv/conn3x"); !strings.Contains(got, ":httpd_sys_content_t:") {
+		t.Fatalf("/srv/conn3x label = %q", got)
+	}
 	if got := run("firewall-cmd --list-services; firewall-cmd --permanent --list-services"); strings.Count(got, "http") != 2 {
 		t.Fatalf("firewalld services = %q", got)
 	}
