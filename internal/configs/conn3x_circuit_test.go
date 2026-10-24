@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 
 	"github.com/opentofu/opentofu/internal/configs/symlib"
 )
@@ -263,4 +264,76 @@ func traversalString(tr hcl.Traversal) string {
 		}
 	}
 	return strings.Join(parts, ".")
+}
+
+func TestTemplateStepLowersToFile(t *testing.T) {
+	src := `
+circuit "web" {
+  hosts = { web1 = "203.0.113.10" }
+  ssh {
+    user = "root"
+  }
+  step "nginx_conf" {
+    template {
+      source      = "${path.module}/nginx.conf.tftpl"
+      destination = "/etc/nginx/nginx.conf"
+      vars        = { server_name = each.key }
+      mode        = "0640"
+    }
+  }
+  step "motd" {
+    template {
+      source      = "motd.tftpl"
+      destination = "/etc/motd"
+    }
+  }
+}
+`
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	r, ok := mod.ManagedResources["conn3x_file.web__nginx_conf"]
+	if !ok {
+		t.Fatalf("no conn3x_file.web__nginx_conf; have %v", keys(mod.ManagedResources))
+	}
+	content, diags := r.Config.Content(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "path", Required: true}, {Name: "content", Required: true}, {Name: "mode"}},
+		Blocks:     []hcl.BlockHeaderSchema{{Type: "ssh"}},
+	})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	call, ok := content.Attributes["content"].Expr.(*hclsyntax.FunctionCallExpr)
+	if !ok || call.Name != "templatefile" || len(call.Args) != 2 {
+		t.Fatalf("content is %T, want templatefile(source, vars)", content.Attributes["content"].Expr)
+	}
+	if _, ok := content.Attributes["mode"]; !ok {
+		t.Fatal("mode not carried over")
+	}
+
+	motd := mod.ManagedResources["conn3x_file.web__motd"]
+	mc, _ := motd.Config.Content(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "path"}, {Name: "content"}},
+		Blocks:     []hcl.BlockHeaderSchema{{Type: "ssh"}},
+	})
+	if call, ok := mc.Attributes["content"].Expr.(*hclsyntax.FunctionCallExpr); !ok || len(call.Args) != 2 {
+		t.Fatal("template without vars should still pass an empty vars object")
+	}
+}
+
+func TestTemplateStepErrors(t *testing.T) {
+	for name, tc := range map[string]struct{ body, want string }{
+		"missing source": {`destination = "/etc/x"`, `"source" is required`},
+		"missing dest":   {`source = "x.tftpl"`, `"destination" is required`},
+		"content set":    {"source = \"x\"\n      destination = \"/x\"\n      content = \"y\"", `Unsupported argument`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := "circuit \"a\" {\n  hosts = { h = \"1.2.3.4\" }\n  ssh {\n    user = \"root\"\n  }\n  step \"s\" {\n    template {\n      " + tc.body + "\n    }\n  }\n}\n"
+			_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+			if !diags.HasErrors() || !strings.Contains(diags.Error(), tc.want) {
+				t.Fatalf("diags = %v, want %q", diags.Error(), tc.want)
+			}
+		})
+	}
 }

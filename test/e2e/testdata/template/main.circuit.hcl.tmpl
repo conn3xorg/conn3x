@@ -1,0 +1,19 @@
+circuit "web" {
+  hosts = { web1 = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "motd" {
+    template {
+      source      = "${path.module}/motd.tftpl"
+      destination = "/etc/motd"
+      vars        = { owner = "{{.Owner}}", host = each.key }
+      mode        = "0644"
+    }
+  }
+}

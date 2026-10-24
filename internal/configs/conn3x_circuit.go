@@ -191,6 +191,15 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	}
 	module := body.Blocks[0]
 	resourceType, ok := circuitModules[module.Type]
+	moduleAttrs := module.Body.Attributes
+	if module.Type == "template" {
+		attrs, templateDiags := lowerTemplate(module)
+		diags = append(diags, templateDiags...)
+		if templateDiags.HasErrors() {
+			return nil, diags
+		}
+		resourceType, ok, moduleAttrs = "conn3x_file", true, attrs
+	}
 	if !ok {
 		rng := module.TypeRange
 		return nil, append(diags, &hcl.Diagnostic{
@@ -219,7 +228,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		NameRange: sshRange,
 	}
 	config := &hclsyntax.Body{
-		Attributes: module.Body.Attributes,
+		Attributes: moduleAttrs,
 		Blocks: append(append(hclsyntax.Blocks{}, module.Body.Blocks...), &hclsyntax.Block{
 			Type:            "ssh",
 			Body:            &hclsyntax.Body{Attributes: ssh, SrcRange: sshRange, EndRange: sshRange},
@@ -255,12 +264,65 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	return r, diags
 }
 
+var templateSchema = &hcl.BodySchema{
+	Attributes: []hcl.AttributeSchema{
+		{Name: "source", Required: true},
+		{Name: "destination", Required: true},
+		{Name: "vars"},
+		{Name: "mode"},
+		{Name: "owner"},
+		{Name: "group"},
+		{Name: "on_remove"},
+	},
+}
+
+// lowerTemplate turns a template module into conn3x_file arguments. The
+// template renders on the controller with templatefile(), so only the
+// finished bytes travel to the host:
+//
+//	template { source = S, destination = D, vars = V }
+//	  => path = D, content = templatefile(S, V)
+func lowerTemplate(module *hclsyntax.Block) (hclsyntax.Attributes, hcl.Diagnostics) {
+	_, diags := module.Body.Content(templateSchema)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	in := module.Body.Attributes
+	out := hclsyntax.Attributes{}
+	for _, name := range []string{"mode", "owner", "group", "on_remove"} {
+		if a, ok := in[name]; ok {
+			out[name] = a
+		}
+	}
+	dest := in["destination"]
+	out["path"] = &hclsyntax.Attribute{Name: "path", Expr: dest.Expr, SrcRange: dest.SrcRange, NameRange: dest.NameRange, EqualsRange: dest.EqualsRange}
+
+	src := in["source"]
+	var vars hclsyntax.Expression = &hclsyntax.ObjectConsExpr{SrcRange: src.SrcRange, OpenRange: src.SrcRange}
+	if v, ok := in["vars"]; ok {
+		vars = v.Expr
+	}
+	out["content"] = &hclsyntax.Attribute{
+		Name: "content",
+		Expr: &hclsyntax.FunctionCallExpr{
+			Name:            "templatefile",
+			Args:            []hclsyntax.Expression{src.Expr, vars},
+			NameRange:       src.NameRange,
+			OpenParenRange:  src.SrcRange,
+			CloseParenRange: src.SrcRange,
+		},
+		SrcRange:  src.SrcRange,
+		NameRange: src.NameRange,
+	}
+	return out, nil
+}
+
 func validCircuitName(name string) bool {
 	return hclsyntax.ValidIdentifier(name) && !strings.Contains(name, "__")
 }
 
 func moduleList() string {
-	names := make([]string, 0, len(circuitModules))
+	names := []string{`"template"`}
 	for name := range circuitModules {
 		names = append(names, fmt.Sprintf("%q", name))
 	}
