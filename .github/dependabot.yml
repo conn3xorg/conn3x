@@ -1,14 +1,14 @@
 version: 2
 updates:
+  # Go module versions follow OpenTofu through the upstream sync. A limit
+  # of 0 turns off routine version bumps; security updates still open PRs.
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     commit-message:
       prefix: build
-    groups:
-      go-minor-patch:
-        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:

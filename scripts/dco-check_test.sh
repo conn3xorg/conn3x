@@ -26,4 +26,9 @@ g commit -q --allow-empty -m "feat: unsigned"
 out=$(cd "$work" && bash "$here/dco-check.sh" "$base" HEAD) && fail "unsigned commit accepted"
 echo "$out" | grep -q "missing Signed-off-by for dev@example.com" || fail "no offender listed: $out"
 
+# Dependabot cannot sign off; its commits are exempt.
+base2=$(g rev-parse HEAD)
+git -C "$work" -c user.name="dependabot[bot]" -c user.email="49699333+dependabot[bot]@users.noreply.github.com" -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q --allow-empty -m "build: bump x"
+(cd "$work" && bash "$here/dco-check.sh" "$base2" HEAD >/dev/null) || fail "dependabot commit rejected"
+
 echo "PASS: dco-check_test.sh"
