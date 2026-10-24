@@ -1,0 +1,25 @@
+circuit "web" {
+  hosts = { web1 = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "motd" {
+    file {
+      path    = "/etc/motd"
+      content = "Hello from ${each.key}\n"
+    }
+  }
+{{if .WithIssue}}
+  step "issue" {
+    file {
+      path    = "/etc/issue.conn3x"
+      content = "motd sha256 ${conn3x_file.web__motd[each.key].sha256}\n"
+      mode    = "0600"
+    }
+  }
+{{end}}}

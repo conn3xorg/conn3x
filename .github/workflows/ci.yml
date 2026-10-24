@@ -29,7 +29,7 @@ jobs:
           version: v2.14.0
           args: ./internal/conn3x/... ./cmd/conn3x/...
       - name: Upstream edits stay marked and within budget
-        run: bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 3
+        run: bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 5
       - name: Script tests
         run: |
           bash scripts/upstream/sync_test.sh
@@ -69,6 +69,21 @@ jobs:
           go-version-file: go.mod
       - name: Build
         run: |
-          go build -trimpath -ldflags='-s -w' -o dist/conn3x ./cmd/conn3x
+          scripts/build-conn3x.sh dist/conn3x -ldflags='-s -w'
           go build -trimpath -ldflags='-s -w' -o dist/tofu ./cmd/tofu
           ./dist/conn3x version
+          scripts/brand-check.sh dist/conn3x
+
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: End-to-end tests against Podman hosts
+        run: |
+          podman --version
+          go test -tags e2e -count=1 -v ./test/e2e/...

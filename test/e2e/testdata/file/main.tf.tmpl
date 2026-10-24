@@ -1,0 +1,14 @@
+resource "conn3x_file" "motd" {
+  path    = "/etc/motd"
+  content = "{{.Content}}"
+  mode    = "0644"
+{{if .OnRemove}}  on_remove = "{{.OnRemove}}"
+{{end}}
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}

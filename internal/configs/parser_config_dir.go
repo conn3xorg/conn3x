@@ -344,6 +344,10 @@ func fileExt(path string) string {
 		extension = symbolFileExt(path)
 	}
 
+	if extension == "" {
+		extension = circuitFileExtOf(path) // CONN3X: *.circuit.hcl files
+	}
+
 	return extension
 }
 
