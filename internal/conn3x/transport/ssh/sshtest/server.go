@@ -1,7 +1,9 @@
 // Copyright (c) The Conn3x Authors
 // SPDX-License-Identifier: MPL-2.0
 
-package ssh
+// Package sshtest runs an in-process SSH server for tests. It executes
+// each command with the local sh, so tests exercise real shell behaviour.
+package sshtest
 
 import (
 	"crypto/ed25519"
@@ -19,16 +21,19 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// testServer is an in-process SSH server that runs each exec request with
-// the local sh, in its own working directory.
-type testServer struct {
+// Server is an in-process SSH server that runs each exec request with the
+// local sh, in its own working directory.
+type Server struct {
 	Addr      string
+	Host      string
+	Port      int
 	HostKey   gossh.PublicKey
 	ClientKey []byte // PEM private key the server accepts
 	Dir       string
 }
 
-func newTestServer(t *testing.T) *testServer {
+// New starts a server that stops when the test ends.
+func New(t testing.TB) *Server {
 	t.Helper()
 	_, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
 	hostSigner, err := gossh.NewSignerFromKey(hostPriv)
@@ -57,8 +62,11 @@ func newTestServer(t *testing.T) *testServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	s := &testServer{
+	host, port := splitAddr(t, ln.Addr().String())
+	s := &Server{
 		Addr:      ln.Addr().String(),
+		Host:      host,
+		Port:      port,
 		HostKey:   hostSigner.PublicKey(),
 		ClientKey: pemEncode(pemBlock),
 		Dir:       t.TempDir(),
@@ -75,7 +83,7 @@ func newTestServer(t *testing.T) *testServer {
 	return s
 }
 
-func (s *testServer) serve(conn net.Conn, cfg *gossh.ServerConfig) {
+func (s *Server) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 	_, chans, reqs, err := gossh.NewServerConn(conn, cfg)
 	if err != nil {
 		return
@@ -94,7 +102,7 @@ func (s *testServer) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 	}
 }
 
-func (s *testServer) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
+func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
 	defer ch.Close()
 	for req := range reqs {
 		if req.Type != "exec" {
@@ -126,23 +134,28 @@ func (s *testServer) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
 	}
 }
 
-// knownHosts writes a known_hosts file trusting the server and returns its path.
-func (s *testServer) knownHosts(t *testing.T) string {
+// KnownHosts writes a known_hosts file trusting the server and returns its path.
+func (s *Server) KnownHosts(t testing.TB) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "known_hosts")
-	line := knownHostsLine(s.Addr, s.HostKey)
+	line := KnownHostsLine(s.Addr, s.HostKey)
 	if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
 }
 
-func (s *testServer) config(t *testing.T) Config {
-	host, port := splitAddr(t, s.Addr)
-	return Config{Host: host, Port: port, User: "test", PrivateKey: s.ClientKey, KnownHostsFile: s.knownHosts(t)}
+// KeyFile writes the client private key to a file and returns its path.
+func (s *Server) KeyFile(t testing.TB) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(path, s.ClientKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
-func splitAddr(t *testing.T, addr string) (string, int) {
+func splitAddr(t testing.TB, addr string) (string, int) {
 	t.Helper()
 	h, p, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -157,6 +170,7 @@ func splitAddr(t *testing.T, addr string) (string, int) {
 
 func pemEncode(b *pem.Block) []byte { return pem.EncodeToMemory(b) }
 
-func knownHostsLine(addr string, key gossh.PublicKey) string {
+// KnownHostsLine formats a known_hosts entry for addr.
+func KnownHostsLine(addr string, key gossh.PublicKey) string {
 	return knownhosts.Line([]string{knownhosts.Normalize(addr)}, key)
 }

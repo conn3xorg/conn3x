@@ -16,6 +16,8 @@ import (
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh/sshtest"
 )
 
 func dial(t *testing.T, cfg Config) *Client {
@@ -29,8 +31,8 @@ func dial(t *testing.T, cfg Config) *Client {
 }
 
 func TestRunCapturesOutputAndExit(t *testing.T) {
-	s := newTestServer(t)
-	c := dial(t, s.config(t))
+	s := sshtest.New(t)
+	c := dial(t, testConfig(t, s))
 	res, err := c.Run(context.Background(), "printf hi; printf oops >&2; exit 3", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -41,8 +43,8 @@ func TestRunCapturesOutputAndExit(t *testing.T) {
 }
 
 func TestRunSetsCLocale(t *testing.T) {
-	s := newTestServer(t)
-	c := dial(t, s.config(t))
+	s := sshtest.New(t)
+	c := dial(t, testConfig(t, s))
 	res, err := c.Run(context.Background(), `printf %s "$LC_ALL"`, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -53,8 +55,8 @@ func TestRunSetsCLocale(t *testing.T) {
 }
 
 func TestRunPassesStdin(t *testing.T) {
-	s := newTestServer(t)
-	c := dial(t, s.config(t))
+	s := sshtest.New(t)
+	c := dial(t, testConfig(t, s))
 	in := []byte("no trailing newline\x00\xff")
 	res, err := c.Run(context.Background(), "cat", in)
 	if err != nil {
@@ -66,8 +68,8 @@ func TestRunPassesStdin(t *testing.T) {
 }
 
 func TestRunReusesOneConnection(t *testing.T) {
-	s := newTestServer(t)
-	c := dial(t, s.config(t))
+	s := sshtest.New(t)
+	c := dial(t, testConfig(t, s))
 	for i := 0; i < 5; i++ {
 		if _, err := c.Run(context.Background(), "true", nil); err != nil {
 			t.Fatalf("run %d: %v", i, err)
@@ -76,8 +78,8 @@ func TestRunReusesOneConnection(t *testing.T) {
 }
 
 func TestUnknownHostKeyFails(t *testing.T) {
-	s := newTestServer(t)
-	cfg := s.config(t)
+	s := sshtest.New(t)
+	cfg := testConfig(t, s)
 	empty := filepath.Join(t.TempDir(), "known_hosts")
 	if err := os.WriteFile(empty, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -93,12 +95,12 @@ func TestUnknownHostKeyFails(t *testing.T) {
 }
 
 func TestChangedHostKeyFails(t *testing.T) {
-	s := newTestServer(t)
-	cfg := s.config(t)
+	s := sshtest.New(t)
+	cfg := testConfig(t, s)
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	other, _ := gossh.NewPublicKey(pub)
 	path := filepath.Join(t.TempDir(), "known_hosts")
-	if err := os.WriteFile(path, []byte(knownHostsLine(s.Addr, other)+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(sshtest.KnownHostsLine(s.Addr, other)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg.KnownHostsFile = path
@@ -109,8 +111,8 @@ func TestChangedHostKeyFails(t *testing.T) {
 }
 
 func TestPinnedHostKey(t *testing.T) {
-	s := newTestServer(t)
-	cfg := s.config(t)
+	s := sshtest.New(t)
+	cfg := testConfig(t, s)
 	cfg.KnownHostsFile = filepath.Join(t.TempDir(), "does-not-exist")
 	cfg.HostKey = string(gossh.MarshalAuthorizedKey(s.HostKey))
 	dial(t, cfg)
@@ -138,8 +140,8 @@ func TestUnreachableTimesOut(t *testing.T) {
 }
 
 func TestCancelStopsRun(t *testing.T) {
-	s := newTestServer(t)
-	c := dial(t, s.config(t))
+	s := sshtest.New(t)
+	c := dial(t, testConfig(t, s))
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	start := time.Now()
@@ -165,4 +167,8 @@ func TestQuote(t *testing.T) {
 	if _, err := os.Stat("pwned"); err == nil {
 		t.Fatal("quoted command substitution executed")
 	}
+}
+
+func testConfig(t *testing.T, s *sshtest.Server) Config {
+	return Config{Host: s.Host, Port: s.Port, User: "test", PrivateKey: s.ClientKey, KnownHostsFile: s.KnownHosts(t)}
 }
