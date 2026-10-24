@@ -1,0 +1,11 @@
+# Rocky Linux 10 with systemd and sshd, used as a managed host in end-to-end tests.
+FROM docker.io/rockylinux/rockylinux:10-ubi-init
+
+RUN dnf -y install openssh-server sudo policycoreutils \
+ && dnf clean all \
+ && ssh-keygen -A \
+ && systemctl enable sshd \
+ && mkdir -p -m 700 /root/.ssh
+
+EXPOSE 22
+CMD ["/sbin/init"]
