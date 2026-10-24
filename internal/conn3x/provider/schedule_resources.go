@@ -19,30 +19,32 @@ import (
 
 // planSynced plans a resource whose computed in_sync says whether the host
 // matches: replace when the name or host changes, update when any setting
-// changed or refresh found the host out of sync.
-func planSynced(req providers.PlanResourceChangeRequest, kind string, settings []string) providers.PlanResourceChangeResponse {
+// changed or refresh found the host out of sync. A singleton (one per host,
+// such as its hostname) passes singleton, and its name is a setting.
+func planSynced(req providers.PlanResourceChangeRequest, kind string, singleton bool, settings []string) providers.PlanResourceChangeResponse {
 	var resp providers.PlanResourceChangeResponse
 	if req.ProposedNewState.IsNull() {
 		resp.PlannedState = req.ProposedNewState
 		return resp
 	}
 	vals := req.ProposedNewState.AsValueMap()
-	if vals["on_remove"].IsNull() {
+	if v, ok := vals["on_remove"]; ok && v.IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 	}
 	host, name := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["name"]
-	if host.IsKnown() && name.IsKnown() {
+	switch {
+	case singleton && host.IsKnown():
+		vals["id"] = cty.StringVal(host.AsString() + ":" + kind)
+	case !singleton && host.IsKnown() && name.IsKnown():
 		vals["id"] = cty.StringVal(host.AsString() + ":" + kind + ":" + name.AsString())
-	} else {
+	default:
 		vals["id"] = cty.UnknownVal(cty.String)
 	}
 	stale := req.PriorState.IsNull()
 	if !stale {
-		for _, a := range []string{"name"} {
-			if !req.PriorState.GetAttr(a).RawEquals(vals[a]) {
-				resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath(a))
-				stale = true
-			}
+		if !singleton && !req.PriorState.GetAttr("name").RawEquals(name) {
+			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("name"))
+			stale = true
 		}
 		if !req.PriorState.GetAttr("ssh").GetAttr("host").RawEquals(host) {
 			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("host"))
@@ -107,7 +109,7 @@ func validateCron(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planCron(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "cron", cronSettings)
+	return planSynced(req, "cron", false, cronSettings)
 }
 
 func readCron(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -190,7 +192,7 @@ func validateTimer(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planTimer(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "timer", timerSettings)
+	return planSynced(req, "timer", false, timerSettings)
 }
 
 func readTimer(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

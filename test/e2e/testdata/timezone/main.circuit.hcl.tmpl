@@ -1,0 +1,22 @@
+circuit "clock" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tzdata" {
+    package {
+      name = "tzdata"
+    }
+  }
+
+  step "zone" {
+    timezone {
+      name = "{{.Zone}}"
+    }
+  }
+}

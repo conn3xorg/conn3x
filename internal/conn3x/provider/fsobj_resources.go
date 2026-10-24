@@ -221,7 +221,7 @@ func applyPathResource(ctx context.Context, req providers.ApplyResourceChangeReq
 	target := req.PlannedState
 	if target.IsNull() {
 		resp.NewState = target
-		if req.PriorState.IsNull() || req.PriorState.GetAttr("on_remove").AsString() != onRemoveDelete {
+		if req.PriorState.IsNull() || !req.PriorState.Type().HasAttribute("on_remove") || req.PriorState.GetAttr("on_remove").AsString() != onRemoveDelete {
 			return resp
 		}
 		target = req.PriorState

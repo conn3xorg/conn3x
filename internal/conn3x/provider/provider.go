@@ -42,6 +42,9 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_authorized_key": {authorizedKeySchema, validateAuthorizedKey, planAuthorizedKey, readAuthorizedKey, applyAuthorizedKey, upgradeWith(authorizedKeySchema)},
 	"conn3x_cron":           {cronSchema, validateCron, planCron, readCron, applyCron, upgradeWith(cronSchema)},
 	"conn3x_timer":          {timerSchema, validateTimer, planTimer, readTimer, applyTimer, upgradeWith(timerSchema)},
+	"conn3x_sysctl":         {sysctlSchema, validateSysctl, planSysctl, readSysctl, applySysctl, upgradeWith(sysctlSchema)},
+	"conn3x_hostname":       {hostnameSchema, validateHostname, planHostname, readHostname, applyHostname, upgradeWith(hostnameSchema)},
+	"conn3x_timezone":       {timezoneSchema, validateTimezone, planTimezone, readTimezone, applyTimezone, upgradeWith(timezoneSchema)},
 	"conn3x_group":          {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 }
 

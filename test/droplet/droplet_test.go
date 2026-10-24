@@ -132,6 +132,8 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		`conn3x_file.web__page["web1"] will be created`,
 		`conn3x_service.web__running["web1"] will be created`,
 		`conn3x_file.sudo_check__marker["web1"] will be created`,
+		`conn3x_sysctl.web__forwarding["web1"] will be created`,
+		`conn3x_hostname.web__name["web1"] will be created`,
 		"host             = (known after apply)",
 		"Conn3x will perform the following actions",
 	} {
@@ -179,16 +181,30 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	session, err := client.NewSession()
-	if err != nil {
-		t.Fatal(err)
+	run := func(cmd string) string {
+		t.Helper()
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		out, err := session.Output(cmd)
+		if err != nil {
+			t.Fatalf("%s: %v", cmd, err)
+		}
+		return string(out)
 	}
-	stat, err := session.Output("stat -c '%U %a' /etc/conn3x-sudo-check && cat /etc/conn3x-sudo-check")
-	if err != nil {
-		t.Fatalf("checking the sudo marker: %v", err)
-	}
-	if got := string(stat); got != "root 600\nwritten through sudo\n" {
+	if got := run("stat -c '%U %a' /etc/conn3x-sudo-check && cat /etc/conn3x-sudo-check"); got != "root 600\nwritten through sudo\n" {
 		t.Fatalf("sudo marker = %q", got)
+	}
+	if got := run("sysctl -n net.ipv4.ip_forward net.ipv4.ip_local_port_range"); got != "1\n20000\t60999\n" {
+		t.Fatalf("running sysctl values = %q", got)
+	}
+	if got := run("cat /etc/sysctl.d/90-conn3x-net.ipv4.ip_forward.conf"); got != "# Managed by Conn3x.\nnet.ipv4.ip_forward = 1\n" {
+		t.Fatalf("sysctl drop-in = %q", got)
+	}
+	if got := run("hostname; cat /etc/hostname"); got != "web1.conn3x-ci.internal\nweb1.conn3x-ci.internal\n" {
+		t.Fatalf("hostname = %q", got)
 	}
 
 	if out := must("plan", "-no-color"); !strings.Contains(out, "No changes.") {

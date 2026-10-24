@@ -33,6 +33,8 @@ resource "digitalocean_droplet" "web" {
   # yamlencode keeps the multi-line private key valid YAML.
   user_data = "#cloud-config\n${yamlencode({
     ssh_deletekeys = true
+    # Without this, cloud-init sets the hostname back at every boot.
+    preserve_hostname = true
     ssh_keys = {
       ed25519_private = tls_private_key.host.private_key_openssh
       ed25519_public  = tls_private_key.host.public_key_openssh
@@ -85,6 +87,26 @@ circuit "web" {
       name    = "nginx"
       state   = "started"
       enabled = true
+    }
+  }
+
+  step "forwarding" {
+    sysctl {
+      name  = "net.ipv4.ip_forward"
+      value = "1"
+    }
+  }
+
+  step "ports" {
+    sysctl {
+      name  = "net.ipv4.ip_local_port_range"
+      value = "20000 60999"
+    }
+  }
+
+  step "name" {
+    hostname {
+      name = "${each.key}.conn3x-ci.internal"
     }
   }
 }
