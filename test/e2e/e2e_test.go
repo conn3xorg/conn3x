@@ -62,7 +62,11 @@ func startHost(t *testing.T, image string) *host {
 	tag := "localhost/conn3x-e2e-" + image
 	run(t, "podman", "build", "-q", "-t", tag, imageDir)
 
-	id := strings.TrimSpace(run(t, "podman", "run", "-d", "--rm", "--systemd=always", "-p", "127.0.0.1::22", tag))
+	// Podman's default capabilities differ between versions. A real host's
+	// root can read /etc/shadow (DAC_OVERRIDE) and write audit records, and
+	// PAM needs both to let non-root users log in, so grant them explicitly.
+	id := strings.TrimSpace(run(t, "podman", "run", "-d", "--rm", "--systemd=always",
+		"--cap-add", "DAC_OVERRIDE,AUDIT_WRITE", "-p", "127.0.0.1::22", tag))
 	t.Cleanup(func() {
 		if t.Failed() {
 			// Show what sshd and the rest of the host logged, to explain the failure.
