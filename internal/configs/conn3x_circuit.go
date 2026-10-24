@@ -33,6 +33,8 @@ var circuitModules = map[string]string{
 	"file":    "conn3x_file",
 	"package": "conn3x_package",
 	"service": "conn3x_service",
+	"user":    "conn3x_user",
+	"group":   "conn3x_group",
 }
 
 var circuitSchema = &hcl.BodySchema{
