@@ -81,7 +81,9 @@ func NewProvider(hostname svchost.Hostname, namespace, typeName string) Provider
 // which remains only for compatibility with older OpenTofu versions.
 func ImpliedProviderForUnqualifiedType(typeName string) Provider {
 	switch typeName {
-	case "terraform":
+	// CONN3X: "conn3x" is the built-in provider of the conn3x binary. It is
+	// never published as registry.opentofu.org/hashicorp/conn3x.
+	case "terraform", "conn3x":
 		// Note for future maintainers: any additional strings we add here
 		// as implied to be builtin must never also be use as provider names
 		// in the registry.terraform.io/hashicorp/... namespace, because
