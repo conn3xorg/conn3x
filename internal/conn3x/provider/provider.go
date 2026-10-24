@@ -30,9 +30,11 @@ func unsupported(what string) tfdiags.Diagnostics {
 
 func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchemaResponse {
 	return providers.GetProviderSchemaResponse{
-		Provider:      providers.Schema{Block: emptyBlock()},
-		ResourceTypes: map[string]providers.Schema{},
-		DataSources:   map[string]providers.Schema{},
+		Provider: providers.Schema{Block: emptyBlock()},
+		ResourceTypes: map[string]providers.Schema{
+			"conn3x_file": fileSchema(),
+		},
+		DataSources: map[string]providers.Schema{},
 	}
 }
 
@@ -40,8 +42,12 @@ func (p *Provider) ValidateProviderConfig(_ context.Context, req providers.Valid
 	return providers.ValidateProviderConfigResponse{PreparedConfig: req.Config}
 }
 
-func (p *Provider) ValidateResourceConfig(context.Context, providers.ValidateResourceConfigRequest) providers.ValidateResourceConfigResponse {
-	return providers.ValidateResourceConfigResponse{}
+func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.ValidateResourceConfigRequest) providers.ValidateResourceConfigResponse {
+	switch req.TypeName {
+	case "conn3x_file":
+		return providers.ValidateResourceConfigResponse{Diagnostics: validateFile(req.Config)}
+	}
+	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
 func (p *Provider) ValidateDataResourceConfig(context.Context, providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
@@ -69,6 +75,9 @@ func (p *Provider) Close(context.Context) error { return nil }
 func (p *Provider) Stop(context.Context) error { return nil }
 
 func (p *Provider) UpgradeResourceState(_ context.Context, req providers.UpgradeResourceStateRequest) providers.UpgradeResourceStateResponse {
+	if req.TypeName == "conn3x_file" {
+		return upgradeFile(req)
+	}
 	return providers.UpgradeResourceStateResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
@@ -76,15 +85,24 @@ func (p *Provider) UpgradeResourceIdentity(context.Context, providers.UpgradeRes
 	return providers.UpgradeResourceIdentityResponse{Diagnostics: unsupported("resource identity")}
 }
 
-func (p *Provider) ReadResource(_ context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+func (p *Provider) ReadResource(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	if req.TypeName == "conn3x_file" {
+		return readFile(ctx, req)
+	}
 	return providers.ReadResourceResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
 func (p *Provider) PlanResourceChange(_ context.Context, req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	if req.TypeName == "conn3x_file" {
+		return planFile(req)
+	}
 	return providers.PlanResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
-func (p *Provider) ApplyResourceChange(_ context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	if req.TypeName == "conn3x_file" {
+		return applyFile(ctx, req)
+	}
 	return providers.ApplyResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
