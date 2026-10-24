@@ -80,6 +80,10 @@ func startHost(t *testing.T, image string) *host {
 	signer, _ := gossh.NewSignerFromKey(priv)
 	h.exec(string(gossh.MarshalAuthorizedKey(signer.PublicKey())), "sh", "-c", "cat > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys")
 
+	// Let systemd finish booting first: services that start late can
+	// restart sshd and drop a connection mid-handshake.
+	_ = exec.Command("podman", "exec", id, "timeout", "60", "systemctl", "is-system-running", "--wait").Run()
+
 	// Wait for sshd, then record its key the way an admin would.
 	var keys string
 	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
