@@ -19,11 +19,13 @@ open-source tool we're building to do the whole job, from one binary, with one p
 and one state.
 
 > **Early development.** Today Conn3x configures Linux hosts over SSH, as root or
-> through sudo, on Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu. Circuits can
-> manage files, templates, packages, systemd services, users and groups, and run
-> handlers when something changes. Every plan shows the exact diff. Provisioning
-> and configuring a new server in one plan comes next. Star and watch the repo to
-> follow along. We're building it in public.
+> through sudo, on Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu. One plan can
+> create a server and set it up; we test that against real DigitalOcean droplets.
+> Circuits manage files, templates, directories, symlinks, single lines and marked
+> blocks, packages, systemd services and timers, cron jobs, users, groups and SSH
+> keys. They run guarded commands, and handlers fire only when something changed.
+> Every plan shows the exact diff. Star and watch the repo to follow along. We're
+> building it in public.
 
 <p align="center">
   <img alt="conn3x applying a circuit, then planning a fix for a hand-edited file" src=".github/assets/demo.gif" width="100%">
