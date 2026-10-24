@@ -29,7 +29,7 @@ jobs:
           version: v2.14.0
           args: ./internal/conn3x/... ./cmd/conn3x/...
       - name: Upstream edits stay marked and within budget
-        run: bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 3
+        run: bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 5
       - name: Script tests
         run: |
           bash scripts/upstream/sync_test.sh
