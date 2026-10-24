@@ -18,15 +18,13 @@ scripts, inventory files and second state that hold the two together. Conn3x is 
 open-source tool we're building to do the whole job, from one binary, with one plan
 and one state.
 
-> **Early development.** Today Conn3x configures Linux hosts over SSH, as root or
-> through sudo, on Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu. One plan can
-> create a server and set it up; we test that against real DigitalOcean droplets.
-> Circuits manage files, templates, directories, symlinks, single lines and marked
-> blocks, packages, systemd services and timers, cron jobs, users, groups, SSH
-> keys, kernel parameters, the hostname and the time zone. They run guarded
-> commands, and handlers fire only when something changed.
-> Every plan shows the exact diff. Star and watch the repo to follow along. We're
-> building it in public.
+> **Early development.** Conn3x configures Linux hosts over SSH, as root or through
+> sudo, on Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu. One plan can create a
+> server and set it up, and we test that against real DigitalOcean droplets. Circuits
+> already cover the everyday work: files and templates, packages, services, users and
+> SSH keys, cron jobs and timers, kernel parameters, the hostname and time zone, and
+> firewalld or ufw rules. Every plan shows the exact diff. Star and watch the repo to
+> follow along. We're building it in public.
 
 <p align="center">
   <img alt="conn3x applying a circuit, then planning a fix for a hand-edited file" src=".github/assets/demo.gif" width="100%">
