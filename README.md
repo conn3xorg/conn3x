@@ -18,8 +18,14 @@ scripts, inventory files and second state that hold the two together. Conn3x is 
 open-source tool we're building to do the whole job, from one binary, with one plan
 and one state.
 
-> **Early development.** Conn3x can't provision or configure anything yet. Star and
-> watch the repo to follow along. We're building it in public.
+> **Early development.** Today Conn3x can manage files on Linux hosts over SSH, on
+> their own or in circuits, with plans that show the exact diff. Packages,
+> services and users come next. Star and watch the repo to follow along. We're
+> building it in public.
+
+<p align="center">
+  <img alt="conn3x applying a circuit, then planning a fix for a hand-edited file" src=".github/assets/demo.gif" width="100%">
+</p>
 
 ## What Conn3x will do
 
