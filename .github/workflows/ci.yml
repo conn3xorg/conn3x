@@ -69,9 +69,10 @@ jobs:
           go-version-file: go.mod
       - name: Build
         run: |
-          go build -trimpath -ldflags='-s -w' -o dist/conn3x ./cmd/conn3x
+          scripts/build-conn3x.sh dist/conn3x -ldflags='-s -w'
           go build -trimpath -ldflags='-s -w' -o dist/tofu ./cmd/tofu
           ./dist/conn3x version
+          scripts/brand-check.sh dist/conn3x
 
   e2e:
     runs-on: ubuntu-24.04
