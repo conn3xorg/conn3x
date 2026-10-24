@@ -82,9 +82,9 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 	tpl := template.Must(template.ParseFiles(filepath.Join(filepath.Dir(here), "testdata", "main.tf.tmpl")))
 	var cfg bytes.Buffer
 	if err := tpl.Execute(&cfg, vars{
-		RunID:          runID,
-		Image:          "rockylinux-10-x64",
-		PublicKey:      strings.TrimSpace(string(gossh.MarshalAuthorizedKey(sshPub))),
+		RunID:            runID,
+		Image:            "rockylinux-10-x64",
+		PublicKey:        strings.TrimSpace(string(gossh.MarshalAuthorizedKey(sshPub))),
 		PrivateKeyFile:   keyFile,
 		SudoPassword:     sudoPassword,
 		SudoPasswordFile: pwFile,

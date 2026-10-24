@@ -43,7 +43,9 @@ func TestAuthorizedKeyLetsTheUserLogIn(t *testing.T) {
 				User:            "carol",
 				Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
 				HostKeyCallback: hostKeys,
-				Timeout:         10 * time.Second,
+				// known_hosts only records the ed25519 key, so ask for that one.
+				HostKeyAlgorithms: []string{gossh.KeyAlgoED25519},
+				Timeout:           10 * time.Second,
 			})
 			if err != nil {
 				t.Fatalf("carol can't log in with the installed key: %v", err)
