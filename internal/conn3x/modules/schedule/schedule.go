@@ -34,7 +34,7 @@ func (c Cron) Validate() error {
 	if !cronName.MatchString(c.Name) {
 		return fmt.Errorf("name %q may only use letters, digits, - and _ (cron ignores other file names)", c.Name)
 	}
-	if fields := strings.Fields(c.Schedule); !(len(fields) == 1 && cronMacros[fields[0]]) {
+	if fields := strings.Fields(c.Schedule); len(fields) != 1 || !cronMacros[fields[0]] {
 		if len(fields) != 5 {
 			return fmt.Errorf("schedule %q needs five fields, or a macro such as @daily", c.Schedule)
 		}
