@@ -1,0 +1,17 @@
+circuit "box" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "build" {
+    command {
+      command = "date +%s%N >> /var/tmp/conn3x-runs && touch /var/tmp/conn3x-built"
+      creates = "/var/tmp/conn3x-built"
+    }
+  }
+}
