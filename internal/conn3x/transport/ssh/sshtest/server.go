@@ -11,10 +11,12 @@ import (
 	"encoding/binary"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -34,8 +36,12 @@ type Server struct {
 	// Env is added to the environment of every command the server runs.
 	Env []string
 
-	accepts atomic.Int64
+	accepts  atomic.Int64
+	forwards atomic.Int64
 }
+
+// Forwards is how many connections the server has forwarded as a jump host.
+func (s *Server) Forwards() int64 { return s.forwards.Load() }
 
 // Accepts is how many TCP connections the server has accepted.
 func (s *Server) Accepts() int64 { return s.accepts.Load() }
@@ -63,6 +69,13 @@ func NewKeys(t testing.TB) Keys {
 		t.Fatal(err)
 	}
 	return Keys{Host: hostSigner, ClientKey: pemEncode(pemBlock), client: clientSigner.PublicKey()}
+}
+
+// Sharing returns these keys accepting other's client key instead, for a
+// bastion and the hosts behind it that trust the same key.
+func (k Keys) Sharing(other Keys) Keys {
+	k.ClientKey, k.client = other.ClientKey, other.client
+	return k
 }
 
 // KnownHosts writes a known_hosts file trusting these keys at addr.
@@ -128,8 +141,12 @@ func (s *Server) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 	}
 	go gossh.DiscardRequests(reqs)
 	for ch := range chans {
+		if ch.ChannelType() == "direct-tcpip" {
+			go s.forward(ch)
+			continue
+		}
 		if ch.ChannelType() != "session" {
-			_ = ch.Reject(gossh.UnknownChannelType, "only sessions")
+			_ = ch.Reject(gossh.UnknownChannelType, "only sessions and forwarding")
 			continue
 		}
 		channel, requests, err := ch.Accept()
@@ -138,6 +155,37 @@ func (s *Server) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 		}
 		go s.session(channel, requests)
 	}
+}
+
+// forward connects a direct-tcpip channel to its target, the way a jump
+// host does for ssh -J.
+func (s *Server) forward(nc gossh.NewChannel) {
+	var target struct {
+		Host       string
+		Port       uint32
+		OriginHost string
+		OriginPort uint32
+	}
+	if err := gossh.Unmarshal(nc.ExtraData(), &target); err != nil {
+		_ = nc.Reject(gossh.ConnectionFailed, "bad forward request")
+		return
+	}
+	conn, err := net.Dial("tcp", net.JoinHostPort(target.Host, strconv.Itoa(int(target.Port))))
+	if err != nil {
+		_ = nc.Reject(gossh.ConnectionFailed, err.Error())
+		return
+	}
+	ch, reqs, err := nc.Accept()
+	if err != nil {
+		conn.Close()
+		return
+	}
+	s.forwards.Add(1)
+	go gossh.DiscardRequests(reqs)
+	go func() { _, _ = io.Copy(ch, conn); _ = ch.CloseWrite() }()
+	_, _ = io.Copy(conn, ch)
+	conn.Close()
+	ch.Close()
 }
 
 func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request) {

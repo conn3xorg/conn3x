@@ -65,6 +65,7 @@ require (
 	github.com/hashicorp/jsonapi v1.5.0
 	github.com/jmespath/go-jmespath v0.4.0
 	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0
+	github.com/kevinburke/ssh_config v1.6.0
 	github.com/lib/pq v1.12.3
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-shellwords v1.0.14

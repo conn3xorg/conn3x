@@ -34,6 +34,42 @@ type Config struct {
 	HostKey        string // optional pinned key, in authorized_keys format
 	KnownHostsFile string // default ~/.ssh/known_hosts when HostKey is empty
 	Timeout        time.Duration
+	// Jumps are hosts to connect through first, in order, like ssh -J. Each
+	// is checked against KnownHostsFile and uses the same key.
+	Jumps []Jump
+}
+
+// Jump is a host to connect through on the way to the target.
+type Jump struct {
+	Host string
+	Port int    // default 22
+	User string // default the target's user
+}
+
+// ParseJump reads a jump host the way ssh -J writes one: [user@]host[:port],
+// with IPv6 addresses in brackets.
+func ParseJump(s string) (Jump, error) {
+	j := Jump{Port: 22}
+	rest := s
+	if user, host, ok := strings.Cut(s, "@"); ok {
+		j.User, rest = user, host
+	}
+	host, portText, err := net.SplitHostPort(rest)
+	if err != nil {
+		host, portText = strings.Trim(rest, "[]"), ""
+	}
+	if portText != "" {
+		p, err := strconv.Atoi(portText)
+		if err != nil || p < 1 || p > 65535 {
+			return Jump{}, fmt.Errorf("jump host %q: port must be between 1 and 65535", s)
+		}
+		j.Port = p
+	}
+	if host == "" || strings.ContainsAny(host, " \t/") || (j.User == "" && strings.Contains(s, "@")) {
+		return Jump{}, fmt.Errorf("jump host %q must look like [user@]host[:port]", s)
+	}
+	j.Host = host
+	return j, nil
 }
 
 // Result is the outcome of one command.
@@ -46,8 +82,9 @@ type Result struct {
 // Client is an open connection to one host. It is safe for concurrent use;
 // each Run gets its own session on the shared connection.
 type Client struct {
-	addr string
-	conn *gossh.Client
+	addr  string
+	conn  *gossh.Client
+	jumps []*gossh.Client // the hops in front of conn, outermost first
 }
 
 // Dial connects and authenticates, verifying the host key first.
@@ -58,38 +95,69 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 15 * time.Second
 	}
-	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-
-	hostKeyCallback, algorithms, err := hostKeyCheck(cfg, addr)
-	if err != nil {
-		return nil, err
-	}
 	auth, err := authMethod(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("ssh %s: %w", addr, err)
+		return nil, fmt.Errorf("ssh %s: %w", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), err)
 	}
-
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
-	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("ssh %s: %w", addr, err)
+
+	// Each hop is reached through the one before it; the last is the target.
+	hops := make([]Config, 0, len(cfg.Jumps)+1)
+	for _, j := range cfg.Jumps {
+		hop := Config{Host: j.Host, Port: j.Port, User: j.User, KnownHostsFile: cfg.KnownHostsFile}
+		if hop.Port == 0 {
+			hop.Port = 22
+		}
+		if hop.User == "" {
+			hop.User = cfg.User
+		}
+		hops = append(hops, hop)
 	}
-	deadline, _ := ctx.Deadline()
-	_ = raw.SetDeadline(deadline)
-	conn, chans, reqs, err := gossh.NewClientConn(raw, addr, &gossh.ClientConfig{
-		User:              cfg.User,
-		Auth:              []gossh.AuthMethod{auth},
-		HostKeyCallback:   hostKeyCallback,
-		HostKeyAlgorithms: algorithms,
-		Timeout:           cfg.Timeout,
-	})
-	if err != nil {
-		raw.Close()
-		return nil, fmt.Errorf("ssh %s: %w", addr, err)
+	hops = append(hops, cfg)
+
+	var via []*gossh.Client
+	closeAll := func() {
+		for i := len(via) - 1; i >= 0; i-- {
+			via[i].Close()
+		}
 	}
-	_ = raw.SetDeadline(time.Time{})
-	return &Client{addr: addr, conn: gossh.NewClient(conn, chans, reqs)}, nil
+	for _, hop := range hops {
+		addr := net.JoinHostPort(hop.Host, strconv.Itoa(hop.Port))
+		hostKeyCallback, algorithms, err := hostKeyCheck(hop, addr)
+		if err != nil {
+			closeAll()
+			return nil, err
+		}
+		var raw net.Conn
+		if len(via) == 0 {
+			raw, err = (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+		} else {
+			raw, err = via[len(via)-1].DialContext(ctx, "tcp", addr)
+		}
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("ssh %s: %w", addr, err)
+		}
+		deadline, _ := ctx.Deadline()
+		_ = raw.SetDeadline(deadline)
+		conn, chans, reqs, err := gossh.NewClientConn(raw, addr, &gossh.ClientConfig{
+			User:              hop.User,
+			Auth:              []gossh.AuthMethod{auth},
+			HostKeyCallback:   hostKeyCallback,
+			HostKeyAlgorithms: algorithms,
+			Timeout:           cfg.Timeout,
+		})
+		if err != nil {
+			raw.Close()
+			closeAll()
+			return nil, fmt.Errorf("ssh %s: %w", addr, err)
+		}
+		_ = raw.SetDeadline(time.Time{})
+		via = append(via, gossh.NewClient(conn, chans, reqs))
+	}
+	target := via[len(via)-1]
+	return &Client{addr: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), conn: target, jumps: via[:len(via)-1]}, nil
 }
 
 // hostKeyCheck returns the verification callback and, for known_hosts, the
@@ -227,9 +295,13 @@ func (c *Client) Alive() bool {
 	return err == nil
 }
 
-// Close ends the connection.
+// Close ends the connection, and those to any jump hosts.
 func (c *Client) Close() error {
-	return c.conn.Close()
+	err := c.conn.Close()
+	for i := len(c.jumps) - 1; i >= 0; i-- {
+		c.jumps[i].Close()
+	}
+	return err
 }
 
 // Quote returns s as one POSIX shell word, safe to splice into a command.

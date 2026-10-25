@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	sshconfig "github.com/kevinburke/ssh_config"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
@@ -38,9 +39,19 @@ func connectionBlock() *configschema.NestedBlock {
 		Block: configschema.Block{
 			Description: "How to reach the host over SSH.",
 			Attributes: map[string]*configschema.Attribute{
-				"host":             {Type: cty.String, Required: true, Description: "Hostname or IP address."},
-				"port":             {Type: cty.Number, Optional: true, Description: "SSH port. Defaults to 22."},
-				"user":             {Type: cty.String, Required: true, Description: "User to log in as."},
+				"host": {Type: cty.String, Required: true, Description: "Hostname or IP address."},
+				"port": {Type: cty.Number, Optional: true, Description: "SSH port. Defaults to 22."},
+				"user": {Type: cty.String, Optional: true, Description: "User to log in as. Required unless ssh_config_file sets one."},
+				"jump_hosts": {
+					Type:        cty.List(cty.String),
+					Optional:    true,
+					Description: "Hosts to connect through first, in order, like ssh -J: [user@]host[:port]. Each is checked against known_hosts and uses the same key.",
+				},
+				"ssh_config_file": {
+					Type:        cty.String,
+					Optional:    true,
+					Description: "An OpenSSH config file, such as ~/.ssh/config, to read HostName, User, Port, IdentityFile, ProxyJump and UserKnownHostsFile from, with host as the Host alias. Anything set in this block wins. Nothing is read unless this is set.",
+				},
 				"private_key_file": {Type: cty.String, Optional: true, Description: "Path to a private key. Defaults to the SSH agent."},
 				"host_key":         {Type: cty.String, Optional: true, Description: "Pinned host public key, in authorized_keys format."},
 				"known_hosts_file": {Type: cty.String, Optional: true, Description: "known_hosts file to verify the host against. Defaults to ~/.ssh/known_hosts."},
@@ -159,11 +170,20 @@ func poolKey(cfg ssh.Config, become bool, password []byte) string {
 	for _, part := range [][]byte{
 		[]byte(cfg.Host), []byte(strconv.Itoa(cfg.Port)), []byte(cfg.User), cfg.PrivateKey,
 		[]byte(cfg.HostKey), []byte(cfg.KnownHostsFile), []byte(strconv.FormatBool(become)), password,
+		[]byte(fmt.Sprint(cfg.Jumps)), // the same host through another bastion is another connection
 	} {
 		sum.Write(part)
 		sum.Write([]byte{0})
 	}
 	return hex.EncodeToString(sum.Sum(nil))
+}
+
+// optional reads an attribute added after v0.1, which older values lack.
+func optional(v cty.Value, name string) cty.Value {
+	if !v.Type().HasAttribute(name) {
+		return cty.NullVal(cty.DynamicPseudoType)
+	}
+	return v.GetAttr(name)
 }
 
 func sshConfig(conn cty.Value) (ssh.Config, error) {
@@ -172,7 +192,7 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 	}
 	cfg := ssh.Config{
 		Host:           conn.GetAttr("host").AsString(),
-		User:           conn.GetAttr("user").AsString(),
+		User:           stringOr(conn.GetAttr("user"), ""),
 		HostKey:        stringOr(conn.GetAttr("host_key"), ""),
 		KnownHostsFile: expandHome(stringOr(conn.GetAttr("known_hosts_file"), "")),
 	}
@@ -183,10 +203,68 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 		}
 		cfg.Port = int(p)
 	}
-	if keyFile := stringOr(conn.GetAttr("private_key_file"), ""); keyFile != "" {
-		key, err := os.ReadFile(expandHome(keyFile))
+	keyFile := expandHome(stringOr(conn.GetAttr("private_key_file"), ""))
+	var jumps []string
+	explicitJumps := !optional(conn, "jump_hosts").IsNull()
+	if explicitJumps {
+		for _, j := range optional(conn, "jump_hosts").AsValueSlice() {
+			jumps = append(jumps, j.AsString())
+		}
+	}
+
+	// An OpenSSH config only fills in what the block leaves out.
+	if file := stringOr(optional(conn, "ssh_config_file"), ""); file != "" {
+		f, err := os.Open(expandHome(file))
 		if err != nil {
-			return ssh.Config{}, fmt.Errorf("reading private_key_file: %w", err)
+			return ssh.Config{}, fmt.Errorf("reading ssh_config_file: %w", err)
+		}
+		parsed, err := sshconfig.Decode(f)
+		f.Close()
+		if err != nil {
+			return ssh.Config{}, fmt.Errorf("reading ssh_config_file: %w", err)
+		}
+		get := func(key string) string { v, _ := parsed.Get(cfg.Host, key); return v }
+		if cfg.User == "" {
+			cfg.User = get("User")
+		}
+		if cfg.Port == 0 {
+			if p := get("Port"); p != "" {
+				n, err := strconv.Atoi(p)
+				if err != nil || n < 1 || n > 65535 {
+					return ssh.Config{}, fmt.Errorf("ssh_config_file: Port %q for %s is not a port", p, cfg.Host)
+				}
+				cfg.Port = n
+			}
+		}
+		if keyFile == "" {
+			keyFile = expandHome(get("IdentityFile"))
+		}
+		if cfg.KnownHostsFile == "" {
+			if kh := strings.Fields(get("UserKnownHostsFile")); len(kh) > 0 {
+				cfg.KnownHostsFile = expandHome(kh[0])
+			}
+		}
+		if pj := get("ProxyJump"); !explicitJumps && pj != "" && pj != "none" {
+			jumps = strings.Split(pj, ",")
+		}
+		if name := get("HostName"); name != "" {
+			cfg.Host = name
+		}
+	}
+	if cfg.User == "" {
+		return ssh.Config{}, fmt.Errorf("the ssh block needs a user, or an ssh_config_file that sets User for %s", cfg.Host)
+	}
+	for _, j := range jumps {
+		jump, err := ssh.ParseJump(strings.TrimSpace(j))
+		if err != nil {
+			return ssh.Config{}, err
+		}
+		cfg.Jumps = append(cfg.Jumps, jump)
+	}
+	if keyFile != "" {
+		key, err := os.ReadFile(keyFile)
+		if err != nil {
+			return ssh.Config{}, fmt.Errorf("reading private key %s: %w", keyFile, err)
 		}
 		cfg.PrivateKey = key
 	}
