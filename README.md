@@ -27,7 +27,7 @@ Linux and macOS, amd64 and arm64. Every release is signed and comes with SBOMs;
 [the docs](https://docs.conn3x.org/install) show how to check one.
 
 ```sh
-VERSION=0.1.0 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.1.1 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
