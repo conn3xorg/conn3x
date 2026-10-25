@@ -1,0 +1,25 @@
+- name: Base
+  hosts: box
+  tasks:
+    - name: Install tree
+      package:
+        name: tree
+    - name: App directory
+      file:
+        path: /opt/app
+        state: directory
+        mode: "0750"
+    - name: App config
+      copy:
+        dest: /opt/app/app.conf
+        content: "port = 8080\n"
+        mode: 0640
+    - name: Login banner
+      lineinfile:
+        path: /etc/issue.net
+        line: Managed by Conn3x
+        create: true
+    - name: Service account
+      user:
+        name: app
+        shell: /bin/sh
