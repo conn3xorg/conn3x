@@ -71,9 +71,8 @@ homebrew_casks:
     repository:
       owner: conn3xorg
       name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
-    # The tap needs its own token; until it exists, the cask is not pushed.
-    skip_upload: '{{ if eq (envOrDefault "HOMEBREW_TAP_TOKEN" "") "" }}true{{ end }}'
+      # Token fields only expand .Env, not template functions.
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://conn3x.org
     description: One plan for your cloud and the servers it creates.
     license: MPL-2.0
