@@ -26,7 +26,7 @@ func TestPruneBackends(t *testing.T) {
 		t.Fatalf("pruned init.go does not parse: %v", err)
 	}
 	got := string(out)
-	for _, name := range []string{"kubernetes", "cos", "oss"} {
+	for _, name := range []string{"cos", "oss"} {
 		if strings.Contains(got, "remote-state/"+name+`"`) {
 			t.Errorf("%s is still imported", name)
 		}
@@ -34,7 +34,7 @@ func TestPruneBackends(t *testing.T) {
 			t.Errorf("%s has no removed-backend message", name)
 		}
 	}
-	for _, kept := range []string{"remote-state/s3", "remote-state/gcs", "remote-state/azure", "remote-state/consul", "remote-state/pg", "remote-state/http"} {
+	for _, kept := range []string{"remote-state/kubernetes", "remote-state/s3", "remote-state/gcs", "remote-state/azure", "remote-state/consul", "remote-state/pg", "remote-state/http"} {
 		if !strings.Contains(got, kept) {
 			t.Errorf("%s was pruned", kept)
 		}

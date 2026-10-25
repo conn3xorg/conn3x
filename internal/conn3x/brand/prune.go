@@ -14,12 +14,11 @@ import (
 )
 
 // prunedBackends are the remote-state backends the conn3x build leaves out,
-// by name and import alias. The Kubernetes client alone is a fifth of the
-// binary; Tencent COS and Alibaba OSS each carry their cloud's SDK.
+// by name and import alias: Tencent COS and Alibaba OSS, each of which
+// carries its cloud's SDK. Kubernetes is heavier but widely used, so it stays.
 var prunedBackends = map[string]string{
-	"kubernetes": "backendKubernetes",
-	"cos":        "backendCos",
-	"oss":        "backendOSS",
+	"cos": "backendCos",
+	"oss": "backendOSS",
 }
 
 const backendInit = "internal/backend/init/init.go"
