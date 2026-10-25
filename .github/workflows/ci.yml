@@ -27,7 +27,7 @@ jobs:
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
-          args: ./internal/conn3x/... ./cmd/conn3x/...
+          args: ./internal/conn3x/... ./cmd/conn3x/... ./cmd/conn3x-agent/...
       - name: Upstream edits stay marked and within budget
         run: bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 5
       - name: Script tests
@@ -36,6 +36,7 @@ jobs:
           bash scripts/upstream/commit_payload_test.sh
           bash scripts/upstream/hook-budget_test.sh
           bash scripts/dco-check_test.sh
+          bash scripts/build-agent_test.sh
       - name: Real-host test helpers
         run: go test ./test/droplet/...
 
@@ -87,8 +88,13 @@ jobs:
             GOOS=${target%/*} GOARCH=${target#*/} scripts/build-conn3x.sh "dist/conn3x-${target%/*}-${target#*/}" -ldflags='-s -w'
           done
 
-  e2e:
+  e2e-hosts:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: ["off", "on"]
+    name: e2e (agent ${{ matrix.agent }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,6 +103,19 @@ jobs:
         with:
           go-version-file: go.mod
       - name: End-to-end tests against Podman hosts
+        env:
+          CONN3X_AGENT: ${{ matrix.agent }}
         run: |
           podman --version
           go test -tags e2e -count=1 -timeout 30m -v ./test/e2e/...
+
+  # The required check: both agent modes passed.
+  e2e:
+    if: always()
+    needs: e2e-hosts
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Both agent modes passed
+        env:
+          RESULT: ${{ needs.e2e-hosts.result }}
+        run: '[ "$RESULT" = success ] || { echo "e2e: $RESULT" >&2; exit 1; }'
