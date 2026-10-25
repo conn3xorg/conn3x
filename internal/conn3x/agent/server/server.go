@@ -14,19 +14,32 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/agent/agentpb"
 )
 
+// MaxOutput is the most stdout and stderr together that one command may
+// write. A command that writes more is killed, so a runaway command can't
+// exhaust the host's memory, and its reply always fits in a frame.
+var MaxOutput = 255 << 20
+
+// waitDelay bounds how long a finished or killed command's output pipes
+// are waited for, in case something it started outside its process group
+// still holds them.
+const waitDelay = 2 * time.Second
+
 // Serve says Hello on out, then runs the requests read from in until in
-// ends. When it ends, or ctx is done, every running command is killed and
-// waited for. A clean end of in returns nil.
+// ends. When it ends, when out can't be written, or when ctx is done,
+// every running command is killed and waited for. A clean end of in
+// returns nil.
 func Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
-	s := &server{out: out, running: map[uint64]context.CancelFunc{}}
+	s := &server{out: out, stop: cancel, running: map[uint64]context.CancelFunc{}}
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	defer cancel()
@@ -55,6 +68,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	for {
 		select {
 		case <-ctx.Done():
+			if err := s.writeErr(); err != nil {
+				return err
+			}
 			return ctx.Err()
 		case err := <-readErr:
 			if errors.Is(err, io.EOF) {
@@ -92,18 +108,36 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 }
 
 type server struct {
-	wmu sync.Mutex
-	out io.Writer
+	wmu  sync.Mutex
+	out  io.Writer
+	werr error              // the first failed write
+	stop context.CancelFunc // ends Serve
 
 	mu      sync.Mutex
 	running map[uint64]context.CancelFunc
 }
 
-// send writes one frame; responses from concurrent requests never interleave.
+// send writes one frame; responses from concurrent requests never
+// interleave. Once a write fails nobody can hear the agent, so Serve stops
+// and takes every running command with it.
 func (s *server) send(e *agentpb.Envelope) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	return agentpb.WriteFrame(s.out, e)
+	if s.werr != nil {
+		return s.werr
+	}
+	if err := agentpb.WriteFrame(s.out, e); err != nil {
+		s.werr = fmt.Errorf("writing to conn3x: %w", err)
+		s.stop()
+		return s.werr
+	}
+	return nil
+}
+
+func (s *server) writeErr() error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	return s.werr
 }
 
 func (s *server) fail(id uint64, code agentpb.Code, msg string) {
@@ -113,12 +147,16 @@ func (s *server) fail(id uint64, code agentpb.Code, msg string) {
 // exec runs a command the way the shell transport does, in its own process
 // group so that canceling it kills everything it started.
 func (s *server) exec(ctx context.Context, id uint64, req *agentpb.ExecRequest) {
-	c := exec.CommandContext(ctx, "/bin/sh", "-c", "export LC_ALL=C; "+req.Cmd)
+	runCtx, kill := context.WithCancel(ctx)
+	defer kill()
+	c := exec.CommandContext(runCtx, "/bin/sh", "-c", "export LC_ALL=C; "+req.Cmd)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	c.WaitDelay = waitDelay
 	c.Stdin = bytes.NewReader(req.Stdin)
-	var stdout, stderr bytes.Buffer
-	c.Stdout, c.Stderr = &stdout, &stderr
+	budget := &budget{left: MaxOutput, over: kill}
+	stdout, stderr := &capped{budget: budget}, &capped{budget: budget}
+	c.Stdout, c.Stderr = stdout, stderr
 
 	err := c.Run()
 	var exit *exec.ExitError
@@ -126,12 +164,59 @@ func (s *server) exec(ctx context.Context, id uint64, req *agentpb.ExecRequest) 
 	case ctx.Err() != nil:
 		s.fail(id, agentpb.CodeCanceled, "canceled")
 		return
-	case err != nil && !errors.As(err, &exit):
+	case budget.exceeded():
+		s.fail(id, agentpb.CodeInternal, fmt.Sprintf("the command's output exceeds %d MiB, the most the agent returns", MaxOutput>>20))
+		return
+	case err != nil && !errors.As(err, &exit) && !errors.Is(err, exec.ErrWaitDelay):
 		s.fail(id, agentpb.CodeInternal, err.Error())
 		return
 	}
-	res := &agentpb.ExecResponse{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: int32(c.ProcessState.ExitCode())}
-	if err := s.send(&agentpb.Envelope{ID: id, Result: res}); errors.Is(err, agentpb.ErrFrameTooLarge) {
-		s.fail(id, agentpb.CodeInternal, fmt.Sprintf("the command's output is too large for the agent: %v", err))
+	res := &agentpb.ExecResponse{Stdout: stdout.buf.Bytes(), Stderr: stderr.buf.Bytes(), ExitCode: exitCode(c.ProcessState)}
+	_ = s.send(&agentpb.Envelope{ID: id, Result: res})
+}
+
+// exitCode is the status the shell transport reports: 128 plus the signal
+// for a shell killed by one, as sshd does.
+func exitCode(ps *os.ProcessState) int32 {
+	if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int32(ws.Signal())
 	}
+	return int32(ps.ExitCode())
+}
+
+// budget is the output a command has left, shared by its stdout and stderr.
+type budget struct {
+	mu   sync.Mutex
+	left int
+	over func() // kills the command
+	hit  bool
+}
+
+func (b *budget) exceeded() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.hit
+}
+
+var errOutputLimit = errors.New("output limit reached")
+
+// capped collects output until the budget runs out, then kills the command.
+type capped struct {
+	budget *budget
+	buf    bytes.Buffer
+}
+
+func (w *capped) Write(p []byte) (int, error) {
+	b := w.budget
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(p) > b.left {
+		if !b.hit {
+			b.hit = true
+			b.over()
+		}
+		return 0, errOutputLimit
+	}
+	b.left -= len(p)
+	return w.buf.Write(p)
 }

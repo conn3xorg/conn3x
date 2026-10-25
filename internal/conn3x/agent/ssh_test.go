@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/opentofu/opentofu/internal/conn3x/agent/agentpb"
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/moduletest"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
@@ -171,4 +173,41 @@ func BenchmarkRun(b *testing.B) {
 			})
 		}
 	}
+}
+
+func TestAgentBinaryStopsCleanlyWhenOutputBreaks(t *testing.T) {
+	cmd := exec.Command(buildAgent(t))
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	if _, err := agentpb.ReadFrame(stdout); err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	if err := agentpb.WriteFrame(stdin, &agentpb.Envelope{ID: 1, Exec: &agentpb.ExecRequest{Cmd: "sleep 60 & echo $! > " + pidFile + "; wait"}}); err != nil {
+		t.Fatal(err)
+	}
+	pid := waitForPID(t, pidFile)
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	// With nobody reading, the next reply hits a broken pipe. That must
+	// not kill the agent outright and leave the sleep behind.
+	stdout.Close()
+	if err := agentpb.WriteFrame(stdin, &agentpb.Envelope{ID: 2, Exec: &agentpb.ExecRequest{Cmd: "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	if ws := cmd.ProcessState.Sys().(syscall.WaitStatus); ws.Signaled() {
+		t.Fatalf("the agent died of %v", ws.Signal())
+	}
+	waitGone(t, pid)
 }

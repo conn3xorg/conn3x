@@ -19,6 +19,9 @@ import (
 )
 
 func main() {
+	// A broken stdout must be an error Serve sees, so it can kill what is
+	// still running, not a signal that kills the agent and orphans it.
+	signal.Ignore(syscall.SIGPIPE)
 	// A signal kills the commands still running before the agent exits.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
