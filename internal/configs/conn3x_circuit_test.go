@@ -747,3 +747,40 @@ circuit "app" {
 		t.Fatalf("host a's handler watches %v, want only host a's instances", keys)
 	}
 }
+
+// The parser caches files, so the same circuit can be lowered twice; the
+// second pass must not rewrite references again.
+func TestLoopingStepLowersTwice(t *testing.T) {
+	file, diags := hclsyntax.ParseConfig([]byte(loopingCircuit), "main.circuit.hcl", hcl.InitialPos)
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	content, _ := file.Body.Content(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "circuit", LabelNames: []string{"name"}}}})
+	var second []*Resource
+	for range 2 {
+		rs, d := decodeCircuitBlock(content.Blocks[0], map[string]hcl.Range{})
+		if d.HasErrors() {
+			t.Fatal(d.Error())
+		}
+		second = rs
+	}
+	for _, r := range second {
+		if r.Name != "app__tools" {
+			continue
+		}
+		attrs, _ := r.Config.JustAttributes()
+		var parts []string
+		for _, step := range attrs["name"].Expr.Variables()[0] {
+			switch s := step.(type) {
+			case hcl.TraverseRoot:
+				parts = append(parts, s.Name)
+			case hcl.TraverseAttr:
+				parts = append(parts, s.Name)
+			}
+		}
+		got := strings.Join(parts, ".")
+		if got != "each.value.item" {
+			t.Fatalf("after a second lowering, item.value became %s", got)
+		}
+	}
+}

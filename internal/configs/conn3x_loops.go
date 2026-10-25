@@ -5,6 +5,7 @@ package configs
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -175,7 +176,15 @@ func loopRefs(attrs hclsyntax.Attributes, blocks hclsyntax.Blocks, looping bool)
 	return diags
 }
 
+// rewritten remembers the references already mapped onto the instance
+// object. The parser caches files, so a circuit can be lowered more than
+// once over the same syntax tree, and a second rewrite would nest them.
+var rewritten sync.Map // *hclsyntax.ScopeTraversalExpr => struct{}
+
 func rewriteLoopRef(e *hclsyntax.ScopeTraversalExpr, looping bool) hcl.Diagnostics {
+	if _, done := rewritten.Load(e); done {
+		return nil
+	}
 	t := e.Traversal
 	root := t.RootName()
 	if root != "each" && root != "item" {
@@ -213,6 +222,7 @@ func rewriteLoopRef(e *hclsyntax.ScopeTraversalExpr, looping bool) hcl.Diagnosti
 		}}
 	}
 	sr := t[0].SourceRange()
+	rewritten.Store(e, struct{}{})
 	e.Traversal = append(hcl.Traversal{
 		hcl.TraverseRoot{Name: "each", SrcRange: sr},
 		hcl.TraverseAttr{Name: "value", SrcRange: sr},
