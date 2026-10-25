@@ -86,6 +86,9 @@ func brandTree(cmd *command.Command) {
 			return (&conn3xVersionCommand{Out: stdout}).Run(nil)
 		}
 	}
+	if cmd.Name == "init" && cmd.Run != nil {
+		cmd.Run = suggestEncryption(cmd.Run)
+	}
 	for i := range cmd.Commands {
 		brandTree(&cmd.Commands[i])
 	}

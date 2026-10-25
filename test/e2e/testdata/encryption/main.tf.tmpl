@@ -1,0 +1,15 @@
+terraform {
+{{- if .Encrypted }}
+  encryption {
+    key_provider "pbkdf2" "k" {
+      passphrase = "correct-horse-battery-staple"
+    }
+    method "aes_gcm" "m" {
+      keys = key_provider.pbkdf2.k
+    }
+    state {
+      method = method.aes_gcm.m
+    }
+  }
+{{- end }}
+}
