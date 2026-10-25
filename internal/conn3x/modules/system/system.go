@@ -17,7 +17,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
-var sysctlKey = regexp.MustCompile(`^[A-Za-z0-9_-]+([./][A-Za-z0-9_-]+)+$`)
+var sysctlKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*([./][A-Za-z0-9_-]+)+$`)
 
 // Sysctl is one kernel parameter, kept in its own file in /etc/sysctl.d.
 type Sysctl struct{ Key, Value string }
@@ -54,7 +54,7 @@ func normalize(v string) string { return strings.Join(strings.Fields(v), " ") }
 
 // ReadSysctl returns the live value of a key.
 func ReadSysctl(ctx context.Context, r modules.Runner, key string) (string, error) {
-	res, err := r.Run(ctx, "sysctl -n "+ssh.Quote(key), nil)
+	res, err := r.Run(ctx, "sysctl -n -- "+ssh.Quote(key), nil)
 	if err != nil {
 		return "", err
 	}

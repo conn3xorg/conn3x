@@ -149,12 +149,14 @@ func TestValidate(t *testing.T) {
 		{Path: "/x", Mode: "644x"},
 		{Path: "/x", Mode: "99999"},
 		{Path: "", Mode: "0644"},
+		{Path: "/x", Mode: "644"}, // plan would rewrite it, which OpenTofu rejects
+		{Path: "/x", Mode: "00644"},
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("Validate(%+v) accepted", bad)
 		}
 	}
-	if err := (Desired{Path: "/etc/motd", Mode: "644"}).Validate(); err != nil {
+	if err := (Desired{Path: "/etc/motd", Mode: "0644"}).Validate(); err != nil {
 		t.Errorf("valid desired rejected: %v", err)
 	}
 }

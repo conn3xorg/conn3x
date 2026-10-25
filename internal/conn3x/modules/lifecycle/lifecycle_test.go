@@ -41,3 +41,16 @@ func TestWaitForPath(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A path is data, never shell: it must not run when the wait times out.
+func TestWaitForQuotesThePath(t *testing.T) {
+	dir := t.TempDir()
+	marker := dir + "/ran"
+	err := WaitFor{Path: dir + `/$(touch ` + marker + `)"`, Timeout: time.Second}.Wait(context.Background(), moduletest.Local{})
+	if err == nil || !strings.Contains(err.Error(), "$(touch") {
+		t.Fatalf("err = %v", err)
+	}
+	if res, _ := (moduletest.Local{}).Run(context.Background(), "test -e "+marker, nil); res.ExitCode == 0 {
+		t.Fatal("the path was run as a command")
+	}
+}

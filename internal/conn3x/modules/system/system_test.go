@@ -74,3 +74,9 @@ func TestTimezone(t *testing.T) {
 		}
 	}
 }
+
+func TestSysctlKeyIsNotAFlag(t *testing.T) {
+	if (Sysctl{Key: "-p/etc/shadow", Value: "1"}).Validate() == nil {
+		t.Fatal("accepted a key that sysctl reads as a flag")
+	}
+}

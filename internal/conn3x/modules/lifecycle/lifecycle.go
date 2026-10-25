@@ -77,9 +77,9 @@ func (w WaitFor) Wait(ctx context.Context, r modules.Runner) error {
 	script := fmt.Sprintf(`i=0
 until %s; do
   i=$((i + 1))
-  if [ "$i" -ge %d ]; then echo "timed out after %s waiting for %s" >&2; exit 1; fi
+  if [ "$i" -ge %d ]; then echo %s >&2; exit 1; fi
   sleep 1
-done`, w.condition(), secs, timeout.Round(time.Second), w)
+done`, w.condition(), secs, ssh.Quote(fmt.Sprintf("timed out after %s waiting for %s", timeout.Round(time.Second), w)))
 	res, err := r.Run(ctx, script, nil)
 	if err != nil {
 		return err

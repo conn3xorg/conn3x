@@ -22,7 +22,7 @@ var (
 	sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	commitHex = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	gitRef    = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
-	modeOctal = regexp.MustCompile(`^0?[0-7]{3,4}$`)
+	modeOctal = regexp.MustCompile(`^[0-7]{4}$`)
 )
 
 func absolute(label, p string) error {
@@ -57,7 +57,7 @@ func (d Download) Validate() error {
 		return errors.New("sha256 must be 64 lowercase hex characters")
 	}
 	if d.Mode != "" && !modeOctal.MatchString(d.Mode) {
-		return fmt.Errorf("mode %q must be octal, like \"0644\"", d.Mode)
+		return fmt.Errorf("mode %q must be four octal digits, like \"0644\"", d.Mode)
 	}
 	return nil
 }

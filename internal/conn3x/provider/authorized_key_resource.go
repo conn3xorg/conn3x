@@ -24,7 +24,7 @@ func authorizedKeySchema() providers.Schema {
 			"user":      {Type: cty.String, Required: true, Description: "The account the key logs in as."},
 			"key":       {Type: cty.String, Required: true, Description: "Public key, in authorized_keys format."},
 			"state":     {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\"."},
-			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the key, \"delete\" removes it."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) removes the key, so a rotated key stops working; \"forget\" leaves it."},
 			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether authorized_keys already matches."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
@@ -57,10 +57,7 @@ func planAuthorizedKey(req providers.PlanResourceChangeRequest) providers.PlanRe
 		resp.PlannedState = req.ProposedNewState
 		return resp
 	}
-	vals := req.ProposedNewState.AsValueMap()
-	if vals["on_remove"].IsNull() {
-		vals["on_remove"] = cty.StringVal(defaultOnRemove)
-	}
+	vals := deleteByDefault(req).ProposedNewState.AsValueMap()
 	host, user := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["user"]
 	if host.IsKnown() && user.IsKnown() {
 		vals["id"] = cty.StringVal(host.AsString() + ":authorized_key:" + user.AsString())
