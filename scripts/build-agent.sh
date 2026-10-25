@@ -11,6 +11,10 @@
 # only on the source, not on the commit, so an unchanged agent keeps its
 # checksum. Each agent must stay within 2,000,000 bytes gzipped, or the
 # build fails.
+#
+# GOFLAGS, GOAMD64, GOARM64 and GOEXPERIMENT from the environment are
+# ignored: the agent must run on any amd64 or arm64 host and build the same
+# everywhere.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -23,7 +27,7 @@ trap 'rm -rf "$work"' EXIT
 cd "$root"
 for arch in amd64 arm64; do
   name=conn3x-agent-linux-$arch
-  env -u GOFLAGS GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
+  env -u GOFLAGS -u GOAMD64 -u GOARM64 -u GOEXPERIMENT GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
     go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o "$work/$name" ./cmd/conn3x-agent
   gzip -9n "$work/$name"
   size=$(wc -c <"$work/$name.gz" | tr -d ' ')

@@ -23,6 +23,12 @@ if go version -m "$work/agent" | grep -q vcs; then fail "the agent records git s
 # The same source gives the same bytes.
 bash "$here/build-agent.sh" "$work/b" >/dev/null || fail "second build failed"
 cmp -s "$work/a/conn3x-agent-linux-amd64.gz" "$work/b/conn3x-agent-linux-amd64.gz" || fail "builds differ"
+# This machine's CPU level settings don't reach the agent, which has to run
+# on any amd64 or arm64 host.
+GOAMD64=v3 GOARM64=v9.0 bash "$here/build-agent.sh" "$work/v" >/dev/null || fail "build with GOAMD64 set failed"
+for arch in amd64 arm64; do
+  cmp -s "$work/a/conn3x-agent-linux-$arch.gz" "$work/v/conn3x-agent-linux-$arch.gz" || fail "GOAMD64/GOARM64 changed the $arch agent"
+done
 
 # Over budget fails and leaves nothing behind.
 out=$(CONN3X_AGENT_GZ_LIMIT=1000 bash "$here/build-agent.sh" "$work/c" 2>&1) && fail "over-budget agent accepted"
