@@ -90,7 +90,8 @@ conn3x init && conn3x plan && conn3x apply
 ```
 
 [Get started](https://docs.conn3x.org/get-started) walks through it in about fifteen
-minutes.
+minutes. No server handy? [Try it locally](examples/try-it-locally) against a throwaway
+container, in about five.
 
 ## What it does
 

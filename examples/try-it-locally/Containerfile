@@ -1,0 +1,10 @@
+# A throwaway Rocky Linux 10 host for trying Conn3x. It runs sshd directly,
+# without systemd, so it needs no special privileges under Docker or Podman.
+FROM docker.io/rockylinux/rockylinux:10
+
+RUN dnf -y install openssh-server \
+ && ssh-keygen -A \
+ && mkdir -p -m 700 /root/.ssh
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]
