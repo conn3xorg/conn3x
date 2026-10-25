@@ -223,7 +223,13 @@ func TestAttachReplacesCorruptCache(t *testing.T) {
 	// The cached file is damaged; running it would leave a mark.
 	cached := filepath.Join(h.cacheDir(), agentName(t))
 	mark := filepath.Join(t.TempDir(), "ran")
-	if err := os.WriteFile(cached, []byte("#!/bin/sh\ntouch "+mark+"\n"), 0o700); err != nil {
+	// The first agent is still running from that file, and Linux won't
+	// let it be opened for writing, so swap a new file in.
+	corrupt := filepath.Join(t.TempDir(), "corrupt")
+	if err := os.WriteFile(corrupt, []byte("#!/bin/sh\ntouch "+mark+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(corrupt, cached); err != nil {
 		t.Fatal(err)
 	}
 
