@@ -23,9 +23,9 @@ and one state.
 > server and set it up, and we test that against real DigitalOcean droplets. Circuits
 > already cover the everyday work: files and templates, packages and their
 > repositories, services, users and SSH keys, cron jobs and timers, kernel parameters,
-> the hostname and time zone, firewalld or ufw rules, SELinux booleans and file
-> contexts, and checksummed downloads, archives and git checkouts. Every plan shows
-> the exact diff. Star and watch the repo to follow along. We're building it in
+> mounts, the hostname and time zone, firewalld or ufw rules, SELinux booleans and
+> file contexts, and checksummed downloads, archives and git checkouts. Every plan
+> shows the exact diff. Star and watch the repo to follow along. We're building it in
 > public.
 
 <p align="center">

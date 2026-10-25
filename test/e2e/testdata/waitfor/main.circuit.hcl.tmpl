@@ -1,0 +1,29 @@
+circuit "boot" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "slow_start" {
+    command {
+      command = "(sleep 3; touch /run/conn3x-ready) >/dev/null 2>&1 &"
+    }
+  }
+
+  step "ready" {
+    wait_for {
+      path    = "/run/conn3x-ready"
+      timeout = "30s"
+    }
+  }
+
+  step "sshd" {
+    wait_for {
+      port = 22
+    }
+  }
+}
