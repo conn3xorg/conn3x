@@ -32,6 +32,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Fail before tagging, so a bad tap token can't burn a version: tags
+      # are protected and never deleted. An unreferenced blob changes nothing.
+      - name: Check the tap token can write
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          gh api repos/conn3xorg/homebrew-tap/git/blobs -f content=preflight --silent \
+            || { echo "HOMEBREW_TAP_TOKEN cannot write to conn3xorg/homebrew-tap" >&2; exit 1; }
       - name: Tag
         env:
           GH_TOKEN: ${{ github.token }}
