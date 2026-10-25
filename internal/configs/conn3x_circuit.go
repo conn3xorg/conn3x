@@ -60,6 +60,15 @@ var circuitModules = map[string]string{
 	"group":            "conn3x_group",
 }
 
+// Conn3xStepModules maps each circuit step module to its resource type.
+func Conn3xStepModules() map[string]string {
+	out := make(map[string]string, len(circuitModules))
+	for name, rt := range circuitModules {
+		out[name] = rt
+	}
+	return out
+}
+
 // Conn3xStepResourceTypes lists the resource types circuit steps lower to.
 func Conn3xStepResourceTypes() []string {
 	types := make([]string, 0, len(circuitModules))
