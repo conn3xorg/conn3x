@@ -237,7 +237,7 @@ func applyPathResource(ctx context.Context, req providers.ApplyResourceChangeReq
 			return resp
 		}
 	}
-	h, err := dialConnection(ctx, target.GetAttr("ssh"))
+	h, err := dialForApply(ctx, target.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp

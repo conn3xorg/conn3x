@@ -176,7 +176,7 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		if req.PriorState.IsNull() || req.PriorState.GetAttr("on_remove").AsString() != onRemoveDelete {
 			return resp
 		}
-		client, err := dialConnection(ctx, req.PriorState.GetAttr("ssh"))
+		client, err := dialForApply(ctx, req.PriorState.GetAttr("ssh"))
 		if err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 			return resp
@@ -189,7 +189,7 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	}
 
 	planned := req.PlannedState
-	client, err := dialConnection(ctx, planned.GetAttr("ssh"))
+	client, err := dialForApply(ctx, planned.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp

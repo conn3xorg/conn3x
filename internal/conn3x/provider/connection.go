@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"math/big"
 	"os"
 	"strconv"
@@ -19,8 +20,10 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
+	"github.com/opentofu/opentofu/internal/conn3x/agent"
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+	"github.com/opentofu/opentofu/internal/conn3x/version"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
@@ -57,6 +60,11 @@ func connectionBlock() *configschema.NestedBlock {
 				"host_key":         {Type: cty.String, Optional: true, Description: "Pinned host public key, in authorized_keys format."},
 				"known_hosts_file": {Type: cty.String, Optional: true, Description: "known_hosts file to verify the host against. Defaults to ~/.ssh/known_hosts."},
 				"become":           {Type: cty.Bool, Optional: true, Description: "Run commands as root through sudo."},
+				"agent": {
+					Type:        cty.Bool,
+					Optional:    true,
+					Description: "Run commands through the conn3x agent: a small program conn3x copies to the host and keeps running for the whole run, so each command costs one round trip instead of a new SSH session. An apply uploads it to ~/.cache/conn3x, checked by sha256; a plan only uses a copy already there. Hosts that can't run it fall back to plain shell commands. Not yet used with become. Overrides the CONN3X_AGENT environment variable (on or off). Defaults to off.",
+				},
 				"timeout": {
 					Type:        cty.String,
 					Optional:    true,
@@ -76,12 +84,67 @@ func connectionBlock() *configschema.NestedBlock {
 // block asks for become. Connections are pooled: every resource that names
 // the same host and login in one run shares a single SSH connection.
 type hostConn struct {
-	client *ssh.Client
-	runner modules.Runner
+	client   *ssh.Client
+	runner   modules.Runner
+	useAgent bool
+	host     string // for log messages
+
+	mu    sync.Mutex
+	agent *agent.Client
+	tried [2]bool // attach tried without and with upload
 }
 
+// Run sends cmd to the agent once one is attached, and through the shell
+// otherwise. A command the agent fails to answer is never retried in the
+// shell: it may already have run.
 func (h *hostConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	h.mu.Lock()
+	a := h.agent
+	h.mu.Unlock()
+	if a != nil {
+		return a.Run(ctx, cmd, stdin)
+	}
 	return h.runner.Run(ctx, cmd, stdin)
+}
+
+// attach starts the agent when this connection wants one, at most once
+// without upload and once with it. When it can't, commands stay on the
+// shell.
+func (h *hostConn) attach(ctx context.Context, upload bool) {
+	if !h.useAgent {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	i := 0
+	if upload {
+		i = 1
+	}
+	if h.agent != nil || h.tried[i] {
+		return
+	}
+	h.tried[i] = true
+	a, err := agent.Attach(ctx, h.client, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload})
+	switch {
+	case err == nil:
+		h.agent = a
+	case upload:
+		log.Printf("[WARN] conn3x: running shell commands on %s: %v", h.host, err)
+	default:
+		log.Printf("[INFO] conn3x: running shell commands on %s until an apply: %v", h.host, err)
+	}
+}
+
+// alive reports whether the connection, and its agent if it has one,
+// still work.
+func (h *hostConn) alive() bool {
+	h.mu.Lock()
+	a := h.agent
+	h.mu.Unlock()
+	if a != nil && a.Err() != nil {
+		return false
+	}
+	return h.client.Alive()
 }
 
 // Close returns the connection to the pool; it stays open for the run.
@@ -100,9 +163,49 @@ var pool = struct {
 	conns map[string]*pooledConn
 }{conns: map[string]*pooledConn{}}
 
+// defaultAgent is whether hosts run commands through the agent when
+// neither the agent attribute nor CONN3X_AGENT says.
+const defaultAgent = false
+
+// wantAgent reads the agent attribute, then CONN3X_AGENT, then the default.
+func wantAgent(conn cty.Value) bool {
+	if v := optional(conn, "agent"); !v.IsNull() && v.IsKnown() {
+		return v.True()
+	}
+	switch env := strings.ToLower(os.Getenv("CONN3X_AGENT")); env {
+	case "on":
+		return true
+	case "off":
+		return false
+	case "":
+	default:
+		log.Printf("[WARN] conn3x: CONN3X_AGENT=%q is neither on nor off; ignoring it", env)
+	}
+	return defaultAgent
+}
+
 // dialConnection returns a connection to the host an ssh block describes,
-// reusing an open one when it is still alive.
+// reusing an open one when it is still alive. For reads: it uses an agent
+// already cached on the host but never uploads one.
 func dialConnection(ctx context.Context, conn cty.Value) (*hostConn, error) {
+	return dial(ctx, conn, false)
+}
+
+// dialForApply is dialConnection for applies, which may upload the agent.
+func dialForApply(ctx context.Context, conn cty.Value) (*hostConn, error) {
+	return dial(ctx, conn, true)
+}
+
+func dial(ctx context.Context, conn cty.Value, upload bool) (*hostConn, error) {
+	h, err := pooled(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	h.attach(ctx, upload)
+	return h, nil
+}
+
+func pooled(ctx context.Context, conn cty.Value) (*hostConn, error) {
 	cfg, err := sshConfig(conn)
 	if err != nil {
 		return nil, err
@@ -117,20 +220,25 @@ func dialConnection(ctx context.Context, conn cty.Value) (*hostConn, error) {
 		}
 		password = []byte(strings.TrimRight(string(raw), "\r\n"))
 	}
-	key := poolKey(cfg, useSudo, password)
+	// Under sudo the shell stays in charge until the agent can become root.
+	useAgent := !useSudo && wantAgent(conn)
+	key := poolKey(cfg, useSudo, password, useAgent)
 
 	pool.Lock()
 	entry, ok := pool.conns[key]
 	if ok {
 		pool.Unlock()
 		<-entry.ready
-		if entry.err == nil && entry.conn.client.Alive() {
+		if entry.err == nil && entry.conn.alive() {
 			return entry.conn, nil
 		}
 		pool.Lock()
 		// Another caller may already have replaced the dead entry.
 		if pool.conns[key] == entry {
 			delete(pool.conns, key)
+			if entry.err == nil {
+				_ = entry.conn.client.Close() // its agent may have died alone
+			}
 		}
 		if again, ok := pool.conns[key]; ok {
 			pool.Unlock()
@@ -157,7 +265,7 @@ func dialConnection(ctx context.Context, conn cty.Value) (*hostConn, error) {
 		close(entry.ready)
 		return nil, err
 	}
-	h := &hostConn{client: client, runner: client}
+	h := &hostConn{client: client, runner: client, useAgent: useAgent, host: cfg.Host}
 	if useSudo {
 		h.runner = &ssh.Become{Client: client, Password: password}
 	}
@@ -166,12 +274,13 @@ func dialConnection(ctx context.Context, conn cty.Value) (*hostConn, error) {
 	return h, nil
 }
 
-func poolKey(cfg ssh.Config, become bool, password []byte) string {
+func poolKey(cfg ssh.Config, become bool, password []byte, useAgent bool) string {
 	sum := sha256.New()
 	for _, part := range [][]byte{
 		[]byte(cfg.Host), []byte(strconv.Itoa(cfg.Port)), []byte(cfg.User), cfg.PrivateKey,
 		[]byte(cfg.HostKey), []byte(cfg.KnownHostsFile), []byte(strconv.FormatBool(become)), password,
 		[]byte(fmt.Sprint(cfg.Jumps)), // the same host through another bastion is another connection
+		[]byte(strconv.FormatBool(useAgent)),
 	} {
 		sum.Write(part)
 		sum.Write([]byte{0})
@@ -334,3 +443,6 @@ func hostPort(ssh cty.Value) string {
 	}
 	return ssh.GetAttr("host").AsString()
 }
+
+// agentPayload is where attach gets the agent; tests swap it.
+var agentPayload = agent.Embedded
