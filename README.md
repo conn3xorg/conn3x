@@ -32,8 +32,6 @@ curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/c
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
 
-Or run `ghcr.io/conn3xorg/conn3x`.
-
 ## Quick start
 
 Circuits are Conn3x's playbooks: HCL, beside the rest of your infrastructure. Each step

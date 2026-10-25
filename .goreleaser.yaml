@@ -86,6 +86,7 @@ homebrew_casks:
 changelog:
   sort: asc
   use: github
+  format: "{{ .Message }}"
   groups:
     - title: Features
       regexp: '^.*?feat(\(.+\))??!?:.+$'
