@@ -287,3 +287,50 @@ func TestUpgradeStateWithoutAgentAttribute(t *testing.T) {
 		t.Fatal("upgraded state without the attribute started the agent")
 	}
 }
+
+func TestRequireTurnsUnavailableIntoError(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		attr cty.Value
+	}{{"env alone", cty.NilVal}, {"with agent = true", cty.True}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := newAgentTest(t)
+			t.Setenv("CONN3X_AGENT", "require")
+			if tc.attr != cty.NilVal {
+				f.withConn(map[string]cty.Value{"agent": tc.attr})
+			}
+			bin := t.TempDir()
+			if err := os.WriteFile(filepath.Join(bin, "uname"), []byte("#!/bin/sh\necho riscv64\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			f.server.Env = append(f.server.Env, "PATH="+bin+":"+os.Getenv("PATH"))
+
+			cfg := f.config(map[string]cty.Value{"content": cty.StringVal("hi\n")})
+			null := cty.NullVal(cfg.Type())
+			resp := f.p.ApplyResourceChange(ctx, providers.ApplyResourceChangeRequest{
+				TypeName: "conn3x_file", PriorState: null, PlannedState: f.plan(null, cfg).PlannedState, Config: cfg,
+			})
+			if !resp.Diagnostics.HasErrors() || !strings.Contains(resp.Diagnostics.Err().Error(), "riscv64") {
+				t.Fatalf("apply on a host that can't run the agent = %v, want an error naming riscv64", resp.Diagnostics.Err())
+			}
+			if _, err := os.Stat(f.path); err == nil {
+				t.Fatal("the file was written through the shell anyway")
+			}
+		})
+	}
+}
+
+func TestRequireLetsReadsWaitForAnApply(t *testing.T) {
+	f, _ := newAgentTest(t)
+	state := f.create("hi\n", nil) // agent off
+	t.Setenv("CONN3X_AGENT", "require")
+	// Nothing is cached yet, so the read uses the shell; the apply then
+	// uploads and uses the agent.
+	f.read(state)
+	cfg := f.config(map[string]cty.Value{"content": cty.StringVal("two\n")})
+	before := len(f.server.Commands())
+	f.apply(state, f.plan(state, cfg).PlannedState, cfg)
+	if cmds := f.commands()[before:]; len(cmds) != 3 || !strings.HasPrefix(cmds[2], "exec ") {
+		t.Fatalf("apply under require ran:\n%s", strings.Join(cmds, "\n---\n"))
+	}
+}

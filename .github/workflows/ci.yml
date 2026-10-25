@@ -95,7 +95,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: ["off", "on"]
+        agent: ["off", "require"]
     name: e2e (agent ${{ matrix.agent }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,6 +104,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # "require" fails an apply that can't use the agent, so the on leg
+      # proves every non-become host ran its commands through it.
       - name: End-to-end tests against Podman hosts
         env:
           CONN3X_AGENT: ${{ matrix.agent }}
