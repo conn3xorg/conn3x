@@ -139,6 +139,7 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		`conn3x_selinux_boolean.web__proxy["web1"] will be created`,
 		`conn3x_selinux_fcontext.web__content_label["web1"] will be created`,
 		`conn3x_ufw_rule.edge__http["edge1"] will be created`,
+		`conn3x_reboot.edge__reboot["edge1"] will be created`,
 		"host             = (known after apply)",
 		"Conn3x will perform the following actions",
 	} {
@@ -217,6 +218,9 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer edge.Close()
+	if got := runOn(t, edge, "test -e /run/conn3x-before-reboot && echo still there || echo gone"); got != "gone\n" {
+		t.Fatalf("edge did not reboot: marker %s", got)
+	}
 	if got := runOn(t, edge, "ufw status"); !strings.Contains(got, "Status: active") || !strings.Contains(got, "80/tcp") {
 		t.Fatalf("ufw status:\n%s", got)
 	}

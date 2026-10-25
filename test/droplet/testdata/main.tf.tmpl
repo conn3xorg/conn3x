@@ -222,6 +222,25 @@ circuit "edge" {
       name = "nginx"
     }
   }
+
+  # /run is cleared at boot, so this marker shows the reboot happened.
+  step "marker" {
+    command {
+      command = "touch /run/conn3x-before-reboot"
+    }
+  }
+
+  step "reboot" {
+    reboot {
+      triggers = { reason = "droplet test" }
+    }
+  }
+
+  step "nginx_back" {
+    wait_for {
+      port = 80
+    }
+  }
 }
 
 circuit "sudo_check" {

@@ -47,6 +47,8 @@ var circuitModules = map[string]string{
 	"archive":          "conn3x_archive",
 	"git":              "conn3x_git",
 	"mount":            "conn3x_mount",
+	"wait_for":         "conn3x_wait_for",
+	"reboot":           "conn3x_reboot",
 	"directory":        "conn3x_directory",
 	"link":             "conn3x_link",
 	"line":             "conn3x_line",

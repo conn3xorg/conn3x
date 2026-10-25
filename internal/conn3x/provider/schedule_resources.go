@@ -41,7 +41,7 @@ func planSynced(req providers.PlanResourceChangeRequest, kind string, keys, sett
 				id = nil
 				break
 			}
-			id = append(id, stringOr(vals[k], ""))
+			id = append(id, keyString(vals[k]))
 		}
 		if id != nil {
 			vals["id"] = cty.StringVal(strings.Join(id, ":"))
@@ -74,6 +74,18 @@ func planSynced(req providers.PlanResourceChangeRequest, kind string, keys, sett
 	}
 	resp.PlannedState = cty.ObjectVal(vals)
 	return resp
+}
+
+// keyString renders a key attribute for an id: "" when null, numbers in
+// plain decimal.
+func keyString(v cty.Value) string {
+	switch {
+	case v.IsNull():
+		return ""
+	case v.Type() == cty.Number:
+		return v.AsBigFloat().Text('f', -1)
+	}
+	return v.AsString()
 }
 
 func withSync(v cty.Value, inSync bool) cty.Value {
