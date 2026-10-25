@@ -148,6 +148,86 @@ if [ -f /etc/timezone ]; then echo %[1]s > /etc/timezone; fi`, q)
 	return check(r.Run(ctx, script, nil))
 }
 
+var localeName = regexp.MustCompile(`^(C|POSIX|C\.[A-Za-z0-9-]+|[a-z]{2,3}(_[A-Z]{2})?(\.[A-Za-z0-9-]+)?(@[a-z]+)?)$`)
+
+// ValidateLocale checks the shape of a locale name such as en_US.UTF-8.
+func ValidateLocale(name string) error {
+	if !localeName.MatchString(name) {
+		return fmt.Errorf("locale %q is not a name such as en_US.UTF-8 or C.UTF-8", name)
+	}
+	return nil
+}
+
+// NormalizeLocale spells a locale the way locale -a does, so en_US.UTF-8
+// and en_US.utf8 compare equal.
+func NormalizeLocale(name string) string {
+	base, enc, ok := strings.Cut(name, ".")
+	if !ok {
+		return name
+	}
+	mod := ""
+	if i := strings.Index(enc, "@"); i >= 0 {
+		enc, mod = enc[:i], enc[i:]
+	}
+	return base + "." + strings.ToLower(strings.ReplaceAll(enc, "-", "")) + mod
+}
+
+// ReadLocale returns the system's LANG from the file ApplyLocale writes:
+// /etc/default/locale where update-locale exists (Debian family), else
+// /etc/locale.conf. It returns "" if LANG isn't set.
+func ReadLocale(ctx context.Context, r modules.Runner) (string, error) {
+	res, err := r.Run(ctx, "if command -v update-locale >/dev/null 2>&1; then cat /etc/default/locale; else cat /etc/locale.conf; fi 2>/dev/null; true", nil)
+	if err != nil {
+		return "", err
+	}
+	return langFrom(string(res.Stdout)), nil
+}
+
+func langFrom(conf string) string {
+	for _, line := range strings.Split(conf, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "LANG="); ok {
+			return strings.Trim(v, `"'`)
+		}
+	}
+	return ""
+}
+
+// ApplyLocale sets the system's LANG. A locale that isn't installed is
+// generated where locale-gen exists (Debian, Ubuntu); on the Red Hat family
+// it needs its glibc-langpack package first.
+func ApplyLocale(ctx context.Context, r modules.Runner, name string) error {
+	if err := ValidateLocale(name); err != nil {
+		return err
+	}
+	script := fmt.Sprintf(`set -e
+want=%[1]s
+have() { locale -a 2>/dev/null | sed 's/\.utf-*8/.utf8/I' | grep -qix -- "$(printf '%%s' "$want" | sed 's/\.utf-*8/.utf8/I')"; }
+if ! have; then
+  if command -v locale-gen >/dev/null 2>&1; then
+    if [ -f /etc/locale.gen ]; then
+      grep -q "^[# ]*$want " /etc/locale.gen && sed -i "s/^[# ]*\($want \)/\1/" /etc/locale.gen || echo "$want UTF-8" >> /etc/locale.gen
+      locale-gen >/dev/null
+    else
+      locale-gen "$want" >/dev/null
+    fi
+  fi
+fi
+if ! have; then
+  lang=${want%%%%_*}
+  echo "locale $want isn't installed; on the Red Hat family add a package step for glibc-langpack-$lang first" >&2
+  exit 1
+fi
+if command -v update-locale >/dev/null 2>&1; then
+  update-locale LANG="$want"
+elif localectl set-locale LANG="$want" 2>/dev/null; then
+  :
+else
+  printf 'LANG=%%s
+' "$want" > /etc/locale.conf
+fi`, ssh.Quote(name))
+	return check(r.Run(ctx, script, nil))
+}
+
 func check(res ssh.Result, err error) error {
 	if err != nil {
 		return err

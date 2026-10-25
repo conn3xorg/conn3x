@@ -4,6 +4,8 @@
 package system
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,4 +81,48 @@ func TestSysctlKeyIsNotAFlag(t *testing.T) {
 	if (Sysctl{Key: "-p/etc/shadow", Value: "1"}).Validate() == nil {
 		t.Fatal("accepted a key that sysctl reads as a flag")
 	}
+}
+
+func TestLocale(t *testing.T) {
+	for _, ok := range []string{"C", "C.UTF-8", "POSIX", "en_US.UTF-8", "en_GB.utf8", "de_DE", "sr_RS@latin", "ast_ES.UTF-8"} {
+		if err := ValidateLocale(ok); err != nil {
+			t.Errorf("%q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "en US", "en_US.UTF-8;rm -rf /", "../etc", "LANG=en_US"} {
+		if ValidateLocale(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	// locale -a spells the same locale differently from LANG.
+	for a, b := range map[string]string{"en_US.UTF-8": "en_US.utf8", "C.UTF-8": "C.utf8", "de_DE": "de_DE"} {
+		if NormalizeLocale(a) != NormalizeLocale(b) {
+			t.Errorf("%q and %q should match", a, b)
+		}
+	}
+	if NormalizeLocale("en_US.UTF-8") == NormalizeLocale("en_GB.UTF-8") {
+		t.Error("different locales matched")
+	}
+}
+
+func TestReadLocale(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "locale.conf"), []byte("# set by hand\nLANG=\"en_GB.UTF-8\"\nLC_TIME=C\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := langFrom(readFileString(t, filepath.Join(dir, "locale.conf"))); got != "en_GB.UTF-8" {
+		t.Fatalf("langFrom = %q", got)
+	}
+	if got := langFrom("LC_ALL=C\n"); got != "" {
+		t.Fatalf("no LANG gives %q", got)
+	}
+}
+
+func readFileString(t *testing.T, p string) string {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
