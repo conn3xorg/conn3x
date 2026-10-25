@@ -1,8 +1,10 @@
 # Rocky Linux 10 with systemd and sshd, used as a managed host in end-to-end tests.
+# The repository metadata stays in the image, so each test's container does
+# not download it again (it is valid for six hours).
 FROM docker.io/rockylinux/rockylinux:10-ubi-init
 
 RUN dnf -y install openssh-server sudo policycoreutils \
- && dnf clean all \
+ && dnf makecache \
  && ssh-keygen -A \
  && systemctl enable sshd \
  && mkdir -p -m 700 /root/.ssh
