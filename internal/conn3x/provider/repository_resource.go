@@ -99,12 +99,16 @@ func applyRepository(ctx context.Context, req providers.ApplyResourceChangeReque
 	}
 	return applyPathResource(ctx, req,
 		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
-			if err := withFamily(ctx, h, planned, func(ctx context.Context, h *hostConn, f pkg.Family, r repo.Repo) error { return repo.Apply(ctx, h, f, r) }); err != nil {
+			if err := withFamily(ctx, h, planned, func(ctx context.Context, h *hostConn, f pkg.Family, r repo.Repo) error {
+				return repo.Apply(ctx, h, f, r)
+			}); err != nil {
 				return cty.NilVal, err
 			}
 			return withSync(planned, true), nil
 		},
 		func(ctx context.Context, h *hostConn, prior cty.Value) error {
-			return withFamily(ctx, h, prior, func(ctx context.Context, h *hostConn, f pkg.Family, r repo.Repo) error { return repo.Delete(ctx, h, f, r) })
+			return withFamily(ctx, h, prior, func(ctx context.Context, h *hostConn, f pkg.Family, r repo.Repo) error {
+				return repo.Delete(ctx, h, f, r)
+			})
 		})
 }

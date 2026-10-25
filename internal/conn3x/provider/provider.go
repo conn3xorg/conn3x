@@ -54,6 +54,8 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_archive":          {archiveSchema, validateWith("src", func(v cty.Value) error { return archiveFrom(v).Validate() }), planArchive, readArchive, applyArchive, upgradeWith(archiveSchema)},
 	"conn3x_git":              {gitSchema, validateWith("repo", func(v cty.Value) error { return gitFrom(v).Validate() }), planGit, readGit, applyGit, upgradeWith(gitSchema)},
 	"conn3x_mount":            {mountSchema, validateWith("path", func(v cty.Value) error { return mountFrom(v).Validate() }), planMount, readMount, applyMount, upgradeWith(mountSchema)},
+	"conn3x_wait_for":         {waitForSchema, validateWaitFor, planWaitFor, readWaitFor, applyWaitFor, upgradeWith(waitForSchema)},
+	"conn3x_reboot":           {rebootSchema, validateReboot, planReboot, readReboot, applyReboot, upgradeWith(rebootSchema)},
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 }
 
@@ -73,7 +75,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 	return providers.GetProviderSchemaResponse{
 		Provider:      providers.Schema{Block: emptyBlock()},
 		ResourceTypes: resourceSchemas(),
-		DataSources:   map[string]providers.Schema{},
+		DataSources:   map[string]providers.Schema{"conn3x_host": hostDataSchema()},
 	}
 }
 
@@ -90,8 +92,11 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
-func (p *Provider) ValidateDataResourceConfig(context.Context, providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
-	return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data sources")}
+func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
+	if req.TypeName != "conn3x_host" {
+		return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data source " + req.TypeName)}
+	}
+	return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config)}
 }
 
 func (p *Provider) ValidateEphemeralConfig(context.Context, providers.ValidateEphemeralConfigRequest) providers.ValidateEphemeralConfigResponse {
@@ -150,8 +155,11 @@ func (p *Provider) ImportResourceState(context.Context, providers.ImportResource
 	return providers.ImportResourceStateResponse{Diagnostics: unsupported("import")}
 }
 
-func (p *Provider) ReadDataSource(context.Context, providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
-	return providers.ReadDataSourceResponse{Diagnostics: unsupported("data sources")}
+func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
+	if req.TypeName != "conn3x_host" {
+		return providers.ReadDataSourceResponse{Diagnostics: unsupported("data source " + req.TypeName)}
+	}
+	return readHostData(ctx, req)
 }
 
 func (p *Provider) OpenEphemeralResource(context.Context, providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {

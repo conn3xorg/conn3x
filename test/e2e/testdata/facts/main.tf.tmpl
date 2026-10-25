@@ -1,0 +1,31 @@
+data "conn3x_host" "box" {
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
+
+circuit "facts" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "motd" {
+    file {
+      path    = "/etc/conn3x-facts"
+      content = "${data.conn3x_host.box.os_family} ${data.conn3x_host.box.os_id} ${data.conn3x_host.box.arch} ${data.conn3x_host.box.cpus}\n"
+    }
+  }
+}
+
+output "memory_mb" {
+  value = data.conn3x_host.box.memory_mb
+}
