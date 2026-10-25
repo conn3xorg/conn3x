@@ -30,14 +30,19 @@ func fileSchema() providers.Schema {
 		Block: &configschema.Block{
 			Description: "A regular file on a host: its content, mode and ownership.",
 			Attributes: map[string]*configschema.Attribute{
-				"id":        {Type: cty.String, Computed: true},
-				"path":      {Type: cty.String, Required: true, Description: "Absolute path of the file on the host."},
-				"content":   {Type: cty.String, Required: true, Description: "Exact content of the file."},
-				"mode":      {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0644\"."},
-				"owner":     {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
-				"group":     {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
-				"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
-				"sha256":    {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded."},
+				"id":      {Type: cty.String, Computed: true},
+				"path":    {Type: cty.String, Required: true, Description: "Absolute path of the file on the host."},
+				"content": {Type: cty.String, Optional: true, Description: "Exact content of the file. Set this or content_wo."},
+				"content_wo": {
+					Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
+					Description: "Exact content of the file, kept out of state: state records only content_hmac. Use it for secrets. Set this or content.",
+				},
+				"content_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of content_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null when content is used."},
+				"mode":         {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0644\"."},
+				"owner":        {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
+				"group":        {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
+				"on_remove":    {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
+				"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded."},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{
 				"ssh": connectionBlock(),
@@ -52,6 +57,9 @@ func validateFile(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
+	if cfg.GetAttr("content").IsNull() == cfg.GetAttr("content_wo").IsNull() {
+		diags = diags.Append(attrError("content", "set exactly one of content and content_wo"))
+	}
 	path, mode := cfg.GetAttr("path"), cfg.GetAttr("mode")
 	if path.IsKnown() && !path.IsNull() {
 		d := file.Desired{Path: path.AsString(), Mode: defaultMode}
@@ -84,10 +92,25 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 	if mode := vals["mode"]; mode.IsKnown() {
 		vals["mode"] = cty.StringVal(file.NormalizeMode(mode.AsString()))
 	}
-	if content := vals["content"]; content.IsKnown() {
-		vals["sha256"] = cty.StringVal(digest(content.AsString()))
+	if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
+		// Write-only: the content stays out of the plan and state.
+		vals["content"], vals["content_wo"], vals["sha256"] = cty.NullVal(cty.String), cty.NullVal(cty.String), cty.NullVal(cty.String)
+		vals["content_hmac"] = cty.UnknownVal(cty.String)
+		key, err := writeKey(req.PriorState)
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("content_wo", err.Error()))
+			return resp
+		}
+		if wo.IsKnown() {
+			vals["content_hmac"] = cty.StringVal(contentHMAC(key, wo.AsString()))
+		}
 	} else {
-		vals["sha256"] = cty.UnknownVal(cty.String)
+		vals["content_hmac"] = cty.NullVal(cty.String)
+		if content := vals["content"]; content.IsKnown() {
+			vals["sha256"] = cty.StringVal(digest(content.AsString()))
+		} else {
+			vals["sha256"] = cty.UnknownVal(cty.String)
+		}
 	}
 	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
 	if path := vals["path"]; path.IsKnown() {
@@ -133,7 +156,12 @@ func readFile(ctx context.Context, req providers.ReadResourceRequest) providers.
 		resp.NewState = cty.NullVal(req.PriorState.Type())
 		return resp
 	}
-	resp.NewState = stateFrom(req.PriorState, actual)
+	key, err := woKey(req.PriorState)
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("content_wo", err.Error()))
+		return resp
+	}
+	resp.NewState = stateFrom(req.PriorState, actual, key)
 	return resp
 }
 
@@ -164,9 +192,18 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	}
 	defer client.Close()
 
+	content := planned.GetAttr("content")
+	var key []byte
+	if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
+		content = wo
+		if key, err = writeKey(req.PriorState); err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("content_wo", err.Error()))
+			return resp
+		}
+	}
 	desired := file.Desired{
 		Path:    planned.GetAttr("path").AsString(),
-		Content: planned.GetAttr("content").AsString(),
+		Content: content.AsString(),
 		Mode:    planned.GetAttr("mode").AsString(),
 		Owner:   stringOr(planned.GetAttr("owner"), ""),
 		Group:   stringOr(planned.GetAttr("group"), ""),
@@ -184,16 +221,22 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("%s does not match what was written; something else changed it", desired.Path))
 		return resp
 	}
-	resp.NewState = stateFrom(planned, actual)
+	resp.NewState = stateFrom(planned, actual, key)
 	return resp
 }
 
 // stateFrom records what is actually on the host. Owner and group are only
-// tracked when the configuration manages them.
-func stateFrom(base cty.Value, actual file.Actual) cty.Value {
+// tracked when the configuration manages them. With a key, the content is
+// write-only and state gets its HMAC instead.
+func stateFrom(base cty.Value, actual file.Actual, key []byte) cty.Value {
 	vals := base.AsValueMap()
-	vals["content"] = cty.StringVal(actual.Content)
-	vals["sha256"] = cty.StringVal(digest(actual.Content))
+	if key != nil {
+		vals["content"], vals["sha256"] = cty.NullVal(cty.String), cty.NullVal(cty.String)
+		vals["content_hmac"] = cty.StringVal(contentHMAC(key, actual.Content))
+	} else {
+		vals["content"] = cty.StringVal(actual.Content)
+		vals["sha256"] = cty.StringVal(digest(actual.Content))
+	}
 	vals["mode"] = cty.StringVal(actual.Mode)
 	if !vals["owner"].IsNull() {
 		vals["owner"] = cty.StringVal(actual.Owner)
@@ -233,4 +276,30 @@ func validateOnRemove(cfg cty.Value) tfdiags.Diagnostics {
 		}
 	}
 	return diags
+}
+
+// woKey returns the HMAC key when state holds write-only content, and nil
+// when it holds plain content.
+func woKey(state cty.Value) ([]byte, error) {
+	if state.IsNull() || state.GetAttr("content_hmac").IsNull() {
+		return nil, nil
+	}
+	return writeKey(state)
+}
+
+// writeKey returns the HMAC key, checking that prior state, if it holds
+// write-only content, was hashed with the same key.
+func writeKey(prior cty.Value) ([]byte, error) {
+	key, err := hmacKey()
+	if err != nil {
+		return nil, err
+	}
+	if !prior.IsNull() {
+		if stored := prior.GetAttr("content_hmac"); stored.IsKnown() && !stored.IsNull() {
+			if err := checkHMACKey(stored.AsString(), key); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return key, nil
 }
