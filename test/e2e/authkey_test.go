@@ -40,7 +40,7 @@ func TestAuthorizedKeyLetsTheUserLogIn(t *testing.T) {
 			// droplet suite's deploy user.
 			// Without PAM, sshd also refuses accounts that have no password at
 			// all, as useradd leaves them; "*" marks "no usable password".
-			h.exec("", "sh", "-c", "usermod -p '*' carol && echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && (systemctl restart sshd 2>/dev/null || systemctl restart ssh)")
+			h.exec("", "sh", "-c", "usermod -p '*' carol && usermod -p '*' root && echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && (systemctl restart sshd 2>/dev/null || systemctl restart ssh)")
 			hostKeys, err := knownhosts.New(h.knownHosts)
 			if err != nil {
 				t.Fatal(err)

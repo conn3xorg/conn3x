@@ -12,7 +12,7 @@ import (
 )
 
 func TestHostFacts(t *testing.T) {
-	families := map[string]string{"rocky10": "redhat rocky", "ubuntu2404": "debian ubuntu", "debian13": "debian debian"}
+	families := map[string]string{"rocky10": "redhat rocky", "fedora45": "redhat fedora", "ubuntu2404": "debian ubuntu", "debian13": "debian debian"}
 	for _, image := range linuxImages {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)

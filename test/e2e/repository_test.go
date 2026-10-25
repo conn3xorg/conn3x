@@ -32,7 +32,10 @@ func TestRepository(t *testing.T) {
 	// that apt lists nginx.org's builds, which it does only once the
 	// repository's signature checks out.
 	repos := map[string]struct{ url, suite, check, want string }{
-		"rocky10":    {"https://nginx.org/packages/centos/10/$basearch/", "", "rpm -q --qf %{RELEASE} nginx", ".ngx"},
+		"rocky10": {"https://nginx.org/packages/centos/10/$basearch/", "", "rpm -q --qf %{RELEASE} nginx", ".ngx"},
+		// Fedora has no nginx.org build, so check dnf trusts the repository
+		// enough to read its metadata.
+		"fedora45":   {"https://nginx.org/packages/centos/10/$basearch/", "", "dnf -q repoquery --repo nginx-org nginx", ".ngx"},
 		"ubuntu2404": {"https://nginx.org/packages/ubuntu", "noble", "apt-cache madison nginx", "https://nginx.org/packages/ubuntu noble/nginx"},
 		"debian13":   {"https://nginx.org/packages/debian", "trixie", "apt-cache madison nginx", "https://nginx.org/packages/debian trixie/nginx"},
 	}

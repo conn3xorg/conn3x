@@ -242,3 +242,16 @@ func TestApplyDebRefreshesListsWhenNoCandidate(t *testing.T) {
 		t.Fatalf("install ran %d times, want a retry after apt-get update", calls)
 	}
 }
+
+// On Fedora, wget is a name that wget2-wget provides: dnf installs it, and
+// rpm -q wget finds nothing.
+func TestReadRPMVirtualProvide(t *testing.T) {
+	h := &scriptedHost{answers: []answer{
+		{"--whatprovides", ok("0:2.2.1-1.fc45.x86_64\n")},
+		{"rpm -q", ssh.Result{ExitCode: 1, Stdout: []byte("package wget is not installed\n")}},
+	}}
+	a, err := Read(ctx, h, RPM, "wget", false)
+	if err != nil || !a.Installed || a.Version != "0:2.2.1-1.fc45" {
+		t.Fatalf("got %+v, %v", a, err)
+	}
+}

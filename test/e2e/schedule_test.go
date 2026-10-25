@@ -18,7 +18,7 @@ func TestCronAndTimer(t *testing.T) {
 			h := startHost(t, image)
 			w := newWorkdir(t, "schedule")
 			cron := "cron"
-			if image == "rocky10" {
+			if rpmImage(image) {
 				cron = "cronie"
 			}
 			w.writeAs("main.circuit.hcl", scheduleVars{h.port, h.keyFile, h.knownHosts, cron})

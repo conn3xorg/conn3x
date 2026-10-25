@@ -16,8 +16,8 @@ type ufwVars struct{ Port, KeyFile, KnownHosts, DNSPort string }
 // the droplet suite enables it on a real kernel.
 func TestUFWRules(t *testing.T) {
 	for _, image := range linuxImages {
-		if image == "rocky10" {
-			continue // ufw is a Debian-family tool; Rocky uses firewalld
+		if rpmImage(image) {
+			continue // ufw is a Debian-family tool; the Red Hat family uses firewalld
 		}
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)

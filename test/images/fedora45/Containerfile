@@ -1,0 +1,13 @@
+# Fedora 45 with systemd and sshd, used as a managed host in end-to-end tests.
+FROM registry.fedoraproject.org/fedora:45
+
+RUN dnf -y install systemd openssh-server sudo procps-ng iproute policycoreutils \
+ && dnf makecache \
+ && ssh-keygen -A \
+ && systemctl enable sshd \
+ && systemctl mask systemd-firstboot.service \
+ && mkdir -p -m 700 /root/.ssh
+
+STOPSIGNAL SIGRTMIN+3
+EXPOSE 22
+CMD ["/sbin/init"]

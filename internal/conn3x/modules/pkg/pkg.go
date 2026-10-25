@@ -114,7 +114,13 @@ func Read(ctx context.Context, r modules.Runner, family Family, name string, can
 	var a Actual
 	switch family {
 	case RPM:
-		res, err := r.Run(ctx, "rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\\n' -- "+q, nil)
+		const qf = "--qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\\n' -- "
+		res, err := r.Run(ctx, "rpm -q "+qf+q, nil)
+		if err == nil && res.ExitCode != 0 {
+			// The name may be one another package provides, as wget is on
+			// Fedora, where dnf installs wget2-wget for it.
+			res, err = r.Run(ctx, "rpm -q --whatprovides "+qf+q, nil)
+		}
 		if err != nil {
 			return a, err
 		}

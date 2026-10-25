@@ -38,7 +38,7 @@ func TestPackageLifecycle(t *testing.T) {
 
 			// Removing it by hand shows up as drift and apply reinstalls it.
 			remove := "dnf -y -q remove tree"
-			if image != "rocky10" { // apt-based images
+			if !rpmImage(image) {
 				remove = "DEBIAN_FRONTEND=noninteractive apt-get -y -q remove tree"
 			}
 			h.exec("", "sh", "-c", remove)

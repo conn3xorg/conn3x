@@ -28,7 +28,10 @@ import (
 var conn3xBin string
 
 // linuxImages are the test hosts that cross-distro tests run on.
-var linuxImages = []string{"rocky10", "ubuntu2404", "debian13"}
+var linuxImages = []string{"rocky10", "fedora45", "ubuntu2404", "debian13"}
+
+// rpmImage reports whether an image uses dnf rather than apt.
+func rpmImage(image string) bool { return image == "rocky10" || image == "fedora45" }
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "conn3x-e2e-bin")
