@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"syscall"
 
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
@@ -27,6 +28,11 @@ func (Local) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, err
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		res.ExitCode = exit.ExitCode()
+		// A shell killed by a signal reads as 128 plus the signal over
+		// SSH, so it does here too.
+		if ws, ok := exit.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			res.ExitCode = 128 + int(ws.Signal())
+		}
 		return res, nil
 	}
 	return res, err

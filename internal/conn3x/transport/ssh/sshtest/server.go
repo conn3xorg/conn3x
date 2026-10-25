@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -245,13 +246,17 @@ func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
 		code := 0
 		err = cmd.Run()
 		stdin.Close()
-		if err != nil {
-			var exit *exec.ExitError
-			if errors.As(err, &exit) {
-				code = exit.ExitCode()
-			} else {
-				code = 255
-			}
+		var exit *exec.ExitError
+		switch {
+		case err == nil:
+		case !errors.As(err, &exit):
+			code = 255
+		case exit.Sys().(syscall.WaitStatus).Signaled():
+			// sshd sends exit-signal, which the client reads as 128 plus
+			// the signal; this is the same status, sent directly.
+			code = 128 + int(exit.Sys().(syscall.WaitStatus).Signal())
+		default:
+			code = exit.ExitCode()
 		}
 		status := make([]byte, 4)
 		binary.BigEndian.PutUint32(status, uint32(code))

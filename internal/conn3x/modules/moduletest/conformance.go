@@ -16,7 +16,8 @@ import (
 
 // RunnerConformance checks that the Runner from newRunner behaves like the
 // shell on a host: every command here must give the same stdout, stderr
-// and exit status as Local, and the file module must work through it.
+// and exit status as Local (128 plus the signal for a shell killed by
+// one, as sshd reports), and the file module must work through it.
 // The Runner has to run commands on this machine.
 func RunnerConformance(t *testing.T, newRunner func(t *testing.T) modules.Runner) {
 	t.Helper()
@@ -32,6 +33,7 @@ func RunnerConformance(t *testing.T, newRunner func(t *testing.T) modules.Runner
 		{"exit 1", "false", nil},
 		{"exit 42", "printf out; printf err >&2; exit 42", nil},
 		{"exit 127", "conn3x-no-such-command", nil},
+		{"killed by a signal", "kill -9 $$", nil},
 		{"stderr only", "echo oops >&2", nil},
 		{"NUL stdin", "cat", []byte("a\x00b\x00\xff")},
 		{"8 MiB in and out", "cat", in},
@@ -47,6 +49,9 @@ func RunnerConformance(t *testing.T, newRunner func(t *testing.T) modules.Runner
 			got, err := r.Run(ctx, c.cmd, c.stdin)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if c.name == "killed by a signal" && want.ExitCode != 137 {
+				t.Fatalf("the shell reports exit %d, want 137", want.ExitCode)
 			}
 			if !sameResult(got, want) {
 				t.Errorf("got exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q",
