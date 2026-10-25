@@ -349,16 +349,33 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 
 // sshBlockFor is a step's ssh block: the circuit's settings plus this
 // host's address, each.value.
+// hostOverrides are the ssh settings a host object in hosts may set for
+// itself, over the circuit's ssh block.
+var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "jump_hosts"}
+
+// sshBlockFor builds a step's ssh block. A host in hosts is either an
+// address or an object with an address and any of hostOverrides:
+//
+//	host = try(each.value.address, each.value)
+//	port = try(each.value.port, <the circuit's port, or null>)
 func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *hclsyntax.Block {
 	ssh := hclsyntax.Attributes{}
 	for k, v := range sshAttrs {
 		ssh[k] = v
 	}
-	ssh["host"] = &hclsyntax.Attribute{
-		Name:      "host",
-		Expr:      eachTraversal("value", sshRange),
-		SrcRange:  sshRange,
-		NameRange: sshRange,
+	attr := func(name string, expr hclsyntax.Expression) *hclsyntax.Attribute {
+		return &hclsyntax.Attribute{Name: name, Expr: expr, SrcRange: sshRange, NameRange: sshRange}
+	}
+	try := func(args ...hclsyntax.Expression) hclsyntax.Expression {
+		return &hclsyntax.FunctionCallExpr{Name: "try", Args: args, NameRange: sshRange, OpenParenRange: sshRange, CloseParenRange: sshRange}
+	}
+	ssh["host"] = attr("host", try(eachValueAttr("address", sshRange), eachTraversal("value", sshRange)))
+	for _, name := range hostOverrides {
+		var fallback hclsyntax.Expression = &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.DynamicPseudoType), SrcRange: sshRange}
+		if a, ok := sshAttrs[name]; ok {
+			fallback = a.Expr
+		}
+		ssh[name] = attr(name, try(eachValueAttr(name, sshRange), fallback))
 	}
 	return &hclsyntax.Block{
 		Type:            "ssh",
@@ -366,6 +383,13 @@ func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *hclsyntax.B
 		TypeRange:       sshRange,
 		OpenBraceRange:  sshRange,
 		CloseBraceRange: sshRange,
+	}
+}
+
+func eachValueAttr(name string, rng hcl.Range) *hclsyntax.ScopeTraversalExpr {
+	return &hclsyntax.ScopeTraversalExpr{
+		Traversal: hcl.Traversal{hcl.TraverseRoot{Name: "each", SrcRange: rng}, hcl.TraverseAttr{Name: "value", SrcRange: rng}, hcl.TraverseAttr{Name: name, SrcRange: rng}},
+		SrcRange:  rng,
 	}
 }
 

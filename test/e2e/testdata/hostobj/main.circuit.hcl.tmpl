@@ -1,0 +1,20 @@
+circuit "fleet" {
+  hosts = {
+    a = "127.0.0.1"
+    b = { address = "127.0.0.1", port = {{.PortB}} }
+  }
+
+  ssh {
+    port             = {{.PortA}}
+    user             = "root"
+    private_key_file = "{{.KeyA}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "name" {
+    file {
+      path    = "/etc/conn3x-name"
+      content = "${each.key}\n"
+    }
+  }
+}

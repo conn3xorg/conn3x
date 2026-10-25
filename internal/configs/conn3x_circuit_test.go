@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/tryfunc"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/function"
 
 	"github.com/opentofu/opentofu/internal/configs/symlib"
 )
@@ -109,9 +112,25 @@ func TestCircuitLowersToResources(t *testing.T) {
 	if !ok {
 		t.Fatal("ssh block has no host")
 	}
-	refs := host.Expr.Variables()
-	if len(refs) != 1 || traversalString(refs[0]) != "each.value" {
-		t.Fatalf("host = %v, want each.value", refs)
+	// A host is an address, or an object with one and its own settings.
+	ctx := func(v cty.Value) *hcl.EvalContext {
+		return &hcl.EvalContext{
+			Variables: map[string]cty.Value{"each": cty.ObjectVal(map[string]cty.Value{"key": cty.StringVal("web1"), "value": v})},
+			Functions: map[string]function.Function{"try": tryfunc.TryFunc},
+		}
+	}
+	for v, want := range map[*cty.Value]string{
+		ptr(cty.StringVal("203.0.113.10")): "203.0.113.10",
+		ptr(cty.ObjectVal(map[string]cty.Value{"address": cty.StringVal("10.0.0.5"), "port": cty.NumberIntVal(2222)})): "10.0.0.5",
+	} {
+		got, diags := host.Expr.Value(ctx(*v))
+		if diags.HasErrors() || got.AsString() != want {
+			t.Errorf("host for %#v = %#v, %s; want %s", *v, got, diags, want)
+		}
+	}
+	port, diags := ssh["port"].Expr.Value(ctx(cty.ObjectVal(map[string]cty.Value{"address": cty.StringVal("10.0.0.5"), "port": cty.NumberIntVal(2222)})))
+	if diags.HasErrors() || !port.RawEquals(cty.NumberIntVal(2222)) {
+		t.Errorf("a host's own port = %#v, %s; want 2222", port, diags)
 	}
 	if _, ok := ssh["user"]; !ok {
 		t.Fatal("circuit ssh settings not copied to the step")
@@ -469,3 +488,5 @@ circuit "a" {
 	}
 	t.Fatalf("no warning: %v", diags)
 }
+
+func ptr(v cty.Value) *cty.Value { return &v }
