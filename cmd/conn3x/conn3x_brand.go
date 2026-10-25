@@ -89,6 +89,9 @@ func brandTree(cmd *command.Command) {
 	for i := range cmd.Commands {
 		brandTree(&cmd.Commands[i])
 	}
+	if cmd.Name == "" {
+		cmd.Commands = append(cmd.Commands, driftCommand())
+	}
 }
 
 // commandUsage renders a command's usage text as conn3x.

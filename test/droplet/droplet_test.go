@@ -224,6 +224,9 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 	if out := must("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 		t.Fatalf("plan after apply is not empty:\n%s", out)
 	}
+	if out, err := conn3x("drift", "-no-color"); err != nil || !strings.Contains(out, "No drift") {
+		t.Fatalf("drift after apply: %v\n%s", err, out)
+	}
 }
 
 // fetch polls url until its body contains want or two minutes pass, and
