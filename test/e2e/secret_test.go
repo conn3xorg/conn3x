@@ -12,22 +12,27 @@ import (
 	"testing"
 )
 
-type secretVars struct{ Port, KeyFile, KnownHosts, Secret string }
+type secretVars struct{ Port, KeyFile, KnownHosts string }
 
 // Write-only content reaches the host but never the state, and drift on the
 // host still shows.
 func TestWriteOnlySecrets(t *testing.T) {
 	const secret = "s3cret-e2e-value"
 	t.Setenv("CONN3X_HMAC_KEY", strings.Repeat("e2e-key-", 4))
+	t.Setenv("TF_VAR_db_password", secret)
 	h := startHost(t, "rocky10")
 	w := newWorkdir(t, "secret")
 	if err := os.WriteFile(filepath.Join(w.dir, "pgpass.tftpl"), []byte("db:5432:*:app:${password}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	w.writeAs("main.circuit.hcl", secretVars{h.port, h.keyFile, h.knownHosts, secret})
+	w.writeAs("main.circuit.hcl", secretVars{h.port, h.keyFile, h.knownHosts})
 	w.mustConn3x("init", "-no-color")
-	if out := w.mustConn3x("plan", "-no-color"); strings.Contains(out, secret) {
+	if out := w.mustConn3x("plan", "-no-color", "-out=tfplan"); strings.Contains(out, secret) {
 		t.Fatalf("plan shows the secret:\n%s", out)
+	}
+	if out := w.mustConn3x("show", "-json", "tfplan"); strings.Contains(out, secret) {
+		i := strings.Index(out, secret)
+		t.Fatalf("the saved plan holds the secret: ...%s...", out[max(0, i-300):i])
 	}
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 

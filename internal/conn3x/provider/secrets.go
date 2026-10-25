@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // Write-only content never reaches state. State keeps an HMAC of it instead,
@@ -22,12 +23,17 @@ import (
 
 const hmacKeyEnv = "CONN3X_HMAC_KEY"
 
+// keyFileMu serialises first use within one process; the hard link below
+// covers other processes.
+var keyFileMu sync.Mutex
+
 // hmacKey returns the key from CONN3X_HMAC_KEY, or from a key file in the
-// user's config directory, which it creates on first use.
-func hmacKey() ([]byte, error) {
+// user's config directory. With create, a missing key file is made: 64 hex
+// characters, so its content also works as CONN3X_HMAC_KEY.
+func hmacKey(create bool) ([]byte, error) {
 	if env := os.Getenv(hmacKeyEnv); env != "" {
 		if len(env) < 32 {
-			return nil, fmt.Errorf("%s must be at least 32 bytes long", hmacKeyEnv)
+			return nil, fmt.Errorf("%s must be at least 32 bytes long; generate one with: openssl rand -hex 32", hmacKeyEnv)
 		}
 		return []byte(env), nil
 	}
@@ -35,36 +41,56 @@ func hmacKey() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, err := os.ReadFile(path)
-	if err == nil {
-		if len(key) < 32 {
-			return nil, fmt.Errorf("%s must hold at least 32 bytes", path)
-		}
-		return key, nil
+	keyFileMu.Lock()
+	defer keyFileMu.Unlock()
+	key, err := readKeyFile(path)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return key, err
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
+	if !create {
+		return nil, fmt.Errorf("no HMAC key here: set %s, or copy %s from the machine that applied this state", hmacKeyEnv, path)
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
 		return nil, err
 	}
-	key = make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, err
-	}
+	key = []byte(hex.EncodeToString(raw))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	// O_EXCL: if another process created the file first, use its key.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		return hmacKey()
-	}
+	// Write the whole key under a temporary name, then link it into place,
+	// so no reader ever sees a half-written file. If another process won,
+	// use its key.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".hmac.key-*")
 	if err != nil {
 		return nil, err
 	}
-	if _, err := f.Write(key); err != nil {
-		f.Close()
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(append(key, '\n')); err != nil {
+		tmp.Close()
 		return nil, err
 	}
-	return key, f.Close()
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Link(tmp.Name(), path); errors.Is(err, fs.ErrExist) {
+		return readKeyFile(path)
+	} else if err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func readKeyFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	key := []byte(strings.TrimSpace(string(data)))
+	if len(key) < 32 {
+		return nil, fmt.Errorf("%s must hold at least 32 bytes", path)
+	}
+	return key, nil
 }
 
 func hmacKeyPath() (string, error) {
@@ -85,9 +111,12 @@ func keyID(key []byte) string {
 	return hex.EncodeToString(sum[:4])
 }
 
-// contentHMAC is what state records for write-only content.
-func contentHMAC(key []byte, content string) string {
+// contentHMAC is what state records for write-only content. The path is part
+// of it, so the same secret in two files doesn't show as the same value.
+func contentHMAC(key []byte, path, content string) string {
 	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(path))
+	mac.Write([]byte{0})
 	mac.Write([]byte(content))
 	return "hmac-sha256:" + keyID(key) + ":" + hex.EncodeToString(mac.Sum(nil))
 }
@@ -104,6 +133,7 @@ func checkHMACKey(stored string, key []byte) error {
 	}
 	path, _ := hmacKeyPath()
 	return fmt.Errorf("this state's write-only content was hashed with key %s, but the key here is %s. "+
-		"Use the same key everywhere you run Conn3x: set %s, or copy %s from the machine that applied it",
+		"Use the same key everywhere you run Conn3x: set %s, or copy %s from the machine that applied it. "+
+		"If that key is lost, run conn3x state rm on this resource and apply again to rewrite the file with the key here",
 		parts[1], keyID(key), hmacKeyEnv, path)
 }

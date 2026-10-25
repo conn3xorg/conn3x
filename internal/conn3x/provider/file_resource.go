@@ -38,7 +38,7 @@ func fileSchema() providers.Schema {
 					Description: "Exact content of the file, kept out of state: state records only content_hmac. Use it for secrets. Set this or content.",
 				},
 				"content_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of content_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null when content is used."},
-				"mode":         {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0644\"."},
+				"mode":         {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0644\", or \"0600\" with content_wo."},
 				"owner":        {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
 				"group":        {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
 				"on_remove":    {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
@@ -85,6 +85,9 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 	vals := req.ProposedNewState.AsValueMap()
 	if vals["mode"].IsNull() {
 		vals["mode"] = cty.StringVal(defaultMode)
+		if !req.Config.GetAttr("content_wo").IsNull() {
+			vals["mode"] = cty.StringVal("0600")
+		}
 	}
 	if vals["on_remove"].IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
@@ -101,8 +104,8 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 			resp.Diagnostics = resp.Diagnostics.Append(attrError("content_wo", err.Error()))
 			return resp
 		}
-		if wo.IsKnown() {
-			vals["content_hmac"] = cty.StringVal(contentHMAC(key, wo.AsString()))
+		if path := vals["path"]; wo.IsKnown() && path.IsKnown() {
+			vals["content_hmac"] = cty.StringVal(contentHMAC(key, path.AsString(), wo.AsString()))
 		}
 	} else {
 		vals["content_hmac"] = cty.NullVal(cty.String)
@@ -196,7 +199,11 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	var key []byte
 	if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
 		content = wo
-		if key, err = writeKey(req.PriorState); err != nil {
+		if key, err = writeKey(req.PriorState); err == nil {
+			// A saved plan applied elsewhere must use the key it was made with.
+			err = checkHMACKey(planned.GetAttr("content_hmac").AsString(), key)
+		}
+		if err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(attrError("content_wo", err.Error()))
 			return resp
 		}
@@ -232,7 +239,7 @@ func stateFrom(base cty.Value, actual file.Actual, key []byte) cty.Value {
 	vals := base.AsValueMap()
 	if key != nil {
 		vals["content"], vals["sha256"] = cty.NullVal(cty.String), cty.NullVal(cty.String)
-		vals["content_hmac"] = cty.StringVal(contentHMAC(key, actual.Content))
+		vals["content_hmac"] = cty.StringVal(contentHMAC(key, vals["path"].AsString(), actual.Content))
 	} else {
 		vals["content"] = cty.StringVal(actual.Content)
 		vals["sha256"] = cty.StringVal(digest(actual.Content))
@@ -284,13 +291,23 @@ func woKey(state cty.Value) ([]byte, error) {
 	if state.IsNull() || state.GetAttr("content_hmac").IsNull() {
 		return nil, nil
 	}
-	return writeKey(state)
+	// Reading never creates a key: a new one here would only mismatch.
+	key, err := hmacKey(false)
+	if err != nil {
+		return nil, err
+	}
+	if stored := state.GetAttr("content_hmac"); stored.IsKnown() {
+		if err := checkHMACKey(stored.AsString(), key); err != nil {
+			return nil, err
+		}
+	}
+	return key, nil
 }
 
 // writeKey returns the HMAC key, checking that prior state, if it holds
 // write-only content, was hashed with the same key.
 func writeKey(prior cty.Value) ([]byte, error) {
-	key, err := hmacKey()
+	key, err := hmacKey(true)
 	if err != nil {
 		return nil, err
 	}

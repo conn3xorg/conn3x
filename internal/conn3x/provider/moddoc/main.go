@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -78,7 +79,7 @@ func page(name, rt string, b *configschema.Block) string {
 	fmt.Fprintf(&out, "%s\n\n", b.Description)
 	var required []string
 	for _, a := range sortedAttrs(b) {
-		if at := b.Attributes[a]; at.Required || firstOfPair(a, at.Description) {
+		if at := b.Attributes[a]; at.Required || firstOfPair(b, a) {
 			required = append(required, fmt.Sprintf("    %s = %s\n", a, placeholder(at.Type)))
 		}
 	}
@@ -135,12 +136,14 @@ func placeholder(t cty.Type) string {
 func escape(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
 
 // firstOfPair reports whether attr is the alphabetically first of two
-// alternatives, described as "Set this or <other>.", so examples set one.
-func firstOfPair(attr, desc string) bool {
-	_, rest, ok := strings.Cut(desc, "Set this or ")
-	if !ok {
+// alternatives, described as "Set this or <other>", so examples set one.
+func firstOfPair(b *configschema.Block, attr string) bool {
+	m := pairRe.FindStringSubmatch(b.Attributes[attr].Description)
+	if m == nil {
 		return false
 	}
-	other, _, _ := strings.Cut(rest, ".")
-	return attr < other
+	_, ok := b.Attributes[m[1]]
+	return ok && attr < m[1]
 }
+
+var pairRe = regexp.MustCompile(`Set this or ([a-z_]+)\b`)

@@ -32,7 +32,7 @@ func TestFileWriteOnlyKeepsSecretOutOfState(t *testing.T) {
 	cfg := f.config(map[string]cty.Value{"content_wo": cty.StringVal("s3cret\n")})
 	null := cty.NullVal(cfg.Type())
 	planned := f.plan(null, cfg).PlannedState
-	want := cty.StringVal(contentHMAC([]byte(testHMACKey), "s3cret\n"))
+	want := cty.StringVal(contentHMAC([]byte(testHMACKey), f.path, "s3cret\n"))
 	for name, v := range map[string]cty.Value{"content": planned.GetAttr("content"), "sha256": planned.GetAttr("sha256"), "content_wo": planned.GetAttr("content_wo")} {
 		if !v.IsNull() {
 			t.Errorf("planned %s = %#v, want null", name, v)
@@ -106,7 +106,7 @@ func TestFileSwitchToWriteOnlyAndBack(t *testing.T) {
 	if !planned.GetAttr("content").IsNull() || !planned.GetAttr("sha256").IsNull() || planned.GetAttr("content_hmac").IsNull() {
 		t.Fatalf("switch to write-only planned %#v", planned)
 	}
-	if want := cty.StringVal(contentHMAC([]byte(testHMACKey), "s3cret")); !planned.GetAttr("content_hmac").RawEquals(want) {
+	if want := cty.StringVal(contentHMAC([]byte(testHMACKey), f.path, "s3cret")); !planned.GetAttr("content_hmac").RawEquals(want) {
 		t.Fatalf("switch planned content_hmac %#v, want %#v", planned.GetAttr("content_hmac"), want)
 	}
 	wo := f.apply(plain, planned, woCfg)
@@ -156,5 +156,43 @@ func TestFileUpgradesStateFromBeforeWriteOnly(t *testing.T) {
 	}
 	if got := resp.UpgradedState.GetAttr("content_hmac"); !got.IsNull() {
 		t.Fatalf("content_hmac = %#v", got)
+	}
+}
+
+func TestFileWriteOnlyDefaultsToPrivateMode(t *testing.T) {
+	f := newWOTest(t)
+	cfg := f.config(map[string]cty.Value{"content_wo": cty.StringVal("s3cret")})
+	if got := f.plan(cty.NullVal(cfg.Type()), cfg).PlannedState.GetAttr("mode"); !got.RawEquals(cty.StringVal("0600")) {
+		t.Fatalf("mode = %#v, want 0600 for write-only content", got)
+	}
+}
+
+func TestFileWriteOnlyApplyChecksPlannedKey(t *testing.T) {
+	f := newWOTest(t)
+	cfg := f.config(map[string]cty.Value{"content_wo": cty.StringVal("s3cret")})
+	null := cty.NullVal(cfg.Type())
+	planned := f.plan(null, cfg).PlannedState
+	// The plan was made with one key; apply runs somewhere with another.
+	t.Setenv("CONN3X_HMAC_KEY", strings.Repeat("z", 32))
+	resp := f.p.ApplyResourceChange(ctx, providers.ApplyResourceChangeRequest{TypeName: "conn3x_file", PriorState: null, PlannedState: planned, Config: cfg})
+	if !resp.Diagnostics.HasErrors() {
+		t.Fatal("apply with a different key than the plan succeeded")
+	}
+	if _, err := os.Stat(f.path); !os.IsNotExist(err) {
+		t.Fatal("apply wrote the file before noticing the key mismatch")
+	}
+}
+
+func TestFileWriteOnlyReadDoesNotCreateKey(t *testing.T) {
+	f := newWOTest(t)
+	state, _ := f.createWO("s3cret")
+	t.Setenv("CONN3X_HMAC_KEY", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	resp := f.p.ReadResource(ctx, providers.ReadResourceRequest{TypeName: "conn3x_file", PriorState: state})
+	if !resp.Diagnostics.HasErrors() {
+		t.Fatal("read without the key succeeded")
+	}
+	if path, _ := hmacKeyPath(); fileExists(path) {
+		t.Fatal("read created a key file")
 	}
 }
