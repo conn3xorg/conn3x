@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -83,7 +84,10 @@ func TestAgentOverSSHConformance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, _ := shell.Run(ctx, cmd, nil)
+			want, err := shell.Run(ctx, cmd, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if string(got.Stdout) != string(want.Stdout) {
 				t.Errorf("%s: agent says %q, the shell says %q", cmd, got.Stdout, want.Stdout)
 			}
@@ -100,7 +104,10 @@ func TestAgentDependencies(t *testing.T) {
 		agentPkg,
 		"github.com/opentofu/opentofu/internal/conn3x/agent/agentpb",
 		"github.com/opentofu/opentofu/internal/conn3x/agent/server",
-		"google.golang.org/protobuf/",
+		// protowire and the two internal packages it uses, not the runtime.
+		"google.golang.org/protobuf/encoding/protowire",
+		"google.golang.org/protobuf/internal/detrand",
+		"google.golang.org/protobuf/internal/errors",
 	}
 	cmd := exec.Command("go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", agentPkg)
 	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
@@ -109,12 +116,8 @@ func TestAgentDependencies(t *testing.T) {
 		t.Fatalf("go list: %v", err)
 	}
 	for _, dep := range strings.Fields(string(out)) {
-		ok := false
-		for _, a := range allowed {
-			ok = ok || dep == a || (strings.HasSuffix(a, "/") && strings.HasPrefix(dep, a))
-		}
-		if !ok {
-			t.Errorf("the agent imports %s; it may use only the standard library, protobuf and its own packages", dep)
+		if !slices.Contains(allowed, dep) {
+			t.Errorf("the agent imports %s; it may use only the standard library, protowire and its own packages", dep)
 		}
 	}
 

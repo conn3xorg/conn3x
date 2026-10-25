@@ -329,7 +329,9 @@ func (c *Client) Start(ctx context.Context, cmd string) (*Process, error) {
 func (p *Process) Read(b []byte) (int, error)  { return p.stdout.Read(b) }
 func (p *Process) Write(b []byte) (int, error) { return p.stdin.Write(b) }
 
-// Stderr is everything the command has written to stderr so far.
+// Stderr is a snapshot of everything the command has written to stderr so
+// far. Nothing signals new output; a caller waiting for some, such as a
+// sudo prompt, has to call it again.
 func (p *Process) Stderr() []byte { return p.stderr.Bytes() }
 
 // Wait waits for the command to exit. A non-zero exit is an error.
