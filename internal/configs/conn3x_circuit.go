@@ -515,6 +515,7 @@ var templateSchema = &hcl.BodySchema{
 		{Name: "owner"},
 		{Name: "group"},
 		{Name: "on_remove"},
+		{Name: "write_only"},
 	},
 }
 
@@ -524,6 +525,9 @@ var templateSchema = &hcl.BodySchema{
 //
 //	template { source = S, destination = D, vars = V }
 //	  => path = D, content = templatefile(S, V)
+//
+// With write_only = true the rendered file goes to content_wo instead, so it
+// stays out of state.
 func lowerTemplate(module *hclsyntax.Block) (hclsyntax.Attributes, hcl.Diagnostics) {
 	_, diags := module.Body.Content(templateSchema)
 	if diags.HasErrors() {
@@ -544,8 +548,23 @@ func lowerTemplate(module *hclsyntax.Block) (hclsyntax.Attributes, hcl.Diagnosti
 	if v, ok := in["vars"]; ok {
 		vars = v.Expr
 	}
-	out["content"] = &hclsyntax.Attribute{
-		Name: "content",
+	content := "content"
+	if wo, ok := in["write_only"]; ok {
+		v, valDiags := wo.Expr.Value(nil)
+		if valDiags.HasErrors() || !v.Type().Equals(cty.Bool) || v.IsNull() {
+			return nil, hcl.Diagnostics{{
+				Severity: hcl.DiagError,
+				Summary:  "write_only must be true or false",
+				Detail:   "write_only decides how the file is stored before anything is evaluated, so it takes a literal true or false.",
+				Subject:  wo.Expr.Range().Ptr(),
+			}}
+		}
+		if v.True() {
+			content = "content_wo"
+		}
+	}
+	out[content] = &hclsyntax.Attribute{
+		Name: content,
 		Expr: &hclsyntax.FunctionCallExpr{
 			Name:            "templatefile",
 			Args:            []hclsyntax.Expression{src.Expr, vars},

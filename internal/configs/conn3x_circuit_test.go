@@ -490,3 +490,77 @@ circuit "a" {
 }
 
 func ptr(v cty.Value) *cty.Value { return &v }
+
+func TestTemplateWriteOnlyLowersToContentWO(t *testing.T) {
+	src := `
+circuit "db" {
+  hosts = { db1 = "203.0.113.10" }
+  ssh {
+    user = "root"
+  }
+  step "secret" {
+    template {
+      source      = "pgpass.tftpl"
+      destination = "/root/.pgpass"
+      write_only  = true
+    }
+  }
+  step "plain" {
+    template {
+      source      = "motd.tftpl"
+      destination = "/etc/motd"
+      write_only  = false
+    }
+  }
+}
+`
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	attrs := func(name string) hcl.Attributes {
+		c, _, _ := mod.ManagedResources[name].Config.PartialContent(&hcl.BodySchema{
+			Attributes: []hcl.AttributeSchema{{Name: "content"}, {Name: "content_wo"}, {Name: "write_only"}},
+		})
+		return c.Attributes
+	}
+	secret := attrs("conn3x_file.db__secret")
+	if _, ok := secret["content_wo"]; !ok {
+		t.Fatal("write_only = true should lower to content_wo")
+	}
+	if _, ok := secret["content"]; ok {
+		t.Fatal("write_only = true must not also set content")
+	}
+	if _, ok := secret["write_only"]; ok {
+		t.Fatal("write_only must not reach conn3x_file")
+	}
+	plain := attrs("conn3x_file.db__plain")
+	if _, ok := plain["content"]; !ok {
+		t.Fatal("write_only = false should lower to content")
+	}
+}
+
+func TestTemplateWriteOnlyMustBeLiteral(t *testing.T) {
+	src := `
+variable "wo" {
+  default = true
+}
+circuit "db" {
+  hosts = { db1 = "203.0.113.10" }
+  ssh {
+    user = "root"
+  }
+  step "secret" {
+    template {
+      source      = "pgpass.tftpl"
+      destination = "/root/.pgpass"
+      write_only  = var.wo
+    }
+  }
+}
+`
+	_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if !diags.HasErrors() || !strings.Contains(diags.Error(), "true or false") {
+		t.Fatalf("want an error asking for true or false, got %v", diags)
+	}
+}
