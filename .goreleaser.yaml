@@ -1,0 +1,115 @@
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
+#
+# Releases are cut by .github/workflows/release.yml, which runs this as a
+# draft that a maintainer reviews and publishes. Try it locally with
+#   goreleaser release --snapshot --clean
+version: 2
+project_name: conn3x
+
+before:
+  hooks:
+    # The branding and pruning overlay that scripts/build-conn3x.sh uses.
+    - sh -c 'rm -rf .overlay && mkdir .overlay && env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root . -out .overlay >/dev/null'
+
+builds:
+  - id: conn3x
+    main: ./cmd/conn3x
+    binary: conn3x
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+      - -overlay=.overlay/overlay.json
+    ldflags:
+      - -s -w -X github.com/opentofu/opentofu/internal/conn3x/version.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--bundle=${signature}", "${artifact}", "--yes"]
+    artifacts: checksum
+
+dockers_v2:
+  - images:
+      - ghcr.io/conn3xorg/conn3x
+    tags:
+      - "v{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    dockerfile: release.Containerfile
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: conn3x
+      org.opencontainers.image.description: One plan for your cloud and the servers it creates.
+      org.opencontainers.image.source: "{{ .GitURL }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.licenses: MPL-2.0
+
+homebrew_casks:
+  - name: conn3x
+    repository:
+      owner: conn3xorg
+      name: homebrew-tap
+      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
+    # The tap needs its own token; until it exists, the cask is not pushed.
+    skip_upload: '{{ if eq (envOrDefault "HOMEBREW_TAP_TOKEN" "") "" }}true{{ end }}'
+    homepage: https://conn3x.org
+    description: One plan for your cloud and the servers it creates.
+    license: MPL-2.0
+    hooks:
+      post:
+        # The binary is not notarised by Apple; let Gatekeeper run it.
+        install_steps: |
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/conn3x"]
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other changes
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: true
+  replace_existing_draft: true
+  footer: |
+    Verify a download:
+
+    ```sh
+    cosign verify-blob \
+      --certificate-identity 'https://github.com/conn3xorg/conn3x/.github/workflows/release.yml@refs/heads/main' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --bundle checksums.txt.sigstore.json checksums.txt
+    sha256sum --check --ignore-missing checksums.txt
+    ```
