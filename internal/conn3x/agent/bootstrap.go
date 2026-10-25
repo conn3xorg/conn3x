@@ -39,9 +39,10 @@ usable() { [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ] && case $(ls -ld "$1") in
 
 // probeScript reports the host's architecture, whether fapolicyd is
 // active, whether gunzip exists and, for each candidate cache directory
-// that is usable, the checksum of a cached agent and, when creating is
-// allowed, whether a file there can be executed. It writes nothing unless
-// create is set.
+// that is usable, the checksum of a cached agent. When creating is
+// allowed it also creates and tests directories in turn, with a canary
+// that shows whether a file there can be run, and stops creating at the
+// first that works. It writes nothing unless create is set.
 const probeScript = helpers + `m=$(uname -m)
 echo "arch $m"
 case $m in x86_64|amd64) name=%s ;; aarch64|arm64) name=%s ;; *) exit 0 ;; esac
@@ -49,14 +50,18 @@ case $m in x86_64|amd64) name=%s ;; aarch64|arm64) name=%s ;; *) exit 0 ;; esac
 if systemctl is-active --quiet fapolicyd 2>/dev/null; then echo fapolicyd; exit 0; fi
 command -v gunzip >/dev/null 2>&1 && echo gunzip
 uid=$(id -u)
+trap 'exit 1' HUP INT TERM
+found=
 for d in "${XDG_CACHE_HOME:-$HOME/.cache}/conn3x" "$HOME/.conn3x" "/var/tmp/conn3x-$uid" "/dev/shm/conn3x-$uid"; do
-  [ -n "%s" ] && mkdir -p "$d" 2>/dev/null
+  [ -n "%s" ] && [ -z "$found" ] && mkdir -p "$d" 2>/dev/null
   usable "$d" || continue
   s=; [ -f "$d/$name" ] && s=$(sum256 "$d/$name")
   x=-
-  if [ -n "%[3]s" ] && c=$(mktemp "$d/.canary.XXXXXX" 2>/dev/null); then
-    printf '#!/bin/sh\n' >"$c" && chmod 700 "$c" && "$c" 2>/dev/null && x=exec
+  if [ -n "%[3]s" ] && [ -z "$found" ] && c=$(mktemp "$d/.canary.XXXXXX" 2>/dev/null); then
+    trap 'rm -f "$c"' EXIT
+    printf '#!/bin/sh\n' >"$c" && chmod 700 "$c" && "$c" 2>/dev/null && x=exec found=1
     rm -f "$c"
+    trap - EXIT
   fi
   printf 'dir %%s %%s %%s\n' "${s:--}" "$x" "$d"
 done
@@ -68,7 +73,7 @@ done
 const uploadScript = helpers + `d=%s name=%s want=%s
 usable "$d" || { echo "$d is not a private directory" >&2; exit 1; }
 if command -v flock >/dev/null 2>&1; then exec 9>>"$d/.lock" && flock -w 120 9 || exit 1; fi
-find "$d" -maxdepth 1 -name '.agent.*' -mmin +60 -exec rm -f {} + 2>/dev/null
+find "$d" -maxdepth 1 \( -name '.agent.*' -o -name '.canary.*' \) -mmin +60 -exec rm -f {} + 2>/dev/null
 t=$(mktemp "$d/.agent.XXXXXX") || exit 1
 trap 'rm -f "$t"' EXIT
 %s >"$t" || { echo "the upload was cut short" >&2; exit 1; }

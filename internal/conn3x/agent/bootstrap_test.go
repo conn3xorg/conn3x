@@ -120,7 +120,7 @@ func tree(t *testing.T, dir string) []string {
 func names(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
-	if err != nil {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal(err)
 	}
 	var out []string
@@ -175,6 +175,10 @@ func TestAttachUploadsThenReusesCache(t *testing.T) {
 	// Only the verified agent is left: no temp file, no canary.
 	if got := names(t, h.cacheDir()); !slices.Equal(got, []string{agentName(t)}) {
 		t.Fatalf("cache holds %q, want just %s", got, agentName(t))
+	}
+	// It stopped at the first directory that works.
+	if _, err := os.Lstat(filepath.Join(h.home, ".conn3x")); err == nil {
+		t.Error("$HOME/.conn3x was created though ~/.cache/conn3x works")
 	}
 	for path, want := range map[string]os.FileMode{h.cacheDir(): os.ModeDir | 0o700, filepath.Join(h.cacheDir(), agentName(t)): 0o700} {
 		if info, err := os.Lstat(path); err != nil || info.Mode() != want {
@@ -390,13 +394,13 @@ func TestPruneKeepsTwo(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	for i, name := range []string{"agent-0.1.0-aaaaaaaaaaaa", "agent-0.2.0-bbbbbbbbbbbb", "agent-0.3.0-cccccccccccc", ".agent.stale", ".agent.fresh"} {
+	for i, name := range []string{"agent-0.1.0-aaaaaaaaaaaa", "agent-0.2.0-bbbbbbbbbbbb", "agent-0.3.0-cccccccccccc", ".agent.stale", ".agent.fresh", ".canary.stale", ".canary.fresh"} {
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte(name), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		age := time.Duration(5-i) * time.Hour
-		if name == ".agent.fresh" {
+		age := time.Duration(7-i) * time.Hour
+		if strings.HasSuffix(name, ".fresh") {
 			age = time.Minute // another upload may still be writing it
 		}
 		if err := os.Chtimes(path, now.Add(-age), now.Add(-age)); err != nil {
@@ -409,7 +413,7 @@ func TestPruneKeepsTwo(t *testing.T) {
 	}
 	mustRun(t, a, "true")
 	got := names(t, dir)
-	want := []string{".agent.fresh", "agent-0.3.0-cccccccccccc", agentName(t)}
+	want := []string{".agent.fresh", ".canary.fresh", "agent-0.3.0-cccccccccccc", agentName(t)}
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
