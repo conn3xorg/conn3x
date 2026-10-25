@@ -39,11 +39,13 @@ type attr struct {
 // input reads a task's arguments, remembering which it used so that any it
 // didn't stop the conversion.
 type input struct {
-	args    map[string]*yaml.Node
-	vars    map[string]string
-	dir     string
-	used    map[string]bool
-	problem string
+	args     map[string]*yaml.Node
+	vars     map[string]string
+	dir      string
+	used     map[string]bool
+	problem  string
+	loop     bool // the task loops, so {{ item }} means the current item
+	itemUsed bool
 }
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
@@ -123,6 +125,10 @@ var jinja = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 func (in *input) render(key, s string) string {
 	out := jinja.ReplaceAllStringFunc(s, func(m string) string {
 		name := jinja.FindStringSubmatch(m)[1]
+		if name == "item" && in.loop {
+			in.itemUsed = true
+			return itemMark
+		}
 		if v, ok := in.vars[name]; ok {
 			return v
 		}
