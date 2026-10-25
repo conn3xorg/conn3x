@@ -42,7 +42,3 @@ dist/
 
 # Development temp folder
 tmp
-
-# Build overlay written by GoReleaser
-.overlay/
-dist/

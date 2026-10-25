@@ -9,8 +9,9 @@ project_name: conn3x
 
 before:
   hooks:
-    # The branding and pruning overlay that scripts/build-conn3x.sh uses.
-    - sh -c 'rm -rf .overlay && mkdir .overlay && env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root . -out .overlay >/dev/null'
+    # The branding and pruning overlay that scripts/build-conn3x.sh uses,
+    # written outside the tree so the release sees a clean checkout.
+    - sh -c 'rm -rf /tmp/conn3x-overlay-{{ .ShortCommit }} && env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root . -out /tmp/conn3x-overlay-{{ .ShortCommit }} >/dev/null'
 
 builds:
   - id: conn3x
@@ -22,7 +23,7 @@ builds:
     goarch: [amd64, arm64]
     flags:
       - -trimpath
-      - -overlay=.overlay/overlay.json
+      - -overlay=/tmp/conn3x-overlay-{{ .ShortCommit }}/overlay.json
     ldflags:
       - -s -w -X github.com/opentofu/opentofu/internal/conn3x/version.Version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
