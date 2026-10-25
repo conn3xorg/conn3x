@@ -33,8 +33,18 @@ type Result struct {
 	Review    []Issue
 }
 
+// Options change how a playbook converts.
+type Options struct {
+	// Inventory, when set, fills in each play's hosts and login instead of
+	// leaving variables for them.
+	Inventory *Inventory
+}
+
 // Convert reads the playbook at path and translates it.
-func Convert(path string) (Result, error) {
+func Convert(path string) (Result, error) { return ConvertWith(path, Options{}) }
+
+// ConvertWith is Convert with options.
+func ConvertWith(path string, opts Options) (Result, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return Result{}, err
@@ -46,14 +56,16 @@ func Convert(path string) (Result, error) {
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.SequenceNode {
 		return Result{}, fmt.Errorf("%s: a playbook is a list of plays", path)
 	}
-	c := &converter{dir: filepath.Dir(path), file: filepath.Base(path)}
+	c := &converter{dir: filepath.Dir(path), file: filepath.Base(path), inv: opts.Inventory}
 	return c.run(doc.Content[0]), nil
 }
 
 type converter struct {
 	dir, file string
+	inv       *Inventory
 	res       Result
-	groups    map[string]bool
+	hostVars  map[string]bool // groups that still need a hosts variable
+	needUser  bool
 }
 
 func (c *converter) run(plays *yaml.Node) Result {
@@ -63,7 +75,7 @@ func (c *converter) run(plays *yaml.Node) Result {
 	comment(body, "Search for TODO(convert) to find what still needs a person.")
 	body.AppendNewline()
 
-	c.groups = map[string]bool{}
+	c.hostVars = map[string]bool{}
 	var circuits []*hclwrite.Block
 	used := map[string]int{}
 	for i, play := range plays.Content {
@@ -71,12 +83,11 @@ func (c *converter) run(plays *yaml.Node) Result {
 		hosts := scalar(p["hosts"])
 		name := slug(firstNonEmpty(scalar(p["name"]), hosts, fmt.Sprintf("play_%d", i+1)))
 		name = unique(name, used)
-		c.groups[hosts] = true
-		circuits = append(circuits, c.play(name, hosts, p))
+		circuits = append(circuits, c.play(name, hosts, p, play))
 	}
 
-	groups := make([]string, 0, len(c.groups))
-	for g := range c.groups {
+	groups := make([]string, 0, len(c.hostVars))
+	for g := range c.hostVars {
 		groups = append(groups, g)
 	}
 	sort.Strings(groups)
@@ -86,10 +97,11 @@ func (c *converter) run(plays *yaml.Node) Result {
 		v.Body().SetAttributeValue("description", cty.StringVal(fmt.Sprintf("Hosts in the Ansible group %q, as name = address.", g)))
 		body.AppendNewline()
 	}
-	for _, v := range []struct{ name, desc string }{
-		{"ssh_user", "User Conn3x logs in as."},
-		{"ssh_private_key_file", "Private key Conn3x logs in with."},
-	} {
+	loginVars := []struct{ name, desc string }{{"ssh_private_key_file", "Private key Conn3x logs in with."}}
+	if c.needUser {
+		loginVars = append([]struct{ name, desc string }{{"ssh_user", "User Conn3x logs in as."}}, loginVars...)
+	}
+	for _, v := range loginVars {
 		b := body.AppendNewBlock("variable", []string{v.name})
 		b.Body().SetAttributeRaw("type", rawTokens("string"))
 		b.Body().SetAttributeValue("description", cty.StringVal(v.desc))
@@ -107,14 +119,59 @@ func (c *converter) run(plays *yaml.Node) Result {
 
 func hostsVar(group string) string { return slug(group) + "_hosts" }
 
+// login sets the ssh user and port from the inventory when every host in the
+// group agrees on them, and otherwise leaves a variable.
+func (c *converter) login(circuit, ssh *hclwrite.Body, play string, node *yaml.Node, g *Group) {
+	if g == nil {
+		c.needUser = true
+		ssh.SetAttributeRaw("user", rawTokens("var.ssh_user"))
+		return
+	}
+	for _, key := range []string{"ansible_user", "ansible_port"} {
+		// Mixed when hosts set different values, or only some set one.
+		if _, same := g.Common(key); !same && len(g.Values(key)) > 0 {
+			vals := g.Values(key)
+			if len(vals) == 1 {
+				vals = append(vals, "the default")
+			}
+			c.playIssue(circuit, play, node, fmt.Sprintf("has hosts with different %s (%s); a circuit logs in to all its hosts the same way, so split them into one circuit each", key, strings.Join(vals, ", ")))
+		}
+	}
+	if user, ok := g.Common("ansible_user"); ok {
+		ssh.SetAttributeValue("user", cty.StringVal(user))
+	} else {
+		c.needUser = true
+		ssh.SetAttributeRaw("user", rawTokens("var.ssh_user"))
+	}
+	if port, ok := g.Common("ansible_port"); ok && digits.MatchString(port) {
+		ssh.SetAttributeRaw("port", rawTokens(port))
+	}
+}
+
 // play turns one play into a circuit.
-func (c *converter) play(name, hosts string, p map[string]*yaml.Node) *hclwrite.Block {
+func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml.Node) *hclwrite.Block {
 	circuit := hclwrite.NewBlock("circuit", []string{name})
 	cb := circuit.Body()
-	cb.SetAttributeRaw("hosts", rawTokens("var."+hostsVar(hosts)))
+	var group *Group
+	if c.inv != nil {
+		group = c.inv.Group(hosts)
+	}
+	if group != nil && len(group.hosts) > 0 {
+		addrs := map[string]cty.Value{}
+		for h, a := range group.Addresses() {
+			addrs[h] = cty.StringVal(a)
+		}
+		cb.SetAttributeValue("hosts", cty.ObjectVal(addrs))
+	} else {
+		if c.inv != nil {
+			c.playIssue(cb, name, node, fmt.Sprintf("targets %q, which the inventory doesn't define as a group; set var.%s", hosts, hostsVar(hosts)))
+		}
+		c.hostVars[hosts] = true
+		cb.SetAttributeRaw("hosts", rawTokens("var."+hostsVar(hosts)))
+	}
 	cb.AppendNewline()
 	ssh := cb.AppendNewBlock("ssh", nil).Body()
-	ssh.SetAttributeRaw("user", rawTokens("var.ssh_user"))
+	c.login(cb, ssh, name, node, group)
 	ssh.SetAttributeRaw("private_key_file", rawTokens("var.ssh_private_key_file"))
 	become := truthy(scalar(p["become"]))
 	if become {
@@ -259,6 +316,15 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 	}
 	c.res.Converted++
+}
+
+var digits = regexp.MustCompile(`^[0-9]+$`)
+
+// playIssue records something about a whole play for review, as a comment
+// at the top of its circuit.
+func (c *converter) playIssue(body *hclwrite.Body, play string, node *yaml.Node, reason string) {
+	c.res.Review = append(c.res.Review, Issue{Task: "play " + play, Line: node.Line, Reason: reason})
+	comment(body, fmt.Sprintf("TODO(convert): Play %q (%s line %d) %s.", play, c.file, node.Line, reason))
 }
 
 // issue records a task for review and leaves it in the output as comments.
