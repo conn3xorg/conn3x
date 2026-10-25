@@ -79,10 +79,18 @@ trap - EXIT
 ls -t "$d" | grep '^agent-' | grep -vxF "$name" | tail -n +2 | while IFS= read -r f; do rm -f "$d/$f"; done
 `
 
-// startScript checks the directory again, right before running from it.
-const startScript = helpers + `d=%s
-usable "$d" || { echo "$d is not a private directory" >&2; exit 126; }
-exec "$d"/%s`
+// startScript checks the directory and the binary's checksum again, right
+// before running it. It checks from inside the directory, with symlinks
+// resolved, and runs the binary by that resolved path. It goes back to
+// where it started first, so commands run where a shell command would.
+const startScript = helpers + `d=%s name=%s want=%s
+here=$(pwd)
+cd -P -- "$d" || exit 126
+usable . || { echo "$d is not a private directory" >&2; exit 126; }
+[ "$(sum256 "./$name")" = "$want" ] || { echo "$d/$name has changed" >&2; exit 126; }
+p=$(pwd -P)
+cd -- "$here" || exit 126
+exec "$p/$name"`
 
 type build struct {
 	gz   []byte
@@ -154,7 +162,7 @@ func Attach(ctx context.Context, c *ssh.Client, o Options) (*Client, error) {
 		if d.sum != b.sum {
 			continue
 		}
-		a, err := start(ctx, c, d.path, b.name)
+		a, err := start(ctx, c, d.path, b.name, b.sum)
 		if err == nil {
 			return a, nil
 		}
@@ -185,7 +193,7 @@ func Attach(ctx context.Context, c *ssh.Client, o Options) (*Client, error) {
 			failures = append(failures, fmt.Sprintf("uploading to %s: %s", d.path, bytes.TrimSpace(res.Stderr)))
 			continue
 		}
-		a, err := start(ctx, c, d.path, b.name)
+		a, err := start(ctx, c, d.path, b.name, b.sum)
 		if err == nil {
 			return a, nil
 		}
@@ -197,9 +205,10 @@ func Attach(ctx context.Context, c *ssh.Client, o Options) (*Client, error) {
 	return nil, fmt.Errorf("%w: %s", ErrUnavailable, strings.Join(failures, "; "))
 }
 
-// start runs the agent cached in dir and waits for its hello.
-func start(ctx context.Context, c *ssh.Client, dir, name string) (*Client, error) {
-	p, err := c.Start(ctx, "exec /bin/sh -c "+ssh.Quote(fmt.Sprintf(startScript, ssh.Quote(dir), ssh.Quote(name))))
+// start runs the agent cached in dir, if its sha256 is still want, and
+// waits for its hello.
+func start(ctx context.Context, c *ssh.Client, dir, name, want string) (*Client, error) {
+	p, err := c.Start(ctx, "exec /bin/sh -c "+ssh.Quote(fmt.Sprintf(startScript, ssh.Quote(dir), ssh.Quote(name), want)))
 	if err != nil {
 		return nil, fmt.Errorf("starting the agent in %s: %w", dir, err)
 	}

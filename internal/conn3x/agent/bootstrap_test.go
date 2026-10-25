@@ -160,7 +160,16 @@ func TestAttachUploadsThenReusesCache(t *testing.T) {
 	if got := mustRun(t, a, "echo hi"); got != "hi\n" {
 		t.Fatalf("agent said %q", got)
 	}
-	if got := h.Commands(); len(got) != 3 {
+	before := len(h.Commands())
+	// Commands run where a shell command would, not in the cache.
+	shell, err := dialServer(t, h.Server).Run(ctx, "pwd", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, a, "pwd"); got != string(shell.Stdout) {
+		t.Fatalf("agent runs commands in %q, the shell in %q", got, shell.Stdout)
+	}
+	if got := h.Commands()[:before]; len(got) != 3 {
 		t.Fatalf("first attach ran %d commands, want probe, upload and start:\n%s", len(got), strings.Join(got, "\n---\n"))
 	}
 	// Only the verified agent is left: no temp file, no canary.
@@ -174,7 +183,7 @@ func TestAttachUploadsThenReusesCache(t *testing.T) {
 	}
 
 	// A second run finds the cached agent and uploads nothing.
-	before := len(h.Commands())
+	before = len(h.Commands())
 	a2, err := h.attach(t, o)
 	if err != nil {
 		t.Fatal(err)
@@ -427,5 +436,29 @@ func TestConcurrentAttach(t *testing.T) {
 	wg.Wait()
 	if got := names(t, h.cacheDir()); !slices.Equal(got, []string{agentName(t)}) {
 		t.Fatalf("after concurrent attaches the cache holds %q, want just the agent", got)
+	}
+}
+
+func TestStartRefusesReplacedBinary(t *testing.T) {
+	h := newTestHost(t)
+	if _, err := h.attach(t, Options{Upload: true, Version: testVersion, Payload: agentPayload(t)}); err != nil {
+		t.Fatal(err)
+	}
+	// Between the probe and the start, the cached file changes.
+	mark := filepath.Join(t.TempDir(), "ran")
+	swapped := filepath.Join(t.TempDir(), "swapped")
+	if err := os.WriteFile(swapped, []byte("#!/bin/sh\ntouch "+mark+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(swapped, filepath.Join(h.cacheDir(), agentName(t))); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := testAgent()
+	sum := sha256.Sum256(raw)
+	if _, err := start(ctx, dialServer(t, h.Server), h.cacheDir(), agentName(t), hex.EncodeToString(sum[:])); err == nil {
+		t.Fatal("started a replaced binary")
+	}
+	if _, err := os.Stat(mark); err == nil {
+		t.Fatal("the replaced binary was run")
 	}
 }
