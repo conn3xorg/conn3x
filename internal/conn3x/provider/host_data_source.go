@@ -44,7 +44,7 @@ func readHostData(ctx context.Context, req providers.ReadDataSourceRequest) prov
 		return resp
 	}
 	vals := req.Config.AsValueMap()
-	vals["id"] = cty.StringVal(conn.GetAttr("host").AsString())
+	vals["id"] = cty.StringVal(hostPort(conn))
 	vals["os_family"], vals["os_id"], vals["os_version"] = cty.StringVal(f.Family), cty.StringVal(f.ID), cty.StringVal(f.Version)
 	vals["arch"], vals["ipv4"] = cty.StringVal(f.Arch), cty.StringVal(f.IPv4)
 	vals["cpus"], vals["memory_mb"] = cty.NumberIntVal(int64(f.CPUs)), cty.NumberIntVal(int64(f.MemoryMB))

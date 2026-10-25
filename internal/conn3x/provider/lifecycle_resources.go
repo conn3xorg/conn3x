@@ -134,10 +134,7 @@ func planReboot(req providers.PlanResourceChangeRequest) providers.PlanResourceC
 		return resp
 	}
 	vals := req.ProposedNewState.AsValueMap()
-	vals["id"] = cty.UnknownVal(cty.String)
-	if host := req.ProposedNewState.GetAttr("ssh").GetAttr("host"); host.IsKnown() {
-		vals["id"] = cty.StringVal(host.AsString() + ":reboot")
-	}
+	vals["id"] = planID(req, "reboot")
 	switch {
 	case req.PriorState.IsNull():
 		vals["boot_id"] = cty.UnknownVal(cty.String)

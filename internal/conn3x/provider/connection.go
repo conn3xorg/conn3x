@@ -21,6 +21,7 @@ import (
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
@@ -305,4 +306,31 @@ func validateSSH(cfg cty.Value) tfdiags.Diagnostics {
 		}
 	}
 	return diags
+}
+
+// planID is a host resource's id: the host, its port when that isn't 22, then
+// parts. The port keeps hosts behind one address apart. Ids in state written
+// without it stay as they are, so upgrading plans no change.
+func planID(req providers.PlanResourceChangeRequest, parts ...string) cty.Value {
+	ssh := req.ProposedNewState.GetAttr("ssh")
+	host, port := ssh.GetAttr("host"), ssh.GetAttr("port")
+	if !host.IsKnown() || !port.IsKnown() {
+		return cty.UnknownVal(cty.String)
+	}
+	legacy := strings.Join(append([]string{host.AsString()}, parts...), ":")
+	id := strings.Join(append([]string{hostPort(ssh)}, parts...), ":")
+	if !req.PriorState.IsNull() {
+		if prior := req.PriorState.GetAttr("id"); prior.IsKnown() && prior.RawEquals(cty.StringVal(legacy)) {
+			return prior
+		}
+	}
+	return cty.StringVal(id)
+}
+
+// hostPort names a known ssh block's host: the address, plus the port when it isn't 22.
+func hostPort(ssh cty.Value) string {
+	if port := ssh.GetAttr("port"); !port.IsNull() && !port.RawEquals(cty.NumberIntVal(22)) {
+		return ssh.GetAttr("host").AsString() + ":" + port.AsBigFloat().Text('f', 0)
+	}
+	return ssh.GetAttr("host").AsString()
 }

@@ -73,11 +73,7 @@ func planCommand(req providers.PlanResourceChangeRequest) providers.PlanResource
 	}
 	vals := req.ProposedNewState.AsValueMap()
 	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
-	if host.IsKnown() {
-		vals["id"] = cty.StringVal(host.AsString() + ":command")
-	} else {
-		vals["id"] = cty.UnknownVal(cty.String)
-	}
+	vals["id"] = planID(req, "command")
 	rerun := req.PriorState.IsNull()
 	if !rerun {
 		for _, a := range commandRerun {

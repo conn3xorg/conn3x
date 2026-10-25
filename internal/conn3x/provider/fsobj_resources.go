@@ -176,9 +176,10 @@ func planPathResource(req providers.PlanResourceChangeRequest, kind string, defa
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 	}
 	defaults(vals)
-	host, path := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["path"]
-	if host.IsKnown() && path.IsKnown() {
-		vals["id"] = cty.StringVal(host.AsString() + ":" + kind + ":" + path.AsString())
+	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
+	path := vals["path"]
+	if path.IsKnown() {
+		vals["id"] = planID(req, kind, path.AsString())
 	} else {
 		vals["id"] = cty.UnknownVal(cty.String)
 	}

@@ -6,7 +6,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -34,18 +33,16 @@ func planSynced(req providers.PlanResourceChangeRequest, kind string, keys, sett
 	}
 	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
 	vals["id"] = cty.UnknownVal(cty.String)
-	if host.IsKnown() {
-		id := []string{host.AsString(), kind}
-		for _, k := range keys {
-			if !vals[k].IsKnown() {
-				id = nil
-				break
-			}
-			id = append(id, keyString(vals[k]))
+	id := []string{kind}
+	for _, k := range keys {
+		if !vals[k].IsKnown() {
+			id = nil
+			break
 		}
-		if id != nil {
-			vals["id"] = cty.StringVal(strings.Join(id, ":"))
-		}
+		id = append(id, keyString(vals[k]))
+	}
+	if id != nil {
+		vals["id"] = planID(req, id...)
 	}
 	stale := req.PriorState.IsNull()
 	if !stale {

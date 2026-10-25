@@ -271,9 +271,9 @@ func planAccount(req providers.PlanResourceChangeRequest, kind string, observed 
 	if vals["on_remove"].IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 	}
-	host, name := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["name"]
-	if host.IsKnown() && name.IsKnown() {
-		vals["id"] = cty.StringVal(host.AsString() + ":" + kind + ":" + name.AsString())
+	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
+	if name := vals["name"]; name.IsKnown() {
+		vals["id"] = planID(req, kind, name.AsString())
 	} else {
 		vals["id"] = cty.UnknownVal(cty.String)
 	}

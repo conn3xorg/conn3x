@@ -58,9 +58,9 @@ func planAuthorizedKey(req providers.PlanResourceChangeRequest) providers.PlanRe
 		return resp
 	}
 	vals := deleteByDefault(req).ProposedNewState.AsValueMap()
-	host, user := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["user"]
-	if host.IsKnown() && user.IsKnown() {
-		vals["id"] = cty.StringVal(host.AsString() + ":authorized_key:" + user.AsString())
+	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
+	if user := vals["user"]; user.IsKnown() {
+		vals["id"] = planID(req, "authorized_key", user.AsString())
 	} else {
 		vals["id"] = cty.UnknownVal(cty.String)
 	}

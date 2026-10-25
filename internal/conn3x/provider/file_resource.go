@@ -89,9 +89,9 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 	} else {
 		vals["sha256"] = cty.UnknownVal(cty.String)
 	}
-	host, path := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["path"]
-	if host.IsKnown() && path.IsKnown() {
-		vals["id"] = cty.StringVal(host.AsString() + ":" + path.AsString())
+	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
+	if path := vals["path"]; path.IsKnown() {
+		vals["id"] = planID(req, path.AsString())
 	} else {
 		vals["id"] = cty.UnknownVal(cty.String)
 	}

@@ -60,9 +60,8 @@ func planServiceAction(req providers.PlanResourceChangeRequest) providers.PlanRe
 	if vals["action"].IsNull() {
 		vals["action"] = cty.StringVal("restart")
 	}
-	host, name := req.ProposedNewState.GetAttr("ssh").GetAttr("host"), vals["name"]
-	if host.IsKnown() && name.IsKnown() {
-		vals["id"] = cty.StringVal(host.AsString() + ":service-action:" + service.Unit(name.AsString()))
+	if name := vals["name"]; name.IsKnown() {
+		vals["id"] = planID(req, "service-action", service.Unit(name.AsString()))
 	} else {
 		vals["id"] = cty.UnknownVal(cty.String)
 	}
