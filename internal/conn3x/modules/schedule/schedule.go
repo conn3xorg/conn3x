@@ -61,8 +61,9 @@ func (c Cron) Content() (string, error) {
 	if user == "" {
 		user = "root"
 	}
+	// cron turns an unescaped % into a newline and feeds the rest to stdin.
 	return fmt.Sprintf("# Managed by Conn3x.\nSHELL=/bin/sh\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n%s %s %s\n",
-		strings.Join(strings.Fields(c.Schedule), " "), user, c.Command), nil
+		strings.Join(strings.Fields(c.Schedule), " "), user, strings.ReplaceAll(c.Command, "%", `\%`)), nil
 }
 
 var unitName = regexp.MustCompile(`^[A-Za-z0-9:_.-]+$`)
@@ -112,8 +113,10 @@ func (t Timer) Units() (service, timer string, err error) {
 	if desc == "" {
 		desc = t.Name + " (managed by Conn3x)"
 	}
-	service = fmt.Sprintf("[Unit]\nDescription=%s\n\n[Service]\nType=oneshot\nUser=%s\nExecStart=%s\n", desc, user, t.Command)
-	timer = fmt.Sprintf("[Unit]\nDescription=%s\n\n[Timer]\nOnCalendar=%s\nPersistent=%t\n\n[Install]\nWantedBy=timers.target\n", desc, t.OnCalendar, t.Persistent)
+	// systemd reads % as the start of a specifier, such as %h.
+	esc := func(s string) string { return strings.ReplaceAll(s, "%", "%%") }
+	service = fmt.Sprintf("[Unit]\nDescription=%s\n\n[Service]\nType=oneshot\nUser=%s\nExecStart=%s\n", esc(desc), user, esc(t.Command))
+	timer = fmt.Sprintf("[Unit]\nDescription=%s\n\n[Timer]\nOnCalendar=%s\nPersistent=%t\n\n[Install]\nWantedBy=timers.target\n", esc(desc), t.OnCalendar, t.Persistent)
 	return service, timer, nil
 }
 

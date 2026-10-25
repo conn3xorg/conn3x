@@ -132,7 +132,8 @@ func readCommand(ctx context.Context, req providers.ReadResourceRequest) provide
 
 func applyCommand(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	var resp providers.ApplyResourceChangeResponse
-	if req.PlannedState.IsNull() {
+	// A known satisfied means the plan found nothing to rerun.
+	if req.PlannedState.IsNull() || (!req.PriorState.IsNull() && req.PlannedState.GetAttr("satisfied").IsKnown()) {
 		resp.NewState = req.PlannedState
 		return resp
 	}

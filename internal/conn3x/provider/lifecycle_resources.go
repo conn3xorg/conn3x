@@ -159,7 +159,8 @@ func readReboot(_ context.Context, req providers.ReadResourceRequest) providers.
 // applyReboot reboots and redials until the host reports a new boot ID.
 func applyReboot(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	var resp providers.ApplyResourceChangeResponse
-	if req.PlannedState.IsNull() {
+	// A known boot_id means the plan did not ask for a reboot.
+	if req.PlannedState.IsNull() || req.PlannedState.GetAttr("boot_id").IsKnown() {
 		resp.NewState = req.PlannedState
 		return resp
 	}

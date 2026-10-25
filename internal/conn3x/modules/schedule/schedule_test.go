@@ -71,3 +71,15 @@ func TestTimerValidate(t *testing.T) {
 		}
 	}
 }
+
+// cron reads an unescaped % as a newline, and systemd as a specifier.
+func TestPercentIsEscaped(t *testing.T) {
+	got, err := Cron{Name: "stamp", Schedule: "@daily", Command: "date +%F >> /var/log/stamp"}.Content()
+	if err != nil || !strings.HasSuffix(got, `@daily root date +\%F >> /var/log/stamp`+"\n") {
+		t.Fatalf("cron = %q, %v", got, err)
+	}
+	svc, _, err := Timer{Name: "stamp", OnCalendar: "daily", Command: "date +%F", Description: "100% daily"}.Units()
+	if err != nil || !strings.Contains(svc, "ExecStart=date +%%F\n") || !strings.Contains(svc, "Description=100%% daily\n") {
+		t.Fatalf("service = %q, %v", svc, err)
+	}
+}

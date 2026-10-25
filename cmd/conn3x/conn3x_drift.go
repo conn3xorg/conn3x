@@ -65,24 +65,37 @@ func runDrift(args []string, out, errOut io.Writer) int {
 		return 1
 	}
 	r, readErr := readDrift(pipe)
-	waitErr := plan.Wait()
-	r.write(out)
-	switch {
-	case readErr != nil:
+	planCode := 0
+	if err := plan.Wait(); err != nil {
+		planCode = 1
+		if exit, ok := err.(*exec.ExitError); ok {
+			planCode = exit.ExitCode()
+		}
+	}
+	if readErr != nil {
 		fmt.Fprintf(errOut, "Error: reading the plan: %s\n", readErr)
 		return 1
-	case len(r.errors) > 0:
+	}
+	// plan -detailed-exitcode also exits 2 when only outputs changed.
+	r.outputsOnly = planCode == 2 && len(r.cloud)+len(r.hosts) == 0 && len(r.errors) == 0
+	r.write(out)
+	return driftExit(r, planCode)
+}
+
+// driftExit is 0 for no drift, 2 for drift and 1 for errors.
+func driftExit(r driftReport, planCode int) int {
+	switch {
+	case len(r.errors) > 0 || planCode == 1:
 		return 1
-	case len(r.cloud)+len(r.hosts) > 0:
+	case len(r.cloud)+len(r.hosts) > 0 || planCode == 2:
 		return 2
-	case waitErr != nil:
-		return 1
 	}
 	return 0
 }
 
 type driftReport struct {
 	cloud, hosts, errors []string
+	outputsOnly          bool
 }
 
 // readDrift collects the drifted resources and errors from plan -json.
@@ -134,6 +147,9 @@ func readDrift(r io.Reader) (driftReport, error) {
 func (r driftReport) write(w io.Writer) {
 	n := len(r.cloud) + len(r.hosts)
 	switch {
+	case r.outputsOnly:
+		fmt.Fprintln(w, "Only outputs changed since the last apply; the cloud and the hosts match it.")
+		return
 	case n == 0 && len(r.errors) == 0:
 		fmt.Fprintln(w, "No drift: the cloud and the hosts match the last apply.")
 		return

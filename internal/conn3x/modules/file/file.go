@@ -35,7 +35,7 @@ type Actual struct {
 	Group   string
 }
 
-var modePattern = regexp.MustCompile(`^0?[0-7]{3,4}$`)
+var modePattern = regexp.MustCompile(`^[0-7]{4}$`)
 
 // Validate checks a Desired before anything runs on a host.
 func (d Desired) Validate() error {
@@ -43,7 +43,7 @@ func (d Desired) Validate() error {
 		return fmt.Errorf("path %q must be absolute", d.Path)
 	}
 	if !modePattern.MatchString(d.Mode) {
-		return fmt.Errorf("mode %q must be octal, like \"0644\"", d.Mode)
+		return fmt.Errorf("mode %q must be four octal digits, like \"0644\"", d.Mode)
 	}
 	return nil
 }

@@ -226,6 +226,14 @@ func applyPathResource(ctx context.Context, req providers.ApplyResourceChangeReq
 		}
 		target = req.PriorState
 	}
+	// An update that planned nothing stale only changed how Conn3x reaches
+	// the host, so there is nothing to do there.
+	if !req.PriorState.IsNull() && !req.PlannedState.IsNull() && req.PlannedState.Type().HasAttribute("in_sync") {
+		if s := req.PlannedState.GetAttr("in_sync"); s.IsKnown() && !s.IsNull() && s.True() {
+			resp.NewState = req.PlannedState
+			return resp
+		}
+	}
 	h, err := dialConnection(ctx, target.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))

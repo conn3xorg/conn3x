@@ -17,17 +17,23 @@ import (
 
 const ruleOnRemove = "\"delete\" (default) closes the port again when the rule is removed or replaced, \"forget\" leaves it open."
 
-// planRule plans a firewall rule. Unlike other resources, rules default to
-// on_remove = "delete", so a changed port does not leave the old one open.
+// planRule plans a firewall rule, which defaults to on_remove = "delete".
 func planRule(kind string, keys []string) func(providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	return func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-		if !req.ProposedNewState.IsNull() && req.ProposedNewState.GetAttr("on_remove").IsNull() {
-			vals := req.ProposedNewState.AsValueMap()
-			vals["on_remove"] = cty.StringVal(onRemoveDelete)
-			req.ProposedNewState = cty.ObjectVal(vals)
-		}
-		return planSynced(req, kind, keys, nil)
+		return planSynced(deleteByDefault(req), kind, keys, nil)
 	}
+}
+
+// deleteByDefault makes on_remove default to "delete", for resources that
+// grant access or run things: a rotated key, a renamed job or a changed
+// port must not leave the old one active.
+func deleteByDefault(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeRequest {
+	if !req.ProposedNewState.IsNull() && req.ProposedNewState.GetAttr("on_remove").IsNull() {
+		vals := req.ProposedNewState.AsValueMap()
+		vals["on_remove"] = cty.StringVal(onRemoveDelete)
+		req.ProposedNewState = cty.ObjectVal(vals)
+	}
+	return req
 }
 
 func firewalldSchema() providers.Schema {

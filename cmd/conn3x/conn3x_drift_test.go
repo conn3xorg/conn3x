@@ -62,3 +62,29 @@ Run conn3x plan to see what Conn3x would change to put them back.
 		t.Fatalf("got %q", out.String())
 	}
 }
+
+// A refresh-only plan exits 2 for changed outputs too; that is drift, not
+// an error.
+func TestDriftExitCode(t *testing.T) {
+	var none driftReport
+	for _, c := range []struct {
+		rep      driftReport
+		planCode int
+		want     int
+	}{
+		{none, 0, 0},
+		{none, 2, 2},
+		{driftReport{hosts: []string{"x"}}, 2, 2},
+		{driftReport{errors: []string{"e"}}, 1, 1},
+		{none, 1, 1},
+	} {
+		if got := driftExit(c.rep, c.planCode); got != c.want {
+			t.Errorf("driftExit(%+v, %d) = %d, want %d", c.rep, c.planCode, got, c.want)
+		}
+	}
+	var out strings.Builder
+	driftReport{outputsOnly: true}.write(&out)
+	if !strings.Contains(out.String(), "Only outputs changed") {
+		t.Fatalf("got %q", out.String())
+	}
+}

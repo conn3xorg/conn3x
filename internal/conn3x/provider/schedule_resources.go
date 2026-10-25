@@ -105,7 +105,7 @@ func cronSchema() providers.Schema {
 			"schedule":  {Type: cty.String, Required: true, Description: "Five cron fields, or a macro such as @daily."},
 			"user":      {Type: cty.String, Optional: true, Description: "User the job runs as. Defaults to root."},
 			"command":   {Type: cty.String, Required: true, Description: "Command to run."},
-			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the job, \"delete\" removes it."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) removes the job, \"forget\" leaves it."},
 			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the job on the host matches."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
@@ -130,7 +130,7 @@ func validateCron(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planCron(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "cron", []string{"name"}, cronSettings)
+	return planSynced(deleteByDefault(req), "cron", []string{"name"}, cronSettings)
 }
 
 func readCron(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -184,7 +184,7 @@ func timerSchema() providers.Schema {
 			"command":     {Type: cty.String, Required: true, Description: "Command to run (ExecStart)."},
 			"description": {Type: cty.String, Optional: true, Description: "Unit description."},
 			"persistent":  {Type: cty.Bool, Optional: true, Description: "Run a missed job at the next boot."},
-			"on_remove":   {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the timer, \"delete\" stops it and removes its units."},
+			"on_remove":   {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) stops the timer and removes its units, \"forget\" leaves it."},
 			"in_sync":     {Type: cty.Bool, Computed: true, Description: "Whether the units match and the timer is enabled and running."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
@@ -213,7 +213,7 @@ func validateTimer(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planTimer(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "timer", []string{"name"}, timerSettings)
+	return planSynced(deleteByDefault(req), "timer", []string{"name"}, timerSettings)
 }
 
 func readTimer(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
