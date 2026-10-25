@@ -1,0 +1,54 @@
+// Copyright (c) The Conn3x Authors
+// SPDX-License-Identifier: MPL-2.0
+
+// The messages between conn3x and the agent on a host. Each one travels as
+// a frame: a four-byte big-endian length, then an Envelope. agentpb.go
+// encodes them by hand with protowire, field for field as written here.
+syntax = "proto3";
+
+package conn3x.agent.v1;
+
+option go_package = "github.com/opentofu/opentofu/internal/conn3x/agent/agentpb";
+
+message Envelope {
+  // id ties a response to its request. Hello uses 0.
+  uint64 id = 1;
+  oneof body {
+    Hello hello = 2;
+    ExecRequest exec_request = 3;
+    ExecResponse exec_response = 4;
+    Cancel cancel = 5;
+    Error error = 6;
+  }
+}
+
+// Hello is the first frame the agent sends.
+message Hello {
+  uint32 version = 1;
+}
+
+// ExecRequest runs cmd with /bin/sh in the C locale.
+message ExecRequest {
+  string cmd = 1;
+  bytes stdin = 2;
+}
+
+message ExecResponse {
+  bytes stdout = 1;
+  bytes stderr = 2;
+  int32 exit_code = 3;
+}
+
+// Cancel kills the request with the same id, and everything it started.
+message Cancel {}
+
+message Error {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    UNSUPPORTED = 1;
+    INTERNAL = 2;
+    CANCELED = 3;
+  }
+  Code code = 1;
+  string message = 2;
+}
