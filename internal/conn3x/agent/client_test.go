@@ -156,6 +156,10 @@ func TestRunAfterAgentDied(t *testing.T) {
 	if _, err := c.Run(ctx, "true", nil); !errors.Is(err, ErrAgentGone) {
 		t.Fatalf("afterwards: err = %v, want ErrAgentGone", err)
 	}
+	<-c.Done()
+	if c.Err() == nil {
+		t.Fatal("Err() is nil after the agent died")
+	}
 }
 
 // waitForPID reads a pid a command writes to path.
@@ -185,4 +189,75 @@ func waitGone(t *testing.T, pid int) {
 	}
 	_ = syscall.Kill(pid, syscall.SIGKILL)
 	t.Fatalf("process %d outlived its request", pid)
+}
+
+func TestRunAfterUnreadableFrame(t *testing.T) {
+	conn, end := pipes()
+	sent := make(chan *agentpb.Envelope, 1)
+	go func() {
+		_ = agentpb.WriteFrame(end, &agentpb.Envelope{Hello: &agentpb.Hello{Version: agentpb.ProtocolVersion}})
+		// A frame longer than MaxFrame: the client must stop and hang up.
+		_, _ = end.Write([]byte{0xff, 0xff, 0xff, 0xff})
+		e, _ := agentpb.ReadFrame(end)
+		sent <- e
+		end.Close()
+	}()
+	c, err := NewClient(ctx, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the client kept reading after a bad frame")
+	}
+	if !errors.Is(c.Err(), agentpb.ErrFrameTooLarge) {
+		t.Fatalf("Err() = %v, want ErrFrameTooLarge", c.Err())
+	}
+	if _, err := c.Run(ctx, "true", nil); !errors.Is(err, ErrAgentGone) {
+		t.Fatalf("err = %v, want ErrAgentGone", err)
+	}
+	if e := <-sent; e != nil {
+		t.Fatalf("the client sent %+v to an agent it had stopped reading", e)
+	}
+}
+
+func TestHelloTimeout(t *testing.T) {
+	defer func(old time.Duration) { helloTimeout = old }(helloTimeout)
+	helloTimeout = 50 * time.Millisecond
+	conn, end := pipes()
+	defer end.Close()
+	start := time.Now()
+	if _, err := NewClient(ctx, conn); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a deadline", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("NewClient took %s", took)
+	}
+}
+
+func TestAgentShutdownIsAgentGone(t *testing.T) {
+	conn, end := pipes()
+	serveCtx, shutdown := context.WithCancel(ctx)
+	go func() {
+		_ = server.Serve(serveCtx, end, end)
+		end.Close()
+	}()
+	c, err := NewClient(ctx, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	errc := make(chan error, 1)
+	go func() {
+		_, err := c.Run(ctx, "sleep 60 & echo $! > "+pidFile+"; wait", nil)
+		errc <- err
+	}()
+	pid := waitForPID(t, pidFile)
+	shutdown()
+	if err := <-errc; !errors.Is(err, ErrAgentGone) {
+		t.Fatalf("err = %v, want ErrAgentGone", err)
+	}
+	waitGone(t, pid)
 }

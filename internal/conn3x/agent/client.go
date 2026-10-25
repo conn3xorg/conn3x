@@ -20,7 +20,7 @@ import (
 
 // helloTimeout bounds the wait for the agent's Hello, which under sudo
 // includes PAM.
-const helloTimeout = 20 * time.Second
+var helloTimeout = 20 * time.Second
 
 var (
 	// ErrAgentGone is wrapped when the agent stops while conn3x still
@@ -89,8 +89,10 @@ func (c *Client) read() {
 	for {
 		e, err := agentpb.ReadFrame(c.rw)
 		if err != nil {
+			// Hang up, so nothing more is sent to an agent nobody hears.
 			c.err = err
 			close(c.done)
+			c.rw.Close()
 			return
 		}
 		c.mu.Lock()
@@ -109,6 +111,11 @@ func (c *Client) read() {
 func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return ssh.Result{}, err
+	}
+	select {
+	case <-c.done:
+		return ssh.Result{}, c.gone()
+	default:
 	}
 	ch := make(chan *agentpb.Envelope, 1)
 	c.mu.Lock()
@@ -144,12 +151,30 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result,
 	switch {
 	case e.Result != nil:
 		return ssh.Result{Stdout: e.Result.Stdout, Stderr: e.Result.Stderr, ExitCode: int(e.Result.ExitCode)}, nil
+	case e.Error != nil && e.Error.Code == agentpb.CodeCanceled:
+		// Only the agent cancels a request whose ctx is still live: it is
+		// shutting down.
+		return ssh.Result{}, fmt.Errorf("%w: it was stopped while running the command", ErrAgentGone)
 	case e.Error != nil && e.Error.Code == agentpb.CodeUnsupported:
 		return ssh.Result{}, fmt.Errorf("conn3x agent: %s: %w", e.Error.Message, errors.ErrUnsupported)
 	case e.Error != nil:
 		return ssh.Result{}, fmt.Errorf("conn3x agent: %s: %s", e.Error.Code, e.Error.Message)
 	}
 	return ssh.Result{}, fmt.Errorf("%w: an empty reply to request %d", ErrProtocol, id)
+}
+
+// Done is closed when the agent's output ends; after that every Run fails
+// with ErrAgentGone.
+func (c *Client) Done() <-chan struct{} { return c.done }
+
+// Err says why the agent's output ended, or nil while it is running.
+func (c *Client) Err() error {
+	select {
+	case <-c.done:
+		return c.err
+	default:
+		return nil
+	}
 }
 
 // Close stops the agent by ending its input.
