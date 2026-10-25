@@ -73,7 +73,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 	return providers.GetProviderSchemaResponse{
 		Provider:      providers.Schema{Block: emptyBlock()},
 		ResourceTypes: resourceSchemas(),
-		DataSources:   map[string]providers.Schema{},
+		DataSources:   map[string]providers.Schema{"conn3x_host": hostDataSchema()},
 	}
 }
 
@@ -90,8 +90,11 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
-func (p *Provider) ValidateDataResourceConfig(context.Context, providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
-	return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data sources")}
+func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
+	if req.TypeName != "conn3x_host" {
+		return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data source " + req.TypeName)}
+	}
+	return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config)}
 }
 
 func (p *Provider) ValidateEphemeralConfig(context.Context, providers.ValidateEphemeralConfigRequest) providers.ValidateEphemeralConfigResponse {
@@ -150,8 +153,11 @@ func (p *Provider) ImportResourceState(context.Context, providers.ImportResource
 	return providers.ImportResourceStateResponse{Diagnostics: unsupported("import")}
 }
 
-func (p *Provider) ReadDataSource(context.Context, providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
-	return providers.ReadDataSourceResponse{Diagnostics: unsupported("data sources")}
+func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
+	if req.TypeName != "conn3x_host" {
+		return providers.ReadDataSourceResponse{Diagnostics: unsupported("data source " + req.TypeName)}
+	}
+	return readHostData(ctx, req)
 }
 
 func (p *Provider) OpenEphemeralResource(context.Context, providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
