@@ -10,11 +10,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -287,6 +289,82 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 			return res, fmt.Errorf("ssh %s: %w", c.addr, err)
 		}
 	}
+}
+
+// Process is a command started with Start. Reading reads its stdout and
+// writing writes its stdin.
+type Process struct {
+	addr    string
+	session *gossh.Session
+	stdin   io.WriteCloser
+	stdout  io.Reader
+	stderr  syncBuffer
+}
+
+// Start runs cmd as given, without a PTY, and leaves its stdin and stdout
+// open for the caller. Unlike Run it adds no shell or locale around cmd.
+func (c *Client) Start(ctx context.Context, cmd string) (*Process, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	session, err := c.conn.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("ssh %s: opening session: %w", c.addr, err)
+	}
+	p := &Process{addr: c.addr, session: session}
+	session.Stderr = &p.stderr
+	if p.stdin, err = session.StdinPipe(); err == nil {
+		p.stdout, err = session.StdoutPipe()
+	}
+	if err == nil {
+		err = session.Start(cmd)
+	}
+	if err != nil {
+		session.Close()
+		return nil, fmt.Errorf("ssh %s: starting command: %w", c.addr, err)
+	}
+	return p, nil
+}
+
+func (p *Process) Read(b []byte) (int, error)  { return p.stdout.Read(b) }
+func (p *Process) Write(b []byte) (int, error) { return p.stdin.Write(b) }
+
+// Stderr is everything the command has written to stderr so far.
+func (p *Process) Stderr() []byte { return p.stderr.Bytes() }
+
+// Wait waits for the command to exit. A non-zero exit is an error.
+func (p *Process) Wait() error {
+	if err := p.session.Wait(); err != nil {
+		return fmt.Errorf("ssh %s: %w", p.addr, err)
+	}
+	return nil
+}
+
+// Close ends the command's stdin and the session.
+func (p *Process) Close() error {
+	_ = p.stdin.Close()
+	if err := p.session.Close(); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
+
+// syncBuffer is a bytes.Buffer safe to write and read at the same time.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return bytes.Clone(b.buf.Bytes())
 }
 
 // Alive reports whether the connection still answers a keepalive.

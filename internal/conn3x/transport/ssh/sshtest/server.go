@@ -16,9 +16,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -35,9 +38,33 @@ type Server struct {
 	Dir       string
 	// Env is added to the environment of every command the server runs.
 	Env []string
+	// Latency delays every write the server makes, to stand in for a
+	// distant host.
+	Latency time.Duration
+
+	mu       sync.Mutex
+	commands []string
 
 	accepts  atomic.Int64
 	forwards atomic.Int64
+}
+
+// Commands are the commands the server has run, in order.
+func (s *Server) Commands() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.commands)
+}
+
+// slowConn delays each write by the server's Latency.
+type slowConn struct {
+	net.Conn
+	s *Server
+}
+
+func (c slowConn) Write(b []byte) (int, error) {
+	time.Sleep(c.s.Latency)
+	return c.Conn.Write(b)
 }
 
 // Forwards is how many connections the server has forwarded as a jump host.
@@ -128,7 +155,7 @@ func StartWith(t testing.TB, addr string, keys Keys) *Server {
 				return
 			}
 			s.accepts.Add(1)
-			go s.serve(conn, cfg)
+			go s.serve(slowConn{conn, s}, cfg)
 		}
 	}()
 	return s
@@ -198,15 +225,27 @@ func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
 		cmdLen := binary.BigEndian.Uint32(req.Payload[:4])
 		command := string(req.Payload[4 : 4+cmdLen])
 		_ = req.Reply(true, nil)
+		s.mu.Lock()
+		s.commands = append(s.commands, command)
+		s.mu.Unlock()
 
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = s.Dir
 		cmd.Env = append(os.Environ(), s.Env...)
-		cmd.Stdin = ch
+		// Stdin goes through an os.Pipe so that, as with sshd, the command
+		// can exit without waiting for the client to close its stdin.
+		stdin, feed, err := os.Pipe()
+		if err != nil {
+			return
+		}
+		go func() { _, _ = io.Copy(feed, ch); feed.Close() }()
+		cmd.Stdin = stdin
 		cmd.Stdout = ch
 		cmd.Stderr = ch.Stderr()
 		code := 0
-		if err := cmd.Run(); err != nil {
+		err = cmd.Run()
+		stdin.Close()
+		if err != nil {
 			var exit *exec.ExitError
 			if errors.As(err, &exit) {
 				code = exit.ExitCode()

@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -151,6 +152,57 @@ func TestCancelStopsRun(t *testing.T) {
 	}
 	if time.Since(start) > 2*time.Second {
 		t.Fatalf("run ignored cancellation, took %s", time.Since(start))
+	}
+}
+
+func TestStartStreamsWithoutPTY(t *testing.T) {
+	s := sshtest.New(t)
+	c := dial(t, testConfig(t, s))
+	cmd := `head -c 5; [ -t 0 ] || echo no-tty >&2`
+	p, err := c.Start(context.Background(), cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err := p.Write([]byte("hello, and more")); err != nil {
+		t.Fatal(err)
+	}
+	out := make([]byte, 5)
+	if _, err := io.ReadFull(p, out); err != nil || string(out) != "hello" {
+		t.Fatalf("read %q, %v; want hello", out, err)
+	}
+	if err := p.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if string(p.Stderr()) != "no-tty\n" {
+		t.Fatalf("stderr = %q, want no-tty", p.Stderr())
+	}
+	if got := s.Commands(); len(got) != 1 || got[0] != cmd {
+		t.Fatalf("server ran %q, want exactly %q", got, cmd)
+	}
+}
+
+func TestStartAfterCancel(t *testing.T) {
+	s := sshtest.New(t)
+	c := dial(t, testConfig(t, s))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Start(ctx, "true"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestLatencyDelaysEveryWrite(t *testing.T) {
+	s := sshtest.New(t)
+	c := dial(t, testConfig(t, s))
+	s.Latency = 30 * time.Millisecond
+	start := time.Now()
+	if _, err := c.Run(context.Background(), "true", nil); err != nil {
+		t.Fatal(err)
+	}
+	// A session takes several round trips: open, exec, exit status, close.
+	if took := time.Since(start); took < 3*s.Latency {
+		t.Fatalf("Run took %s with %s latency per write", took, s.Latency)
 	}
 }
 
