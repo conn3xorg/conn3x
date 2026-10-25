@@ -16,6 +16,7 @@ Provisioning a server and configuring it are one job, but it usually takes two t
 Terraform or OpenTofu to create the machine, then Ansible to set it up, plus the glue
 scripts, inventory files and second state that hold the two together. Conn3x does the
 whole job, from one binary, with one plan and one state.
+[Here's why that matters.](https://conn3x.org/blog/why-conn3x)
 
 <p align="center">
   <img alt="conn3x applying a circuit, then planning a fix for a hand-edited file" src=".github/assets/demo.gif" width="100%">
