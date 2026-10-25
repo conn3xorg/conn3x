@@ -24,9 +24,11 @@ and one state.
 > already cover the everyday work: files and templates, packages and their
 > repositories, services, users and SSH keys, cron jobs and timers, kernel parameters,
 > mounts, the hostname and time zone, firewalld or ufw rules, SELinux booleans and
-> file contexts, and checksummed downloads, archives and git checkouts. Every plan
-> shows the exact diff. Star and watch the repo to follow along. We're building it in
-> public.
+> file contexts, checksummed downloads, archives and git checkouts, and reboots that
+> wait for the host to come back. Steps can read facts about each host, such as its
+> distribution and memory. Every plan shows the exact diff, and `conn3x drift` tells you
+> what changed by hand since the last apply, in the cloud and on the hosts. Star and
+> watch the repo to follow along. We're building it in public.
 
 <p align="center">
   <img alt="conn3x applying a circuit, then planning a fix for a hand-edited file" src=".github/assets/demo.gif" width="100%">
