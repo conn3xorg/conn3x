@@ -1,0 +1,174 @@
+// Copyright (c) The Conn3x Authors
+// SPDX-License-Identifier: MPL-2.0
+
+package agent
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/opentofu/opentofu/internal/conn3x/modules"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/moduletest"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh/sshtest"
+)
+
+const agentPkg = "github.com/opentofu/opentofu/cmd/conn3x-agent"
+
+// buildAgent builds the agent for this machine.
+func buildAgent(tb testing.TB) string {
+	tb.Helper()
+	bin := filepath.Join(tb.TempDir(), "conn3x-agent")
+	if out, err := exec.Command("go", "build", "-o", bin, agentPkg).CombinedOutput(); err != nil {
+		tb.Fatalf("building the agent: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func dialServer(tb testing.TB, s *sshtest.Server) *ssh.Client {
+	tb.Helper()
+	c, err := ssh.Dial(context.Background(), ssh.Config{Host: s.Host, Port: s.Port, User: "test", PrivateKey: s.ClientKey, KnownHostsFile: s.KnownHosts(tb)})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { c.Close() })
+	return c
+}
+
+// sshAgent starts the agent binary over SSH, as conn3x does on a host.
+func sshAgent(tb testing.TB, c *ssh.Client, bin string) *Client {
+	tb.Helper()
+	p, err := c.Start(context.Background(), "exec "+ssh.Quote(bin))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	a, err := NewClient(context.Background(), p)
+	if err != nil {
+		tb.Fatalf("%v (agent stderr: %s)", err, p.Stderr())
+	}
+	tb.Cleanup(func() { a.Close() })
+	return a
+}
+
+func TestAgentOverSSHConformance(t *testing.T) {
+	bin := buildAgent(t)
+	s := sshtest.New(t)
+	shell := dialServer(t, s)
+
+	t.Run("Local", func(t *testing.T) {
+		moduletest.RunnerConformance(t, func(*testing.T) modules.Runner { return moduletest.Local{} })
+	})
+	t.Run("shell", func(t *testing.T) {
+		moduletest.RunnerConformance(t, func(*testing.T) modules.Runner { return shell })
+	})
+	before := len(s.Commands())
+	var a *Client
+	t.Run("agent", func(t *testing.T) {
+		moduletest.RunnerConformance(t, func(t *testing.T) modules.Runner {
+			a = sshAgent(t, dialServer(t, s), bin)
+			return a
+		})
+		// Same directory and environment as a shell command gets.
+		for _, cmd := range []string{"pwd", `printf %s "$LC_ALL"`} {
+			got, err := a.Run(ctx, cmd, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, _ := shell.Run(ctx, cmd, nil)
+			if string(got.Stdout) != string(want.Stdout) {
+				t.Errorf("%s: agent says %q, the shell says %q", cmd, got.Stdout, want.Stdout)
+			}
+		}
+	})
+	// Everything the agent ran went through the one session that started it.
+	if got := s.Commands()[before:]; len(got) != 3 || !strings.HasPrefix(got[0], "exec ") {
+		t.Fatalf("the server ran %q; want the agent started once and two shell commands", got)
+	}
+}
+
+func TestAgentDependencies(t *testing.T) {
+	allowed := []string{
+		agentPkg,
+		"github.com/opentofu/opentofu/internal/conn3x/agent/agentpb",
+		"github.com/opentofu/opentofu/internal/conn3x/agent/server",
+		"google.golang.org/protobuf/",
+	}
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", agentPkg)
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	for _, dep := range strings.Fields(string(out)) {
+		ok := false
+		for _, a := range allowed {
+			ok = ok || dep == a || (strings.HasSuffix(a, "/") && strings.HasPrefix(dep, a))
+		}
+		if !ok {
+			t.Errorf("the agent imports %s; it may use only the standard library, protobuf and its own packages", dep)
+		}
+	}
+
+	for _, arch := range []string{"amd64", "arm64"} {
+		bin := filepath.Join(t.TempDir(), "conn3x-agent")
+		build := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w -buildid=", "-o", bin, agentPkg)
+		build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+arch, "CGO_ENABLED=0")
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("building for linux/%s: %v\n%s", arch, err, out)
+		}
+		raw, err := os.ReadFile(bin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var gz bytes.Buffer
+		w, _ := gzip.NewWriterLevel(&gz, gzip.BestCompression)
+		_, _ = w.Write(raw)
+		w.Close()
+		t.Logf("linux/%s agent: %d bytes, %d gzipped", arch, len(raw), gz.Len())
+		if gz.Len() > 2_000_000 {
+			t.Errorf("linux/%s agent is %d bytes gzipped; the budget is 2,000,000", arch, gz.Len())
+		}
+	}
+}
+
+// BenchmarkRun times one small command per way of running it, against a
+// local host and one 25 ms away.
+func BenchmarkRun(b *testing.B) {
+	bin := buildAgent(b)
+	for _, mode := range []string{"shell", "shell-sudo", "agent"} {
+		for _, rtt := range []struct {
+			name  string
+			delay time.Duration
+		}{{"rtt0", 0}, {"rtt25ms", 25 * time.Millisecond}} {
+			b.Run(mode+"/"+rtt.name, func(b *testing.B) {
+				s := sshtest.New(b)
+				s.Latency = rtt.delay
+				c := dialServer(b, s)
+				var r modules.Runner = c
+				switch mode {
+				case "shell-sudo":
+					s.FakeSudo(b, "nopasswd")
+					r = &ssh.Become{Client: c}
+				case "agent":
+					r = sshAgent(b, c, bin)
+				}
+				ctx := context.Background()
+				if _, err := r.Run(ctx, "true", nil); err != nil {
+					b.Fatal(err)
+				}
+				for b.Loop() {
+					if _, err := r.Run(ctx, "true", nil); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
