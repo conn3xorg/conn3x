@@ -4,12 +4,14 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/opentofu/opentofu/internal/configs"
+	"github.com/opentofu/opentofu/internal/conn3x/provider"
 )
 
 func TestWritesAPagePerModule(t *testing.T) {
@@ -35,21 +37,55 @@ func TestWritesAPagePerModule(t *testing.T) {
 // When two arguments are alternatives ("Set this or ..."), the example sets
 // one of them, so it's a valid step.
 func TestExamplesSetOneOfAPair(t *testing.T) {
-	dir := t.TempDir()
-	if err := write(dir); err != nil {
+	p, err := provider.New()
+	if err != nil {
 		t.Fatal(err)
 	}
-	for page, want := range map[string]string{"file": "    content = \"...\"\n", "firewalld": "    port = \"...\"\n"} {
-		got, err := os.ReadFile(filepath.Join(dir, page+".md"))
-		if err != nil {
-			t.Fatal(err)
-		}
+	schemas := p.GetProviderSchema(context.Background()).ResourceTypes
+	for name, want := range map[string]string{"file": "    content = \"...\"\n", "firewalld": "    port = \"...\"\n"} {
+		rt := configs.Conn3xStepModules()[name]
+		got := []byte(page(name, rt, schemas[rt].Block))
 		example := strings.SplitN(strings.SplitN(string(got), "```hcl\n", 2)[1], "```", 2)[0]
 		if !strings.Contains(example, want) {
-			t.Errorf("%s example lacks %q:\n%s", page, want, example)
+			t.Errorf("%s example lacks %q:\n%s", name, want, example)
 		}
-		if page == "file" && strings.Contains(example, "content_wo") {
+		if name == "file" && strings.Contains(example, "content_wo") {
 			t.Errorf("file example sets both of a pair:\n%s", example)
+		}
+	}
+}
+
+// A hand-written page goes around the generated reference: its part before
+// the marker follows the description in place of the generated example, and
+// its part after the marker closes the page.
+func TestHandwrittenPageIsSpliced(t *testing.T) {
+	gen := "---\ntitle: x\n---\n\nGen description.\n\n```hcl\ngenerated example\n```\n\n## Arguments\n\ntable\n\nA step lowers to x.\n"
+	hand := "Intro.\n\n## Example usage\n\n```hcl\nhand example\n```\n<!-- reference -->\n## How it works\n\nNotes.\n"
+	got := splice(gen, hand)
+	for _, want := range []string{"Gen description.\n\nIntro.", "hand example", "## Arguments", "A step lowers to x.\n\n## How it works\n\nNotes."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "generated example") || strings.Contains(got, "<!-- reference -->") {
+		t.Errorf("generated example or marker left in:\n%s", got)
+	}
+	if splice(gen, "") != gen {
+		t.Error("no hand-written page should leave the generated one as it is")
+	}
+}
+
+// Every hand-written page belongs to a module that exists.
+func TestHandwrittenPagesMatchModules(t *testing.T) {
+	entries, err := pages.ReadDir("pages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mods := configs.Conn3xStepModules()
+	for _, e := range entries {
+		name := strings.TrimSuffix(e.Name(), ".md")
+		if _, ok := mods[name]; !ok && e.Name() != "README.md" {
+			t.Errorf("pages/%s has no module", e.Name())
 		}
 	}
 }

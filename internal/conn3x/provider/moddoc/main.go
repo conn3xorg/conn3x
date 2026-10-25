@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,36 @@ func main() {
 	}
 }
 
+// pages holds the hand-written part of each module's page; see pages/README.md.
+//
+//go:embed pages
+var pages embed.FS
+
+// referenceMarker separates a hand-written page's introduction from its notes.
+const referenceMarker = "<!-- reference -->"
+
+// splice puts a hand-written page around a generated one: the part before
+// the marker follows the description, replacing the generated example, and
+// the part after it closes the page.
+func splice(gen, hand string) string {
+	if hand == "" {
+		return gen
+	}
+	intro, notes, _ := strings.Cut(hand, referenceMarker)
+	head, rest, ok := strings.Cut(gen, "## Arguments")
+	if !ok {
+		return gen
+	}
+	if i := strings.Index(head, "```hcl"); i >= 0 {
+		head = strings.TrimRight(head[:i], "\n") + "\n\n"
+	}
+	out := head + strings.TrimSpace(intro) + "\n\n## Arguments" + rest
+	if notes = strings.TrimSpace(notes); notes != "" {
+		out = strings.TrimRight(out, "\n") + "\n\n" + notes + "\n"
+	}
+	return out
+}
+
 func write(dir string) error {
 	p, err := provider.New()
 	if err != nil {
@@ -49,7 +80,8 @@ func write(dir string) error {
 		if !ok {
 			return fmt.Errorf("%s: no schema for %s", name, rt)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(page(name, rt, schema.Block)), 0o644); err != nil {
+		hand, _ := pages.ReadFile("pages/" + name + ".md") // most modules have none yet
+		if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(splice(page(name, rt, schema.Block), string(hand))), 0o644); err != nil {
 			return err
 		}
 	}
