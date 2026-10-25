@@ -18,5 +18,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 cd "$root"
-overlay=$(go run ./internal/conn3x/brand/brandgen -root "$root" -out "$work")
+# brandgen runs here, so it is built for this machine even when GOOS or
+# GOARCH asks for another target.
+overlay=$(env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root "$root" -out "$work")
 go build -overlay "$overlay" -trimpath "$@" -o "$out" ./cmd/conn3x

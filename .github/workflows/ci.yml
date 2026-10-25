@@ -75,6 +75,17 @@ jobs:
           go build -trimpath -ldflags='-s -w' -o dist/tofu ./cmd/tofu
           ./dist/conn3x version
           scripts/brand-check.sh dist/conn3x
+      - name: Stay smaller than tofu
+        run: |
+          c=$(stat -c %s dist/conn3x)
+          t=$(stat -c %s dist/tofu)
+          echo "conn3x $((c / 1000000)) MB, tofu $((t / 1000000)) MB"
+          [ "$c" -lt "$t" ] || { echo "conn3x has grown past the tofu it is built from" >&2; exit 1; }
+      - name: Cross-compile for the release targets
+        run: |
+          for target in linux/arm64 darwin/arm64 windows/amd64; do
+            GOOS=${target%/*} GOARCH=${target#*/} scripts/build-conn3x.sh "dist/conn3x-${target%/*}-${target#*/}" -ldflags='-s -w'
+          done
 
   e2e:
     runs-on: ubuntu-24.04
