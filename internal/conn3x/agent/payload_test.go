@@ -8,6 +8,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"errors"
+	"os"
 	"testing"
 	"testing/fstest"
 )
@@ -53,5 +54,24 @@ func TestEmbeddedMissingPayload(t *testing.T) {
 	payloadFS = fstest.MapFS{"payload/conn3x-agent-linux-amd64.gz": {Data: raw}}
 	if _, _, err := Embedded("amd64"); err == nil || errors.Is(err, ErrUnavailable) {
 		t.Errorf("Embedded of a non-gzip payload = %v, want another error", err)
+	}
+}
+
+// TestEmbeddedPresent checks a release build: CI sets CONN3X_REQUIRE_AGENT=1
+// after building, so a build that lost its agents fails.
+func TestEmbeddedPresent(t *testing.T) {
+	if os.Getenv("CONN3X_REQUIRE_AGENT") != "1" {
+		t.Skip("set CONN3X_REQUIRE_AGENT=1 to check that this build embeds the agents")
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		gz, _, err := Embedded(arch)
+		if err != nil {
+			t.Errorf("linux/%s: %v", arch, err)
+			continue
+		}
+		raw, err := gunzip(gz)
+		if err != nil || !bytes.HasPrefix(raw, []byte("\x7fELF")) {
+			t.Errorf("linux/%s: the embedded agent is not an ELF binary (%v)", arch, err)
+		}
 	}
 }

@@ -7,6 +7,8 @@ on:
       - release.Containerfile
       - scripts/build-conn3x.sh
       - scripts/build-agent.sh
+      - internal/conn3x/agent/payload/**
+      - internal/conn3x/agent/payload.go
       - internal/conn3x/brand/**
       - .github/workflows/release*.yml
 
@@ -36,3 +38,5 @@ jobs:
           tar -xzf dist/conn3x_*_linux_amd64.tar.gz conn3x
           ./conn3x version
           scripts/brand-check.sh ./conn3x
+      - name: The release embeds the agents
+        run: CONN3X_REQUIRE_AGENT=1 go test -count=1 -run TestEmbeddedPresent ./internal/conn3x/agent/
