@@ -6,6 +6,7 @@ on:
       - .goreleaser.yaml
       - release.Containerfile
       - scripts/build-conn3x.sh
+      - scripts/build-agent.sh
       - internal/conn3x/brand/**
       - .github/workflows/release*.yml
 
