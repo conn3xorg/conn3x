@@ -17,6 +17,9 @@ for arch in amd64 arm64; do
   [ -s "$f" ] || fail "no $f"
   [ "$(gzip -dc "$f" | head -c 4 | tail -c 3)" = ELF ] || fail "$f is not an ELF binary"
 done
+# Nothing from git goes in, so another commit doesn't change the agent.
+gzip -dc "$work/a/conn3x-agent-linux-amd64.gz" >"$work/agent"
+if go version -m "$work/agent" | grep -q vcs; then fail "the agent records git state"; fi
 # The same source gives the same bytes.
 bash "$here/build-agent.sh" "$work/b" >/dev/null || fail "second build failed"
 cmp -s "$work/a/conn3x-agent-linux-amd64.gz" "$work/b/conn3x-agent-linux-amd64.gz" || fail "builds differ"

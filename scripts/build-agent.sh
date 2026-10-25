@@ -7,8 +7,10 @@
 #
 #   scripts/build-agent.sh [output-dir]
 #
-# The output dir defaults to internal/conn3x/agent/payload. Each agent must
-# stay within 2,000,000 bytes gzipped, or the build fails.
+# The output dir defaults to internal/conn3x/agent/payload. The bytes depend
+# only on the source, not on the commit, so an unchanged agent keeps its
+# checksum. Each agent must stay within 2,000,000 bytes gzipped, or the
+# build fails.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -22,7 +24,7 @@ cd "$root"
 for arch in amd64 arm64; do
   name=conn3x-agent-linux-$arch
   env -u GOFLAGS GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
-    go build -trimpath -ldflags='-s -w -buildid=' -o "$work/$name" ./cmd/conn3x-agent
+    go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o "$work/$name" ./cmd/conn3x-agent
   gzip -9n "$work/$name"
   size=$(wc -c <"$work/$name.gz" | tr -d ' ')
   if [ "$size" -gt "$limit" ]; then
