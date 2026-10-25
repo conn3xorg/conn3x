@@ -78,7 +78,7 @@ func page(name, rt string, b *configschema.Block) string {
 	fmt.Fprintf(&out, "%s\n\n", b.Description)
 	var required []string
 	for _, a := range sortedAttrs(b) {
-		if at := b.Attributes[a]; at.Required {
+		if at := b.Attributes[a]; at.Required || firstOfPair(a, at.Description) {
 			required = append(required, fmt.Sprintf("    %s = %s\n", a, placeholder(at.Type)))
 		}
 	}
@@ -133,3 +133,14 @@ func placeholder(t cty.Type) string {
 }
 
 func escape(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
+
+// firstOfPair reports whether attr is the alphabetically first of two
+// alternatives, described as "Set this or <other>.", so examples set one.
+func firstOfPair(attr, desc string) bool {
+	_, rest, ok := strings.Cut(desc, "Set this or ")
+	if !ok {
+		return false
+	}
+	other, _, _ := strings.Cut(rest, ".")
+	return attr < other
+}
