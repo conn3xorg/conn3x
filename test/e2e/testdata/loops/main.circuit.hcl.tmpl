@@ -1,0 +1,36 @@
+circuit "app" {
+  hosts = {
+    a = "127.0.0.1"
+    b = { address = "127.0.0.1", port = {{.PortB}} }
+  }
+
+  ssh {
+    port             = {{.PortA}}
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "users" {
+    for_each = [{{range $i, $u := .Users}}{{if $i}}, {{end}}"{{$u}}"{{end}}]
+    user {
+      name = item.value
+    }
+  }
+
+  step "conf" {
+    for_each = { motd = "hello", issue = "welcome" }
+    file {
+      path    = "/etc/conn3x-${item.key}"
+      content = each.key == "a" ? "a: ${item.value}{{.SuffixA}}\n" : "${each.key}: ${item.value}\n"
+    }
+    notify = [handler.reload]
+  }
+
+  handler "reload" {
+    service {
+      name   = "sshd"
+      action = "reload"
+    }
+  }
+}

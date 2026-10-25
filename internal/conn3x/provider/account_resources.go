@@ -27,6 +27,7 @@ func userSchema() providers.Schema {
 			Description: "A local user account.",
 			Attributes: map[string]*configschema.Attribute{
 				"id":        {Type: cty.String, Computed: true},
+				"revision":  revisionAttr(),
 				"name":      {Type: cty.String, Required: true, Description: "Login name."},
 				"uid":       {Type: cty.Number, Optional: true, Computed: true, Description: "User ID."},
 				"group":     {Type: cty.String, Optional: true, Computed: true, Description: "Primary group."},
@@ -170,6 +171,7 @@ func groupSchema() providers.Schema {
 			Description: "A local group.",
 			Attributes: map[string]*configschema.Attribute{
 				"id":        {Type: cty.String, Computed: true},
+				"revision":  revisionAttr(),
 				"name":      {Type: cty.String, Required: true, Description: "Group name."},
 				"gid":       {Type: cty.Number, Optional: true, Computed: true, Description: "Group ID."},
 				"system":    {Type: cty.Bool, Optional: true, Description: "Create as a system group."},

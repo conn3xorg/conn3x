@@ -24,6 +24,7 @@ func commandSchema() providers.Schema {
 			Description: "A shell command, for what no module covers yet. Guards say when it has already done its job.",
 			Attributes: map[string]*configschema.Attribute{
 				"id":        {Type: cty.String, Computed: true},
+				"revision":  revisionAttr(),
 				"command":   {Type: cty.String, Required: true, Description: "Shell command, run with /bin/sh."},
 				"creates":   {Type: cty.String, Optional: true, Description: "Skip the command while this path exists."},
 				"removes":   {Type: cty.String, Optional: true, Description: "Skip the command while this path is missing."},

@@ -25,6 +25,7 @@ func serviceActionSchema() providers.Schema {
 			Description: "Restarts or reloads a systemd unit when its triggers change.",
 			Attributes: map[string]*configschema.Attribute{
 				"id":       {Type: cty.String, Computed: true},
+				"revision": revisionAttr(),
 				"name":     {Type: cty.String, Required: true, Description: "Unit name."},
 				"action":   {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default) or \"reload\"."},
 				"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the action runs again whenever it changes."},
@@ -68,7 +69,7 @@ func planServiceAction(req providers.PlanResourceChangeRequest) providers.PlanRe
 	resp.PlannedState = cty.ObjectVal(vals)
 	if !req.PriorState.IsNull() {
 		prior, now := req.PriorState.GetAttr("triggers"), vals["triggers"]
-		if !now.IsWhollyKnown() || !prior.RawEquals(now) {
+		if !now.IsWhollyKnown() || (!prior.RawEquals(now) && !upgradedTriggers(prior, now)) {
 			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("triggers"))
 		}
 	}
@@ -84,7 +85,9 @@ func readServiceAction(_ context.Context, req providers.ReadResourceRequest) pro
 func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	var resp providers.ApplyResourceChangeResponse
 	resp.NewState = req.PlannedState
-	if req.PlannedState.IsNull() {
+	// Only a create, which a change of triggers forces, runs the action. An
+	// in-place update only records the new settings.
+	if req.PlannedState.IsNull() || !req.PriorState.IsNull() {
 		return resp
 	}
 	host, err := dialConnection(ctx, req.PlannedState.GetAttr("ssh"))
@@ -103,4 +106,48 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("service %s: %w", service.Unit(name), err))
 	}
 	return resp
+}
+
+// upgradedTriggers reports the first plan after upgrading: handlers used to
+// watch whole step objects and now watch their revisions, which state from
+// before doesn't have yet. Old objects against nothing but null revisions
+// mean nothing changed on the host.
+func upgradedTriggers(prior, now cty.Value) bool {
+	return hasObjects(prior) && onlyNulls(now)
+}
+
+// hasObjects reports whether triggers hold whole step objects, which always
+// have an id, as handlers recorded before revisions existed.
+func hasObjects(v cty.Value) bool {
+	if v.IsNull() || !v.IsKnown() {
+		return false
+	}
+	ty := v.Type()
+	if ty.IsObjectType() && ty.HasAttribute("id") {
+		return true
+	}
+	if ty.IsTupleType() || ty.IsListType() || ty.IsObjectType() || ty.IsMapType() {
+		for it := v.ElementIterator(); it.Next(); {
+			if _, e := it.Element(); hasObjects(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func onlyNulls(v cty.Value) bool {
+	if v.IsNull() {
+		return true
+	}
+	ty := v.Type()
+	if !ty.IsTupleType() && !ty.IsListType() && !ty.IsObjectType() && !ty.IsMapType() {
+		return false
+	}
+	for it := v.ElementIterator(); it.Next(); {
+		if _, e := it.Element(); !onlyNulls(e) {
+			return false
+		}
+	}
+	return true
 }

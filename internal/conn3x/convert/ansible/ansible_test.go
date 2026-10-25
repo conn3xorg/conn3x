@@ -36,10 +36,10 @@ func TestConvertGolden(t *testing.T) {
 	if _, diags := hclparse.NewParser().ParseHCL(res.HCL, "site.tf"); diags.HasErrors() {
 		t.Fatalf("output is not valid HCL: %s", diags)
 	}
-	if res.Converted != 9 || len(res.Review) != 2 {
+	if res.Converted != 10 || len(res.Review) != 1 {
 		t.Fatalf("converted %d, review %v", res.Converted, res.Review)
 	}
-	for _, want := range []string{"loop", "debug"} {
+	for _, want := range []string{"debug"} {
 		found := false
 		for _, r := range res.Review {
 			found = found || strings.Contains(r.Reason, want)
@@ -101,5 +101,51 @@ func TestHandlerThatIsNotAServiceIsLeft(t *testing.T) {
 `)
 	if res.Converted != 0 || len(res.Review) != 2 {
 		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}
+
+func TestConvertsLiteralLoops(t *testing.T) {
+	res := convertString(t, `- hosts: all
+  tasks:
+    - name: Tools
+      package:
+        name: "{{ item }}"
+      loop: [git, jq]
+    - name: Config files
+      copy:
+        dest: "/etc/app/{{ item }}.conf"
+        content: "managed\n"
+      loop:
+        - api
+        - worker
+`)
+	if res.Converted != 2 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v\n%s", res.Converted, res.Review, res.HCL)
+	}
+	for _, want := range []string{
+		`for_each = ["git", "jq"]`,
+		`name = item.value`,
+		`for_each = ["api", "worker"]`,
+		`path    = "/etc/app/${item.value}.conf"`,
+	} {
+		if !strings.Contains(string(res.HCL), want) {
+			t.Errorf("output lacks %q:\n%s", want, res.HCL)
+		}
+	}
+}
+
+// Loops the converter can't prove the same stay for a person.
+func TestRefusesOtherLoops(t *testing.T) {
+	for reason, task := range map[string]string{
+		"loop over a variable":   "package: {name: \"{{ item }}\"}\n      loop: \"{{ pkgs }}\"",
+		"item.name":              "user: {name: \"{{ item.name }}\"}\n      loop: [{name: a}, {name: b}]",
+		"uses when":              "package: {name: \"{{ item }}\"}\n      loop: [a, b]\n      when: x",
+		"doesn't use item":       "package: {name: vim}\n      loop: [a, b]",
+		"uses loop_control":      "package: {name: \"{{ i }}\"}\n      loop: [a, b]\n      loop_control: {loop_var: i}",
+	} {
+		res := convertString(t, "- hosts: all\n  vars: {pkgs: x}\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
 	}
 }

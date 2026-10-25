@@ -100,11 +100,12 @@ circuit "web_servers" {
     }
   }
 
-  # TODO(convert): Task "Users from a list" (site.yml line 64) uses loop, which the converter can't translate yet.
-  #   - name: Users from a list
-  #     user:
-  #       name: "{{ item }}"
-  #     loop: [alice, bob]
+  step "users_from_a_list" {
+    for_each = ["alice", "bob"]
+    user {
+      name = item.value
+    }
+  }
 
   # TODO(convert): Task "Say hello" (site.yml line 69) uses the debug module, which has no Conn3x equivalent yet.
   #   - name: Say hello

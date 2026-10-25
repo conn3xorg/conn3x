@@ -139,14 +139,18 @@ func (p *Provider) ReadResource(ctx context.Context, req providers.ReadResourceR
 
 func (p *Provider) PlanResourceChange(_ context.Context, req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
-		return rt.plan(req)
+		resp := rt.plan(req)
+		resp.PlannedState = planRevision(req.PriorState, resp.PlannedState)
+		return resp
 	}
 	return providers.PlanResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
 func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
-		return rt.apply(ctx, req)
+		resp := rt.apply(ctx, req)
+		resp.NewState = applyRevision(req.PlannedState, resp.NewState)
+		return resp
 	}
 	return providers.ApplyResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }

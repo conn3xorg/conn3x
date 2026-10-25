@@ -22,6 +22,7 @@ func serviceSchema() providers.Schema {
 			Description: "A systemd unit: whether it runs, and whether it starts at boot.",
 			Attributes: map[string]*configschema.Attribute{
 				"id":         {Type: cty.String, Computed: true},
+				"revision":   revisionAttr(),
 				"name":       {Type: cty.String, Required: true, Description: "Unit name. \".service\" is added when there is no suffix."},
 				"state":      {Type: cty.String, Optional: true, Description: "\"started\" or \"stopped\". Left as is when unset."},
 				"enabled":    {Type: cty.Bool, Optional: true, Description: "Start at boot. Left as is when unset."},

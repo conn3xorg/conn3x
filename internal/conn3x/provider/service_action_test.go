@@ -72,3 +72,34 @@ func TestServiceActionValidate(t *testing.T) {
 		t.Error("bad action accepted")
 	}
 }
+
+// Handlers used to watch whole step objects and now watch their revisions.
+// State from before has no revisions yet, so the first plan after upgrading
+// must not fire every handler.
+func TestServiceActionUpgradeDoesNotFire(t *testing.T) {
+	step := cty.ObjectVal(map[string]cty.Value{"id": cty.StringVal("h:/etc/a"), "sha256": cty.StringVal("x")})
+	prior := actionObj(map[string]cty.Value{
+		"id": cty.StringVal("x"), "name": cty.StringVal("nginx"), "action": cty.StringVal("restart"),
+		"triggers": cty.TupleVal([]cty.Value{step, cty.ObjectVal(map[string]cty.Value{"h/one": step})}),
+	})
+	now := cty.TupleVal([]cty.Value{cty.NullVal(cty.String), cty.ObjectVal(map[string]cty.Value{"h/one": cty.NullVal(cty.String)})})
+	if resp := planAction(prior, actionObj(map[string]cty.Value{"name": cty.StringVal("nginx"), "triggers": now})); len(resp.RequiresReplace) != 0 {
+		t.Fatalf("upgrade planned a replace: %v", resp.RequiresReplace)
+	}
+	changed := cty.TupleVal([]cty.Value{cty.UnknownVal(cty.String), cty.ObjectVal(map[string]cty.Value{"h/one": cty.NullVal(cty.String)})})
+	if resp := planAction(prior, actionObj(map[string]cty.Value{"name": cty.StringVal("nginx"), "triggers": changed})); len(resp.RequiresReplace) != 1 {
+		t.Fatal("a real change right after upgrading did not plan a replace")
+	}
+}
+
+// Only a create or a replace runs the action; an in-place update records
+// state without touching the host.
+func TestServiceActionInPlaceUpdateRunsNothing(t *testing.T) {
+	prior := actionObj(map[string]cty.Value{"id": cty.StringVal("x"), "name": cty.StringVal("nginx"), "action": cty.StringVal("restart"), "triggers": cty.StringVal("a")})
+	planned := actionObj(map[string]cty.Value{"id": cty.StringVal("x"), "name": cty.StringVal("nginx"), "action": cty.StringVal("reload"), "triggers": cty.StringVal("a")})
+	// The ssh block points at nothing, so any attempt to connect fails.
+	resp := applyServiceAction(ctx, providers.ApplyResourceChangeRequest{PriorState: prior, PlannedState: planned, Config: planned})
+	if resp.Diagnostics.HasErrors() {
+		t.Fatalf("in-place update tried to reach the host: %v", resp.Diagnostics.Err())
+	}
+}

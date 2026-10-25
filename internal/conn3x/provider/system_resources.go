@@ -21,6 +21,7 @@ func sysctlSchema() providers.Schema {
 		Description: "A kernel parameter, set now and kept across reboots in /etc/sysctl.d.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"name":      {Type: cty.String, Required: true, Description: "Key, such as net.ipv4.ip_forward."},
 			"value":     {Type: cty.String, Required: true, Description: "Value. Separate several with spaces."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the setting, \"delete\" removes its file; the running value stays until reboot."},
@@ -84,9 +85,10 @@ func singletonSchema(desc, nameDesc string) providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: desc,
 		Attributes: map[string]*configschema.Attribute{
-			"id":      {Type: cty.String, Computed: true},
-			"name":    {Type: cty.String, Required: true, Description: nameDesc},
-			"in_sync": {Type: cty.Bool, Computed: true, Description: "Whether the host has this setting."},
+			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
+			"name":     {Type: cty.String, Required: true, Description: nameDesc},
+			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the host has this setting."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}

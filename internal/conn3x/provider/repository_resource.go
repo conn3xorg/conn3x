@@ -21,6 +21,7 @@ func repositorySchema() providers.Schema {
 		Description: "A package repository and its signing key: a .repo file for dnf, or a .sources file for apt, which then refreshes its package lists.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":         {Type: cty.String, Computed: true},
+			"revision":   revisionAttr(),
 			"name":       {Type: cty.String, Required: true, Description: "Repository name, used for its file names."},
 			"url":        {Type: cty.String, Required: true, Description: "Base URL. dnf expands $releasever and $basearch in it."},
 			"key":        {Type: cty.String, Required: true, Description: "ASCII-armored public key the repository is signed with."},

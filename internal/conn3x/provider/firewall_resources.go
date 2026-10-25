@@ -41,6 +41,7 @@ func firewalldSchema() providers.Schema {
 		Description: "A service or port allowed through firewalld, now and after reboots.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"zone":      {Type: cty.String, Optional: true, Description: "Zone. Defaults to firewalld's default zone."},
 			"service":   {Type: cty.String, Optional: true, Description: "firewalld service name, such as http. Set this or port."},
 			"port":      {Type: cty.String, Optional: true, Description: "Port and protocol, such as 8080/tcp or 60000-61000/udp. Set this or service."},
@@ -101,6 +102,7 @@ func ufwRuleSchema() providers.Schema {
 		Description: "A ufw rule for a port. Rules take effect once ufw is enabled; allow SSH before enabling it.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"action":    {Type: cty.String, Required: true, Description: "allow, deny, reject or limit."},
 			"port":      {Type: cty.String, Required: true, Description: "Port, optionally with a protocol: 22, 22/tcp or 6000:6007/tcp."},
 			"from":      {Type: cty.String, Optional: true, Description: "Address or CIDR the rule applies to. Defaults to anywhere."},

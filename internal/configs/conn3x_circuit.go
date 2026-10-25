@@ -273,12 +273,12 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		return nil, append(diags, nativeSyntaxRequired(step.DefRange))
 	}
 	for attrName, attr := range body.Attributes {
-		if attrName != "depends_on" && attrName != "notify" {
+		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" {
 			rng := attr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported argument in step",
-				Detail:   fmt.Sprintf("A step takes only depends_on, notify and one module block, not %q.", attrName),
+				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify and one module block, not %q.", attrName),
 				Subject:  &rng,
 			})
 		}
@@ -312,13 +312,19 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			Subject:  &rng,
 		})
 	}
+	items, looping := body.Attributes["for_each"]
+	diags = append(diags, loopRefs(moduleAttrs, module.Body.Blocks, looping)...)
 	if diags.HasErrors() {
 		return nil, diags
+	}
+	forEach, hostPath := hosts, []string{"value"}
+	if looping {
+		forEach, hostPath = &hostItemProduct{hosts: hosts, items: items.Expr}, []string{"value", "host"}
 	}
 
 	config := &hclsyntax.Body{
 		Attributes: moduleAttrs,
-		Blocks:     append(append(hclsyntax.Blocks{}, module.Body.Blocks...), sshBlockFor(sshAttrs, sshRange)),
+		Blocks:     append(append(hclsyntax.Blocks{}, module.Body.Blocks...), sshBlockFor(sshAttrs, sshRange, hostPath)),
 		SrcRange:   module.Body.SrcRange,
 		EndRange:   module.Body.EndRange,
 	}
@@ -328,7 +334,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		Type:      resourceType,
 		Name:      circuit + "__" + step.Labels[0],
 		Config:    config,
-		ForEach:   hosts,
+		ForEach:   forEach,
 		DeclRange: step.DefRange,
 		TypeRange: module.TypeRange,
 		Managed:   &ManagedResource{},
@@ -358,7 +364,10 @@ var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "ju
 //
 //	host = try(each.value.address, each.value)
 //	port = try(each.value.port, <the circuit's port, or null>)
-func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *hclsyntax.Block {
+//
+// hostPath is where the host's entry sits under each: ["value"] for a plain
+// step, ["value", "host"] for a looping one.
+func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range, hostPath []string) *hclsyntax.Block {
 	ssh := hclsyntax.Attributes{}
 	for k, v := range sshAttrs {
 		ssh[k] = v
@@ -369,13 +378,13 @@ func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *hclsyntax.B
 	try := func(args ...hclsyntax.Expression) hclsyntax.Expression {
 		return &hclsyntax.FunctionCallExpr{Name: "try", Args: args, NameRange: sshRange, OpenParenRange: sshRange, CloseParenRange: sshRange}
 	}
-	ssh["host"] = attr("host", try(eachValueAttr("address", sshRange), eachTraversal("value", sshRange)))
+	ssh["host"] = attr("host", try(eachPath(sshRange, append(hostPath[:len(hostPath):len(hostPath)], "address")...), eachPath(sshRange, hostPath...)))
 	for _, name := range hostOverrides {
 		var fallback hclsyntax.Expression = &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.DynamicPseudoType), SrcRange: sshRange}
 		if a, ok := sshAttrs[name]; ok {
 			fallback = a.Expr
 		}
-		ssh[name] = attr(name, try(eachValueAttr(name, sshRange), fallback))
+		ssh[name] = attr(name, try(eachPath(sshRange, append(hostPath[:len(hostPath):len(hostPath)], name)...), fallback))
 	}
 	return &hclsyntax.Block{
 		Type:            "ssh",
@@ -386,11 +395,13 @@ func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *hclsyntax.B
 	}
 }
 
-func eachValueAttr(name string, rng hcl.Range) *hclsyntax.ScopeTraversalExpr {
-	return &hclsyntax.ScopeTraversalExpr{
-		Traversal: hcl.Traversal{hcl.TraverseRoot{Name: "each", SrcRange: rng}, hcl.TraverseAttr{Name: "value", SrcRange: rng}, hcl.TraverseAttr{Name: name, SrcRange: rng}},
-		SrcRange:  rng,
+// eachPath is each.<path...>.
+func eachPath(rng hcl.Range, path ...string) *hclsyntax.ScopeTraversalExpr {
+	t := hcl.Traversal{hcl.TraverseRoot{Name: "each", SrcRange: rng}}
+	for _, p := range path {
+		t = append(t, hcl.TraverseAttr{Name: p, SrcRange: rng})
 	}
+	return &hclsyntax.ScopeTraversalExpr{Traversal: t, SrcRange: rng}
 }
 
 func eachTraversal(attr string, rng hcl.Range) *hclsyntax.ScopeTraversalExpr {
@@ -465,15 +476,29 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 
 	var triggers []hclsyntax.Expression
 	for _, n := range notifiers {
-		triggers = append(triggers, &hclsyntax.IndexExpr{
-			Collection: &hclsyntax.ScopeTraversalExpr{
+		if _, looping := n.ForEach.(*hostItemProduct); looping {
+			step := &hclsyntax.ScopeTraversalExpr{
 				Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: h.DefRange}, hcl.TraverseAttr{Name: n.Name, SrcRange: h.DefRange}},
 				SrcRange:  h.DefRange,
+			}
+			triggers = append(triggers, hostInstances(step, h.DefRange))
+			continue
+		}
+		// Watch the step's revision on this host, which changes whenever
+		// Conn3x changes something there.
+		triggers = append(triggers, &hclsyntax.RelativeTraversalExpr{
+			Source: &hclsyntax.IndexExpr{
+				Collection: &hclsyntax.ScopeTraversalExpr{
+					Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: h.DefRange}, hcl.TraverseAttr{Name: n.Name, SrcRange: h.DefRange}},
+					SrcRange:  h.DefRange,
+				},
+				Key:          eachTraversal("key", h.DefRange),
+				SrcRange:     h.DefRange,
+				OpenRange:    h.DefRange,
+				BracketRange: h.DefRange,
 			},
-			Key:          eachTraversal("key", h.DefRange),
-			SrcRange:     h.DefRange,
-			OpenRange:    h.DefRange,
-			BracketRange: h.DefRange,
+			Traversal: hcl.Traversal{hcl.TraverseAttr{Name: "revision", SrcRange: h.DefRange}},
+			SrcRange:  h.DefRange,
 		})
 	}
 	attrs := hclsyntax.Attributes{}
@@ -490,7 +515,7 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 		Mode:      addrs.ManagedResourceMode,
 		Type:      "conn3x_service_action",
 		Name:      circuit + "__" + h.Labels[0],
-		Config:    &hclsyntax.Body{Attributes: attrs, Blocks: hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange)}, SrcRange: svc.Body.SrcRange, EndRange: svc.Body.EndRange},
+		Config:    &hclsyntax.Body{Attributes: attrs, Blocks: hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})}, SrcRange: svc.Body.SrcRange, EndRange: svc.Body.EndRange},
 		ForEach:   hosts,
 		DeclRange: h.DefRange,
 		TypeRange: svc.TypeRange,

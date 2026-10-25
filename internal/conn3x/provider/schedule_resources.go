@@ -98,6 +98,7 @@ func cronSchema() providers.Schema {
 		Description: "A job in /etc/cron.d.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"name":      {Type: cty.String, Required: true, Description: "File name in /etc/cron.d: letters, digits, - and _."},
 			"schedule":  {Type: cty.String, Required: true, Description: "Five cron fields, or a macro such as @daily."},
 			"user":      {Type: cty.String, Optional: true, Description: "User the job runs as. Defaults to root."},
@@ -175,6 +176,7 @@ func timerSchema() providers.Schema {
 		Description: "A systemd timer that runs a command on a schedule.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":          {Type: cty.String, Computed: true},
+			"revision":    revisionAttr(),
 			"name":        {Type: cty.String, Required: true, Description: "Unit name, without .timer or .service."},
 			"on_calendar": {Type: cty.String, Required: true, Description: "systemd calendar expression, such as \"daily\" or \"*-*-* 02:30:00\"."},
 			"user":        {Type: cty.String, Optional: true, Description: "User the command runs as. Defaults to root."},

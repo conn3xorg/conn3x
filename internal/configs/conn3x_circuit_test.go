@@ -4,6 +4,7 @@
 package configs
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -562,5 +563,225 @@ circuit "db" {
 	_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
 	if !diags.HasErrors() || !strings.Contains(diags.Error(), "true or false") {
 		t.Fatalf("want an error asking for true or false, got %v", diags)
+	}
+}
+
+const loopingCircuit = `
+circuit "app" {
+  hosts = { a = "10.0.0.1", b = { address = "10.0.0.2", port = 2222 } }
+  ssh {
+    user = "root"
+  }
+  step "tools" {
+    for_each = ["git", "jq"]
+    package {
+      name = item.value
+    }
+  }
+  step "conf" {
+    for_each = { motd = "hi", issue = "ho" }
+    file {
+      path    = "/etc/${item.key}"
+      content = "${each.key}: ${item.value}"
+    }
+  }
+  step "plain" {
+    file {
+      path    = "/etc/plain"
+      content = each.key
+    }
+  }
+}
+`
+
+func TestLoopingStepLowersToHostItemProduct(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": loopingCircuit})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	v, vDiags := mod.ManagedResources["conn3x_package.app__tools"].ForEach.Value(nil)
+	if vDiags.HasErrors() {
+		t.Fatal(vDiags.Error())
+	}
+	got := map[string]string{}
+	for k, inst := range v.AsValueMap() {
+		got[k] = inst.GetAttr("host_key").AsString() + "|" + inst.GetAttr("item_key").AsString() + "|" + inst.GetAttr("item").AsString()
+	}
+	want := map[string]string{"a/git": "a|git|git", "a/jq": "a|jq|jq", "b/git": "b|git|git", "b/jq": "b|jq|jq"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("for_each = %v, want %v", got, want)
+	}
+	if host := v.GetAttr("b/jq").GetAttr("host"); host.GetAttr("port").AsBigFloat().String() != "2222" {
+		t.Fatalf("host object not carried: %#v", host)
+	}
+}
+
+func TestLoopingStepRewritesReferences(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": loopingCircuit})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	r := mod.ManagedResources["conn3x_file.app__conf"]
+	inst := cty.ObjectVal(map[string]cty.Value{
+		"host_key": cty.StringVal("b"), "host": cty.ObjectVal(map[string]cty.Value{"address": cty.StringVal("10.0.0.2"), "port": cty.NumberIntVal(2222)}),
+		"item_key": cty.StringVal("motd"), "item": cty.StringVal("hi"),
+	})
+	ctx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{"each": cty.ObjectVal(map[string]cty.Value{"key": cty.StringVal("b/motd"), "value": inst})},
+		Functions: map[string]function.Function{"try": tryfunc.TryFunc},
+	}
+	attrs, _ := r.Config.JustAttributes()
+	for name, want := range map[string]string{"path": "/etc/motd", "content": "b: hi"} {
+		got, d := attrs[name].Expr.Value(ctx)
+		if d.HasErrors() || got.AsString() != want {
+			t.Errorf("%s = %#v (%v), want %q", name, got, d, want)
+		}
+	}
+	ssh, _, _ := r.Config.PartialContent(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "ssh"}}})
+	sshAttrs, _ := ssh.Blocks[0].Body.JustAttributes()
+	for name, want := range map[string]string{"host": "10.0.0.2", "port": "2222"} {
+		got, d := sshAttrs[name].Expr.Value(ctx)
+		if d.HasErrors() {
+			t.Fatalf("ssh %s: %v", name, d)
+		}
+		s := ""
+		if got.Type() == cty.Number {
+			s = got.AsBigFloat().String()
+		} else {
+			s = got.AsString()
+		}
+		if s != want {
+			t.Errorf("ssh %s = %s, want %s", name, s, want)
+		}
+	}
+}
+
+func TestStepWithoutForEachUnchanged(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": loopingCircuit})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	if _, ok := mod.ManagedResources["conn3x_file.app__plain"].ForEach.(*hclsyntax.ObjectConsExpr); !ok {
+		t.Fatalf("a step without for_each should keep hosts as its for_each, got %T", mod.ManagedResources["conn3x_file.app__plain"].ForEach)
+	}
+}
+
+func TestItemOutsideLoopIsAnError(t *testing.T) {
+	src := `
+circuit "app" {
+  hosts = { a = "10.0.0.1" }
+  ssh {
+    user = "root"
+  }
+  step "plain" {
+    file {
+      path    = "/etc/x"
+      content = item.value
+    }
+  }
+}
+`
+	_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if !diags.HasErrors() || !strings.Contains(diags.Error(), "for_each") {
+		t.Fatalf("want an error pointing at for_each, got %v", diags)
+	}
+}
+
+func TestHandlerTriggersFromLoopingStep(t *testing.T) {
+	src := `
+circuit "app" {
+  hosts = { a = "10.0.0.1", b = "10.0.0.2" }
+  ssh {
+    user = "root"
+  }
+  step "conf" {
+    for_each = ["one", "two"]
+    file {
+      path    = "/etc/${item.value}"
+      content = "x"
+    }
+    notify = [handler.reload]
+  }
+  handler "reload" {
+    service {
+      name   = "nginx"
+      action = "reload"
+    }
+  }
+}
+`
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	h := mod.ManagedResources["conn3x_service_action.app__reload"]
+	attrs, _ := h.Config.JustAttributes()
+	startswith := function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "s", Type: cty.String}, {Name: "p", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.Bool),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			return cty.BoolVal(strings.HasPrefix(args[0].AsString(), args[1].AsString())), nil
+		},
+	})
+	inst := func(rev string) cty.Value {
+		return cty.ObjectVal(map[string]cty.Value{"revision": cty.StringVal(rev), "sha256": cty.StringVal("same")})
+	}
+	ctx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{
+			"each": cty.ObjectVal(map[string]cty.Value{"key": cty.StringVal("a")}),
+			"conn3x_file": cty.ObjectVal(map[string]cty.Value{"app__conf": cty.ObjectVal(map[string]cty.Value{
+				"a/one": inst("1"), "a/two": inst("2"), "b/one": inst("3"), "b/two": inst("4"),
+			})}),
+		},
+		Functions: map[string]function.Function{"startswith": startswith},
+	}
+	got, d := attrs["triggers"].Expr.Value(ctx)
+	if d.HasErrors() {
+		t.Fatal(d.Error())
+	}
+	watched := map[string]string{}
+	for k, v := range got.Index(cty.NumberIntVal(0)).AsValueMap() {
+		watched[k] = v.AsString()
+	}
+	// Handlers watch revisions, which change whenever Conn3x changes the host.
+	if fmt.Sprint(watched) != "map[a/one:1 a/two:2]" {
+		t.Fatalf("host a's handler watches %v, want host a's revisions", watched)
+	}
+}
+
+// The parser caches files, so the same circuit can be lowered twice; the
+// second pass must not rewrite references again.
+func TestLoopingStepLowersTwice(t *testing.T) {
+	file, diags := hclsyntax.ParseConfig([]byte(loopingCircuit), "main.circuit.hcl", hcl.InitialPos)
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	content, _ := file.Body.Content(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "circuit", LabelNames: []string{"name"}}}})
+	var second []*Resource
+	for range 2 {
+		rs, d := decodeCircuitBlock(content.Blocks[0], map[string]hcl.Range{})
+		if d.HasErrors() {
+			t.Fatal(d.Error())
+		}
+		second = rs
+	}
+	for _, r := range second {
+		if r.Name != "app__tools" {
+			continue
+		}
+		attrs, _ := r.Config.JustAttributes()
+		var parts []string
+		for _, step := range attrs["name"].Expr.Variables()[0] {
+			switch s := step.(type) {
+			case hcl.TraverseRoot:
+				parts = append(parts, s.Name)
+			case hcl.TraverseAttr:
+				parts = append(parts, s.Name)
+			}
+		}
+		got := strings.Join(parts, ".")
+		if got != "each.value.item" {
+			t.Fatalf("after a second lowering, item.value became %s", got)
+		}
 	}
 }

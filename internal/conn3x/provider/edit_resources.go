@@ -90,6 +90,7 @@ func blockFrom(v cty.Value) edit.Block {
 func (k editKind) schema() providers.Schema {
 	attrs := map[string]*configschema.Attribute{
 		"id":        {Type: cty.String, Computed: true},
+		"revision":  revisionAttr(),
 		"path":      {Type: cty.String, Required: true, Description: "Absolute path of the file."},
 		"create":    {Type: cty.Bool, Optional: true, Description: "Create the file when it is missing. Otherwise a missing file is an error."},
 		"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the file as it is, \"delete\" takes the edit back out."},

@@ -246,7 +246,18 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			return
 		}
 	}
+	var items []string
+	if l, ok := t["loop"]; ok {
+		var why string
+		if items, why = literalLoop(l); why != "" {
+			c.issue(body, name, node, why)
+			return
+		}
+	}
 	for _, k := range sortedKeys(t) {
+		if k == "loop" && items != nil {
+			continue
+		}
 		if keywords[k] && !harmless[k] {
 			c.issue(body, name, node, "uses "+k+", which the converter can't translate yet")
 			return
@@ -266,8 +277,11 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, "uses the "+mod+" module, which has no Conn3x equivalent yet")
 		return
 	}
-	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}}
+	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil}
 	steps, reason := m(in)
+	if reason == "" && items != nil {
+		reason = loopSteps(steps, in.itemUsed)
+	}
 	if reason == "" {
 		reason = in.problem
 	}
@@ -303,6 +317,13 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			comment(body, note)
 		}
 		sb := body.AppendNewBlock("step", []string{stepName}).Body()
+		if items != nil {
+			vals := make([]cty.Value, len(items))
+			for i, it := range items {
+				vals[i] = cty.StringVal(it)
+			}
+			sb.SetAttributeValue("for_each", cty.TupleVal(vals))
+		}
 		mb := sb.AppendNewBlock(s.module, nil).Body()
 		for _, a := range s.attrs {
 			if a.raw != "" {
