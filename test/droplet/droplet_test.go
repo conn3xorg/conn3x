@@ -135,6 +135,7 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		`conn3x_sysctl.web__forwarding["web1"] will be created`,
 		`conn3x_hostname.web__name["web1"] will be created`,
 		`conn3x_firewalld.web__http["web1"] will be created`,
+		`conn3x_mount.web__scratch["web1"] will be created`,
 		`conn3x_selinux_boolean.web__proxy["web1"] will be created`,
 		`conn3x_selinux_fcontext.web__content_label["web1"] will be created`,
 		`conn3x_ufw_rule.edge__http["edge1"] will be created`,
@@ -198,6 +199,9 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 	}
 	if got := run("stat -c %C /srv/conn3x"); !strings.Contains(got, ":httpd_sys_content_t:") {
 		t.Fatalf("/srv/conn3x label = %q", got)
+	}
+	if got := run("findmnt -n -M /mnt/conn3x-scratch -o FSTYPE,OPTIONS; grep ' /mnt/conn3x-scratch ' /etc/fstab"); !strings.Contains(got, "size=16384k") || !strings.Contains(got, "tmpfs /mnt/conn3x-scratch tmpfs size=16m,mode=0755 0 0") {
+		t.Fatalf("scratch mount:\n%s", got)
 	}
 	if got := run("firewall-cmd --list-services; firewall-cmd --permanent --list-services"); strings.Count(got, "http") != 2 {
 		t.Fatalf("firewalld services = %q", got)

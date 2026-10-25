@@ -138,6 +138,15 @@ circuit "web" {
     }
   }
 
+  step "scratch" {
+    mount {
+      path   = "/mnt/conn3x-scratch"
+      src    = "tmpfs"
+      fstype = "tmpfs"
+      opts   = "size=16m,mode=0755"
+    }
+  }
+
   step "forwarding" {
     sysctl {
       name  = "net.ipv4.ip_forward"

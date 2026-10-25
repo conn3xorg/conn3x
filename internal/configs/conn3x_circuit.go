@@ -46,6 +46,7 @@ var circuitModules = map[string]string{
 	"download":         "conn3x_download",
 	"archive":          "conn3x_archive",
 	"git":              "conn3x_git",
+	"mount":            "conn3x_mount",
 	"directory":        "conn3x_directory",
 	"link":             "conn3x_link",
 	"line":             "conn3x_line",
