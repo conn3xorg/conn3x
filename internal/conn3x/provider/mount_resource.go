@@ -19,6 +19,7 @@ func mountSchema() providers.Schema {
 		Description: "A file system in /etc/fstab, mounted now.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"path":      {Type: cty.String, Required: true, Description: "Mount point. Created if missing."},
 			"src":       {Type: cty.String, Required: true, Description: "Device, UUID=..., LABEL=..., host:/export, or tmpfs."},
 			"fstype":    {Type: cty.String, Required: true, Description: "File system type, such as xfs, ext4, nfs4 or tmpfs."},

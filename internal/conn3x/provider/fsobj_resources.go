@@ -21,6 +21,7 @@ func directorySchema() providers.Schema {
 		Description: "A directory, created with its parents.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"path":      {Type: cty.String, Required: true, Description: "Absolute path."},
 			"mode":      {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0755\"."},
 			"owner":     {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
@@ -109,6 +110,7 @@ func linkSchema() providers.Schema {
 		Description: "A symbolic link.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"path":      {Type: cty.String, Required: true, Description: "Absolute path of the link."},
 			"target":    {Type: cty.String, Required: true, Description: "What the link points to, absolute or relative to the link."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the link, \"delete\" removes it."},

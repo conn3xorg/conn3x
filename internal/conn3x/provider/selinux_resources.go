@@ -19,10 +19,11 @@ func selinuxBooleanSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "An SELinux boolean, set now and across reboots. Removing it leaves the value as it is.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":      {Type: cty.String, Computed: true},
-			"name":    {Type: cty.String, Required: true, Description: "Boolean, such as httpd_can_network_connect."},
-			"value":   {Type: cty.Bool, Required: true, Description: "Whether it is on."},
-			"in_sync": {Type: cty.Bool, Computed: true, Description: "Whether the running value matches."},
+			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
+			"name":     {Type: cty.String, Required: true, Description: "Boolean, such as httpd_can_network_connect."},
+			"value":    {Type: cty.Bool, Required: true, Description: "Whether it is on."},
+			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the running value matches."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -62,6 +63,7 @@ func selinuxFcontextSchema() providers.Schema {
 		Description: "A local SELinux file context rule. Conn3x relabels the files it covers after every change.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"target":    {Type: cty.String, Required: true, Description: "Path expression, such as /srv/www(/.*)?."},
 			"setype":    {Type: cty.String, Required: true, Description: "SELinux type, such as httpd_sys_content_t."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) keeps the rule, \"delete\" removes it and relabels."},

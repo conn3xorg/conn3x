@@ -36,6 +36,7 @@ func downloadSchema() providers.Schema {
 		Description: "A file downloaded on the host and kept only if its SHA-256 matches.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"url":       {Type: cty.String, Required: true, Description: "http or https URL."},
 			"dest":      {Type: cty.String, Required: true, Description: "Absolute path to save it to."},
 			"sha256":    {Type: cty.String, Required: true, Description: "Expected SHA-256, in lowercase hex."},
@@ -87,11 +88,12 @@ func archiveSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "A tar or zip file on the host, unpacked into a directory unless its creates path exists. Removing it leaves the files.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":      {Type: cty.String, Computed: true},
-			"src":     {Type: cty.String, Required: true, Description: "Absolute path of the archive on the host, such as a download's dest."},
-			"dest":    {Type: cty.String, Required: true, Description: "Directory to unpack into."},
-			"creates": {Type: cty.String, Required: true, Description: "A path the archive creates. While it exists, nothing is unpacked."},
-			"in_sync": {Type: cty.Bool, Computed: true, Description: "Whether the creates path exists."},
+			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
+			"src":      {Type: cty.String, Required: true, Description: "Absolute path of the archive on the host, such as a download's dest."},
+			"dest":     {Type: cty.String, Required: true, Description: "Directory to unpack into."},
+			"creates":  {Type: cty.String, Required: true, Description: "A path the archive creates. While it exists, nothing is unpacked."},
+			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the creates path exists."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -130,12 +132,13 @@ func gitSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "A git checkout at a branch, tag or commit. Refresh notices when a branch moves on the remote. Removing it leaves the checkout.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":      {Type: cty.String, Computed: true},
-			"repo":    {Type: cty.String, Required: true, Description: "Repository URL. The host needs access to it."},
-			"dest":    {Type: cty.String, Required: true, Description: "Directory to check it out in."},
-			"ref":     {Type: cty.String, Optional: true, Description: "Branch, tag or full commit. Defaults to the remote's default branch."},
-			"commit":  {Type: cty.String, Computed: true, Description: "The commit checked out."},
-			"in_sync": {Type: cty.Bool, Computed: true, Description: "Whether the checkout is at the commit ref points to."},
+			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
+			"repo":     {Type: cty.String, Required: true, Description: "Repository URL. The host needs access to it."},
+			"dest":     {Type: cty.String, Required: true, Description: "Directory to check it out in."},
+			"ref":      {Type: cty.String, Optional: true, Description: "Branch, tag or full commit. Defaults to the remote's default branch."},
+			"commit":   {Type: cty.String, Computed: true, Description: "The commit checked out."},
+			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the checkout is at the commit ref points to."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}

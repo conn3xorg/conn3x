@@ -5,7 +5,6 @@ package configs
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 
@@ -724,7 +723,9 @@ circuit "app" {
 			return cty.BoolVal(strings.HasPrefix(args[0].AsString(), args[1].AsString())), nil
 		},
 	})
-	inst := func(sum string) cty.Value { return cty.ObjectVal(map[string]cty.Value{"sha256": cty.StringVal(sum)}) }
+	inst := func(rev string) cty.Value {
+		return cty.ObjectVal(map[string]cty.Value{"revision": cty.StringVal(rev), "sha256": cty.StringVal("same")})
+	}
 	ctx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{
 			"each": cty.ObjectVal(map[string]cty.Value{"key": cty.StringVal("a")}),
@@ -738,13 +739,13 @@ circuit "app" {
 	if d.HasErrors() {
 		t.Fatal(d.Error())
 	}
-	keys := []string{}
-	for k := range got.Index(cty.NumberIntVal(0)).AsValueMap() {
-		keys = append(keys, k)
+	watched := map[string]string{}
+	for k, v := range got.Index(cty.NumberIntVal(0)).AsValueMap() {
+		watched[k] = v.AsString()
 	}
-	sort.Strings(keys)
-	if fmt.Sprint(keys) != "[a/one a/two]" {
-		t.Fatalf("host a's handler watches %v, want only host a's instances", keys)
+	// Handlers watch revisions, which change whenever Conn3x changes the host.
+	if fmt.Sprint(watched) != "map[a/one:1 a/two:2]" {
+		t.Fatalf("host a's handler watches %v, want host a's revisions", watched)
 	}
 }
 

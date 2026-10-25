@@ -116,10 +116,10 @@ func (p *hostItemProduct) Variables() []hcl.Traversal {
 func (p *hostItemProduct) Range() hcl.Range      { return p.items.Range() }
 func (p *hostItemProduct) StartRange() hcl.Range { return p.items.StartRange() }
 
-// hostInstances is a handler's trigger for a looping step: the step's
-// instances on the handler's host.
+// hostInstances is a handler's trigger for a looping step: the revisions of
+// the step's instances on the handler's host.
 //
-//	{ for k, v in STEP : k => v if startswith(k, "${each.key}/") }
+//	{ for k, v in STEP : k => v.revision if startswith(k, "${each.key}/") }
 func hostInstances(step hclsyntax.Expression, rng hcl.Range) hclsyntax.Expression {
 	local := func(name string) *hclsyntax.ScopeTraversalExpr {
 		return &hclsyntax.ScopeTraversalExpr{Traversal: hcl.Traversal{hcl.TraverseRoot{Name: name, SrcRange: rng}}, SrcRange: rng}
@@ -128,12 +128,16 @@ func hostInstances(step hclsyntax.Expression, rng hcl.Range) hclsyntax.Expressio
 		Parts:    []hclsyntax.Expression{eachTraversal("key", rng), &hclsyntax.LiteralValueExpr{Val: cty.StringVal("/"), SrcRange: rng}},
 		SrcRange: rng,
 	}
+	revision := &hclsyntax.ScopeTraversalExpr{
+		Traversal: hcl.Traversal{hcl.TraverseRoot{Name: "v", SrcRange: rng}, hcl.TraverseAttr{Name: "revision", SrcRange: rng}},
+		SrcRange:  rng,
+	}
 	return &hclsyntax.ForExpr{
 		KeyVar:   "k",
 		ValVar:   "v",
 		CollExpr: step,
 		KeyExpr:  local("k"),
-		ValExpr:  local("v"),
+		ValExpr:  revision,
 		CondExpr: &hclsyntax.FunctionCallExpr{
 			Name: "startswith", Args: []hclsyntax.Expression{local("k"), prefix},
 			NameRange: rng, OpenParenRange: rng, CloseParenRange: rng,

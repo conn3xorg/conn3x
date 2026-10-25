@@ -35,11 +35,12 @@ func waitForSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "Waits until a path exists or a TCP port is listening on the host. Refresh checks again, so a later apply waits again if it stopped.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":      {Type: cty.String, Computed: true},
-			"path":    {Type: cty.String, Optional: true, Description: "Path to wait for. Set this or port."},
-			"port":    {Type: cty.Number, Optional: true, Description: "TCP port to wait for a listener on. Set this or path."},
-			"timeout": {Type: cty.String, Optional: true, Description: "How long to wait. Defaults to \"5m\"."},
-			"in_sync": {Type: cty.Bool, Computed: true, Description: "Whether it was ready at the last refresh."},
+			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
+			"path":     {Type: cty.String, Optional: true, Description: "Path to wait for. Set this or port."},
+			"port":     {Type: cty.Number, Optional: true, Description: "TCP port to wait for a listener on. Set this or path."},
+			"timeout":  {Type: cty.String, Optional: true, Description: "How long to wait. Defaults to \"5m\"."},
+			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether it was ready at the last refresh."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -108,6 +109,7 @@ func rebootSchema() providers.Schema {
 		Description: "Reboots the host when created and whenever triggers change, then waits for it to come back. Removing it does nothing.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
 			"triggers": {Type: cty.Map(cty.String), Optional: true, Description: "Reboot again whenever any of these values change."},
 			"timeout":  {Type: cty.String, Optional: true, Description: "How long to wait for the host to come back. Defaults to \"10m\"."},
 			"boot_id":  {Type: cty.String, Computed: true, Description: "The host's boot ID after the reboot."},

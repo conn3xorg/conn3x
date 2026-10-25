@@ -484,15 +484,21 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 			triggers = append(triggers, hostInstances(step, h.DefRange))
 			continue
 		}
-		triggers = append(triggers, &hclsyntax.IndexExpr{
-			Collection: &hclsyntax.ScopeTraversalExpr{
-				Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: h.DefRange}, hcl.TraverseAttr{Name: n.Name, SrcRange: h.DefRange}},
-				SrcRange:  h.DefRange,
+		// Watch the step's revision on this host, which changes whenever
+		// Conn3x changes something there.
+		triggers = append(triggers, &hclsyntax.RelativeTraversalExpr{
+			Source: &hclsyntax.IndexExpr{
+				Collection: &hclsyntax.ScopeTraversalExpr{
+					Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: h.DefRange}, hcl.TraverseAttr{Name: n.Name, SrcRange: h.DefRange}},
+					SrcRange:  h.DefRange,
+				},
+				Key:          eachTraversal("key", h.DefRange),
+				SrcRange:     h.DefRange,
+				OpenRange:    h.DefRange,
+				BracketRange: h.DefRange,
 			},
-			Key:          eachTraversal("key", h.DefRange),
-			SrcRange:     h.DefRange,
-			OpenRange:    h.DefRange,
-			BracketRange: h.DefRange,
+			Traversal: hcl.Traversal{hcl.TraverseAttr{Name: "revision", SrcRange: h.DefRange}},
+			SrcRange:  h.DefRange,
 		})
 	}
 	attrs := hclsyntax.Attributes{}

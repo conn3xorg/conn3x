@@ -22,6 +22,7 @@ func packageSchema() providers.Schema {
 			Description: "An OS package, installed with dnf on the Red Hat family and apt on Debian and Ubuntu.",
 			Attributes: map[string]*configschema.Attribute{
 				"id":                {Type: cty.String, Computed: true},
+				"revision":          revisionAttr(),
 				"name":              {Type: cty.String, Required: true, Description: "Package name."},
 				"state":             {Type: cty.String, Optional: true, Computed: true, Description: "\"present\" (default), \"latest\" or \"absent\"."},
 				"version":           {Type: cty.String, Optional: true, Description: "Version to install, with state \"present\"."},

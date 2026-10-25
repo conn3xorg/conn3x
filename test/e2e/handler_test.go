@@ -42,7 +42,23 @@ func TestHandlerRunsOnlyOnChange(t *testing.T) {
 		t.Fatalf("plan does not show the handler running:\n%s", out)
 	}
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
-	if got := invocation(); got == first || got == "" {
-		t.Fatalf("service was not restarted (invocation %q -> %q)", first, got)
+	second := invocation()
+	if second == first || second == "" {
+		t.Fatalf("service was not restarted (invocation %q -> %q)", first, second)
+	}
+
+	// Someone edits the config by hand. Putting it back is a change on the
+	// host too, so the service restarts with the right config.
+	h.exec("", "sh", "-c", "echo 'greeting = hacked' > /etc/conn3x-demo.conf")
+	out = w.mustConn3x("plan", "-no-color")
+	if !strings.Contains(out, `conn3x_service_action.app__restart["box"] must be replaced`) {
+		t.Fatalf("putting back a hand edit doesn't run the handler:\n%s", out)
+	}
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := invocation(); got == second || got == "" {
+		t.Fatalf("service was not restarted after the hand edit was put back (invocation %q -> %q)", second, got)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("plan after putting it back:\n%s", out)
 	}
 }

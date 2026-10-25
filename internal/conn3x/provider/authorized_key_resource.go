@@ -21,6 +21,7 @@ func authorizedKeySchema() providers.Schema {
 		Description: "One public key in a user's ~/.ssh/authorized_keys.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
 			"user":      {Type: cty.String, Required: true, Description: "The account the key logs in as."},
 			"key":       {Type: cty.String, Required: true, Description: "Public key, in authorized_keys format."},
 			"state":     {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\"."},

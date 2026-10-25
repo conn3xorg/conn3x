@@ -30,9 +30,10 @@ func fileSchema() providers.Schema {
 		Block: &configschema.Block{
 			Description: "A regular file on a host: its content, mode and ownership.",
 			Attributes: map[string]*configschema.Attribute{
-				"id":      {Type: cty.String, Computed: true},
-				"path":    {Type: cty.String, Required: true, Description: "Absolute path of the file on the host."},
-				"content": {Type: cty.String, Optional: true, Description: "Exact content of the file. Set this or content_wo."},
+				"id":       {Type: cty.String, Computed: true},
+				"revision": revisionAttr(),
+				"path":     {Type: cty.String, Required: true, Description: "Absolute path of the file on the host."},
+				"content":  {Type: cty.String, Optional: true, Description: "Exact content of the file. Set this or content_wo."},
 				"content_wo": {
 					Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
 					Description: "Exact content of the file, kept out of state: state records only content_hmac. Use it for secrets. Set this or content.",
