@@ -124,7 +124,9 @@ work makes provider compatibility possible.
 ## Contributing
 
 Ideas and feedback are most useful right now, in
-[Discussions](https://github.com/conn3xorg/conn3x/discussions). If you want to send code,
+[Discussions](https://github.com/conn3xorg/conn3x/discussions). Releases and progress
+go out on X at [@conn3xone](https://x.com/conn3xone) and on the
+[blog](https://conn3x.org/blog). If you want to send code,
 read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every commit needs a DCO sign-off
 (`git commit -s`). There's no CLA, and there never will be. See [GOVERNANCE.md](GOVERNANCE.md).
 
