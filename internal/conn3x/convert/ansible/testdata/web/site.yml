@@ -1,0 +1,81 @@
+- name: Web servers
+  hosts: web
+  become: true
+  vars:
+    http_port: 8080
+    page_title: Hello
+  tasks:
+    - name: Install nginx
+      ansible.builtin.package:
+        name: nginx
+        state: present
+
+    - name: Install tools
+      apt:
+        name: [curl, git]
+        update_cache: true
+
+    - name: Write the home page
+      copy:
+        dest: /usr/share/nginx/html/index.html
+        content: "<h1>{{ page_title }}</h1>\n"
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Ship the nginx config
+      copy:
+        src: nginx.conf
+        dest: /etc/nginx/nginx.conf
+        mode: 644
+      notify:
+        - Restart nginx
+
+    - name: Listen on the port
+      lineinfile:
+        path: /etc/nginx/conf.d/port.conf
+        regexp: '^listen '
+        line: "listen {{ http_port }};"
+
+    - name: Start nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Allow HTTP
+      ansible.posix.firewalld:
+        service: http
+        permanent: true
+        immediate: true
+        state: enabled
+
+    - name: Nightly cleanup
+      cron:
+        name: clean tmp
+        minute: "15"
+        hour: "3"
+        job: find /tmp -mtime +7 -delete
+
+    - name: Build the site
+      command: make -C /srv/site
+      args:
+        creates: /srv/site/public
+
+    - name: Users from a list
+      user:
+        name: "{{ item }}"
+      loop: [alice, bob]
+
+    - name: Say hello
+      debug:
+        msg: hi
+
+  handlers:
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted

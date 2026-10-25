@@ -88,3 +88,34 @@ func TestDriftExitCode(t *testing.T) {
 		t.Fatalf("got %q", out.String())
 	}
 }
+
+func TestConvertIsACommand(t *testing.T) {
+	c, ok := findCommand(brandedRoot(t), "convert")
+	if !ok || len(c.Commands) != 1 || c.Commands[0].Name != "ansible" {
+		t.Fatal("conn3x has no convert ansible command")
+	}
+}
+
+func TestRunConvertExitCodes(t *testing.T) {
+	var out, errOut strings.Builder
+	if code := runConvert("../../internal/conn3x/convert/ansible/testdata/web/site.yml", "", "", &out, &errOut); code != 3 {
+		t.Fatalf("exit %d, want 3:\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "Converted 9 tasks. 2 things need you") || !strings.Contains(out.String(), `circuit "web_servers"`) {
+		t.Fatalf("stdout:\n%s\nstderr:\n%s", out.String(), errOut.String())
+	}
+	if code := runConvert("nope.yml", "", "", &out, &errOut); code != 1 {
+		t.Fatalf("missing playbook exited %d", code)
+	}
+}
+
+func TestRunConvertWithInventory(t *testing.T) {
+	var out, errOut strings.Builder
+	runConvert("../../internal/conn3x/convert/ansible/testdata/web/site.yml", "../../internal/conn3x/convert/ansible/testdata/inv/hosts.ini", "", &out, &errOut)
+	if !strings.Contains(out.String(), `web1 = "203.0.113.10"`) {
+		t.Fatalf("inventory not used:\n%s\n%s", out.String(), errOut.String())
+	}
+	if code := runConvert("../../internal/conn3x/convert/ansible/testdata/web/site.yml", "missing.ini", "", &out, &errOut); code != 1 {
+		t.Fatalf("missing inventory exited %d", code)
+	}
+}
