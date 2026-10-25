@@ -7,6 +7,10 @@
 package agentpb
 
 import (
+	"errors"
+	"fmt"
+	"math"
+
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
@@ -123,79 +127,140 @@ func (e *Envelope) body() (protowire.Number, message) {
 }
 
 // Unmarshal decodes b into e. Byte fields share b's memory. Unknown fields
-// are skipped, so newer peers can add them.
+// are skipped, so newer peers can add them; a known field with the wrong
+// wire type or an out-of-range value, or a second body, is an error.
 func (e *Envelope) Unmarshal(b []byte) error {
 	*e = Envelope{}
-	return fields(b, func(num protowire.Number, x uint64, v []byte) error {
-		switch num {
+	return fields(b, func(f field) error {
+		if f.num >= fieldHello && f.num <= fieldError {
+			if num, _ := e.body(); num != 0 {
+				return errors.New("more than one body in an agent message")
+			}
+		}
+		var err error
+		switch f.num {
 		case fieldID:
-			e.ID = x
+			e.ID, err = f.uint(math.MaxUint64)
 		case fieldHello:
 			e.Hello = &Hello{}
-			return fields(v, func(num protowire.Number, x uint64, _ []byte) error {
-				if num == 1 {
+			err = f.message(func(f field) error {
+				if f.num == 1 {
+					x, err := f.uint(math.MaxUint32)
 					e.Hello.Version = uint32(x)
+					return err
 				}
 				return nil
 			})
 		case fieldExec:
 			e.Exec = &ExecRequest{}
-			return fields(v, func(num protowire.Number, _ uint64, v []byte) error {
-				switch num {
+			err = f.message(func(f field) (err error) {
+				switch f.num {
 				case 1:
+					var v []byte
+					v, err = f.bytes()
 					e.Exec.Cmd = string(v)
 				case 2:
-					e.Exec.Stdin = v
+					e.Exec.Stdin, err = f.bytes()
 				}
-				return nil
+				return err
 			})
 		case fieldResult:
 			e.Result = &ExecResponse{}
-			return fields(v, func(num protowire.Number, x uint64, v []byte) error {
-				switch num {
+			err = f.message(func(f field) (err error) {
+				switch f.num {
 				case 1:
-					e.Result.Stdout = v
+					e.Result.Stdout, err = f.bytes()
 				case 2:
-					e.Result.Stderr = v
+					e.Result.Stderr, err = f.bytes()
 				case 3:
-					e.Result.ExitCode = int32(x)
+					e.Result.ExitCode, err = f.int32()
 				}
-				return nil
+				return err
 			})
 		case fieldCancel:
 			e.Cancel = &Cancel{}
+			err = f.message(func(field) error { return nil })
 		case fieldError:
 			e.Error = &Error{}
-			return fields(v, func(num protowire.Number, x uint64, v []byte) error {
-				switch num {
+			err = f.message(func(f field) (err error) {
+				switch f.num {
 				case 1:
+					var x uint64
+					x, err = f.uint(math.MaxInt32)
 					e.Error.Code = Code(x)
 				case 2:
+					var v []byte
+					v, err = f.bytes()
 					e.Error.Message = string(v)
 				}
-				return nil
+				return err
 			})
 		}
-		return nil
+		return err
 	})
 }
 
-// fields calls f for each varint (x) and length-delimited (v) field in b
-// and skips the rest.
-func fields(b []byte, f func(num protowire.Number, x uint64, v []byte) error) error {
+// field is one decoded field: x holds a varint's value, v a
+// length-delimited field's bytes.
+type field struct {
+	num protowire.Number
+	typ protowire.Type
+	x   uint64
+	v   []byte
+}
+
+func (f field) uint(max uint64) (uint64, error) {
+	if f.typ != protowire.VarintType {
+		return 0, fmt.Errorf("agent message field %d: wire type %d, want a varint", f.num, f.typ)
+	}
+	if f.x > max {
+		return 0, fmt.Errorf("agent message field %d: %d is out of range", f.num, f.x)
+	}
+	return f.x, nil
+}
+
+// int32 reads a sign-extended int32, as protobuf encodes one.
+func (f field) int32() (int32, error) {
+	x, err := f.uint(math.MaxUint64)
+	if err != nil {
+		return 0, err
+	}
+	if int64(x) < math.MinInt32 || int64(x) > math.MaxInt32 {
+		return 0, fmt.Errorf("agent message field %d: %d is out of range", f.num, int64(x))
+	}
+	return int32(x), nil
+}
+
+func (f field) bytes() ([]byte, error) {
+	if f.typ != protowire.BytesType {
+		return nil, fmt.Errorf("agent message field %d: wire type %d, want bytes", f.num, f.typ)
+	}
+	return f.v, nil
+}
+
+// message decodes a nested message's fields with decode.
+func (f field) message(decode func(field) error) error {
+	v, err := f.bytes()
+	if err != nil {
+		return err
+	}
+	return fields(v, decode)
+}
+
+// fields calls f for each field in b.
+func fields(b []byte, f func(field) error) error {
 	for len(b) > 0 {
 		num, typ, n := protowire.ConsumeTag(b)
 		if n < 0 {
 			return protowire.ParseError(n)
 		}
 		b = b[n:]
-		var x uint64
-		var v []byte
+		fl := field{num: num, typ: typ}
 		switch typ {
 		case protowire.VarintType:
-			x, n = protowire.ConsumeVarint(b)
+			fl.x, n = protowire.ConsumeVarint(b)
 		case protowire.BytesType:
-			v, n = protowire.ConsumeBytes(b)
+			fl.v, n = protowire.ConsumeBytes(b)
 		default:
 			n = protowire.ConsumeFieldValue(num, typ, b)
 		}
@@ -203,10 +268,8 @@ func fields(b []byte, f func(num protowire.Number, x uint64, v []byte) error) er
 			return protowire.ParseError(n)
 		}
 		b = b[n:]
-		if typ == protowire.VarintType || typ == protowire.BytesType {
-			if err := f(num, x, v); err != nil {
-				return err
-			}
+		if err := f(fl); err != nil {
+			return err
 		}
 	}
 	return nil
