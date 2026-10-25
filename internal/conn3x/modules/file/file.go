@@ -111,7 +111,9 @@ func NeedsChange(d Desired, a Actual) bool {
 
 // Apply writes the file atomically: a temporary file in the same directory
 // gets the content, mode and ownership, then replaces the target in one
-// rename. On SELinux hosts the result is relabelled for its final path.
+// rename. The content is flushed to disk before the rename and the directory
+// after it, so a power cut leaves the old file or the new one, never an
+// empty one. On SELinux hosts the result is relabelled for its final path.
 func Apply(ctx context.Context, r modules.Runner, d Desired) error {
 	if err := d.Validate(); err != nil {
 		return err
@@ -129,13 +131,22 @@ tmp=$(mktemp "$(dirname -- "$p")/.conn3x.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
 cat > "$tmp"
 chmod %s "$tmp"
-%smv -f -- "$tmp" "$p"
+%s`+SyncFile+`
+mv -f -- "$tmp" "$p"
 trap - EXIT
+`+SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
 		ssh.Quote(d.Path), NormalizeMode(d.Mode), owner.String())
 	_, err := run(ctx, r, script, []byte(d.Content))
 	return err
 }
+
+// SyncFile and SyncDir flush "$tmp" and the directory holding "$p" to disk.
+// GNU sync takes paths; where sync doesn't, everything is flushed instead.
+const (
+	SyncFile = `sync -- "$tmp" 2>/dev/null || sync`
+	SyncDir  = `sync -- "$(dirname -- "$p")" 2>/dev/null || sync`
+)
 
 // Delete removes the file. Deleting a missing file succeeds.
 func Delete(ctx context.Context, r modules.Runner, p string) error {

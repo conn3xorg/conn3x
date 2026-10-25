@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
@@ -158,5 +159,31 @@ func TestValidate(t *testing.T) {
 	}
 	if err := (Desired{Path: "/etc/motd", Mode: "0644"}).Validate(); err != nil {
 		t.Errorf("valid desired rejected: %v", err)
+	}
+}
+
+// recordRunner keeps the scripts it's given and runs them locally.
+type recordRunner struct{ scripts []string }
+
+func (r *recordRunner) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	r.scripts = append(r.scripts, cmd)
+	return localRunner{}.Run(ctx, cmd, stdin)
+}
+
+// The new content must reach the disk before the rename, and the rename
+// itself must reach it after, or a power cut can leave an empty file.
+func TestApplySyncsBeforeAndAfterRename(t *testing.T) {
+	r := &recordRunner{}
+	p := filepath.Join(t.TempDir(), "motd")
+	if err := Apply(context.Background(), r, Desired{Path: p, Content: "hi\n", Mode: "0644"}); err != nil {
+		t.Fatal(err)
+	}
+	script := r.scripts[len(r.scripts)-1]
+	syncTmp, rename, syncDir := strings.Index(script, `sync -- "$tmp"`), strings.Index(script, `mv -f -- "$tmp"`), strings.Index(script, `sync -- "$(dirname -- "$p")"`)
+	if syncTmp < 0 || rename < 0 || syncDir < 0 || syncTmp > rename || rename > syncDir {
+		t.Fatalf("want sync of the temp file, then the rename, then sync of the directory:\n%s", script)
+	}
+	if got, _ := os.ReadFile(p); string(got) != "hi\n" {
+		t.Fatalf("content = %q", got)
 	}
 }

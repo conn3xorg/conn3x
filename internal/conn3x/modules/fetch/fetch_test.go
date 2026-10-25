@@ -4,8 +4,12 @@
 package fetch
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
 const sum = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
@@ -86,5 +90,26 @@ func TestResolve(t *testing.T) {
 	}
 	if _, err := resolve(out, "nope"); err == nil {
 		t.Error("resolved a ref the remote does not have")
+	}
+}
+
+// scriptRunner records the script and reports success without running it.
+type scriptRunner struct{ script string }
+
+func (r *scriptRunner) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error) {
+	r.script = cmd
+	return ssh.Result{}, nil
+}
+
+// A download must reach the disk before it replaces the old file.
+func TestDownloadSyncsBeforeAndAfterRename(t *testing.T) {
+	r := &scriptRunner{}
+	d := Download{URL: "https://example.com/a.tar.gz", Dest: "/opt/a.tar.gz", SHA256: strings.Repeat("a", 64)}
+	if err := ApplyDownload(context.Background(), r, d); err != nil {
+		t.Fatal(err)
+	}
+	syncTmp, rename, syncDir := strings.Index(r.script, file.SyncFile), strings.Index(r.script, `mv -f -- "$tmp" "$p"`), strings.Index(r.script, file.SyncDir)
+	if syncTmp < 0 || rename < 0 || syncDir < 0 || syncTmp > rename || rename > syncDir {
+		t.Fatalf("want sync of the temp file, then the rename, then sync of the directory:\n%s", r.script)
 	}
 }
