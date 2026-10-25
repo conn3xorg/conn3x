@@ -147,6 +147,7 @@ func hostInstances(step hclsyntax.Expression, rng hcl.Range) hclsyntax.Expressio
 func loopRefs(attrs hclsyntax.Attributes, blocks hclsyntax.Blocks, looping bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	visit := func(n hclsyntax.Node) hcl.Diagnostics {
+		var diags hcl.Diagnostics
 		switch e := n.(type) {
 		case *hclsyntax.ForExpr:
 			for _, v := range []string{e.KeyVar, e.ValVar} {
@@ -163,13 +164,13 @@ func loopRefs(attrs hclsyntax.Attributes, blocks hclsyntax.Blocks, looping bool)
 		case *hclsyntax.ScopeTraversalExpr:
 			diags = append(diags, rewriteLoopRef(e, looping)...)
 		}
-		return nil
+		return diags
 	}
 	for _, a := range attrs {
-		hclsyntax.VisitAll(a.Expr, visit)
+		diags = append(diags, hclsyntax.VisitAll(a.Expr, visit)...)
 	}
 	for _, b := range blocks {
-		hclsyntax.VisitAll(b.Body, visit)
+		diags = append(diags, hclsyntax.VisitAll(b.Body, visit)...)
 	}
 	return diags
 }
