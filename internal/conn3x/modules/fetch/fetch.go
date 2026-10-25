@@ -103,8 +103,10 @@ else echo "neither curl nor wget is installed; add a package step for one first"
 got=$(sha256sum -- "$tmp" | cut -d' ' -f1)
 if [ "$got" != "$want" ]; then echo "checksum mismatch for $url: got $got, want $want" >&2; exit 1; fi
 chmod %[4]s "$tmp"
-%[5]smv -f -- "$tmp" "$p"
+%[5]s`+file.SyncFile+`
+mv -f -- "$tmp" "$p"
 trap - EXIT
+`+file.SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
 		ssh.Quote(d.Dest), ssh.Quote(d.URL), d.SHA256, mode, owner.String())
 	res, err := r.Run(ctx, script, nil)
