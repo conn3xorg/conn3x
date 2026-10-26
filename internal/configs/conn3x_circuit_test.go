@@ -330,6 +330,48 @@ func TestUnsupportedStepBlockPointsAtItsType(t *testing.T) {
 	}
 }
 
+func TestDuplicateCircuitAcrossFiles(t *testing.T) {
+	web := func(step string) string {
+		return `circuit "web" {
+  hosts = { h = "1.2.3.4" }
+  ssh {
+    user = "root"
+  }
+  step "` + step + `" {
+    file {
+      path    = "/etc/` + step + `"
+      content = "x"
+    }
+  }
+}`
+	}
+	for name, tc := range map[string]struct {
+		files         map[string]string
+		first, second string
+	}{
+		"different steps": {map[string]string{"a.circuit.hcl": web("motd"), "b.circuit.hcl": web("issue")}, "a.circuit.hcl", "b.circuit.hcl"},
+		"same steps":      {map[string]string{"a.circuit.hcl": web("motd"), "b.circuit.hcl": web("motd")}, "a.circuit.hcl", "b.circuit.hcl"},
+		"tf and circuit":  {map[string]string{"main.tf": web("motd"), "web.circuit.hcl": web("issue")}, "main.tf", "web.circuit.hcl"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, diags := loadCircuitModule(t, tc.files)
+			if len(diags) != 1 {
+				t.Fatalf("want one diagnostic, got %d: %s", len(diags), diags.Error())
+			}
+			d := diags[0]
+			if d.Summary != "Duplicate circuit" {
+				t.Fatalf("summary %q, want Duplicate circuit", d.Summary)
+			}
+			if !strings.Contains(d.Detail, "already declared in mod/"+tc.first) {
+				t.Fatalf("detail %q does not name %s", d.Detail, tc.first)
+			}
+			if d.Subject == nil || d.Subject.Filename != "mod/"+tc.second || d.Subject.Start.Line != 6 {
+				t.Fatalf("subject %v should be the step in %s", d.Subject, tc.second)
+			}
+		})
+	}
+}
+
 func keys(m map[string]*Resource) []string {
 	var out []string
 	for k := range m {

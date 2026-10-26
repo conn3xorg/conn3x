@@ -687,6 +687,45 @@ func warnOnConflictingEdits(steps hcl.Blocks) hcl.Diagnostics {
 	return diags
 }
 
+// checkCircuitNames reports a circuit declared in more than one of a
+// module's files. decodeCircuitBlock catches a repeat within one file;
+// across files, the circuit is read from the resources it lowered to,
+// named <circuit>__<step>. The later file's resources for that circuit
+// are dropped, so they aren't also reported as duplicate resources.
+func checkCircuitNames(files []*File) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	declaredIn := map[string]string{}
+	for _, file := range files {
+		reported := map[string]bool{}
+		kept := make([]*Resource, 0, len(file.ManagedResources))
+		for _, r := range file.ManagedResources {
+			circuit, _, lowered := strings.Cut(r.Name, "__")
+			if !lowered || !strings.HasPrefix(r.Type, "conn3x_") {
+				kept = append(kept, r)
+				continue
+			}
+			first, seen := declaredIn[circuit]
+			if !seen || first == r.DeclRange.Filename {
+				declaredIn[circuit] = r.DeclRange.Filename
+				kept = append(kept, r)
+				continue
+			}
+			if !reported[circuit] {
+				reported[circuit] = true
+				rng := r.DeclRange
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Duplicate circuit",
+					Detail:   fmt.Sprintf("A circuit named %q was already declared in %s. Circuit names must be unique within a module.", circuit, first),
+					Subject:  &rng,
+				})
+			}
+		}
+		file.ManagedResources = kept
+	}
+	return diags
+}
+
 func validCircuitName(name string) bool {
 	return hclsyntax.ValidIdentifier(name) && !strings.Contains(name, "__")
 }
