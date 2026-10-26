@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
@@ -188,7 +189,10 @@ func applyPackage(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
 	}
-	if err := pkg.Apply(ctx, host, family, d); err != nil {
+	unlock := lockPackages(host)
+	err = pkg.Apply(ctx, host, family, d)
+	unlock()
+	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("package %s: %w", d.Name, err))
 		return resp
 	}
@@ -230,4 +234,16 @@ func upgradePackage(req providers.UpgradeResourceStateRequest) providers.Upgrade
 	}
 	resp.UpgradedState = val
 	return resp
+}
+
+// packageLocks has one lock per host, so its package installs take turns.
+// Run together, dnf fails a transaction whose dependency another install has
+// just put on the host, and apt waits on its own lock anyway.
+var packageLocks sync.Map // rootKey to *sync.Mutex
+
+func lockPackages(h *hostConn) (unlock func()) {
+	m, _ := packageLocks.LoadOrStore(h.rootKey, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }

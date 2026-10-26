@@ -5,6 +5,7 @@ package provider
 
 import (
 	"testing"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -118,4 +119,26 @@ func TestPackageValidate(t *testing.T) {
 	if d := validatePackage(packageObj(t, map[string]cty.Value{"name": cty.StringVal("nginx")})); d.HasErrors() {
 		t.Errorf("valid config rejected: %s", d.Err())
 	}
+}
+
+// Two installs on one host take turns: run together, dnf fails a
+// transaction whose dependency the other has just installed.
+func TestPackageInstallsOnOneHostTakeTurns(t *testing.T) {
+	a, b := &hostConn{rootKey: "web1"}, &hostConn{rootKey: "web1"}
+	unlock := lockPackages(a)
+	got := make(chan struct{})
+	go func() {
+		defer lockPackages(b)()
+		close(got)
+	}()
+	select {
+	case <-got:
+		t.Fatal("a second install on the same host started while the first was running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	unlock()
+	<-got
+
+	other := lockPackages(&hostConn{rootKey: "web2"}) // another host doesn't wait
+	other()
 }
