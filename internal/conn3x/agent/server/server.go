@@ -5,7 +5,7 @@
 // them on the host, each in its own goroutine.
 //
 // The agent binary links this package, so it may import only the standard
-// library and agentpb.
+// library, agentpb, and go-systemd's D-Bus client.
 package server
 
 import (
@@ -79,7 +79,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			return err
 		case e := <-frames:
 			switch {
-			case e.Exec != nil:
+			case e.Exec != nil || e.ReadFile != nil || e.ReadUnit != nil:
 				reqCtx, stop := context.WithCancel(ctx)
 				s.mu.Lock()
 				s.running[e.ID] = stop
@@ -87,7 +87,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					s.exec(reqCtx, e.ID, e.Exec)
+					s.handle(reqCtx, e)
 					s.mu.Lock()
 					delete(s.running, e.ID)
 					s.mu.Unlock()
@@ -142,6 +142,33 @@ func (s *server) writeErr() error {
 
 func (s *server) fail(id uint64, code agentpb.Code, msg string) {
 	_ = s.send(&agentpb.Envelope{ID: id, Error: &agentpb.Error{Code: code, Message: msg}})
+}
+
+// handle answers one request.
+func (s *server) handle(ctx context.Context, e *agentpb.Envelope) {
+	if e.Exec != nil {
+		s.exec(ctx, e.ID, e.Exec)
+		return
+	}
+	reply := &agentpb.Envelope{ID: e.ID}
+	var err error
+	if e.ReadFile != nil {
+		reply.File, err = readFile(e.ReadFile.Path)
+	} else {
+		var props map[string]string
+		props, err = readUnit(ctx, e.ReadUnit.Unit)
+		reply.Unit = &agentpb.UnitProps{Props: props}
+	}
+	switch {
+	case ctx.Err() != nil:
+		s.fail(e.ID, agentpb.CodeCanceled, "canceled")
+	case err != nil:
+		// Whatever the agent can't answer exactly as the shell would,
+		// conn3x asks the shell instead.
+		s.fail(e.ID, agentpb.CodeUnsupported, err.Error())
+	default:
+		_ = s.send(reply)
+	}
 }
 
 // exec runs a command the way the shell transport does, in its own process

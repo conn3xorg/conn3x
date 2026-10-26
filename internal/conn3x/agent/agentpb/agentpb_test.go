@@ -38,6 +38,10 @@ var malformed = map[string][]byte{
 	"truncated body":        {0x1a, 0x05, 0x0a},
 	"truncated nested cmd":  {0x1a, 0x02, 0x0a, 0x05},
 	"invalid wire type (7)": {0x0f},
+	"mode over uint32":      {0x42, 0x06, 0x18, 0x80, 0x80, 0x80, 0x80, 0x10},
+	"exists as bytes":       {0x42, 0x02, 0x0a, 0x00},
+	"prop as varint":        {0x52, 0x02, 0x08, 0x01},
+	"prop key as varint":    {0x52, 0x04, 0x0a, 0x02, 0x08, 0x01},
 }
 
 func TestUnmarshalRejectsMalformed(t *testing.T) {
@@ -56,6 +60,10 @@ func FuzzEnvelopeUnmarshal(f *testing.F) {
 		{ID: 3, Result: &ExecResponse{Stdout: []byte("out"), ExitCode: -1}},
 		{ID: 4, Cancel: &Cancel{}},
 		{ID: 5, Error: &Error{Code: CodeInternal, Message: "x"}},
+		{ID: 6, ReadFile: &ReadFileRequest{Path: "/x"}},
+		{ID: 7, File: &FileStat{Exists: true, Mode: 0o644, Content: []byte("x")}},
+		{ID: 8, ReadUnit: &ReadUnitRequest{Unit: "a.service"}},
+		{ID: 9, Unit: &UnitProps{Props: map[string]string{"k": "v"}}},
 	} {
 		f.Add(e.Append(nil))
 	}

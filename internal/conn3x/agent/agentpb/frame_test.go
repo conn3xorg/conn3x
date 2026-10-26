@@ -21,6 +21,12 @@ func TestFrameRoundTrip(t *testing.T) {
 		{ID: 4, Result: &ExecResponse{ExitCode: -1}},
 		{ID: 1 << 40, Cancel: &Cancel{}},
 		{ID: 6, Error: &Error{Code: CodeCanceled, Message: "canceled"}},
+		{ID: 7, ReadFile: &ReadFileRequest{Path: "/etc/motd"}},
+		{ID: 8, File: &FileStat{}},
+		{ID: 9, File: &FileStat{Exists: true, Regular: true, Mode: 0o4755, Owner: "root", Group: "wheel", Content: []byte("a\x00b")}},
+		{ID: 10, ReadUnit: &ReadUnitRequest{Unit: "sshd.service"}},
+		{ID: 11, Unit: &UnitProps{}},
+		{ID: 12, Unit: &UnitProps{Props: map[string]string{"LoadState": "loaded", "UnitFileState": "", "": "x"}}},
 	} {
 		var buf bytes.Buffer
 		if err := WriteFrame(&buf, e); err != nil {

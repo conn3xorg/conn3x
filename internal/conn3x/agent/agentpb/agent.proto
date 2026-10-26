@@ -19,6 +19,10 @@ message Envelope {
     ExecResponse exec_response = 4;
     Cancel cancel = 5;
     Error error = 6;
+    ReadFileRequest read_file = 7;
+    FileStat file = 8;
+    ReadUnitRequest read_unit = 9;
+    UnitProps unit = 10;
   }
 }
 
@@ -51,4 +55,31 @@ message Error {
   }
   Code code = 1;
   string message = 2;
+}
+
+// ReadFileRequest asks for a file the way file.Read's shell command sees
+// it. The agent answers with FileStat, or UNSUPPORTED when it can't match
+// the shell exactly, such as an owner with no name in /etc/passwd.
+message ReadFileRequest {
+  string path = 1;
+}
+
+message FileStat {
+  bool exists = 1;   // the path exists, or is a symlink
+  bool regular = 2;  // it is a regular file, following symlinks
+  uint32 mode = 3;   // the path's own permission bits, as stat %a
+  string owner = 4;  // the path's own owner and group
+  string group = 5;
+  bytes content = 6; // following symlinks
+}
+
+// ReadUnitRequest asks systemd, over D-Bus, for a unit's properties. The
+// agent answers with UnitProps, or UNSUPPORTED without D-Bus.
+message ReadUnitRequest {
+  string unit = 1;
+}
+
+message UnitProps {
+  // As "systemctl show" prints them; booleans are yes or no.
+  map<string, string> props = 1;
 }
