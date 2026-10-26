@@ -144,6 +144,8 @@ func applyService(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		off := false
 		d = service.Desired{Name: d.Name, State: service.Stopped, Enabled: &off}
 	}
+	unlock := lockHost(host, "systemd") // until it's read back, so no daemon-reload lands in between
+	defer unlock()
 	if err := service.Apply(ctx, host, d); err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("service %s: %w", service.Unit(d.Name), err))
 		return resp

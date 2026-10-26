@@ -646,3 +646,16 @@ func portOr22(port int) int {
 
 // agentPayload is where attach gets the agent; tests swap it.
 var agentPayload = agent.Embedded
+
+// hostLocks lets changes of one kind on one host take turns. Run together,
+// dnf fails a transaction whose dependency another install has just put on
+// the host, and a service read back during another step's daemon-reload
+// can look stopped.
+var hostLocks sync.Map // rootKey and kind to *sync.Mutex
+
+func lockHost(h *hostConn, kind string) (unlock func()) {
+	m, _ := hostLocks.LoadOrStore(h.rootKey+"\x00"+kind, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}

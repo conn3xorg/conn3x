@@ -125,10 +125,10 @@ func TestPackageValidate(t *testing.T) {
 // transaction whose dependency the other has just installed.
 func TestPackageInstallsOnOneHostTakeTurns(t *testing.T) {
 	a, b := &hostConn{rootKey: "web1"}, &hostConn{rootKey: "web1"}
-	unlock := lockPackages(a)
+	unlock := lockHost(a, "packages")
 	got := make(chan struct{})
 	go func() {
-		defer lockPackages(b)()
+		defer lockHost(b, "packages")()
 		close(got)
 	}()
 	select {
@@ -139,6 +139,6 @@ func TestPackageInstallsOnOneHostTakeTurns(t *testing.T) {
 	unlock()
 	<-got
 
-	other := lockPackages(&hostConn{rootKey: "web2"}) // another host doesn't wait
-	other()
+	lockHost(&hostConn{rootKey: "web2"}, "packages")() // another host doesn't wait
+	lockHost(a, "systemd")()                           // nor another kind of change
 }
