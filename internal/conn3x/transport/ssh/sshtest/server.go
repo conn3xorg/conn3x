@@ -42,6 +42,10 @@ type Server struct {
 	// Latency delays every write the server makes, to stand in for a
 	// distant host.
 	Latency time.Duration
+	// MaxSessions, when set, caps the sessions open at once on one
+	// connection. Like sshd's MaxSessions, a session beyond it is rejected
+	// with "open failed".
+	MaxSessions int
 
 	mu       sync.Mutex
 	commands []string
@@ -168,6 +172,7 @@ func (s *Server) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 		return
 	}
 	go gossh.DiscardRequests(reqs)
+	var open atomic.Int64 // sessions open on this connection
 	for ch := range chans {
 		if ch.ChannelType() == "direct-tcpip" {
 			go s.forward(ch)
@@ -177,11 +182,17 @@ func (s *Server) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 			_ = ch.Reject(gossh.UnknownChannelType, "only sessions and forwarding")
 			continue
 		}
+		if s.MaxSessions > 0 && open.Load() >= int64(s.MaxSessions) {
+			// What sshd sends when session_open fails at MaxSessions.
+			_ = ch.Reject(gossh.ConnectionFailed, "open failed")
+			continue
+		}
 		channel, requests, err := ch.Accept()
 		if err != nil {
 			continue
 		}
-		go s.session(channel, requests)
+		open.Add(1)
+		go s.session(channel, requests, sync.OnceFunc(func() { open.Add(-1) }))
 	}
 }
 
@@ -216,7 +227,11 @@ func (s *Server) forward(nc gossh.NewChannel) {
 	ch.Close()
 }
 
-func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
+// session runs one exec request. done frees the session's place under
+// MaxSessions; it runs before the exit status goes out, so a client that has
+// seen a session end may always open another.
+func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request, done func()) {
+	defer done()
 	defer ch.Close()
 	for req := range reqs {
 		if req.Type != "exec" {
@@ -260,6 +275,7 @@ func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
 		}
 		status := make([]byte, 4)
 		binary.BigEndian.PutUint32(status, uint32(code))
+		done()
 		_, _ = ch.SendRequest("exit-status", false, status)
 		return
 	}

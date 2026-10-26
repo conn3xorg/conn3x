@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -85,11 +86,124 @@ type Result struct {
 }
 
 // Client is an open connection to one host. It is safe for concurrent use;
-// each Run gets its own session on the shared connection.
+// each Run gets its own session on the shared connection. Sessions beyond
+// the cap wait their turn rather than fail.
 type Client struct {
 	addr  string
 	conn  *gossh.Client
 	jumps []*gossh.Client // the hops in front of conn, outermost first
+
+	slots chan struct{} // holds a token for each session open
+
+	mu    sync.Mutex
+	limit int // slots still in use; see shrink
+}
+
+// defaultMaxSessions caps the sessions open at once on one connection.
+// sshd's MaxSessions defaults to 10 and refuses the eleventh. 8 keeps two
+// spare, for a session that is still closing when the next opens, such as
+// one cancelled while its command was being killed. A server set lower is
+// found by being refused; see session.
+const defaultMaxSessions = 8
+
+// maxSessions is the cap, from CONN3X_SSH_MAX_SESSIONS when that is set.
+func maxSessions() int {
+	v := os.Getenv("CONN3X_SSH_MAX_SESSIONS")
+	if v == "" {
+		return defaultMaxSessions
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 1000 {
+		log.Printf("[WARN] conn3x: CONN3X_SSH_MAX_SESSIONS=%q is not a number from 1 to 1000; using %d", v, defaultMaxSessions)
+		return defaultMaxSessions
+	}
+	return n
+}
+
+// newClient wraps an authenticated connection.
+func newClient(addr string, conn *gossh.Client, jumps []*gossh.Client) *Client {
+	n := maxSessions()
+	return &Client{addr: addr, conn: conn, jumps: jumps, slots: make(chan struct{}, n), limit: n}
+}
+
+// session waits for a free slot and opens a session in it. The caller
+// gives it back with c.done.
+//
+// A server that allows fewer sessions than the cap refuses the open with
+// "open failed". The cap for this connection then drops to the sessions
+// already open, and the open waits for one of them to finish and tries
+// again. Nothing has run yet, so trying again can't run a command twice;
+// it stops once the cap is down to one session.
+func (c *Client) session(ctx context.Context) (*gossh.Session, error) {
+	for {
+		if err := c.acquire(ctx); err != nil {
+			return nil, err
+		}
+		s, err := c.conn.NewSession()
+		if err == nil {
+			return s, nil
+		}
+		if !tooManySessions(err) || !c.shrink() {
+			c.release()
+			return nil, fmt.Errorf("ssh %s: opening session: %w", c.addr, err)
+		}
+	}
+}
+
+func (c *Client) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err // select would pick a free slot half the time
+	}
+	select {
+	case c.slots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Client) release() { <-c.slots }
+
+// done closes a session and frees its slot once the server has freed it
+// too. sshd counts a session against MaxSessions until it has read the
+// client's close and cleaned up, so a new session opened at once can be
+// refused. A reply to a request sent after the close proves sshd is past
+// it; waiting for that happens in the background, so the caller doesn't.
+func (c *Client) done(s *gossh.Session) {
+	_ = s.Close()
+	go func() {
+		_, _, _ = c.conn.SendRequest("keepalive@openssh.com", true, nil)
+		c.release()
+	}()
+}
+
+// shrink lowers the cap after the server refused a session: the slot the
+// caller holds and every free one go out of use for good, leaving one per
+// session still open. It reports false, changing nothing, when the cap is
+// already one.
+func (c *Client) shrink() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.limit <= 1 {
+		return false
+	}
+	c.limit--
+	for free := true; free && c.limit > 1; {
+		select {
+		case c.slots <- struct{}{}:
+			c.limit--
+		default:
+			free = false
+		}
+	}
+	log.Printf("[INFO] conn3x: %s refused a session; opening at most %d at once", c.addr, c.limit)
+	return true
+}
+
+// tooManySessions recognizes sshd refusing a session at MaxSessions.
+func tooManySessions(err error) bool {
+	var open *gossh.OpenChannelError
+	return errors.As(err, &open) && open.Reason == gossh.ConnectionFailed && open.Message == "open failed"
 }
 
 // Dial connects and authenticates, verifying the host key first.
@@ -169,7 +283,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		via = append(via, gossh.NewClient(conn, chans, reqs))
 	}
 	target := via[len(via)-1]
-	return &Client{addr: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), conn: target, jumps: via[:len(via)-1]}, nil
+	return newClient(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), target, via[:len(via)-1]), nil
 }
 
 // hostKeyCheck returns the verification callback and, for known_hosts, the
@@ -264,11 +378,11 @@ func authMethod(cfg Config) (gossh.AuthMethod, error) {
 // Run executes cmd with /bin/sh in the C locale, feeding it stdin. A non-zero
 // exit status is reported in Result, not as an error.
 func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, error) {
-	session, err := c.conn.NewSession()
+	session, err := c.session(ctx)
 	if err != nil {
-		return Result{}, fmt.Errorf("ssh %s: opening session: %w", c.addr, err)
+		return Result{}, err
 	}
-	defer session.Close()
+	defer c.done(session)
 
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
@@ -306,6 +420,7 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 type Process struct {
 	addr    string
 	session *gossh.Session
+	done    func() // closes the session and gives its slot back, once
 	stdin   io.WriteCloser
 	stdout  io.Reader
 	stderr  syncBuffer
@@ -314,14 +429,11 @@ type Process struct {
 // Start runs cmd as given, without a PTY, and leaves its stdin and stdout
 // open for the caller. Unlike Run it adds no shell or locale around cmd.
 func (c *Client) Start(ctx context.Context, cmd string) (*Process, error) {
-	if err := ctx.Err(); err != nil {
+	session, err := c.session(ctx)
+	if err != nil {
 		return nil, err
 	}
-	session, err := c.conn.NewSession()
-	if err != nil {
-		return nil, fmt.Errorf("ssh %s: opening session: %w", c.addr, err)
-	}
-	p := &Process{addr: c.addr, session: session}
+	p := &Process{addr: c.addr, session: session, done: sync.OnceFunc(func() { c.done(session) })}
 	session.Stderr = &p.stderr
 	if p.stdin, err = session.StdinPipe(); err == nil {
 		p.stdout, err = session.StdoutPipe()
@@ -330,7 +442,7 @@ func (c *Client) Start(ctx context.Context, cmd string) (*Process, error) {
 		err = session.Start(cmd)
 	}
 	if err != nil {
-		session.Close()
+		p.done()
 		return nil, fmt.Errorf("ssh %s: starting command: %w", c.addr, err)
 	}
 	return p, nil
@@ -352,10 +464,12 @@ func (p *Process) Wait() error {
 	return nil
 }
 
-// Close ends the command's stdin and the session.
+// Close ends the command's stdin and the session, freeing its slot.
 func (p *Process) Close() error {
 	_ = p.stdin.Close()
-	if err := p.session.Close(); err != nil && !errors.Is(err, io.EOF) {
+	err := p.session.Close()
+	p.done()
+	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 	return nil
