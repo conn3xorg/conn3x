@@ -82,17 +82,23 @@ func TestAgentUpgradeSwitchesBinary(t *testing.T) {
 	}
 }
 
-func TestAgentBecome(t *testing.T) {
-	h := startHost(t, "rocky10")
-	// A deploy user with passwordless sudo, logging in with the test key.
-	// sshd and sudo skip PAM's account checks, whose helper can't run in
-	// rootless CI containers; sudo itself is real.
+// addDeploy adds a deploy user with passwordless sudo, logging in with the
+// test key, with extra sudoers defaults and sshd settings. sshd and sudo
+// skip PAM's account checks, whose helper can't run in rootless CI
+// containers; sudo itself is real.
+func addDeploy(h *host, sudoDefaults, sshd string) {
+	h.t.Helper()
 	h.exec("", "sh", "-c", `useradd -m deploy && echo 'deploy:Deploy-Pass-123' | chpasswd &&
-printf '%s\n' 'Defaults:deploy !pam_acct_mgmt, !pam_session' 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy &&
+printf '%s\n' 'Defaults:deploy !pam_acct_mgmt, !pam_session`+sudoDefaults+`' 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy &&
 chmod 440 /etc/sudoers.d/deploy && visudo -cq &&
 mkdir -p -m 700 /home/deploy/.ssh && cp /root/.ssh/authorized_keys /home/deploy/.ssh/ &&
 chown -R deploy:deploy /home/deploy/.ssh &&
-echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl restart sshd`)
+printf '%s\n' 'UsePAM no' '`+sshd+`' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl restart sshd`)
+}
+
+func TestAgentBecome(t *testing.T) {
+	h := startHost(t, "rocky10")
+	addDeploy(h, "", "")
 	w := newWorkdir(t, "agent")
 	w.env = append(w.env, "CONN3X_AGENT=require")
 	w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 1, "deploy"})
@@ -112,5 +118,35 @@ echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl resta
 	}
 	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 		t.Fatalf("plan after apply:\n%s", out)
+	}
+}
+
+// When sudo keeps the login user's XDG_CACHE_HOME, and maybe their HOME,
+// root writes nothing in their home. With their HOME it caches its agent
+// in /var/tmp/conn3x-0.
+func TestAgentBecomeKeepsOutOfUserHome(t *testing.T) {
+	for _, tc := range []struct{ keep, cache string }{
+		{"HOME XDG_CACHE_HOME", "/var/tmp/conn3x-0"},
+		{"XDG_CACHE_HOME", "/root/.cache/conn3x"},
+	} {
+		t.Run(tc.keep, func(t *testing.T) {
+			h := startHost(t, "rocky10")
+			addDeploy(h, `, !always_set_home, env_keep += "`+tc.keep+`"`, "SetEnv XDG_CACHE_HOME=/home/deploy/.cache")
+			w := newWorkdir(t, "agent")
+			w.env = append(w.env, "CONN3X_AGENT=require")
+			w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 1, "deploy"})
+			w.mustConn3x("init", "-no-color")
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+
+			if got := h.runner(); !strings.HasPrefix(got, tc.cache+"/agent-") {
+				t.Fatalf("the command ran under %q, want the agent in %s", got, tc.cache)
+			}
+			if got := strings.TrimSpace(h.exec("", "stat", "-c", "%U %a", tc.cache)); got != "root 700" {
+				t.Fatalf("cache: %q", got)
+			}
+			if got := h.exec("", "find", "/home/deploy", "-newer", "/home/deploy/.ssh/authorized_keys", "-o", "-user", "root", "-o", "-name", ".cache"); got != "" {
+				t.Fatalf("written in the login user's home:\n%s", got)
+			}
+		})
 	}
 }
