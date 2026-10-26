@@ -23,7 +23,8 @@ type Become struct {
 	Client   *Client
 	Password []byte // empty when sudo is NOPASSWD
 
-	once      sync.Once
+	mu        sync.Mutex
+	probed    bool
 	needsPass bool
 	probeErr  error
 }
@@ -31,9 +32,8 @@ type Become struct {
 // Run executes cmd as root. A non-zero exit status of the command itself is
 // reported in Result; sudo refusing to run it is an error.
 func (b *Become) Run(ctx context.Context, cmd string, stdin []byte) (Result, error) {
-	b.once.Do(func() { b.probe(ctx) })
-	if b.probeErr != nil {
-		return Result{}, b.probeErr
+	if err := b.ready(ctx); err != nil {
+		return Result{}, err
 	}
 
 	inner := "/bin/sh -c " + Quote("export LC_ALL=C; "+cmd)
@@ -54,6 +54,24 @@ func (b *Become) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 		}
 	}
 	return res, nil
+}
+
+// ready probes sudo on the first Run. The answer holds for the life of the
+// connection, except a probe cut short by its context, which the next Run
+// tries again.
+func (b *Become) ready(ctx context.Context) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.probed {
+		return b.probeErr
+	}
+	b.probeErr = nil
+	b.probe(ctx)
+	if err := b.probeErr; errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	b.probed = true
+	return b.probeErr
 }
 
 // probe learns whether sudo will ask for a password.

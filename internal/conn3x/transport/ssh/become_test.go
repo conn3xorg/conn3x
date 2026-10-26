@@ -5,6 +5,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -95,5 +96,20 @@ func TestBecomeWrongPasswordNeverSeesCommandInput(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(log); strings.Contains(string(data), "secret file content") {
 		t.Fatalf("command input reached sudo as a password attempt: %q", data)
+	}
+}
+
+// A probe cut short by its context is tried again by the next Run rather
+// than failing every Run after it.
+func TestBecomeProbeRetriesAfterCancel(t *testing.T) {
+	_, cfg := becomeServer(t, "nopasswd")
+	b := &Become{Client: dial(t, cfg)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := b.Run(ctx, "true", nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled Run = %v, want context.Canceled", err)
+	}
+	if _, err := b.Run(context.Background(), "true", nil); err != nil {
+		t.Fatalf("Run after a cancelled probe = %v", err)
 	}
 }
