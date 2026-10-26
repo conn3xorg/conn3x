@@ -47,3 +47,30 @@ func TestHostObjectsOverrideSSH(t *testing.T) {
 		t.Fatalf("plan after apply:\n%s", out)
 	}
 }
+
+// A field a host object doesn't take, such as become, fails validate
+// instead of silently doing nothing.
+func TestHostObjectUnknownFieldFailsValidate(t *testing.T) {
+	w := &workdir{t: t, dir: t.TempDir()}
+	src := `circuit "app" {
+  hosts = { web1 = { address = "192.0.2.10", become = true } }
+  ssh {
+    user = "root"
+  }
+  step "motd" {
+    file {
+      path    = "/etc/motd"
+      content = "hi"
+    }
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(w.dir, "main.tf"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.mustConn3x("init", "-no-color")
+	out, code := w.conn3x("validate", "-no-color")
+	if code == 0 || !strings.Contains(out, `"become"`) || strings.Count(out, "Unsupported field in host object") != 1 {
+		t.Fatalf("want one error naming become, got exit %d:\n%s", code, out)
+	}
+}

@@ -827,3 +827,44 @@ circuit "app" {
 		}
 	}
 }
+
+// A host object takes only the fields Conn3x reads; anything else, such as
+// become, is an error rather than a setting that silently does nothing.
+func TestHostObjectRejectsUnknownFields(t *testing.T) {
+	src := `
+circuit "app" {
+  hosts = { a = "10.0.0.1", b = { address = "10.0.0.2", become = true } }
+  ssh {
+    user = "root"
+  }
+  step "one" {
+    file {
+      path    = "/etc/one"
+      content = "x"
+    }
+  }
+  step "two" {
+    for_each = ["x"]
+    file {
+      path    = "/etc/${item.value}"
+      content = "x"
+    }
+  }
+}
+`
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	_, d := mod.ManagedResources["conn3x_file.app__one"].ForEach.Value(nil)
+	if !d.HasErrors() || !strings.Contains(d.Error(), `"become"`) || !strings.Contains(d.Error(), "address, user, port, private_key_file, host_key and jump_hosts") {
+		t.Fatalf("want an error naming become and the accepted fields, got %v", d)
+	}
+	if d[0].Subject == nil || d[0].Subject.Start.Line != 3 {
+		t.Fatalf("error should point at hosts, got %v", d[0].Subject)
+	}
+	// Reported once per circuit, not once per step.
+	if _, d := mod.ManagedResources["conn3x_file.app__two"].ForEach.Value(nil); d.HasErrors() {
+		t.Fatalf("second step repeats the error: %v", d)
+	}
+}

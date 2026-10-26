@@ -198,7 +198,12 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 		}
 		steps[stepName] = step.DefRange
 
-		r, stepDiags := lowerStep(name, step, hosts, sshAttrs, sshRange, previous)
+		stepHosts := hosts
+		if previous == nil {
+			// Checked on the first step only, so a bad host is reported once.
+			stepHosts = &checkedHosts{hosts}
+		}
+		r, stepDiags := lowerStep(name, step, stepHosts, sshAttrs, sshRange, previous)
 		diags = append(diags, stepDiags...)
 		if r != nil {
 			resources = append(resources, r)
