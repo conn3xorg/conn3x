@@ -14,6 +14,8 @@ before:
     - sh -c 'rm -rf /tmp/conn3x-overlay-{{ .ShortCommit }} && env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root . -out /tmp/conn3x-overlay-{{ .ShortCommit }} >/dev/null'
     # The host agents conn3x embeds, built for Linux whatever the target.
     - env -u GOOS -u GOARCH bash scripts/build-agent.sh
+    # A release without them would quietly run everything over the shell.
+    - env -u GOOS -u GOARCH CONN3X_REQUIRE_AGENT=1 go test -count=1 -run TestEmbeddedPresent ./internal/conn3x/agent/
 
 builds:
   - id: conn3x

@@ -9,6 +9,8 @@ on:
       - scripts/build-agent.sh
       - internal/conn3x/agent/payload/**
       - internal/conn3x/agent/payload.go
+      - cmd/conn3x-agent/**
+      - cmd/conn3x/conn3x_brand.go
       - internal/conn3x/brand/**
       - .github/workflows/release*.yml
 
@@ -36,7 +38,21 @@ jobs:
       - name: The release binary is branded and runs
         run: |
           tar -xzf dist/conn3x_*_linux_amd64.tar.gz conn3x
-          ./conn3x version
+          ./conn3x version | tee version.txt
           scripts/brand-check.sh ./conn3x
-      - name: The release embeds the agents
-        run: CONN3X_REQUIRE_AGENT=1 go test -count=1 -run TestEmbeddedPresent ./internal/conn3x/agent/
+      - name: The release binary embeds both agents
+        run: |
+          grep -Eq '^agent: linux/amd64 [0-9a-f]{12}, linux/arm64 [0-9a-f]{12}$' version.txt \
+            || { echo "the release binary has no agents" >&2; exit 1; }
+      # Another path and an empty build cache must give the same bytes the
+      # release embedded, or nobody can check the agent against its source.
+      - name: The agents build reproducibly
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/again" HEAD
+          GOCACHE="$RUNNER_TEMP/gocache" bash "$RUNNER_TEMP/again/scripts/build-agent.sh" "$RUNNER_TEMP/agents"
+          for arch in amd64 arm64; do
+            f=conn3x-agent-linux-$arch.gz
+            sha256sum "internal/conn3x/agent/payload/$f" "$RUNNER_TEMP/agents/$f"
+            cmp -s "internal/conn3x/agent/payload/$f" "$RUNNER_TEMP/agents/$f" \
+              || { echo "linux/$arch agent differs between builds" >&2; exit 1; }
+          done

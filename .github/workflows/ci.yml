@@ -78,6 +78,10 @@ jobs:
           scripts/brand-check.sh dist/conn3x
       - name: The build embeds the agents
         run: CONN3X_REQUIRE_AGENT=1 go test -count=1 -run TestEmbeddedPresent ./internal/conn3x/agent/
+      - name: The version names the agents
+        run: |
+          ./dist/conn3x version | grep -E '^agent: linux/amd64 [0-9a-f]{12}, linux/arm64 [0-9a-f]{12}$' \
+            || { echo "conn3x version has no agent line" >&2; exit 1; }
       - name: Stay smaller than tofu
         run: |
           c=$(stat -c %s dist/conn3x)
