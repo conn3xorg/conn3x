@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/opentofu/opentofu/internal/command"
@@ -164,7 +165,10 @@ func readDrift(r io.Reader) (driftReport, error) {
 				if msg.Diagnostic.Detail != "" {
 					e += "\n  " + strings.ReplaceAll(msg.Diagnostic.Detail, "\n", "\n  ")
 				}
-				rep.errors = append(rep.errors, e)
+				// Every step on a host that's down says the same thing.
+				if !slices.Contains(rep.errors, e) {
+					rep.errors = append(rep.errors, e)
+				}
 			}
 		}
 	}

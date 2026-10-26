@@ -69,9 +69,13 @@ Run conn3x plan to see what Conn3x would change to put them back.
 // A host the refresh couldn't reach is a warning to plan, but drift can't
 // call it unchanged, so it's an error there.
 func TestDriftUnreachableHostIsAnError(t *testing.T) {
-	r, err := readDrift(strings.NewReader(`{"type":"diagnostic","diagnostic":{"severity":"warning","summary":"` + provider.UnreachableSummary + `","detail":"Nothing answered at 10.0.0.5:22."}}` + "\n"))
+	line := `{"type":"diagnostic","diagnostic":{"severity":"warning","summary":"` + provider.UnreachableSummary + `","detail":"Nothing answered at 10.0.0.5:22."}}` + "\n"
+	r, err := readDrift(strings.NewReader(line + line)) // two steps on one host
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(r.errors) != 1 {
+		t.Fatalf("got %d errors for one host, want 1", len(r.errors))
 	}
 	if got := driftExit(r, 0); got != 1 {
 		t.Fatalf("exit %d, want 1", got)

@@ -324,7 +324,9 @@ func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostCo
 	entry, ok := pool.conns[key]
 	if ok {
 		pool.Unlock()
-		<-entry.ready
+		if err := waitReady(ctx, entry, cfg.Host, maxWait); err != nil {
+			return nil, err
+		}
 		if entry.err == nil && entry.conn.alive() {
 			return entry.conn, nil
 		}
@@ -338,7 +340,9 @@ func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostCo
 		}
 		if again, ok := pool.conns[key]; ok {
 			pool.Unlock()
-			<-again.ready
+			if err := waitReady(ctx, again, cfg.Host, maxWait); err != nil {
+				return nil, err
+			}
 			return again.conn, again.err
 		}
 	}
@@ -354,6 +358,9 @@ func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostCo
 	}
 	if maxWait > 0 && maxWait < wait {
 		wait = maxWait
+		if cfg.Timeout == 0 || cfg.Timeout > wait {
+			cfg.Timeout = wait // or one attempt alone could outlast it
+		}
 	}
 	client, err := ssh.DialWait(ctx, cfg, wait)
 	if err != nil {
@@ -397,6 +404,25 @@ func rootKey(cfg ssh.Config) string {
 		jumps[i] = ssh.Jump{Host: j.Host, Port: j.Port, User: j.User}
 	}
 	return poolKey(ssh.Config{Host: cfg.Host, Port: cfg.Port, User: cfg.User, Jumps: jumps, HostKey: cfg.HostKey, KnownHostsFile: cfg.KnownHostsFile}, true, nil, true, false)
+}
+
+// waitReady waits for another caller's dial of entry to finish, but no
+// longer than ctx or maxWait allow, when maxWait isn't zero.
+func waitReady(ctx context.Context, entry *pooledConn, addr string, maxWait time.Duration) error {
+	var timeout <-chan time.Time
+	if maxWait > 0 {
+		t := time.NewTimer(maxWait)
+		defer t.Stop()
+		timeout = t.C
+	}
+	select {
+	case <-entry.ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timeout:
+		return fmt.Errorf("ssh %s: %w", addr, os.ErrDeadlineExceeded)
+	}
 }
 
 // optional reads an attribute added after v0.1, which older values lack.
@@ -621,11 +647,22 @@ func reachable(ctx context.Context, conn cty.Value) tfdiags.Diagnostics {
 		return nil
 	}
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(portOr22(cfg.Port)))
-	if _, down := unreachable.Load(addr); !down {
-		if _, err := pooled(ctx, conn, readWait); err == nil || !ssh.Unreachable(err) {
+	if len(cfg.Jumps) > 0 {
+		hops := make([]string, len(cfg.Jumps))
+		for i, j := range cfg.Jumps {
+			hops[i] = net.JoinHostPort(j.Host, strconv.Itoa(portOr22(j.Port)))
+		}
+		addr += " through jump hosts " + strings.Join(hops, ", ")
+	}
+	// The key is the path, not the address: another way to the same
+	// address may still answer.
+	key := rootKey(cfg)
+	if _, down := unreachable.Load(key); !down {
+		_, err := pooled(ctx, conn, readWait)
+		if err == nil || !ssh.Unreachable(err) || ctx.Err() != nil {
 			return nil
 		}
-		unreachable.Store(addr, true)
+		unreachable.Store(key, true)
 	}
 	return tfdiags.Diagnostics{tfdiags.Sourceless(tfdiags.Warning, UnreachableSummary, fmt.Sprintf(
 		"Nothing answered at %s, so this step keeps what the last apply recorded. If sshd has moved to the address or port in your configuration, the plan uses that one. If the host is down, applying will fail to connect to it.", addr))}
