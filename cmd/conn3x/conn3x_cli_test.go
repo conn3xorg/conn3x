@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -43,6 +44,25 @@ func TestSubcommandHelpIsBranded(t *testing.T) {
 		}
 		if strings.Contains(help, "OpenTofu") || strings.Contains(help, "Usage: tofu") {
 			t.Errorf("%s help still mentions OpenTofu or tofu:\n%s", name, help)
+		}
+	}
+}
+
+func TestAllCommandHelpDoesNotMentionTofu(t *testing.T) {
+	initCommands(command.Meta{})
+	tofuWord := regexp.MustCompile(`\btofu\b`)
+	for name, factory := range commands {
+		c, err := factory()
+		if err != nil {
+			t.Errorf("%s factory returned an error: %v", name, err)
+			continue
+		}
+		if c == nil {
+			t.Errorf("%s factory returned a nil command", name)
+			continue
+		}
+		if match := tofuWord.FindString(c.Help()); match != "" {
+			t.Errorf("%s help still contains %q as a word:\n%s", name, match, c.Help())
 		}
 	}
 }

@@ -32,7 +32,10 @@ var helpBrand = strings.NewReplacer(
 	"Usage: tofu ", "Usage: conn3x ",
 	"tofu -help", "conn3x -help",
 	"`tofu ", "`conn3x ",
+	"\"tofu ", "\"conn3x ",
+	"'tofu ", "'conn3x ",
 	" tofu ", " conn3x ",
+	" tofu\n", " conn3x\n",
 	"\ttofu ", "\tconn3x ",
 )
 
