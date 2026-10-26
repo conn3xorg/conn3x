@@ -126,7 +126,7 @@ func brandTree(cmd *command.Command) {
 		}
 	}
 	if cmd.Name == "init" && cmd.Run != nil {
-		cmd.Run = suggestEncryption(cmd.Run)
+		cmd.Run = suggestEncryption(cmd.Run, cmd.CommandLine.View)
 	}
 	for i := range cmd.Commands {
 		brandTree(&cmd.Commands[i])
