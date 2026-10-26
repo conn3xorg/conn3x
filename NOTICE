@@ -8,3 +8,13 @@ This product includes software from OpenTofu
 License, version 2.0. Copyright (c) The OpenTofu Authors and
 Copyright (c) HashiCorp, Inc. Files taken from OpenTofu keep their
 original copyright and license headers.
+
+The host agent that conn3x embeds includes go-systemd
+(https://github.com/coreos/go-systemd), licensed under the Apache
+License, version 2.0, whose NOTICE file reads:
+
+    CoreOS Project
+    Copyright 2018 CoreOS, Inc
+
+    This product includes software developed at CoreOS, Inc.
+    (http://www.coreos.com/).
