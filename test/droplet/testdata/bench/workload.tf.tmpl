@@ -1,0 +1,52 @@
+# The benchmark workload: 50 files (45 pages and 5 unit files), 10
+# packages and 5 services, applied as deploy through password sudo.
+circuit "bench" {
+  hosts = { bench = "{{.IP}}" }
+
+  ssh {
+    user                 = "deploy"
+    private_key_file     = "{{.PrivateKeyFile}}"
+    host_key             = "{{.HostKey}}"
+    timeout              = "5m"
+    become               = true
+    become_password_file = "{{.SudoPasswordFile}}"
+  }
+
+  step "packages" {
+    for_each = ["bc", "jq", "lsof", "nano", "rsync", "strace", "tmux", "tree", "unzip", "zip"]
+    package {
+      name = item.value
+    }
+  }
+
+  step "dir" {
+    directory {
+      path = "/srv/conn3x-bench"
+    }
+  }
+
+  step "pages" {
+    for_each = [{{range $i, $n := .Pages}}{{if $i}}, {{end}}"{{$n}}"{{end}}]
+    file {
+      path    = "/srv/conn3x-bench/page-${item.value}.txt"
+      content = "page ${item.value} on ${each.key}\n"
+    }
+  }
+
+  step "units" {
+    for_each = ["1", "2", "3", "4", "5"]
+    file {
+      path    = "/etc/systemd/system/conn3x-bench-${item.value}.service"
+      content = "[Unit]\nDescription=Conn3x benchmark ${item.value}\n\n[Service]\nExecStart=/usr/bin/sleep infinity\n\n[Install]\nWantedBy=multi-user.target\n"
+    }
+  }
+
+  step "services" {
+    for_each = ["1", "2", "3", "4", "5"]
+    service {
+      name    = "conn3x-bench-${item.value}"
+      state   = "started"
+      enabled = true
+    }
+  }
+}

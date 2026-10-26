@@ -40,89 +40,24 @@ type vars struct {
 }
 
 func TestDropletAndCircuitInOnePlan(t *testing.T) {
-	token := os.Getenv("DIGITALOCEAN_TOKEN")
-	if token == "" {
-		t.Skip("DIGITALOCEAN_TOKEN is not set")
-	}
-	api := &doapi.Client{Token: token}
-
-	_, here, _, _ := runtime.Caller(0)
-	root := filepath.Join(filepath.Dir(here), "..", "..")
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "conn3x")
-	build := exec.Command("bash", "scripts/build-conn3x.sh", bin)
-	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building conn3x: %v\n%s", err, out)
-	}
-
-	runBytes := make([]byte, 4)
-	_, _ = rand.Read(runBytes)
-	runID := hex.EncodeToString(runBytes)
-
-	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	block, err := gossh.MarshalPrivateKey(priv, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyFile := filepath.Join(dir, "id_ed25519")
-	if err := os.WriteFile(keyFile, pem.EncodeToMemory(block), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	sshPub, _ := gossh.NewPublicKey(pub)
-
-	pwBytes := make([]byte, 12)
-	_, _ = rand.Read(pwBytes)
-	sudoPassword := "C3x-" + hex.EncodeToString(pwBytes)
-	pwFile := filepath.Join(dir, "sudo-password")
-	if err := os.WriteFile(pwFile, []byte(sudoPassword+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	tpl := template.Must(template.ParseFiles(filepath.Join(filepath.Dir(here), "testdata", "main.tf.tmpl")))
-	var cfg bytes.Buffer
-	if err := tpl.Execute(&cfg, vars{
-		RunID:            runID,
+	r := newRun(t)
+	dir := r.dir
+	r.render(t, "main.tf.tmpl", vars{
+		RunID:            r.id,
 		Image:            "rockylinux-10-x64",
-		PublicKey:        strings.TrimSpace(string(gossh.MarshalAuthorizedKey(sshPub))),
-		PrivateKeyFile:   keyFile,
-		SudoPassword:     sudoPassword,
-		SudoPasswordFile: pwFile,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "main.tf"), cfg.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
+		PublicKey:        r.publicKey,
+		PrivateKeyFile:   r.keyFile,
+		SudoPassword:     r.sudoPassword,
+		SudoPasswordFile: r.pwFile,
+	}, filepath.Join(dir, "main.tf"))
 
-	conn3x := func(args ...string) (string, error) {
-		cmd := exec.Command(bin, args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "CHECKPOINT_DISABLE=1")
-		out, err := cmd.CombinedOutput()
-		return string(out), err
-	}
+	conn3x := func(args ...string) (string, error) { return r.conn3x(dir, nil, args...) }
 	must := func(args ...string) string {
 		t.Helper()
-		out, err := conn3x(args...)
-		if err != nil {
-			t.Fatalf("conn3x %v: %v\n%s", args, err, out)
-		}
-		return out
+		return r.must(t, dir, nil, args...)
 	}
-
-	// Whatever happens, leave nothing behind: destroy through Conn3x, then
-	// delete this run's droplet and key through the API in case that failed.
-	t.Cleanup(func() {
-		if out, err := conn3x("destroy", "-auto-approve", "-no-color"); err != nil {
-			t.Logf("conn3x destroy failed, falling back to the API: %v\n%s", err, out)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if err := api.DeleteRun(ctx, runID); err != nil {
-			t.Errorf("cleaning up run %s: %v", runID, err)
-		}
-	})
+	priv := r.priv
+	r.cleanup(t, dir)
 
 	must("init", "-no-color")
 	plan := must("plan", "-no-color")
@@ -235,6 +170,110 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 
 // fetch polls url until its body contains want or two minutes pass, and
 // returns the last body it saw.
+// run is one test run: a conn3x binary, a key pair and a sudo password,
+// and a run ID that names everything it creates in DigitalOcean.
+type run struct {
+	api                  *doapi.Client
+	here, dir, bin, id   string
+	keyFile, publicKey   string
+	priv                 ed25519.PrivateKey
+	sudoPassword, pwFile string
+}
+
+// newRun builds conn3x and makes the run's keys, or skips the test
+// without DIGITALOCEAN_TOKEN.
+func newRun(t *testing.T) *run {
+	t.Helper()
+	token := os.Getenv("DIGITALOCEAN_TOKEN")
+	if token == "" {
+		t.Skip("DIGITALOCEAN_TOKEN is not set")
+	}
+	_, here, _, _ := runtime.Caller(0)
+	r := &run{api: &doapi.Client{Token: token}, here: filepath.Dir(here), dir: t.TempDir()}
+	r.bin = filepath.Join(r.dir, "conn3x")
+	build := exec.Command("bash", "scripts/build-conn3x.sh", r.bin)
+	build.Dir = filepath.Join(r.here, "..", "..")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building conn3x: %v\n%s", err, out)
+	}
+
+	runBytes := make([]byte, 4)
+	_, _ = rand.Read(runBytes)
+	r.id = hex.EncodeToString(runBytes)
+
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	block, err := gossh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.priv = priv
+	r.keyFile = filepath.Join(r.dir, "id_ed25519")
+	if err := os.WriteFile(r.keyFile, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sshPub, _ := gossh.NewPublicKey(pub)
+	r.publicKey = strings.TrimSpace(string(gossh.MarshalAuthorizedKey(sshPub)))
+
+	pwBytes := make([]byte, 12)
+	_, _ = rand.Read(pwBytes)
+	r.sudoPassword = "C3x-" + hex.EncodeToString(pwBytes)
+	r.pwFile = filepath.Join(r.dir, "sudo-password")
+	if err := os.WriteFile(r.pwFile, []byte(r.sudoPassword+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// render executes the template testdata/name with data into out.
+func (r *run) render(t *testing.T, name string, data any, out string) {
+	t.Helper()
+	tpl := template.Must(template.ParseFiles(filepath.Join(r.here, "testdata", name)))
+	var cfg bytes.Buffer
+	if err := tpl.Execute(&cfg, data); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, cfg.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// conn3x runs the binary in dir with env added.
+func (r *run) conn3x(dir string, env []string, args ...string) (string, error) {
+	cmd := exec.Command(r.bin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(append(os.Environ(), "TF_IN_AUTOMATION=1", "CHECKPOINT_DISABLE=1"), env...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (r *run) must(t *testing.T, dir string, env []string, args ...string) string {
+	t.Helper()
+	out, err := r.conn3x(dir, env, args...)
+	if err != nil {
+		t.Fatalf("conn3x %v: %v\n%s", args, err, out)
+	}
+	return out
+}
+
+// cleanup destroys what the configuration in dir made when the test ends,
+// however it ends, then deletes the run's droplets and key through the
+// API in case that failed.
+func (r *run) cleanup(t *testing.T, dir string) {
+	t.Cleanup(func() {
+		if out, err := r.conn3x(dir, nil, "destroy", "-auto-approve", "-no-color"); err != nil {
+			t.Logf("conn3x destroy failed, falling back to the API: %v\n%s", err, out)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := r.api.DeleteRun(ctx, r.id); err != nil {
+			t.Errorf("cleaning up run %s: %v", r.id, err)
+		}
+	})
+}
+
 func fetch(url, want string) string {
 	var got string
 	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {

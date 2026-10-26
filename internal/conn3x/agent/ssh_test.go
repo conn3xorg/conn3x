@@ -151,14 +151,16 @@ func TestAgentDependencies(t *testing.T) {
 }
 
 // BenchmarkRun times one small command per way of running it, against a
-// local host and one 25 ms away.
+// local host and ones 25 ms and 50 ms away. The server delays each write,
+// so a request and its reply cost about one delay. agent-root is the
+// agent started through sudo, as become runs it.
 func BenchmarkRun(b *testing.B) {
 	bin := buildAgent(b)
-	for _, mode := range []string{"shell", "shell-sudo", "agent"} {
+	for _, mode := range []string{"shell", "shell-sudo", "agent", "agent-root"} {
 		for _, rtt := range []struct {
 			name  string
 			delay time.Duration
-		}{{"rtt0", 0}, {"rtt25ms", 25 * time.Millisecond}} {
+		}{{"rtt0", 0}, {"rtt25ms", 25 * time.Millisecond}, {"rtt50ms", 50 * time.Millisecond}} {
 			b.Run(mode+"/"+rtt.name, func(b *testing.B) {
 				s := sshtest.New(b)
 				s.Latency = rtt.delay
@@ -170,6 +172,14 @@ func BenchmarkRun(b *testing.B) {
 					r = &ssh.Become{Client: c}
 				case "agent":
 					r = sshAgent(b, c, bin)
+				case "agent-root":
+					s.FakeSudo(b, "nopasswd")
+					a, err := startBecome(context.Background(), c, "exec "+ssh.Quote(bin), &ssh.Become{Client: c})
+					if err != nil {
+						b.Fatal(err)
+					}
+					b.Cleanup(func() { a.Close() })
+					r = a
 				}
 				ctx := context.Background()
 				if _, err := r.Run(ctx, "true", nil); err != nil {

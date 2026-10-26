@@ -28,7 +28,41 @@ jobs:
       - name: One plan for a droplet and its configuration
         env:
           DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-        run: go test -tags droplet -count=1 -timeout 40m -v ./test/droplet/...
+        run: go test -tags droplet -count=1 -timeout 40m -v -skip '^TestAgentBench$' ./test/droplet/...
+      - name: Sweep anything left behind
+        if: always()
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+        run: go run ./test/droplet/sweep -max-age 1h
+
+  # Times the agent against the shell on two fresh droplets. Its own job,
+  # after the suite, so its time and failures stay out of the suite's
+  # signal and neither job's sweep can catch the other's droplets.
+  # scripts/agent-bench-results.sh reads the artifacts.
+  agent-bench:
+    needs: droplets
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Time the agent against the shell
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          CONN3X_BENCH_OUT: ${{ runner.temp }}/agent-bench.jsonl
+        run: go test -tags droplet -count=1 -timeout 50m -v -run '^TestAgentBench$' ./test/droplet/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: agent-bench
+          path: ${{ runner.temp }}/agent-bench.jsonl
+          if-no-files-found: ignore
+          retention-days: 90
       - name: Sweep anything left behind
         if: always()
         env:

@@ -1,0 +1,88 @@
+terraform {
+  required_providers {
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = "~> 2.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+  }
+}
+
+resource "tls_private_key" "host" {
+  algorithm = "ED25519"
+}
+
+resource "digitalocean_ssh_key" "ci" {
+  name       = "conn3x-ci-{{.RunID}}"
+  public_key = "{{.PublicKey}}"
+}
+
+# Two identical droplets, one per mode, so each cold apply starts cold.
+# "off" carries the key's name, which keeps the key safe from the sweep.
+resource "digitalocean_droplet" "bench" {
+  for_each = { off = "conn3x-ci-{{.RunID}}", on = "conn3x-ci-{{.RunID}}-on" }
+
+  name     = each.value
+  image    = "rockylinux-10-x64"
+  size     = "s-1vcpu-1gb"
+  region   = "nyc3"
+  tags     = ["conn3x-ci"]
+  ssh_keys = [digitalocean_ssh_key.ci.fingerprint]
+
+  user_data = "#cloud-config\n${yamlencode({
+    ssh_deletekeys = true
+    ssh_keys = {
+      ed25519_private = tls_private_key.host.private_key_openssh
+      ed25519_public  = tls_private_key.host.public_key_openssh
+    }
+    # Password sudo, so become goes through real sudo and PAM.
+    users = ["default", {
+      name                = "deploy"
+      shell               = "/bin/bash"
+      lock_passwd         = false
+      ssh_authorized_keys = ["{{.PublicKey}}"]
+    }]
+    chpasswd = {
+      expire = false
+      users  = [{ name = "deploy", password = "{{.SudoPassword}}", type = "text" }]
+    }
+    write_files = [{
+      path        = "/etc/sudoers.d/deploy"
+      permissions = "0440"
+      content     = "deploy ALL=(ALL) ALL\n"
+    }]
+  })}"
+}
+
+# Nothing is timed until cloud-init has finished on both droplets.
+circuit "ready" {
+  hosts = { for k, d in digitalocean_droplet.bench : k => d.ipv4_address }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.PrivateKeyFile}}"
+    host_key         = tls_private_key.host.public_key_openssh
+    timeout          = "5m"
+  }
+
+  step "cloud_init" {
+    command {
+      command = "cloud-init status --wait >/dev/null || true"
+    }
+  }
+}
+
+output "host_key" {
+  value = tls_private_key.host.public_key_openssh
+}
+
+output "ip_off" {
+  value = digitalocean_droplet.bench["off"].ipv4_address
+}
+
+output "ip_on" {
+  value = digitalocean_droplet.bench["on"].ipv4_address
+}
