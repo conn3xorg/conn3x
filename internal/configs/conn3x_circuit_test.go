@@ -868,3 +868,29 @@ circuit "app" {
 		t.Fatalf("second step repeats the error: %v", d)
 	}
 }
+
+// Fields that aren't ssh settings are the user's own data, read with
+// each.value, and stay allowed.
+func TestHostObjectKeepsCustomFields(t *testing.T) {
+	src := `
+circuit "app" {
+  hosts = { a = { address = "10.0.0.1", role = "db" }, b = { address = "10.0.0.2", role = "web" } }
+  ssh {
+    user = "root"
+  }
+  step "one" {
+    file {
+      path    = "/etc/role"
+      content = each.value.role
+    }
+  }
+}
+`
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	if _, d := mod.ManagedResources["conn3x_file.app__one"].ForEach.Value(nil); d.HasErrors() {
+		t.Fatalf("a custom field was rejected: %v", d)
+	}
+}
