@@ -65,7 +65,7 @@ func TestAgentBench(t *testing.T) {
 			env = []string{"CONN3X_AGENT=require"}
 		}
 		r.must(t, dir, env, "init", "-no-color")
-		// ponytail: -parallelism=8 in both modes. At the default 10, the
+		// -parallelism=8 in both modes. At the default 10, the
 		// shell runs ten commands at once on one connection and sshd's
 		// MaxSessions (10) refuses one with "open failed". Drop it once
 		// the shell caps its sessions per connection.
