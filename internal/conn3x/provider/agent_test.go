@@ -253,7 +253,9 @@ func TestAgentDeathSurfacesError(t *testing.T) {
 	}
 }
 
-func isRootStart(cmd string) bool { return strings.HasPrefix(cmd, "exec sudo -S -p 'conn3x-sudo-") }
+func isRootStart(cmd string) bool {
+	return strings.HasPrefix(cmd, "LC_ALL=C exec sudo -S -p 'conn3x-sudo-")
+}
 
 func TestBecomeUsesTheAgent(t *testing.T) {
 	f, _ := newAgentTest(t)

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +55,7 @@ func attempts(t *testing.T, log string) []string {
 
 func startCommands(h *testHost) (out []string) {
 	for _, c := range h.Commands() {
-		if strings.HasPrefix(c, "exec sudo -S -p 'conn3x-sudo-") {
+		if strings.HasPrefix(c, "LC_ALL=C exec sudo -S -p 'conn3x-sudo-") {
 			out = append(out, c)
 		}
 	}
@@ -101,7 +102,11 @@ func TestBecomeAgentPassword(t *testing.T) {
 		t.Fatalf("started %d agents through sudo, want 1", len(got))
 	}
 	// sudo read the password and nothing else, once per sudo it ran.
-	for _, line := range attempts(t, log) {
+	lines := attempts(t, log)
+	if len(lines) == 0 {
+		t.Fatal("sudo never read a password")
+	}
+	for _, line := range lines {
 		if line != "s3cret" {
 			t.Fatalf("sudo read a line that is not the password")
 		}
@@ -190,5 +195,32 @@ func TestBecomeMarkerSplitAcrossReads(t *testing.T) {
 	}
 	if got := attempts(t, log); len(got) != 1 || got[0] != "s3cret" {
 		t.Fatalf("sudo read %d lines, want the password once", len(got))
+	}
+}
+
+// sudo's refusal is recognised whatever the login user's locale, and even
+// at the end of a long stderr that is still being copied when stdout ends.
+func TestBecomeAgentSudoRefusal(t *testing.T) {
+	for name, sudo := range map[string]string{
+		"in another language": `if [ "$LC_ALL" = C ]; then echo "sudo: a password is required" >&2; else echo "sudo: Passwort benötigt" >&2; fi; exit 1`,
+		"after a long stderr": `yes | head -c 1500000 >&2; echo "sudo: a password is required" >&2; exit 1`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHost(t)
+			bin := t.TempDir()
+			if err := os.WriteFile(filepath.Join(bin, "sudo"), []byte("#!/bin/sh\n"+sudo+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			h.Env = append(h.Env, "PATH="+bin+":"+os.Getenv("PATH"), "LANG=de_DE.UTF-8")
+			c := dialServer(t, h.Server)
+			// The stderr copy loses the race only sometimes, so try a few times.
+			for range 10 {
+				_, err := start(ctx, c, h.cacheDir(), agentName(t), strings.Repeat("0", 64), &ssh.Become{Client: c})
+				if !errors.Is(err, ssh.ErrBecome) || !strings.Contains(err.Error(), "set become_password_file") {
+					msg := fmt.Sprint(err)
+					t.Fatalf("err = …%s, want ErrBecome asking for become_password_file", msg[max(0, len(msg)-200):])
+				}
+			}
+		})
 	}
 }

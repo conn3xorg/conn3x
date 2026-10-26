@@ -17,6 +17,10 @@ import (
 // promptPoll is how often startBecome looks at sudo's stderr for its prompt.
 const promptPoll = 10 * time.Millisecond
 
+// stderrWait bounds how long startBecome waits for the rest of sudo's
+// stderr once the agent has failed to start.
+const stderrWait = 2 * time.Second
+
 // startBecome runs the start script through sudo, so the agent runs as
 // root, and answers sudo's password prompt.
 //
@@ -32,7 +36,8 @@ func startBecome(ctx context.Context, c *ssh.Client, script string, b *ssh.Becom
 		return nil, err
 	}
 	marker := []byte("conn3x-sudo-" + hex.EncodeToString(nonce[:]) + ":")
-	p, err := c.Start(ctx, "exec sudo -S -p "+ssh.Quote(string(marker))+" -- /bin/sh -c "+ssh.Quote(script))
+	// sudo's refusals are matched in English.
+	p, err := c.Start(ctx, "LC_ALL=C exec sudo -S -p "+ssh.Quote(string(marker))+" -- /bin/sh -c "+ssh.Quote(script))
 	if err != nil {
 		return nil, fmt.Errorf("starting the agent as root: %w", err)
 	}
@@ -63,7 +68,14 @@ func startBecome(ctx context.Context, c *ssh.Client, script string, b *ssh.Becom
 				return h.a, nil
 			}
 			// sudo refusing is an error, as it is in the shell; anything
-			// else means this host can't run the agent.
+			// else means this host can't run the agent. The session ending
+			// means its stderr has all been copied.
+			waited := make(chan struct{})
+			go func() { _ = p.Wait(); close(waited) }()
+			select {
+			case <-waited:
+			case <-time.After(stderrWait):
+			}
 			stderr := p.Stderr()
 			if err := ssh.SudoFailure(stderr, c.Addr()); err != nil {
 				return nil, err
