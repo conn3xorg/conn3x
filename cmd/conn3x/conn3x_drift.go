@@ -25,13 +25,21 @@ func driftCommand() command.Command {
 		Short: "Report what changed outside Conn3x, in the cloud and on hosts",
 		Long: `Reads every resource and host step again and reports what no longer matches the last apply, grouped into cloud resources and host steps. Nothing is changed.
 
-Exits 0 when nothing drifted, 2 when something did, and 1 on errors. It takes the same options as plan.`,
+Exits 0 when nothing drifted, 2 when something did, and 1 on errors. It takes the same options as plan, except -json: for machine-readable drift, run plan -refresh-only -json.`,
 		GroupID: command.MainCommandGroup.ID,
 	}
 	// Declaring plan's options lets the CLI accept them; the refresh-only
 	// plan run below parses them for real.
-	arguments.BindPlan(&cmd.CommandLine)
-	cmd.Run = func(command.Meta) int { return runDrift(os.Args[1:], stdout, os.Stderr) }
+	view := arguments.BindPlan(&cmd.CommandLine).View
+	cmd.Run = func(m command.Meta) int {
+		if view.ViewType == arguments.ViewJSON {
+			fmt.Fprintln(stderr, "Error: drift has no -json output. For machine-readable drift, run conn3x plan -refresh-only -json.")
+			return 1
+		}
+		// -chdir has already moved conn3x; the plan starts where conn3x did
+		// and applies the same -chdir itself.
+		return runDrift(os.Args[1:], m.WorkingDir.OriginalWorkingDir(), stdout, stderr)
+	}
 	return cmd
 }
 
@@ -48,13 +56,20 @@ func driftPlanArgs(args []string) []string {
 	return out
 }
 
-func runDrift(args []string, out, errOut io.Writer) int {
+// driftPlan is the refresh-only plan, run from dir with the drift arguments.
+func driftPlan(self, dir string, args []string) *exec.Cmd {
+	plan := exec.Command(self, driftPlanArgs(args)...)
+	plan.Dir = dir
+	return plan
+}
+
+func runDrift(args []string, dir string, out, errOut io.Writer) int {
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(errOut, "Error: finding the conn3x binary: %s\n", err)
 		return 1
 	}
-	plan := exec.Command(self, driftPlanArgs(args)...)
+	plan := driftPlan(self, dir, args)
 	plan.Stderr = errOut
 	pipe, err := plan.StdoutPipe()
 	if err == nil {
@@ -76,10 +91,19 @@ func runDrift(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "Error: reading the plan: %s\n", readErr)
 		return 1
 	}
+	return reportDrift(r, planCode, out)
+}
+
+// reportDrift writes the report for a finished plan and returns the exit code.
+func reportDrift(r driftReport, planCode int, out io.Writer) int {
+	code := driftExit(r, planCode)
+	if code == 1 && len(r.errors) == 0 {
+		return 1 // the plan failed before reporting; it said why on stderr
+	}
 	// plan -detailed-exitcode also exits 2 when only outputs changed.
 	r.outputsOnly = planCode == 2 && len(r.cloud)+len(r.hosts) == 0 && len(r.errors) == 0
 	r.write(out)
-	return driftExit(r, planCode)
+	return code
 }
 
 // driftExit is 0 for no drift, 2 for drift and 1 for errors.

@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/command/views"
+	"github.com/opentofu/opentofu/internal/command/workdir"
 	"github.com/opentofu/opentofu/internal/conn3x/version"
+	"github.com/opentofu/opentofu/internal/terminal"
 )
 
 func TestHelpUsesConn3xName(t *testing.T) {
@@ -114,4 +117,12 @@ func TestTreeVersionPrintsConn3x(t *testing.T) {
 	if first := strings.SplitN(out.String(), "\n", 2)[0]; first != version.String() {
 		t.Fatalf("first line %q, want %q", first, version.String())
 	}
+}
+
+// testMeta is enough of a Meta to run a tree command in the current directory.
+func testMeta(t *testing.T) command.Meta {
+	t.Helper()
+	streams, done := terminal.StreamsForTesting(t)
+	t.Cleanup(func() { done(t) })
+	return command.Meta{View: views.NewView(streams), WorkingDir: workdir.NewDir(".")}
 }
