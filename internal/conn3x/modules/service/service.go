@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -60,10 +61,20 @@ func (d Desired) Validate() error {
 	return fmt.Errorf("state must be %q or %q, not %q", Started, Stopped, d.State)
 }
 
-// Read asks systemd for the unit's state.
+// Read asks systemd for the unit's state. A runner that is a
+// modules.UnitReader answers natively when it can.
 func Read(ctx context.Context, r modules.Runner, name string) (Actual, error) {
 	if !unitPattern.MatchString(name) {
 		return Actual{}, fmt.Errorf("unit name %q is not valid", name)
+	}
+	if ur, ok := r.(modules.UnitReader); ok {
+		props, err := ur.ReadUnit(ctx, Unit(name))
+		if err == nil {
+			return actual(props), nil
+		}
+		if !errors.Is(err, errors.ErrUnsupported) {
+			return Actual{}, err
+		}
 	}
 	res, err := r.Run(ctx, "systemctl show -p LoadState,ActiveState,UnitFileState,NeedDaemonReload -- "+ssh.Quote(Unit(name)), nil)
 	if err != nil {
@@ -78,15 +89,20 @@ func Read(ctx context.Context, r modules.Runner, name string) (Actual, error) {
 			props[k] = v
 		}
 	}
+	return actual(props), nil
+}
+
+// actual reads the properties "systemctl show" prints.
+func actual(props map[string]string) Actual {
 	if props["LoadState"] == "not-found" {
-		return Actual{}, nil
+		return Actual{}
 	}
 	return Actual{
 		Exists:      true,
 		Running:     props["ActiveState"] == "active" || props["ActiveState"] == "activating" || props["ActiveState"] == "reloading",
 		Enabled:     strings.HasPrefix(props["UnitFileState"], "enabled"),
 		NeedsReload: props["NeedDaemonReload"] == "yes",
-	}, nil
+	}
 }
 
 // NeedsChange reports whether Apply would change anything.

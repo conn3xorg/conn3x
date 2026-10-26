@@ -97,6 +97,10 @@ func TestAgentOverSSHConformance(t *testing.T) {
 	if got := s.Commands()[before:]; len(got) != 3 || !strings.HasPrefix(got[0], "exec ") {
 		t.Fatalf("the server ran %q; want the agent started once and two shell commands", got)
 	}
+	t.Run("file reads", func(t *testing.T) {
+		moduletest.FileConformance(t, shell, shell)
+		moduletest.FileConformance(t, shell, sshAgent(t, dialServer(t, s), bin))
+	})
 }
 
 func TestAgentDependencies(t *testing.T) {
@@ -108,6 +112,9 @@ func TestAgentDependencies(t *testing.T) {
 		"google.golang.org/protobuf/encoding/protowire",
 		"google.golang.org/protobuf/internal/detrand",
 		"google.golang.org/protobuf/internal/errors",
+		// systemd over D-Bus, for unit reads.
+		"github.com/coreos/go-systemd/v22/dbus",
+		"github.com/godbus/dbus/v5",
 	}
 	cmd := exec.Command("go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", agentPkg)
 	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
@@ -117,7 +124,7 @@ func TestAgentDependencies(t *testing.T) {
 	}
 	for _, dep := range strings.Fields(string(out)) {
 		if !slices.Contains(allowed, dep) {
-			t.Errorf("the agent imports %s; it may use only the standard library, protowire and its own packages", dep)
+			t.Errorf("the agent imports %s; it may use only the standard library, protowire, go-systemd's D-Bus client and its own packages", dep)
 		}
 	}
 

@@ -5,6 +5,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -144,5 +146,52 @@ func TestValidate(t *testing.T) {
 		if err := (Desired{Name: good}).Validate(); err != nil {
 			t.Errorf("Validate(%q): %v", good, err)
 		}
+	}
+}
+
+// fastHost answers ReadUnit with props or err.
+type fastHost struct {
+	host
+	props map[string]string
+	err   error
+	asked []string
+}
+
+func (h *fastHost) ReadUnit(_ context.Context, unit string) (map[string]string, error) {
+	h.asked = append(h.asked, unit)
+	return h.props, h.err
+}
+
+func TestReadUsesUnitReader(t *testing.T) {
+	h := &fastHost{props: map[string]string{"LoadState": "loaded", "ActiveState": "reloading", "UnitFileState": "enabled-runtime", "NeedDaemonReload": "yes"}}
+	a, err := Read(ctx, h, "nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Actual{Exists: true, Running: true, Enabled: true, NeedsReload: true}); a != want {
+		t.Fatalf("got %+v, want %+v", a, want)
+	}
+	if len(h.ran) != 0 || len(h.asked) != 1 || h.asked[0] != "nginx.service" {
+		t.Fatalf("asked %q, ran %q", h.asked, h.ran)
+	}
+	h.props = map[string]string{"LoadState": "not-found"}
+	if a, err := Read(ctx, h, "nope"); err != nil || a.Exists {
+		t.Fatalf("not found: %+v, %v", a, err)
+	}
+	if _, err := Read(ctx, h, "bad name"); err == nil || len(h.asked) != 2 {
+		t.Fatalf("an invalid name reached the agent: %v, %q", err, h.asked)
+	}
+}
+
+func TestReadUnitFallsBackOnlyWhenUnsupported(t *testing.T) {
+	h := &fastHost{host: host{show: show("masked", "inactive", "masked", "no")}, err: fmt.Errorf("no D-Bus: %w", errors.ErrUnsupported)}
+	a, err := Read(ctx, h, "nginx")
+	if err != nil || !a.Exists || a.Enabled || a.Running || len(h.ran) != 1 {
+		t.Fatalf("got %+v, %v after running %q; want the shell's answer", a, err, h.ran)
+	}
+	gone := errors.New("the conn3x agent stopped")
+	h = &fastHost{err: gone}
+	if _, err := Read(ctx, h, "nginx"); !errors.Is(err, gone) || len(h.ran) != 0 {
+		t.Fatalf("got %v after running %q; want the agent's error and no shell", err, h.ran)
 	}
 }

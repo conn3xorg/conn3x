@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,6 +73,53 @@ func TestExecMatchesShell(t *testing.T) {
 	want, _ := moduletest.Local{}.Run(ctx, "pwd", nil)
 	if string(got.Stdout) != string(want.Stdout) {
 		t.Fatalf("pwd = %q, want %q", got.Stdout, want.Stdout)
+	}
+}
+
+func TestFileReadAgentMatchesShell(t *testing.T) {
+	t.Run("shell", func(t *testing.T) { moduletest.FileConformance(t, moduletest.Local{}, moduletest.Local{}) })
+	t.Run("agent", func(t *testing.T) { moduletest.FileConformance(t, moduletest.Local{}, startAgent(t)) })
+}
+
+func TestReadsCancel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("godbus reads DBUS_SYSTEM_BUS_ADDRESS only on Linux")
+	}
+	// A system bus that accepts and then says nothing.
+	dir, err := os.MkdirTemp("", "bus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	l, err := net.Listen("unix", filepath.Join(dir, "s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { c.Close() })
+		}
+	}()
+	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(dir, "s"))
+
+	c := startAgent(t)
+	cctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := c.ReadUnit(cctx, "sshd.service"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ReadUnit = %v, want the deadline", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("canceling took %s", d)
+	}
+	// The agent is still there for the next request.
+	if _, err := c.ReadFile(ctx, "/"); err != nil {
+		t.Fatal(err)
 	}
 }
 

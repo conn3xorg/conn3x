@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
@@ -185,5 +187,63 @@ func TestApplySyncsBeforeAndAfterRename(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(p); string(got) != "hi\n" {
 		t.Fatalf("content = %q", got)
+	}
+}
+
+// fastRunner answers ReadFile with read, and runs commands locally.
+type fastRunner struct {
+	recordRunner
+	read func(path string) (modules.FileStat, error)
+}
+
+func (r *fastRunner) ReadFile(_ context.Context, path string) (modules.FileStat, error) {
+	return r.read(path)
+}
+
+func TestReadUsesFileReader(t *testing.T) {
+	r := &fastRunner{read: func(string) (modules.FileStat, error) {
+		return modules.FileStat{Exists: true, Regular: true, Mode: 0o4755, Owner: "root", Group: "wheel", Content: []byte("x\x00")}, nil
+	}}
+	a, err := Read(ctx, r, "/etc/motd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Actual{Exists: true, Content: "x\x00", Mode: "4755", Owner: "root", Group: "wheel"}); a != want {
+		t.Fatalf("got %+v, want %+v", a, want)
+	}
+	if len(r.scripts) != 0 {
+		t.Fatalf("ran %q as well", r.scripts)
+	}
+
+	r.read = func(string) (modules.FileStat, error) { return modules.FileStat{}, nil }
+	if a, err := Read(ctx, r, "/nope"); err != nil || a != (Actual{}) {
+		t.Fatalf("missing: got %+v, %v", a, err)
+	}
+	r.read = func(string) (modules.FileStat, error) { return modules.FileStat{Exists: true}, nil }
+	if _, err := Read(ctx, r, "/etc"); err == nil || err.Error() != "/etc exists but is not a regular file" {
+		t.Fatalf("not regular: %v", err)
+	}
+}
+
+func TestReadFallsBackOnlyWhenUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "f")
+	if err := os.WriteFile(p, []byte("hi"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	r := &fastRunner{read: func(string) (modules.FileStat, error) {
+		return modules.FileStat{}, fmt.Errorf("conn3x agent: no names: %w", errors.ErrUnsupported)
+	}}
+	a, err := Read(ctx, r, p)
+	if err != nil || a.Content != "hi" || a.Mode != "0640" || len(r.scripts) != 1 {
+		t.Fatalf("got %+v, %v after running %q; want the shell's answer", a, err, r.scripts)
+	}
+
+	// Anything else, such as the agent dying, is the answer: the shell
+	// is never tried behind its back.
+	gone := errors.New("the conn3x agent stopped")
+	r = &fastRunner{read: func(string) (modules.FileStat, error) { return modules.FileStat{}, gone }}
+	if _, err := Read(ctx, r, p); !errors.Is(err, gone) || len(r.scripts) != 0 {
+		t.Fatalf("got %v after running %q; want the agent's error and no shell", err, r.scripts)
 	}
 }

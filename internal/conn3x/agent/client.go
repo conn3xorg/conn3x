@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/agent/agentpb"
+	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
@@ -109,12 +110,55 @@ func (c *Client) read() {
 // shell transport does. A non-zero exit status is reported in Result.
 // Canceling ctx kills the command and everything it started.
 func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
-	if err := ctx.Err(); err != nil {
+	e, err := c.call(ctx, &agentpb.Envelope{Exec: &agentpb.ExecRequest{Cmd: cmd, Stdin: stdin}})
+	if err != nil {
 		return ssh.Result{}, err
+	}
+	if e.Result == nil {
+		return ssh.Result{}, unexpected(e)
+	}
+	return ssh.Result{Stdout: e.Result.Stdout, Stderr: e.Result.Stderr, ExitCode: int(e.Result.ExitCode)}, nil
+}
+
+// ReadFile reads path on the host natively, as file.Read's shell command
+// sees it. It satisfies modules.FileReader: where the agent can't match the
+// shell exactly, the error wraps errors.ErrUnsupported.
+func (c *Client) ReadFile(ctx context.Context, path string) (modules.FileStat, error) {
+	e, err := c.call(ctx, &agentpb.Envelope{ReadFile: &agentpb.ReadFileRequest{Path: path}})
+	if err != nil {
+		return modules.FileStat{}, err
+	}
+	if e.File == nil {
+		return modules.FileStat{}, unexpected(e)
+	}
+	f := e.File
+	return modules.FileStat{Exists: f.Exists, Regular: f.Regular, Mode: f.Mode, Owner: f.Owner, Group: f.Group, Content: f.Content}, nil
+}
+
+// ReadUnit asks systemd on the host for a unit's properties over D-Bus. It
+// satisfies modules.UnitReader; without D-Bus the error wraps
+// errors.ErrUnsupported.
+func (c *Client) ReadUnit(ctx context.Context, unit string) (map[string]string, error) {
+	e, err := c.call(ctx, &agentpb.Envelope{ReadUnit: &agentpb.ReadUnitRequest{Unit: unit}})
+	if err != nil {
+		return nil, err
+	}
+	if e.Unit == nil {
+		return nil, unexpected(e)
+	}
+	return e.Unit.Props, nil
+}
+
+// call sends req and waits for its reply. An Error reply is returned as
+// an error: UNSUPPORTED wraps errors.ErrUnsupported. Canceling ctx cancels
+// the request on the agent.
+func (c *Client) call(ctx context.Context, req *agentpb.Envelope) (*agentpb.Envelope, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	select {
 	case <-c.done:
-		return ssh.Result{}, c.gone()
+		return nil, c.gone()
 	default:
 	}
 	ch := make(chan *agentpb.Envelope, 1)
@@ -124,13 +168,13 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result,
 	c.pending[id] = ch
 	c.mu.Unlock()
 
-	err := c.send(&agentpb.Envelope{ID: id, Exec: &agentpb.ExecRequest{Cmd: cmd, Stdin: stdin}})
-	if err != nil {
+	req.ID = id
+	if err := c.send(req); err != nil {
 		c.forget(id)
 		if errors.Is(err, agentpb.ErrFrameTooLarge) {
-			return ssh.Result{}, fmt.Errorf("conn3x agent: %w", err)
+			return nil, fmt.Errorf("conn3x agent: %w", err)
 		}
-		return ssh.Result{}, c.gone()
+		return nil, c.gone()
 	}
 
 	var e *agentpb.Envelope
@@ -139,28 +183,30 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result,
 	case <-ctx.Done():
 		c.forget(id)
 		_ = c.send(&agentpb.Envelope{ID: id, Cancel: &agentpb.Cancel{}})
-		return ssh.Result{}, ctx.Err()
+		return nil, ctx.Err()
 	case <-c.done:
 		select {
 		case e = <-ch:
 		default:
-			return ssh.Result{}, c.gone()
+			return nil, c.gone()
 		}
 	}
 
 	switch {
-	case e.Result != nil:
-		return ssh.Result{Stdout: e.Result.Stdout, Stderr: e.Result.Stderr, ExitCode: int(e.Result.ExitCode)}, nil
-	case e.Error != nil && e.Error.Code == agentpb.CodeCanceled:
+	case e.Error == nil:
+		return e, nil
+	case e.Error.Code == agentpb.CodeCanceled:
 		// Only the agent cancels a request whose ctx is still live: it is
 		// shutting down.
-		return ssh.Result{}, fmt.Errorf("%w: it was stopped while running the command", ErrAgentGone)
-	case e.Error != nil && e.Error.Code == agentpb.CodeUnsupported:
-		return ssh.Result{}, fmt.Errorf("conn3x agent: %s: %w", e.Error.Message, errors.ErrUnsupported)
-	case e.Error != nil:
-		return ssh.Result{}, fmt.Errorf("conn3x agent: %s: %s", e.Error.Code, e.Error.Message)
+		return nil, fmt.Errorf("%w: it was stopped while running the command", ErrAgentGone)
+	case e.Error.Code == agentpb.CodeUnsupported:
+		return nil, fmt.Errorf("conn3x agent: %s: %w", e.Error.Message, errors.ErrUnsupported)
 	}
-	return ssh.Result{}, fmt.Errorf("%w: an empty reply to request %d", ErrProtocol, id)
+	return nil, fmt.Errorf("conn3x agent: %s: %s", e.Error.Code, e.Error.Message)
+}
+
+func unexpected(e *agentpb.Envelope) error {
+	return fmt.Errorf("%w: an unexpected reply to request %d", ErrProtocol, e.ID)
 }
 
 // Done is closed when the agent's output ends; after that every Run fails

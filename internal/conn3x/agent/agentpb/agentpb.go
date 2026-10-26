@@ -22,6 +22,11 @@ type Envelope struct {
 	Result *ExecResponse
 	Cancel *Cancel
 	Error  *Error
+
+	ReadFile *ReadFileRequest
+	File     *FileStat
+	ReadUnit *ReadUnitRequest
+	Unit     *UnitProps
 }
 
 // Hello is the first frame the agent sends.
@@ -49,6 +54,32 @@ type Cancel struct{}
 type Error struct {
 	Code    Code
 	Message string
+}
+
+// ReadFileRequest asks for a file the way file.Read's shell command sees it.
+type ReadFileRequest struct {
+	Path string
+}
+
+// FileStat answers a ReadFileRequest: the path's own mode and owner, and
+// the content and type of what it points to.
+type FileStat struct {
+	Exists  bool
+	Regular bool
+	Mode    uint32
+	Owner   string
+	Group   string
+	Content []byte
+}
+
+// ReadUnitRequest asks for a systemd unit's properties.
+type ReadUnitRequest struct {
+	Unit string
+}
+
+// UnitProps answers a ReadUnitRequest, as "systemctl show" prints them.
+type UnitProps struct {
+	Props map[string]string
 }
 
 // Code says why a request failed.
@@ -81,6 +112,11 @@ const (
 	fieldResult = 4
 	fieldCancel = 5
 	fieldError  = 6
+
+	fieldReadFile = 7
+	fieldFile     = 8
+	fieldReadUnit = 9
+	fieldUnit     = 10
 )
 
 // Size is the encoded length of e.
@@ -122,6 +158,14 @@ func (e *Envelope) body() (protowire.Number, message) {
 		return fieldCancel, e.Cancel
 	case e.Error != nil:
 		return fieldError, e.Error
+	case e.ReadFile != nil:
+		return fieldReadFile, e.ReadFile
+	case e.File != nil:
+		return fieldFile, e.File
+	case e.ReadUnit != nil:
+		return fieldReadUnit, e.ReadUnit
+	case e.Unit != nil:
+		return fieldUnit, e.Unit
 	}
 	return 0, nil
 }
@@ -132,7 +176,7 @@ func (e *Envelope) body() (protowire.Number, message) {
 func (e *Envelope) Unmarshal(b []byte) error {
 	*e = Envelope{}
 	return fields(b, func(f field) error {
-		if f.num >= fieldHello && f.num <= fieldError {
+		if f.num >= fieldHello && f.num <= fieldUnit {
 			if num, _ := e.body(); num != 0 {
 				return errors.New("more than one body in an agent message")
 			}
@@ -195,9 +239,86 @@ func (e *Envelope) Unmarshal(b []byte) error {
 				}
 				return err
 			})
+		case fieldReadFile:
+			e.ReadFile = &ReadFileRequest{}
+			err = f.message(func(f field) error {
+				if f.num == 1 {
+					v, err := f.bytes()
+					e.ReadFile.Path = string(v)
+					return err
+				}
+				return nil
+			})
+		case fieldFile:
+			e.File = &FileStat{}
+			err = f.message(e.File.decode)
+		case fieldReadUnit:
+			e.ReadUnit = &ReadUnitRequest{}
+			err = f.message(func(f field) error {
+				if f.num == 1 {
+					v, err := f.bytes()
+					e.ReadUnit.Unit = string(v)
+					return err
+				}
+				return nil
+			})
+		case fieldUnit:
+			e.Unit = &UnitProps{}
+			err = f.message(e.Unit.decode)
 		}
 		return err
 	})
+}
+
+func (s *FileStat) decode(f field) (err error) {
+	var x uint64
+	var v []byte
+	switch f.num {
+	case 1:
+		x, err = f.uint(math.MaxUint64)
+		s.Exists = x != 0
+	case 2:
+		x, err = f.uint(math.MaxUint64)
+		s.Regular = x != 0
+	case 3:
+		x, err = f.uint(math.MaxUint32)
+		s.Mode = uint32(x)
+	case 4:
+		v, err = f.bytes()
+		s.Owner = string(v)
+	case 5:
+		v, err = f.bytes()
+		s.Group = string(v)
+	case 6:
+		s.Content, err = f.bytes()
+	}
+	return err
+}
+
+// decode reads one map entry: a message with the key in field 1 and the
+// value in field 2.
+func (u *UnitProps) decode(f field) error {
+	if f.num != 1 {
+		return nil
+	}
+	var k, v []byte
+	err := f.message(func(f field) (err error) {
+		switch f.num {
+		case 1:
+			k, err = f.bytes()
+		case 2:
+			v, err = f.bytes()
+		}
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if u.Props == nil {
+		u.Props = map[string]string{}
+	}
+	u.Props[string(k)] = string(v)
+	return nil
 }
 
 // field is one decoded field: x holds a varint's value, v a
@@ -311,6 +432,56 @@ func (e *Error) size() int {
 func (e *Error) encode(b []byte) []byte {
 	b = appendVarint(b, 1, uint64(e.Code))
 	return appendBytes(b, 2, []byte(e.Message))
+}
+
+func (r *ReadFileRequest) size() int { return sizeBytes(1, len(r.Path)) }
+
+func (r *ReadFileRequest) encode(b []byte) []byte { return appendBytes(b, 1, []byte(r.Path)) }
+
+func (s *FileStat) size() int {
+	return sizeVarint(1, boolInt(s.Exists)) + sizeVarint(2, boolInt(s.Regular)) + sizeVarint(3, uint64(s.Mode)) +
+		sizeBytes(4, len(s.Owner)) + sizeBytes(5, len(s.Group)) + sizeBytes(6, len(s.Content))
+}
+
+func (s *FileStat) encode(b []byte) []byte {
+	b = appendVarint(b, 1, boolInt(s.Exists))
+	b = appendVarint(b, 2, boolInt(s.Regular))
+	b = appendVarint(b, 3, uint64(s.Mode))
+	b = appendBytes(b, 4, []byte(s.Owner))
+	b = appendBytes(b, 5, []byte(s.Group))
+	return appendBytes(b, 6, s.Content)
+}
+
+func (r *ReadUnitRequest) size() int { return sizeBytes(1, len(r.Unit)) }
+
+func (r *ReadUnitRequest) encode(b []byte) []byte { return appendBytes(b, 1, []byte(r.Unit)) }
+
+// A map entry is always written, even an empty one, as protobuf does.
+func entrySize(k, v string) int { return sizeBytes(1, len(k)) + sizeBytes(2, len(v)) }
+
+func (u *UnitProps) size() int {
+	n := 0
+	for k, v := range u.Props {
+		n += protowire.SizeTag(1) + protowire.SizeBytes(entrySize(k, v))
+	}
+	return n
+}
+
+func (u *UnitProps) encode(b []byte) []byte {
+	for k, v := range u.Props {
+		b = protowire.AppendTag(b, 1, protowire.BytesType)
+		b = protowire.AppendVarint(b, uint64(entrySize(k, v)))
+		b = appendBytes(b, 1, []byte(k))
+		b = appendBytes(b, 2, []byte(v))
+	}
+	return b
+}
+
+func boolInt(b bool) uint64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // The helpers below leave out zero values, as proto3 does.

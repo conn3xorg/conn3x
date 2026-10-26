@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,7 +15,10 @@ import (
 	"testing"
 	"time"
 
+	conn3xagent "github.com/opentofu/opentofu/internal/conn3x/agent"
 	"github.com/opentofu/opentofu/internal/conn3x/agent/agentpb"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/moduletest"
 )
 
 // agent is a Serve running in this process, with the pipes to talk to it.
@@ -174,4 +178,57 @@ func TestKilledBySignalExits128PlusN(t *testing.T) {
 	if e := a.reply(t); e.Result == nil || e.Result.ExitCode != 137 {
 		t.Fatalf("reply %+v, want exit 137", e)
 	}
+}
+
+func TestFileReadUnknownOwnerFallsBack(t *testing.T) {
+	names = func(uid, gid uint32) (string, string, error) { return "", "", errors.New("user: unknown userid 4242") }
+	t.Cleanup(func() { names = lookupNames })
+	p := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := client(t)
+	if _, err := c.ReadFile(context.Background(), p); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("ReadFile = %v, want unsupported", err)
+	}
+	got, err := file.Read(context.Background(), c, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := file.Read(context.Background(), moduletest.Local{}, p)
+	if err != nil || got != want {
+		t.Fatalf("got %+v, the shell gives %+v, %v", got, want, err)
+	}
+}
+
+func TestReadUnitWithoutDBusIsUnsupported(t *testing.T) {
+	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(t.TempDir(), "none"))
+	c := client(t)
+	if _, err := c.ReadUnit(context.Background(), "sshd.service"); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("ReadUnit = %v, want unsupported", err)
+	}
+}
+
+// client connects to a Serve in this process.
+func client(t *testing.T) *conn3xagent.Client {
+	t.Helper()
+	in, toAgent := io.Pipe()
+	fromAgent, out := io.Pipe()
+	go func() { _ = Serve(context.Background(), in, out); out.Close() }()
+	c, err := conn3xagent.NewClient(context.Background(), pipeConn{fromAgent, toAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+type pipeConn struct {
+	*io.PipeReader
+	*io.PipeWriter
+}
+
+func (p pipeConn) Close() error {
+	p.PipeWriter.Close()
+	return p.PipeReader.Close()
 }

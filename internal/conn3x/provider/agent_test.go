@@ -6,8 +6,10 @@ package provider
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -21,6 +23,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/conn3x/agent"
+	"github.com/opentofu/opentofu/internal/conn3x/agent/server"
+	"github.com/opentofu/opentofu/internal/conn3x/modules"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/moduletest"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/providers"
 )
@@ -450,5 +455,42 @@ func TestRequireLetsReadsWaitForAnApply(t *testing.T) {
 	f.apply(state, f.plan(state, cfg).PlannedState, cfg)
 	if cmds := f.commands()[before:]; len(cmds) != 3 || !strings.HasPrefix(cmds[2], "exec ") {
 		t.Fatalf("apply under require ran:\n%s", strings.Join(cmds, "\n---\n"))
+	}
+}
+
+// The file and service modules see the agent's native reads through the
+// pooled connection, and the shell's commands without one.
+func TestHostConnReadsThroughAgent(t *testing.T) {
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(p, []byte("hi"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	var _ modules.FileReader = (*hostConn)(nil)
+	var _ modules.UnitReader = (*hostConn)(nil)
+
+	h := &hostConn{runner: moduletest.Local{}}
+	if _, err := h.ReadFile(ctx, p); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("ReadFile without an agent = %v, want unsupported", err)
+	}
+	if _, err := h.ReadUnit(ctx, "sshd.service"); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("ReadUnit without an agent = %v, want unsupported", err)
+	}
+
+	toAgent, in := io.Pipe()
+	out, fromAgent := io.Pipe()
+	go func() { _ = server.Serve(ctx, toAgent, fromAgent); fromAgent.Close() }()
+	a, err := agent.NewClient(ctx, struct {
+		io.Reader
+		io.WriteCloser
+	}{out, in})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Close() })
+	h.agent = a
+	st, err := h.ReadFile(ctx, p)
+	if err != nil || string(st.Content) != "hi" || st.Mode != 0o640 {
+		t.Fatalf("ReadFile through the agent = %+v, %v", st, err)
 	}
 }

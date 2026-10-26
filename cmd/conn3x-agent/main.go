@@ -4,8 +4,9 @@
 // Command conn3x-agent is the host agent conn3x starts over SSH. It reads
 // requests on stdin and answers on stdout until stdin closes.
 //
-// It may import only the standard library, protobuf and the agent's own
-// packages; TestAgentDependencies in internal/conn3x/agent enforces that.
+// It may import only the standard library, protowire, go-systemd's D-Bus
+// client and the agent's own packages; TestAgentDependencies in
+// internal/conn3x/agent enforces that.
 package main
 
 import (

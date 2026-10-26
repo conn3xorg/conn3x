@@ -113,6 +113,33 @@ func (h *hostConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Resul
 	return h.runner.Run(ctx, cmd, stdin)
 }
 
+// errNoAgent sends a native read to the shell: no agent is attached.
+var errNoAgent = fmt.Errorf("no conn3x agent: %w", errors.ErrUnsupported)
+
+// ReadFile reads a file through the agent when one is attached. Without
+// one, or where the agent can't match the shell, file.Read runs its shell
+// command instead.
+func (h *hostConn) ReadFile(ctx context.Context, path string) (modules.FileStat, error) {
+	h.mu.Lock()
+	a := h.agent
+	h.mu.Unlock()
+	if a == nil {
+		return modules.FileStat{}, errNoAgent
+	}
+	return a.ReadFile(ctx, path)
+}
+
+// ReadUnit reads a systemd unit through the agent, as ReadFile does.
+func (h *hostConn) ReadUnit(ctx context.Context, unit string) (map[string]string, error) {
+	h.mu.Lock()
+	a := h.agent
+	h.mu.Unlock()
+	if a == nil {
+		return nil, errNoAgent
+	}
+	return a.ReadUnit(ctx, unit)
+}
+
 // attach starts the agent when this connection wants one, at most once
 // without upload and once with it. When it can't, commands stay on the
 // shell, unless the agent is required and this is an apply.

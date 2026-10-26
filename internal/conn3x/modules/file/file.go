@@ -57,7 +57,21 @@ func NormalizeMode(mode string) string {
 const notRegular = 3
 
 // Read reports the file's current state. A missing file is not an error.
+// A runner that is a modules.FileReader answers natively when it can.
 func Read(ctx context.Context, r modules.Runner, p string) (Actual, error) {
+	if fr, ok := r.(modules.FileReader); ok {
+		st, err := fr.ReadFile(ctx, p)
+		switch {
+		case err == nil && !st.Exists:
+			return Actual{}, nil
+		case err == nil && !st.Regular:
+			return Actual{}, notRegularError(p)
+		case err == nil:
+			return Actual{Exists: true, Content: string(st.Content), Mode: fmt.Sprintf("%04o", st.Mode), Owner: st.Owner, Group: st.Group}, nil
+		case !errors.Is(err, errors.ErrUnsupported):
+			return Actual{}, err
+		}
+	}
 	q := ssh.Quote(p)
 	script := fmt.Sprintf(`p=%s
 [ -e "$p" ] || [ -L "$p" ] || { echo missing; exit 0; }
@@ -68,7 +82,7 @@ base64 < "$p" | tr -d '\n'`, q, notRegular)
 	res, err := run(ctx, r, script, nil)
 	if err != nil {
 		if res.ExitCode == notRegular {
-			return Actual{}, fmt.Errorf("%s exists but is not a regular file", p)
+			return Actual{}, notRegularError(p)
 		}
 		return Actual{}, err
 	}
@@ -98,6 +112,10 @@ base64 < "$p" | tr -d '\n'`, q, notRegular)
 		Owner:   meta[1],
 		Group:   meta[2],
 	}, nil
+}
+
+func notRegularError(p string) error {
+	return fmt.Errorf("%s exists but is not a regular file", p)
 }
 
 // NeedsChange reports whether Apply would change anything.
