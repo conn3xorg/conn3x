@@ -6,7 +6,8 @@
 // whose string literals name OpenTofu or a tofu command, plus a go build
 // overlay that swaps them in. Comments, identifiers, file extensions and
 // environment variable names are left alone. The overlay also leaves out
-// the remote-state backends in prunedBackends.
+// the remote-state backends in prunedBackends, and applies the few code
+// patches in patches.
 package brand
 
 import (
@@ -24,9 +25,9 @@ import (
 )
 
 // commandPattern matches "tofu" used as the CLI name: followed by a
-// subcommand, a flag or a usage bracket. ".tofu", "tofu.rc" and a bare
-// "tofu" don't match.
-var commandPattern = regexp.MustCompile(`(^|[^\w.\-/])tofu( (?:\[|-|init|plan|apply|destroy|validate|fmt|console|show|state|import|output|providers|refresh|taint|untaint|workspace|graph|login|logout|get|force-unlock|test|metadata|version|modules)\b)`)
+// subcommand, a flag, a usage bracket or a %s standing in for a subcommand.
+// ".tofu", "tofu.rc" and a bare "tofu" don't match.
+var commandPattern = regexp.MustCompile(`(^|[^\w.\-/])tofu( (?:\[|-|%s|init|plan|apply|destroy|validate|fmt|console|show|state|import|output|providers|refresh|taint|untaint|workspace|graph|login|logout|get|force-unlock|test|metadata|version|modules)\b)`)
 
 func rewriteLiteral(lit string) string {
 	lit = strings.ReplaceAll(lit, "OpenTofu", "Conn3x")
@@ -125,6 +126,9 @@ func Generate(root, outDir string) (string, error) {
 		}
 	}
 	if err := prune(root, outDir, replace); err != nil {
+		return "", err
+	}
+	if err := patch(root, outDir, replace); err != nil {
 		return "", err
 	}
 	data, err := json.MarshalIndent(struct{ Replace map[string]string }{replace}, "", "  ")

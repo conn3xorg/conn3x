@@ -95,3 +95,44 @@ func TestGenerateOverlay(t *testing.T) {
 		}
 	}
 }
+
+// views.HelpPrompt fills in the subcommand with %s.
+func TestRewriteHelpPrompt(t *testing.T) {
+	got := rewriteLiteral("`\nFor more help on using this command, run:\n  tofu %s -help\n`")
+	if !strings.Contains(got, "  conn3x %s -help") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// The version message at the top of every -json stream names the Conn3x
+// release, not OpenTofu's version under the Conn3x name.
+func TestGenerateBrandsJSONVersion(t *testing.T) {
+	src, err := os.ReadFile("../../command/views/json_view.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	p := filepath.Join(root, "internal/command/views/json_view.go")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	if _, err := Generate(root, out); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(out, "internal/command/views/json_view.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"conn3xversion.String()", `"conn3x", conn3xversion.Version`, `conn3xversion "github.com/opentofu/opentofu/internal/conn3x/version"`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("rewritten json_view.go lacks %s", want)
+		}
+	}
+}
