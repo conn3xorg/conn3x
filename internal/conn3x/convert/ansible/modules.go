@@ -46,6 +46,7 @@ type input struct {
 	problem  string
 	loop     bool // the task loops, so {{ item }} means the current item
 	itemUsed bool
+	files    *sourceFiles
 }
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
@@ -240,6 +241,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"shell":           commandModule,
 	"reboot":          rebootModule,
 	"wait_for":        waitForModule,
+	"yum_repository":  yumRepositoryModule,
+	"apt_repository":  aptRepositoryModule,
 }
 
 func copyModule(in *input) ([]step, string) {
@@ -582,6 +585,89 @@ func waitForModule(in *input) ([]step, string) {
 	}
 	in.ignore("delay")
 	return one("wait_for", attrs)
+}
+
+func repositoryStep(in *input, name, url, keyName string, suites, components []string) ([]step, string) {
+	if strings.Contains(url, "$") || strings.Contains(url, "{{") {
+		return nil, "has a repository URL with a variable, which the converter can't prove Conn3x will render the same way"
+	}
+	if name == "" || url == "" {
+		return nil, "has no repository name or base URL"
+	}
+	if keyName == "" {
+		return nil, "has no signing key beside the playbook that Conn3x can carry over; put the ASCII-armored key there and set key_file"
+	}
+	if filepath.Ext(keyName) == ".gpg" {
+		return nil, "points key_file at a binary key; convert it to ASCII armor and use the .asc file"
+	}
+	key, err := in.files.contents(keyName)
+	if err != nil {
+		in.fail(fmt.Sprintf("could not read %s beside the playbook: %v", keyName, err))
+		return nil, in.problem
+	}
+	if !strings.Contains(key, "-----BEGIN PGP PUBLIC KEY BLOCK-----") {
+		return nil, "does not have an ASCII-armored signing key in key_file"
+	}
+	attrs := []attr{s("name", name), s("url", url), s("key", key)}
+	if len(suites) > 0 {
+		vals := make([]cty.Value, len(suites))
+		for i, v := range suites {
+			vals[i] = cty.StringVal(v)
+		}
+		attrs = append(attrs, attr{key: "suites", val: cty.ListVal(vals)})
+	}
+	if len(components) > 0 {
+		vals := make([]cty.Value, len(components))
+		for i, v := range components {
+			vals[i] = cty.StringVal(v)
+		}
+		attrs = append(attrs, attr{key: "components", val: cty.ListVal(vals)})
+	}
+	return one("repository", attrs)
+}
+
+func yumRepositoryModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	name := in.str("name")
+	if in.has("mirrorlist") {
+		in.ignore("mirrorlist")
+		return nil, "selects a mirrorlist rather than a fixed baseurl, which Conn3x can't carry over"
+	}
+	url := in.str("baseurl")
+	if name == "" || url == "" {
+		return nil, "has no repository name or baseurl"
+	}
+	if in.has("gpgcheck") && !in.bool("gpgcheck", true) {
+		return nil, "sets gpgcheck to false; Conn3x always verifies repository signatures"
+	}
+	if in.has("enabled") && !in.bool("enabled", true) {
+		return nil, "sets enabled to false; a disabled source is not a Conn3x repository step"
+	}
+	in.ignore("gpgcheck", "enabled", "gpgkey", "mirrorlist")
+	return repositoryStep(in, name, url, in.str("key_file"), nil, nil)
+}
+
+func aptRepositoryModule(in *input) ([]step, string) {
+	repo := in.str("repo")
+	if repo == "" {
+		return nil, "has no repo line"
+	}
+	in.ignore("filename", "state")
+	parsed := strings.Fields(repo)
+	first := 1
+	if len(parsed) > 1 && strings.HasPrefix(parsed[1], "[") {
+		return nil, "has a repo line with options, which the converter can't prove Conn3x will render the same way"
+	}
+	if len(parsed)-first < 3 || parsed[0] != "deb" || parsed[first] == "" || parsed[first+1] == "" || strings.HasPrefix(parsed[first+1], "[") {
+		return nil, "has a repo line whose URL or suites cannot be carried over"
+	}
+	url, suites := parsed[first], strings.Fields(parsed[first+1])
+	name := strings.TrimSuffix(filepath.Base(strings.TrimRight(url, "/")), ".git")
+	if name == "" || name == "." || name == "/" {
+		return nil, "has no repository name Conn3x can derive from its URL"
+	}
+	components := parsed[first+2:]
+	return repositoryStep(in, name, url, in.str("key_file"), suites, components)
 }
 
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
