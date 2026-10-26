@@ -39,6 +39,11 @@ func readFile(path string) (*agentpb.FileStat, error) {
 		}
 		return nil, &os.PathError{Op: "stat", Path: path, Err: err}
 	}
+	if ls.Mode&syscall.S_IFMT != syscall.S_IFLNK && (ls.Dev != st.Dev || ls.Ino != st.Ino) {
+		// Replaced between the two: the mode and the content would be
+		// different files'.
+		return nil, errChanged(path)
+	}
 	if st.Mode&syscall.S_IFMT != syscall.S_IFREG {
 		return &agentpb.FileStat{Exists: true}, nil
 	}
@@ -51,20 +56,11 @@ func readFile(path string) (*agentpb.FileStat, error) {
 		return nil, err
 	}
 
-	// Non-blocking, in case something other than the file checked above
-	// is there by now, such as a FIFO.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := openRegular(path, &st)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	var fst syscall.Stat_t
-	if err := syscall.Fstat(int(f.Fd()), &fst); err != nil {
-		return nil, err
-	}
-	if fst.Dev != st.Dev || fst.Ino != st.Ino {
-		return nil, fmt.Errorf("%s changed while it was read", path)
-	}
 	content, err := io.ReadAll(io.LimitReader(f, int64(MaxOutput)+1))
 	if err != nil {
 		return nil, err
@@ -136,4 +132,8 @@ func readUnit(ctx context.Context, unit string) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+func errChanged(path string) error {
+	return fmt.Errorf("%s changed while it was read", path)
 }
