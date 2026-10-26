@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/conn3x/provider"
 )
 
 func TestDriftIsACommand(t *testing.T) {
@@ -62,6 +63,27 @@ Run conn3x plan to see what Conn3x would change to put them back.
 	clean.write(&out)
 	if out.String() != "No drift: the cloud and the hosts match the last apply.\n" {
 		t.Fatalf("got %q", out.String())
+	}
+}
+
+// A host the refresh couldn't reach is a warning to plan, but drift can't
+// call it unchanged, so it's an error there.
+func TestDriftUnreachableHostIsAnError(t *testing.T) {
+	line := `{"type":"diagnostic","diagnostic":{"severity":"warning","summary":"` + provider.UnreachableSummary + `","detail":"Nothing answered at 10.0.0.5:22."}}` + "\n"
+	r, err := readDrift(strings.NewReader(line + line)) // two steps on one host
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.errors) != 1 {
+		t.Fatalf("got %d errors for one host, want 1", len(r.errors))
+	}
+	if got := driftExit(r, 0); got != 1 {
+		t.Fatalf("exit %d, want 1", got)
+	}
+	var out strings.Builder
+	r.write(&out)
+	if !strings.Contains(out.String(), "Error: "+provider.UnreachableSummary) {
+		t.Fatalf("report doesn't name the host:\n%s", out.String())
 	}
 }
 

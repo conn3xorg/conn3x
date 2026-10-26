@@ -10,10 +10,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/opentofu/opentofu/internal/command"
 	"github.com/opentofu/opentofu/internal/command/arguments"
+	"github.com/opentofu/opentofu/internal/conn3x/provider"
 )
 
 // driftCommand reports what changed outside Conn3x since the last apply,
@@ -156,12 +158,17 @@ func readDrift(r io.Reader) (driftReport, error) {
 				rep.cloud = append(rep.cloud, line)
 			}
 		case "diagnostic":
-			if msg.Diagnostic.Severity == "error" {
+			// A host the refresh couldn't reach is only a warning to plan,
+			// but drift can't report it as unchanged.
+			if msg.Diagnostic.Severity == "error" || msg.Diagnostic.Summary == provider.UnreachableSummary {
 				e := "Error: " + msg.Diagnostic.Summary
 				if msg.Diagnostic.Detail != "" {
 					e += "\n  " + strings.ReplaceAll(msg.Diagnostic.Detail, "\n", "\n  ")
 				}
-				rep.errors = append(rep.errors, e)
+				// Every step on a host that's down says the same thing.
+				if !slices.Contains(rep.errors, e) {
+					rep.errors = append(rep.errors, e)
+				}
 			}
 		}
 	}
