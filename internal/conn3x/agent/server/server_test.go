@@ -204,6 +204,9 @@ func TestFileReadUnknownOwnerFallsBack(t *testing.T) {
 }
 
 func TestReadUnitWithoutDBusIsUnsupported(t *testing.T) {
+	if _, err := os.Stat("/run/systemd/private"); err == nil && os.Geteuid() == 0 {
+		t.Skip("as root, go-systemd falls back to systemd's private socket")
+	}
 	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(t.TempDir(), "none"))
 	c := client(t)
 	if _, err := c.ReadUnit(context.Background(), "sshd.service"); !errors.Is(err, errors.ErrUnsupported) {
