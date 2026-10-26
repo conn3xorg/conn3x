@@ -75,20 +75,24 @@ just what you did.
 
 ## When a pull request goes quiet
 
-Life happens, and nobody owes the project their evenings. So you know what
-to expect:
+Life happens, and nobody owes the project their evenings. A person, not a
+bot, keeps an eye on open pull requests, and here's what to expect:
 
-- We aim to reply to a new PR within a few days.
-- If a PR is waiting on you, there's no deadline. After two weeks without
-  activity we'll check in, just to see whether you still want to finish it.
-- After a month with no reply, we may finish the change ourselves or close
-  the PR. If we finish it, your commits stay in it, or you're credited with
-  a `Co-authored-by:` line, and you're thanked in the release notes either
-  way.
+- We aim to reply to a new PR within a few days. While a PR is waiting on
+  us, it never goes stale.
+- Once we've asked for a change or a rebase, the PR is waiting on you, and
+  there's still no rush. After 30 days without a reply we'll leave a
+  comment to check in.
+- After 60 days without a reply, we may close the PR, or finish the change
+  ourselves if it's close. If we finish it, your commits stay in it or
+  you're credited with a `Co-authored-by:` line, and you're thanked in the
+  release notes either way.
 - A closed PR can always be reopened. Come back whenever you like.
 
-The same goes for issues. If you've said you'll take one and two weeks pass
-without a PR, it's open for someone else.
+If you'd like to take an issue, say so on the issue and give a rough idea
+of when you expect to open a PR. If you need longer, just say so and it
+stays yours. If the time passes with no word, the issue is open for
+someone else.
 
 ## License
 
