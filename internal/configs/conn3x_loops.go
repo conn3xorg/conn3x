@@ -5,6 +5,8 @@ package configs
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/hashicorp/hcl/v2"
@@ -233,4 +235,90 @@ func rewriteLoopRef(e *hclsyntax.ScopeTraversalExpr, looping bool) hcl.Diagnosti
 		hcl.TraverseAttr{Name: field, SrcRange: sr},
 	}, t[2:]...)
 	return nil
+}
+
+// eachMeansHost evaluates expr, from the circuit's ssh block, with each
+// bound to the host as in a plain step. The ssh block's syntax is shared by
+// every step, so it is wrapped rather than rewritten in place:
+//
+//	[for each in [{ key = each.value.host_key, value = each.value.host }] : expr][0]
+func eachMeansHost(expr hclsyntax.Expression, rng hcl.Range) hclsyntax.Expression {
+	lit := func(v cty.Value) *hclsyntax.LiteralValueExpr {
+		return &hclsyntax.LiteralValueExpr{Val: v, SrcRange: rng}
+	}
+	host := &hclsyntax.ObjectConsExpr{
+		Items: []hclsyntax.ObjectConsItem{
+			{KeyExpr: lit(cty.StringVal("key")), ValueExpr: eachPath(rng, "value", "host_key")},
+			{KeyExpr: lit(cty.StringVal("value")), ValueExpr: eachPath(rng, "value", "host")},
+		},
+		SrcRange: rng, OpenRange: rng,
+	}
+	return &hclsyntax.IndexExpr{
+		Collection: &hclsyntax.ForExpr{
+			ValVar:   "each",
+			CollExpr: &hclsyntax.TupleConsExpr{Exprs: []hclsyntax.Expression{host}, SrcRange: rng, OpenRange: rng},
+			ValExpr:  expr,
+			SrcRange: rng, OpenRange: rng, CloseRange: rng,
+		},
+		Key:      lit(cty.Zero),
+		SrcRange: rng, OpenRange: rng, BracketRange: rng,
+	}
+}
+
+// checkedHosts is a circuit's hosts that rejects host objects with fields
+// Conn3x doesn't read, such as become, which would otherwise do nothing.
+type checkedHosts struct {
+	hcl.Expression
+}
+
+func (h *checkedHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
+	v, diags := h.Expression.Value(ctx)
+	if diags.HasErrors() || v.IsNull() {
+		return v, diags
+	}
+	accepted := map[string]bool{"address": true}
+	for _, name := range hostOverrides {
+		accepted[name] = true
+	}
+	check := func(who string, ty cty.Type) {
+		if !ty.IsObjectType() {
+			return
+		}
+		var names []string
+		for _, name := range sortedAttrs(ty) {
+			if !accepted[name] {
+				names = append(names, fmt.Sprintf("%q", name))
+			}
+		}
+		if len(names) == 0 {
+			return
+		}
+		rng := h.Range()
+		last := len(hostOverrides) - 1
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Unsupported field in host object",
+			Detail: fmt.Sprintf("%s sets %s, which a host object doesn't take. A host object takes address, %s and %s. Other ssh settings, such as become, go in the circuit's ssh block.",
+				who, strings.Join(names, ", "), strings.Join(hostOverrides[:last], ", "), hostOverrides[last]),
+			Subject: &rng,
+		})
+	}
+	switch ty := v.Type(); {
+	case ty.IsMapType():
+		check("A host", ty.ElementType())
+	case ty.IsObjectType():
+		for _, name := range sortedAttrs(ty) {
+			check(fmt.Sprintf("Host %q", name), ty.AttributeType(name))
+		}
+	}
+	return v, diags
+}
+
+func sortedAttrs(ty cty.Type) []string {
+	names := make([]string, 0, len(ty.AttributeTypes()))
+	for name := range ty.AttributeTypes() {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

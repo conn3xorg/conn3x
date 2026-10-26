@@ -73,3 +73,31 @@ func TestStepLoops(t *testing.T) {
 		}
 	}
 }
+
+// In a looping step the circuit's ssh block still sees the host as each.
+// Planning new steps doesn't connect, so no host is needed.
+func TestLoopingStepSSHMeansTheHost(t *testing.T) {
+	w := &workdir{t: t, dir: t.TempDir()}
+	src := `circuit "app" {
+  hosts = toset(["192.0.2.10"])
+  ssh {
+    user = "u-${each.key}"
+  }
+  step "conf" {
+    for_each = ["x"]
+    file {
+      path    = "/etc/${item.value}"
+      content = "x"
+    }
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(w.dir, "main.tf"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.mustConn3x("init", "-no-color")
+	out := w.mustConn3x("plan", "-no-color")
+	if !strings.Contains(out, `user = "u-192.0.2.10"`) {
+		t.Fatalf("want the host's key in ssh.user:\n%s", out)
+	}
+}
