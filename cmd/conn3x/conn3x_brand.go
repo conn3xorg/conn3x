@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/command"
 	"github.com/opentofu/opentofu/internal/command/arguments"
+	"github.com/opentofu/opentofu/internal/conn3x/agent"
 	"github.com/opentofu/opentofu/internal/conn3x/version"
 	"github.com/opentofu/opentofu/internal/getproviders"
 	"github.com/opentofu/opentofu/internal/tfdiags"
@@ -64,7 +66,41 @@ type conn3xVersionCommand struct {
 func (c *conn3xVersionCommand) Run([]string) int {
 	fmt.Fprintln(c.Out, version.String())
 	fmt.Fprintf(c.Out, "on %s\n", getproviders.CurrentPlatform)
+	sums := agentSums()
+	if sums == nil {
+		fmt.Fprintln(c.Out, "agent: none (shell commands only)")
+		return 0
+	}
+	var parts []string
+	for _, p := range agentPlatforms {
+		if sum, ok := sums[p]; ok {
+			parts = append(parts, p+" "+sum[:12])
+		}
+	}
+	fmt.Fprintln(c.Out, "agent: "+strings.Join(parts, ", "))
 	return 0
+}
+
+// embeddedAgent is where the version command looks for agents; tests swap it.
+var embeddedAgent = agent.Embedded
+
+var agentPlatforms = []string{"linux/amd64", "linux/arm64"}
+
+// agentSums maps each platform this build embeds an agent for to the
+// sha256 of that agent, or is nil when it embeds none.
+func agentSums() map[string]string {
+	var sums map[string]string
+	for _, p := range agentPlatforms {
+		_, sum, err := embeddedAgent(strings.TrimPrefix(p, "linux/"))
+		if err != nil {
+			continue
+		}
+		if sums == nil {
+			sums = map[string]string{}
+		}
+		sums[p] = hex.EncodeToString(sum[:])
+	}
+	return sums
 }
 
 func (c *conn3xVersionCommand) Help() string {
@@ -75,7 +111,8 @@ func (c *conn3xVersionCommand) Synopsis() string {
 	return "Show the current Conn3x version"
 }
 
-// versionJSON prints version -json: OpenTofu's fields, plus conn3x_version.
+// versionJSON prints version -json: OpenTofu's fields, plus conn3x_version
+// and agent.
 type versionJSON struct{ out io.Writer }
 
 func (versionJSON) Diagnostics(tfdiags.Diagnostics) {}
@@ -90,7 +127,8 @@ func (v versionJSON) PrintVersion(tofu, prerelease, platform string, fips bool, 
 		Platform  string            `json:"platform"`
 		FIPS      bool              `json:"fips140,omitempty"`
 		Providers map[string]string `json:"provider_selections"`
-	}{version.Version, tofu, platform, fips, providers}, "", "  ")
+		Agent     map[string]string `json:"agent"`
+	}{version.Version, tofu, platform, fips, providers, agentSums()}, "", "  ")
 	if err != nil {
 		return false
 	}

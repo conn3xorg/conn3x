@@ -4,15 +4,20 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/opentofu/opentofu/internal/command"
 	"github.com/opentofu/opentofu/internal/command/views"
 	"github.com/opentofu/opentofu/internal/command/workdir"
+	"github.com/opentofu/opentofu/internal/conn3x/agent"
 	"github.com/opentofu/opentofu/internal/conn3x/version"
 	"github.com/opentofu/opentofu/internal/terminal"
 )
@@ -62,6 +67,46 @@ func TestVersionLine(t *testing.T) {
 	first := strings.SplitN(out.String(), "\n", 2)[0]
 	if first != version.String() {
 		t.Fatalf("first line %q, want %q", first, version.String())
+	}
+}
+
+// stubAgents makes the version command see the given gzipped agents, keyed
+// by arch, as if the build embedded them.
+func stubAgents(t *testing.T, gz map[string][]byte) {
+	t.Helper()
+	old := embeddedAgent
+	t.Cleanup(func() { embeddedAgent = old })
+	embeddedAgent = func(arch string) ([]byte, [32]byte, error) {
+		b, ok := gz[arch]
+		if !ok {
+			return nil, [32]byte{}, agent.ErrUnavailable
+		}
+		return b, sha256.Sum256(b), nil
+	}
+}
+
+func TestVersionAgentLine(t *testing.T) {
+	amd, arm := []byte("amd64 agent"), []byte("arm64 agent")
+	sumAmd, sumArm := sha256.Sum256(amd), sha256.Sum256(arm)
+	for name, tc := range map[string]struct {
+		gz   map[string][]byte
+		want string
+	}{
+		"both": {map[string][]byte{"amd64": amd, "arm64": arm},
+			fmt.Sprintf("agent: linux/amd64 %x, linux/arm64 %x", sumAmd[:6], sumArm[:6])},
+		"none": {nil, "agent: none (shell commands only)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stubAgents(t, tc.gz)
+			var out strings.Builder
+			if code := (&conn3xVersionCommand{Out: &out}).Run(nil); code != 0 {
+				t.Fatalf("version exited %d", code)
+			}
+			lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+			if len(lines) != 3 || !strings.HasPrefix(lines[1], "on ") || lines[2] != tc.want {
+				t.Fatalf("version printed\n%s\nwant the platform line, then %q", out.String(), tc.want)
+			}
+		})
 	}
 }
 
@@ -159,6 +204,39 @@ func TestVersionJSON(t *testing.T) {
 	}
 	if got["conn3x_version"] != version.Version {
 		t.Errorf("conn3x_version = %v, want %s", got["conn3x_version"], version.Version)
+	}
+}
+
+func TestVersionJSONAgent(t *testing.T) {
+	amd := []byte("amd64 agent")
+	sum := sha256.Sum256(amd)
+	for name, tc := range map[string]struct {
+		gz   map[string][]byte
+		want any
+	}{
+		"embedded": {map[string][]byte{"amd64": amd}, map[string]any{"linux/amd64": hex.EncodeToString(sum[:])}},
+		"none":     {nil, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			stubAgents(t, tc.gz)
+			v, _ := findCommand(brandedRoot(t), "version")
+			var out strings.Builder
+			old := stdout
+			stdout = &out
+			t.Cleanup(func() { stdout = old })
+			if code := command.RunCommand(v, testMeta(t), []string{"-json"}); code != 0 {
+				t.Fatalf("version -json exited %d", code)
+			}
+			var got map[string]any
+			if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+				t.Fatalf("not JSON: %s\n%s", err, out.String())
+			}
+			a, ok := got["agent"]
+			if !ok || !reflect.DeepEqual(a, tc.want) {
+				t.Fatalf("agent = %#v (present %v), want %#v", a, ok, tc.want)
+			}
+		})
 	}
 }
 
