@@ -143,7 +143,8 @@ func (h *hostConn) attach(ctx context.Context, upload bool) error {
 	case err == nil:
 		h.agent = a
 	case errors.Is(err, ssh.ErrBecome):
-		return err // sudo refused; the shell would fail the same way
+		h.attachErr = err // sudo refused; the shell would fail the same way
+		return err
 	case upload && h.require:
 		h.attachErr = fmt.Errorf("CONN3X_AGENT=require, but the conn3x agent can't run on %s: %w", h.host, err)
 		return h.attachErr

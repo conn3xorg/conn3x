@@ -347,6 +347,24 @@ func TestBecomeOneRootAgentPerHostAndUser(t *testing.T) {
 	}
 }
 
+// A connection whose sudo refused the agent never runs later commands in
+// the shell instead, under require.
+func TestBecomeRefusedStaysRefused(t *testing.T) {
+	f, _ := newAgentTest(t)
+	f.server.FakeSudo(t, "password:s3cret")
+	t.Setenv("CONN3X_AGENT", "require")
+	file := filepath.Join(t.TempDir(), "pw")
+	if err := os.WriteFile(file, []byte("wrong\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.withConn(map[string]cty.Value{"become": cty.True, "become_password_file": cty.StringVal(file)})
+	for i := range 2 {
+		if _, err := dialForApply(ctx, f.conn); err == nil || !strings.Contains(err.Error(), "incorrect password") {
+			t.Fatalf("dial %d = %v, want the incorrect password error", i+1, err)
+		}
+	}
+}
+
 func TestRootKey(t *testing.T) {
 	cfg := ssh.Config{Host: "web1", Port: 22, User: "deploy", KnownHostsFile: "/k"}
 	other := cfg
