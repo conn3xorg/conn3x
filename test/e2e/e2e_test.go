@@ -63,6 +63,13 @@ type host struct {
 
 func startHost(t *testing.T, image string) *host {
 	t.Helper()
+	return startHostWith(t, image)
+}
+
+// startHostWith is startHost with extra podman run arguments, such as a
+// mount.
+func startHostWith(t *testing.T, image string, podmanArgs ...string) *host {
+	t.Helper()
 	_, here, _, _ := runtime.Caller(0)
 	imageDir := filepath.Join(filepath.Dir(here), "..", "images", image)
 	tag := "localhost/conn3x-e2e-" + image
@@ -71,8 +78,9 @@ func startHost(t *testing.T, image string) *host {
 	// Podman's default capabilities differ between versions. A real host's
 	// root can read /etc/shadow (DAC_OVERRIDE) and write audit records, and
 	// PAM needs both to let non-root users log in, so grant them explicitly.
-	id := strings.TrimSpace(run(t, "podman", "run", "-d", "--rm", "--systemd=always",
-		"--cap-add", "DAC_OVERRIDE,AUDIT_WRITE", "-p", "127.0.0.1::22", tag))
+	args := append([]string{"run", "-d", "--rm", "--systemd=always",
+		"--cap-add", "DAC_OVERRIDE,AUDIT_WRITE", "-p", "127.0.0.1::22"}, podmanArgs...)
+	id := strings.TrimSpace(run(t, "podman", append(args, tag)...))
 	t.Cleanup(func() {
 		if t.Failed() {
 			// Show what sshd and the rest of the host logged, to explain the failure.
@@ -148,6 +156,11 @@ type workdir struct {
 	t   *testing.T
 	dir string
 	tpl *template.Template
+	// env is added to conn3x's environment, after the test's own, so it
+	// can override CONN3X_AGENT.
+	env []string
+	// bin is the conn3x to run; empty means the one TestMain built.
+	bin string
 }
 
 func newWorkdir(t *testing.T, name string) *workdir {
@@ -174,9 +187,14 @@ func (w *workdir) write(data any) {
 
 func (w *workdir) conn3x(args ...string) (string, int) {
 	w.t.Helper()
-	cmd := exec.Command(conn3xBin, args...)
+	bin := conn3xBin
+	if w.bin != "" {
+		bin = w.bin
+	}
+	cmd := exec.Command(bin, args...)
 	cmd.Dir = w.dir
 	cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "CHECKPOINT_DISABLE=1", "TF_CLI_CONFIG_FILE=")
+	cmd.Env = append(cmd.Env, w.env...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if exit, ok := err.(*exec.ExitError); ok {

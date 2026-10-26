@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MPL-2.0
 #
 # Build the conn3x binary with its user-facing text branded as Conn3x.
+# It embeds the host agent that scripts/build-agent.sh builds.
 #
 #   scripts/build-conn3x.sh [output-path] [extra go build flags...]
 #
@@ -18,6 +19,8 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 cd "$root"
+# The host agents conn3x embeds; they are always built for Linux.
+bash "$root/scripts/build-agent.sh" >&2
 # brandgen runs here, so it is built for this machine even when GOOS or
 # GOARCH asks for another target.
 overlay=$(env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root "$root" -out "$work")

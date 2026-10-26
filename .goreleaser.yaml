@@ -12,6 +12,8 @@ before:
     # The branding and pruning overlay that scripts/build-conn3x.sh uses,
     # written outside the tree so the release sees a clean checkout.
     - sh -c 'rm -rf /tmp/conn3x-overlay-{{ .ShortCommit }} && env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root . -out /tmp/conn3x-overlay-{{ .ShortCommit }} >/dev/null'
+    # The host agents conn3x embeds, built for Linux whatever the target.
+    - env -u GOOS -u GOARCH bash scripts/build-agent.sh
 
 builds:
   - id: conn3x
