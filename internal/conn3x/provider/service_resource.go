@@ -132,7 +132,7 @@ func applyService(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		}
 		target = req.PriorState
 	}
-	host, err := dialConnection(ctx, target.GetAttr("ssh"))
+	host, err := dialForApply(ctx, target.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp

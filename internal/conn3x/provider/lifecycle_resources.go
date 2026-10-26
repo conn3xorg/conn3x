@@ -172,7 +172,7 @@ func applyReboot(ctx context.Context, req providers.ApplyResourceChangeRequest) 
 		return fail(err)
 	}
 	conn := req.PlannedState.GetAttr("ssh")
-	h, err := dialConnection(ctx, conn)
+	h, err := dialForApply(ctx, conn)
 	if err != nil {
 		return fail(err)
 	}
@@ -193,7 +193,7 @@ func applyReboot(ctx context.Context, req providers.ApplyResourceChangeRequest) 
 			return fail(ctx.Err())
 		case <-time.After(5 * time.Second):
 		}
-		if h, err := dialConnection(ctx, conn); err == nil {
+		if h, err := dialForApply(ctx, conn); err == nil {
 			if now, err := lifecycle.BootID(ctx, h); err == nil && now != before {
 				vals := req.PlannedState.AsValueMap()
 				vals["boot_id"] = cty.StringVal(now)

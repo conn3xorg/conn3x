@@ -1,0 +1,18 @@
+circuit "box" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # Records what ran the command: sshd for the shell, else the agent.
+  step "runner" {
+    command {
+      command  = "readlink /proc/$PPID/exe > /etc/conn3x-runner"
+      triggers = "{{.Round}}"
+    }
+  }
+}
