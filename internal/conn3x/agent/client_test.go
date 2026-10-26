@@ -107,7 +107,17 @@ func TestReadsCancel(t *testing.T) {
 	}()
 	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(dir, "s"))
 
-	c := startAgent(t)
+	conn, end := pipes()
+	served := make(chan struct{})
+	go func() {
+		_ = server.Serve(ctx, end, end)
+		end.Close()
+		close(served)
+	}()
+	c, err := NewClient(ctx, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
@@ -120,6 +130,14 @@ func TestReadsCancel(t *testing.T) {
 	// The agent is still there for the next request.
 	if _, err := c.ReadFile(ctx, "/"); err != nil {
 		t.Fatal(err)
+	}
+	// And the canceled read let go: the agent waits for its reads before
+	// it exits.
+	c.Close()
+	select {
+	case <-served:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the agent is still waiting for the canceled read")
 	}
 }
 
