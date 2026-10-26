@@ -26,11 +26,19 @@ go build ./cmd/conn3x
 Run the checks CI runs:
 
 ```sh
-go test ./internal/conn3x/... ./cmd/conn3x/...
-golangci-lint run ./internal/conn3x/... ./cmd/conn3x/...
+go test ./internal/conn3x/... ./cmd/conn3x/... ./internal/dag/... ./internal/configs/... ./internal/addrs/...
+golangci-lint run ./internal/conn3x/... ./cmd/conn3x/... ./cmd/conn3x-agent/...
+bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 5
 bash scripts/upstream/sync_test.sh
+bash scripts/upstream/commit_payload_test.sh
+bash scripts/upstream/hook-budget_test.sh
 bash scripts/dco-check_test.sh
+bash scripts/build-agent_test.sh
 ```
+
+The `dag`, `configs`, and `addrs` packages are upstream code that Conn3x
+changes or leans on, so their tests run on every PR. The hook budget caps how many
+upstream files carry a Conn3x change.
 
 ## How the code is laid out
 
