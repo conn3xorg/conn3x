@@ -85,9 +85,11 @@ func TestAgentUpgradeSwitchesBinary(t *testing.T) {
 func TestAgentBecome(t *testing.T) {
 	h := startHost(t, "rocky10")
 	// A deploy user with passwordless sudo, logging in with the test key.
-	// sshd skips PAM so non-root logins work in rootless CI containers.
+	// sshd and sudo skip PAM's account checks, whose helper can't run in
+	// rootless CI containers; sudo itself is real.
 	h.exec("", "sh", "-c", `useradd -m deploy && echo 'deploy:Deploy-Pass-123' | chpasswd &&
-echo 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy &&
+printf '%s\n' 'Defaults:deploy !pam_acct_mgmt, !pam_session' 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy &&
+chmod 440 /etc/sudoers.d/deploy && visudo -cq &&
 mkdir -p -m 700 /home/deploy/.ssh && cp /root/.ssh/authorized_keys /home/deploy/.ssh/ &&
 chown -R deploy:deploy /home/deploy/.ssh &&
 echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl restart sshd`)
