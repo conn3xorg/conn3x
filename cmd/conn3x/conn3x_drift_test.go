@@ -152,3 +152,17 @@ func TestDriftRejectsJSON(t *testing.T) {
 		t.Fatalf("stderr: %q", errOut.String())
 	}
 }
+
+func TestConvertNeedsPlaybook(t *testing.T) {
+	c, _ := findCommand(brandedRoot(t), "convert")
+	if diags := c.Commands[0].CommandLine.RemainCheck(nil); diags.HasErrors() {
+		t.Fatalf("a missing playbook is a usage error: %s", diags.Err())
+	}
+	if u := commandUsage("convert ", c.Commands[0]); !strings.Contains(u, "ansible [options] <PLAYBOOK>") {
+		t.Fatalf("usage:\n%s", u)
+	}
+	var out, errOut strings.Builder
+	if code := runConvert("", "", "", &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "playbook path is required") {
+		t.Fatalf("exit %d: %q", code, errOut.String())
+	}
+}
