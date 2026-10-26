@@ -64,7 +64,7 @@ func connectionBlock() *configschema.NestedBlock {
 				"agent": {
 					Type:        cty.Bool,
 					Optional:    true,
-					Description: "Run commands through the conn3x agent: a small program conn3x copies to the host and keeps running for the whole run, so each command costs one round trip instead of a new SSH session. An apply uploads it to ~/.cache/conn3x, checked by sha256; a plan only uses a copy already there. Hosts that can't run it fall back to plain shell commands. With become it runs as root, one agent per host, cached in root's own directory. Overrides the CONN3X_AGENT environment variable: on, off, or require, which fails an apply rather than fall back to the shell. Defaults to off.",
+					Description: "Run commands through the conn3x agent: a small program conn3x copies to the host and keeps running for the whole run, so each command costs one round trip instead of a new SSH session. An apply uploads it to ~/.cache/conn3x, checked by sha256; a plan only uses a copy already there. Hosts that can't run it fall back to plain shell commands. With become it runs as root, one agent per host and login user, cached in root's own directory. Overrides the CONN3X_AGENT environment variable: on, off, or require, which fails an apply rather than fall back to the shell. Defaults to off.",
 				},
 				"timeout": {
 					Type:        cty.String,
@@ -155,8 +155,7 @@ func (h *hostConn) attach(ctx context.Context, upload bool) error {
 	return nil
 }
 
-// rootAgents holds the one root agent each host runs, whichever login
-// started it.
+// rootAgents holds the one root agent each host runs for each login user.
 var rootAgents = struct {
 	sync.Mutex
 	m map[string]*rootAgent
@@ -167,8 +166,10 @@ type rootAgent struct {
 	a  *agent.Client
 }
 
-// attachRoot returns the host's running root agent, or starts one. A login
-// only shares it once its own sudo works, as it would have to in the shell.
+// attachRoot returns the root agent already running for this host and
+// login user, or starts one. Logins as other users never share it: sudo can
+// give each user its own rules (NOEXEC, an SELinux role, logging), and a
+// command run as root must carry the rules and the name of whoever ran it.
 func (h *hostConn) attachRoot(ctx context.Context, upload bool) (*agent.Client, error) {
 	rootAgents.Lock()
 	r := rootAgents.m[h.rootKey]
@@ -181,9 +182,6 @@ func (h *hostConn) attachRoot(ctx context.Context, upload bool) (*agent.Client, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.a != nil && r.a.Err() == nil {
-		if _, err := h.become.Run(ctx, "true", nil); err != nil {
-			return nil, err
-		}
 		return r.a, nil
 	}
 	a, err := agent.Attach(ctx, h.client, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload, Become: h.become})
@@ -354,10 +352,11 @@ func poolKey(cfg ssh.Config, become bool, password []byte, useAgent, require boo
 	return hex.EncodeToString(sum.Sum(nil))
 }
 
-// rootKey names the machine an ssh block reaches, whatever the login: the
-// address, the bastions on the way and how its host key is checked.
+// rootKey names the machine an ssh block reaches and the user it logs in
+// as: the address, the bastions on the way, how its host key is checked
+// and the user, but not the key or the password.
 func rootKey(cfg ssh.Config) string {
-	return poolKey(ssh.Config{Host: cfg.Host, Port: cfg.Port, Jumps: cfg.Jumps, HostKey: cfg.HostKey, KnownHostsFile: cfg.KnownHostsFile}, true, nil, true, false)
+	return poolKey(ssh.Config{Host: cfg.Host, Port: cfg.Port, User: cfg.User, Jumps: cfg.Jumps, HostKey: cfg.HostKey, KnownHostsFile: cfg.KnownHostsFile}, true, nil, true, false)
 }
 
 // optional reads an attribute added after v0.1, which older values lack.
