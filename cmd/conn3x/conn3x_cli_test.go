@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -95,7 +96,8 @@ func TestRootUsageIsBranded(t *testing.T) {
 		if !strings.Contains(u, "Usage: conn3x [global options] "+name) {
 			t.Errorf("%s usage:\n%s", name, u)
 		}
-		if strings.Contains(u, "OpenTofu") || strings.Contains(u, "Usage: tofu") {
+		// version names the OpenTofu release it is built on, and only that.
+		if strings.Contains(strings.ReplaceAll(u, "the OpenTofu release", ""), "OpenTofu") || strings.Contains(u, "Usage: tofu") {
 			t.Errorf("%s usage still names OpenTofu or tofu:\n%s", name, u)
 		}
 	}
@@ -125,4 +127,35 @@ func testMeta(t *testing.T) command.Meta {
 	streams, done := terminal.StreamsForTesting(t)
 	t.Cleanup(func() { done(t) })
 	return command.Meta{View: views.NewView(streams), WorkingDir: workdir.NewDir(".")}
+}
+
+func TestVersionHelpNamesOpenTofu(t *testing.T) {
+	v, _ := findCommand(brandedRoot(t), "version")
+	if u := commandUsage("", v); !strings.Contains(u, "the OpenTofu release it is built on") {
+		t.Fatalf("version usage:\n%s", u)
+	}
+}
+
+func TestVersionJSON(t *testing.T) {
+	t.Chdir(t.TempDir())
+	v, _ := findCommand(brandedRoot(t), "version")
+	var out strings.Builder
+	old := stdout
+	stdout = &out
+	t.Cleanup(func() { stdout = old })
+	if code := command.RunCommand(v, testMeta(t), []string{"-json"}); code != 0 {
+		t.Fatalf("version -json exited %d", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("not JSON: %s\n%s", err, out.String())
+	}
+	for _, k := range []string{"conn3x_version", "terraform_version", "platform", "provider_selections"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("no %q in %s", k, out.String())
+		}
+	}
+	if got["conn3x_version"] != version.Version {
+		t.Errorf("conn3x_version = %v, want %s", got["conn3x_version"], version.Version)
+	}
 }
