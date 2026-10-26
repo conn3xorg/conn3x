@@ -6,6 +6,7 @@
 package sshtest
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
@@ -46,13 +47,37 @@ type Server struct {
 	// connection. Like sshd's MaxSessions, a session beyond it is rejected
 	// with "open failed".
 	MaxSessions int
+	// RejectSessions, when set, refuses every session with this reason.
+	RejectSessions gossh.RejectionReason
+	// IgnoreKeepalives leaves keepalive requests unanswered, like a server
+	// that has stopped responding.
+	IgnoreKeepalives bool
 
 	mu       sync.Mutex
 	commands []string
+	delay    time.Duration
 
-	accepts  atomic.Int64
-	forwards atomic.Int64
+	accepts    atomic.Int64
+	forwards   atomic.Int64
+	rejections atomic.Int64
+	keepalives atomic.Int64
 }
+
+// SetDelay holds back everything the server sends by d without slowing
+// how fast it sends, like a long link rather than a slow one: unlike
+// Latency, writes in flight overlap. It applies to connections accepted
+// after it is set.
+func (s *Server) SetDelay(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.delay = d
+}
+
+// Rejections is how many sessions the server has refused.
+func (s *Server) Rejections() int64 { return s.rejections.Load() }
+
+// Keepalives is how many keepalive requests the server has received.
+func (s *Server) Keepalives() int64 { return s.keepalives.Load() }
 
 // Commands are the commands the server has run, in order.
 func (s *Server) Commands() []string {
@@ -70,6 +95,52 @@ type slowConn struct {
 func (c slowConn) Write(b []byte) (int, error) {
 	time.Sleep(c.s.Latency)
 	return c.Conn.Write(b)
+}
+
+// delayConn delivers each write a fixed delay after it is made.
+type delayConn struct {
+	net.Conn
+	d    time.Duration
+	q    chan delayed
+	stop chan struct{}
+	once sync.Once
+}
+
+type delayed struct {
+	at time.Time
+	b  []byte
+}
+
+func newDelayConn(conn net.Conn, d time.Duration) *delayConn {
+	c := &delayConn{Conn: conn, d: d, q: make(chan delayed, 4096), stop: make(chan struct{})}
+	go func() {
+		for {
+			select {
+			case p := <-c.q:
+				time.Sleep(time.Until(p.at))
+				if _, err := conn.Write(p.b); err != nil {
+					_ = c.Close()
+				}
+			case <-c.stop:
+				return
+			}
+		}
+	}()
+	return c
+}
+
+func (c *delayConn) Write(b []byte) (int, error) {
+	select {
+	case c.q <- delayed{time.Now().Add(c.d), bytes.Clone(b)}:
+		return len(b), nil
+	case <-c.stop:
+		return 0, net.ErrClosed
+	}
+}
+
+func (c *delayConn) Close() error {
+	c.once.Do(func() { close(c.stop) })
+	return c.Conn.Close()
 }
 
 // Forwards is how many connections the server has forwarded as a jump host.
@@ -160,6 +231,12 @@ func StartWith(t testing.TB, addr string, keys Keys) *Server {
 				return
 			}
 			s.accepts.Add(1)
+			s.mu.Lock()
+			d := s.delay
+			s.mu.Unlock()
+			if d > 0 {
+				conn = newDelayConn(conn, d)
+			}
 			go s.serve(slowConn{conn, s}, cfg)
 		}
 	}()
@@ -171,8 +248,29 @@ func (s *Server) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 	if err != nil {
 		return
 	}
-	go gossh.DiscardRequests(reqs)
 	var open atomic.Int64 // sessions open on this connection
+	var closing sync.Map  // exited sessions' requests -> their free func
+	go func() {
+		for req := range reqs {
+			if req.Type == "keepalive@openssh.com" {
+				s.keepalives.Add(1)
+				// Like sshd, answer only once every session the client
+				// closed before this request is freed.
+				closing.Range(func(k, v any) bool {
+					if closed(k.(<-chan *gossh.Request)) {
+						v.(func())()
+					}
+					return true
+				})
+				if s.IgnoreKeepalives {
+					continue
+				}
+			}
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		}
+	}()
 	for ch := range chans {
 		if ch.ChannelType() == "direct-tcpip" {
 			go s.forward(ch)
@@ -182,8 +280,14 @@ func (s *Server) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 			_ = ch.Reject(gossh.UnknownChannelType, "only sessions and forwarding")
 			continue
 		}
+		if s.RejectSessions != 0 {
+			s.rejections.Add(1)
+			_ = ch.Reject(s.RejectSessions, "administratively prohibited")
+			continue
+		}
 		if s.MaxSessions > 0 && open.Load() >= int64(s.MaxSessions) {
 			// What sshd sends when session_open fails at MaxSessions.
+			s.rejections.Add(1)
 			_ = ch.Reject(gossh.ConnectionFailed, "open failed")
 			continue
 		}
@@ -192,7 +296,27 @@ func (s *Server) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 			continue
 		}
 		open.Add(1)
-		go s.session(channel, requests, sync.OnceFunc(func() { open.Add(-1) }))
+		free := sync.OnceFunc(func() { open.Add(-1); closing.Delete(requests) })
+		exited := func() { closing.Store(requests, free) }
+		go s.session(channel, requests, exited, free)
+	}
+}
+
+// closed drains reqs without blocking and reports whether it is closed,
+// which happens once the client's close has arrived.
+func closed(reqs <-chan *gossh.Request) bool {
+	for {
+		select {
+		case req, ok := <-reqs:
+			if !ok {
+				return true
+			}
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		default:
+			return false
+		}
 	}
 }
 
@@ -227,12 +351,21 @@ func (s *Server) forward(nc gossh.NewChannel) {
 	ch.Close()
 }
 
-// session runs one exec request. done frees the session's place under
-// MaxSessions; it runs before the exit status goes out, so a client that has
-// seen a session end may always open another.
-func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request, done func()) {
-	defer done()
-	defer ch.Close()
+// session runs one exec request. free gives the session's place under
+// MaxSessions back. As with sshd, that happens only once the client's
+// close has arrived, and a little after: a session opened at once may be
+// refused, but one opened after a keepalive reply never is.
+func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request, exited, free func()) {
+	defer free()
+	defer func() {
+		ch.Close()
+		exited()
+		for req := range reqs {
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		}
+	}()
 	for req := range reqs {
 		if req.Type != "exec" {
 			_ = req.Reply(false, nil)
@@ -275,7 +408,6 @@ func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request, done func
 		}
 		status := make([]byte, 4)
 		binary.BigEndian.PutUint32(status, uint32(code))
-		done()
 		_, _ = ch.SendRequest("exit-status", false, status)
 		return
 	}

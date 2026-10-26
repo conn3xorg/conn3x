@@ -93,10 +93,14 @@ type Client struct {
 	conn  *gossh.Client
 	jumps []*gossh.Client // the hops in front of conn, outermost first
 
-	slots chan struct{} // holds a token for each session open
+	slots   chan struct{} // holds a token for each session open
+	timeout time.Duration // for a keepalive's reply; see keepalive
 
-	mu    sync.Mutex
-	limit int // slots still in use; see shrink
+	mu       sync.Mutex
+	limit    int  // slots still in use; see shrink
+	reported int  // the limit last logged
+	closed   int  // sessions closed but not yet given back; see done
+	pinging  bool // a goroutine is giving them back
 }
 
 // defaultMaxSessions caps the sessions open at once on one connection.
@@ -123,7 +127,7 @@ func maxSessions() int {
 // newClient wraps an authenticated connection.
 func newClient(addr string, conn *gossh.Client, jumps []*gossh.Client) *Client {
 	n := maxSessions()
-	return &Client{addr: addr, conn: conn, jumps: jumps, slots: make(chan struct{}, n), limit: n}
+	return &Client{addr: addr, conn: conn, jumps: jumps, slots: make(chan struct{}, n), timeout: keepaliveTimeout, limit: n, reported: n}
 }
 
 // session waits for a free slot and opens a session in it. The caller
@@ -141,6 +145,12 @@ func (c *Client) session(ctx context.Context) (*gossh.Session, error) {
 		}
 		s, err := c.conn.NewSession()
 		if err == nil {
+			c.mu.Lock()
+			if c.limit < c.reported {
+				c.reported = c.limit
+				log.Printf("[INFO] conn3x: %s refused a session; opening at most %d at once", c.addr, c.limit)
+			}
+			c.mu.Unlock()
 			return s, nil
 		}
 		if !tooManySessions(err) || !c.shrink() {
@@ -164,17 +174,68 @@ func (c *Client) acquire(ctx context.Context) error {
 
 func (c *Client) release() { <-c.slots }
 
+// keepaliveTimeout is how long a keepalive waits for the server to answer,
+// for connections made after it is set.
+var keepaliveTimeout = 30 * time.Second
+
 // done closes a session and frees its slot once the server has freed it
 // too. sshd counts a session against MaxSessions until it has read the
 // client's close and cleaned up, so a new session opened at once can be
 // refused. A reply to a request sent after the close proves sshd is past
 // it; waiting for that happens in the background, so the caller doesn't.
+//
+// Keepalives that want a reply go out one at a time, so one per session
+// would free slots a round trip apart. Instead one keepalive frees every
+// session closed before it was sent.
 func (c *Client) done(s *gossh.Session) {
 	_ = s.Close()
+	c.mu.Lock()
+	c.closed++
+	start := !c.pinging
+	c.pinging = true
+	c.mu.Unlock()
+	if start {
+		go c.ping()
+	}
+}
+
+// ping frees closed sessions' slots, a keepalive round trip at a time,
+// until there are none left.
+func (c *Client) ping() {
+	for {
+		c.mu.Lock()
+		n := c.closed
+		c.closed = 0
+		if n == 0 {
+			c.pinging = false
+			c.mu.Unlock()
+			return
+		}
+		c.mu.Unlock()
+		c.keepalive()
+		for ; n > 0; n-- {
+			c.release()
+		}
+	}
+}
+
+// keepalive waits for the server to answer a keepalive. A server that
+// hasn't answered within c.timeout is taken for gone: the connection is
+// closed, so the pool dials a new one and commands waiting for a slot
+// fail rather than hang.
+func (c *Client) keepalive() {
+	answered := make(chan struct{})
 	go func() {
 		_, _, _ = c.conn.SendRequest("keepalive@openssh.com", true, nil)
-		c.release()
+		close(answered)
 	}()
+	select {
+	case <-answered:
+	case <-time.After(c.timeout):
+		log.Printf("[WARN] conn3x: %s did not answer a keepalive in %s; closing the connection", c.addr, c.timeout)
+		_ = c.Close()
+		<-answered
+	}
 }
 
 // shrink lowers the cap after the server refused a session: the slot the
@@ -196,7 +257,7 @@ func (c *Client) shrink() bool {
 			free = false
 		}
 	}
-	log.Printf("[INFO] conn3x: %s refused a session; opening at most %d at once", c.addr, c.limit)
+	log.Printf("[DEBUG] conn3x: %s refused a session; opening at most %d at once", c.addr, c.limit)
 	return true
 }
 
