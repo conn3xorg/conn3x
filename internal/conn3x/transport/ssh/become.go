@@ -49,7 +49,7 @@ func (b *Become) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 		return res, err
 	}
 	if res.ExitCode != 0 {
-		if sudoErr := sudoFailure(res.Stderr, b.Client.addr); sudoErr != nil {
+		if sudoErr := SudoFailure(res.Stderr, b.Client.addr); sudoErr != nil {
 			return res, sudoErr
 		}
 	}
@@ -66,7 +66,7 @@ func (b *Become) probe(ctx context.Context) {
 		b.needsPass = false
 	case bytes.Contains(res.Stderr, []byte("password is required")):
 		if len(b.Password) == 0 {
-			b.probeErr = fmt.Errorf("ssh %s: sudo needs a password; set become_password_file in the ssh block", b.Client.addr)
+			b.probeErr = SudoFailure(res.Stderr, b.Client.addr)
 			return
 		}
 		b.needsPass = true
@@ -78,15 +78,15 @@ func (b *Become) probe(ctx context.Context) {
 		case err != nil:
 			b.probeErr = err
 		case check.ExitCode != 0:
-			b.probeErr = sudoFailure(check.Stderr, b.Client.addr)
+			b.probeErr = SudoFailure(check.Stderr, b.Client.addr)
 			if b.probeErr == nil {
 				b.probeErr = fmt.Errorf("%w on %s: sudo rejected the password: %s", ErrBecome, b.Client.addr, strings.TrimSpace(string(check.Stderr)))
 			}
 		}
 	default:
-		b.probeErr = sudoFailure(res.Stderr, b.Client.addr)
+		b.probeErr = SudoFailure(res.Stderr, b.Client.addr)
 		if b.probeErr == nil {
-			b.probeErr = fmt.Errorf("ssh %s: sudo failed: %s", b.Client.addr, strings.TrimSpace(string(res.Stderr)))
+			b.probeErr = fmt.Errorf("%w on %s: sudo failed: %s", ErrBecome, b.Client.addr, strings.TrimSpace(string(res.Stderr)))
 		}
 	}
 }
@@ -94,8 +94,9 @@ func (b *Become) probe(ctx context.Context) {
 // ErrBecome is wrapped by every failure of sudo itself.
 var ErrBecome = errors.New("become failed")
 
-// sudoFailure recognizes sudo's own refusals in stderr.
-func sudoFailure(stderr []byte, addr string) error {
+// SudoFailure recognizes sudo's own refusals in stderr, and is nil for
+// anything else.
+func SudoFailure(stderr []byte, addr string) error {
 	msg := strings.TrimSpace(string(stderr))
 	switch {
 	case strings.Contains(msg, "incorrect password"):

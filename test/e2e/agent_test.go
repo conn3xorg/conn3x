@@ -16,6 +16,7 @@ import (
 type agentVars struct {
 	Port, KeyFile, KnownHosts string
 	Round                     int
+	User                      string // logs in as this user with become; empty is root
 }
 
 // runner is the program that ran the agent step's command on h.
@@ -30,7 +31,7 @@ func TestAgentNoexecFallback(t *testing.T) {
 	h := startHostWith(t, "rocky10", "--tmpfs", "/root/.cache:rw,noexec", "--tmpfs", "/var/tmp:rw,noexec")
 	w := newWorkdir(t, "agent")
 	w.env = append(w.env, "CONN3X_AGENT=on")
-	w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 1})
+	w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 1, ""})
 	w.mustConn3x("init", "-no-color")
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 
@@ -52,7 +53,7 @@ func TestAgentUpgradeSwitchesBinary(t *testing.T) {
 	h := startHost(t, "debian13")
 	w := newWorkdir(t, "agent")
 	w.env = append(w.env, "CONN3X_AGENT=on")
-	w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 1})
+	w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 1, ""})
 	w.mustConn3x("init", "-no-color")
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	first := h.runner()
@@ -68,7 +69,7 @@ func TestAgentUpgradeSwitchesBinary(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the newer conn3x: %v\n%s", err, out)
 	}
-	w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 2})
+	w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 2, ""})
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	second := h.runner()
 	if !strings.HasPrefix(second, "/root/.cache/conn3x/agent-9.9.9-") {
@@ -78,5 +79,36 @@ func TestAgentUpgradeSwitchesBinary(t *testing.T) {
 	want := []string{filepath.Base(first), filepath.Base(second)}
 	if len(cached) != 2 || !strings.Contains(strings.Join(cached, " "), want[0]) || !strings.Contains(strings.Join(cached, " "), want[1]) {
 		t.Fatalf("cache holds %q, want %q", cached, want)
+	}
+}
+
+func TestAgentBecome(t *testing.T) {
+	h := startHost(t, "rocky10")
+	// A deploy user with passwordless sudo, logging in with the test key.
+	// sshd skips PAM so non-root logins work in rootless CI containers.
+	h.exec("", "sh", "-c", `useradd -m deploy && echo 'deploy:Deploy-Pass-123' | chpasswd &&
+echo 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy &&
+mkdir -p -m 700 /home/deploy/.ssh && cp /root/.ssh/authorized_keys /home/deploy/.ssh/ &&
+chown -R deploy:deploy /home/deploy/.ssh &&
+echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl restart sshd`)
+	w := newWorkdir(t, "agent")
+	w.env = append(w.env, "CONN3X_AGENT=require")
+	w.writeAs("main.circuit.hcl", agentVars{h.port, h.keyFile, h.knownHosts, 1, "deploy"})
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+
+	// The command ran as root under the agent, cached where only root can
+	// change it, and nothing of root's landed in the login user's home.
+	if got := h.runner(); !strings.HasPrefix(got, "/root/.cache/conn3x/agent-") {
+		t.Fatalf("the command ran under %q, want the agent in root's cache", got)
+	}
+	if got := strings.TrimSpace(h.exec("", "stat", "-c", "%U %a", "/root/.cache/conn3x", "/etc/conn3x-runner")); got != "root 700\nroot 644" {
+		t.Fatalf("cache and output: %q", got)
+	}
+	if got := h.exec("", "find", "/home/deploy", "-user", "root"); got != "" {
+		t.Fatalf("root's files in the login user's home:\n%s", got)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("plan after apply:\n%s", out)
 	}
 }

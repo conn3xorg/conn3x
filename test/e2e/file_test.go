@@ -124,6 +124,13 @@ echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl resta
 	if owner := strings.TrimSpace(h.exec("", "stat", "-c", "%U", "/etc/motd")); owner != "root" {
 		t.Fatalf("/etc/motd owner = %s, want root", owner)
 	}
+	// Under require the write went through a root agent, past sudo's
+	// password prompt.
+	if os.Getenv("CONN3X_AGENT") == "require" {
+		if got := h.exec("", "sh", "-c", "ls /root/.cache/conn3x | grep '^agent-' || true"); got == "" {
+			t.Fatal("no root agent was cached")
+		}
+	}
 	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 		t.Fatalf("plan through sudo is not empty:\n%s", out)
 	}

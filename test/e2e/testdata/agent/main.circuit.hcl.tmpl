@@ -3,8 +3,9 @@ circuit "box" {
 
   ssh {
     port             = {{.Port}}
-    user             = "root"
-    private_key_file = "{{.KeyFile}}"
+    user             = "{{if .User}}{{.User}}{{else}}root{{end}}"
+{{if .User}}    become           = true
+{{end}}    private_key_file = "{{.KeyFile}}"
     known_hosts_file = "{{.KnownHosts}}"
   }
 

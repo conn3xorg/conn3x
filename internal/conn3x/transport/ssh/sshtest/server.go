@@ -308,16 +308,19 @@ func KnownHostsLine(addr string, key gossh.PublicKey) string {
 
 // fakeSudo behaves like sudo for the modes the tests need, chosen with
 // FAKE_SUDO: "nopasswd", "password:<secret>" or "requiretty". It runs the
-// command after "--" and records how it was invoked.
+// command after "--". Like sudo -S, it writes the -p prompt to stderr
+// before reading each password attempt; FAKE_SUDO_SPLIT=1 writes the
+// prompt in two pieces, a moment apart. FAKE_SUDO_LOG records every line
+// it reads as a password.
 const fakeSudoScript = `#!/bin/sh
-nonint=0; stdin=0
+nonint=0; stdin=0; prompt=
 while [ $# -gt 0 ]; do
   case "$1" in
     -n) nonint=1; shift ;;
     -S) stdin=1; shift ;;
     -k) shift ;;
     -v) validate=1; shift ;;
-    -p) shift 2 ;;
+    -p) prompt=$2; shift 2 ;;
     --) shift; break ;;
     *) break ;;
   esac
@@ -331,6 +334,14 @@ case "$FAKE_SUDO" in
     # Like real sudo, read up to three password attempts from stdin.
     tries=0
     while [ $tries -lt 3 ]; do
+      [ $tries -gt 0 ] && echo "Sorry, try again." >&2
+      if [ "$FAKE_SUDO_SPLIT" = 1 ]; then
+        half=$((${#prompt} / 2))
+        printf '%s' "$prompt" | head -c "$half" >&2; sleep 0.2
+        printf '%s' "$prompt" | tail -c "+$((half + 1))" >&2
+      else
+        printf '%s' "$prompt" >&2
+      fi
       IFS= read -r got || break
       [ -n "$FAKE_SUDO_LOG" ] && printf '%s\n' "$got" >> "$FAKE_SUDO_LOG"
       [ "$got" = "$want" ] && break

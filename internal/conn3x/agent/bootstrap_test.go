@@ -161,13 +161,14 @@ func TestAttachUploadsThenReusesCache(t *testing.T) {
 		t.Fatalf("agent said %q", got)
 	}
 	before := len(h.Commands())
-	// Commands run where a shell command would, not in the cache.
-	shell, err := dialServer(t, h.Server).Run(ctx, "pwd", nil)
+	// Commands run where a shell command would, not in the cache, and
+	// with the same umask, not the bootstrap's.
+	shell, err := dialServer(t, h.Server).Run(ctx, "pwd; umask", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := mustRun(t, a, "pwd"); got != string(shell.Stdout) {
-		t.Fatalf("agent runs commands in %q, the shell in %q", got, shell.Stdout)
+	if got := mustRun(t, a, "pwd; umask"); got != string(shell.Stdout) {
+		t.Fatalf("agent runs commands with %q, the shell with %q", got, shell.Stdout)
 	}
 	if got := h.Commands()[:before]; len(got) != 3 {
 		t.Fatalf("first attach ran %d commands, want probe, upload and start:\n%s", len(got), strings.Join(got, "\n---\n"))
@@ -318,6 +319,21 @@ func TestAttachSkipsUnusableDir(t *testing.T) {
 				}
 			})
 		},
+		// Others could swap the directory itself, so its being private
+		// proves nothing.
+		"inside a directory open to others": func(t *testing.T, dir string) {
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Dir(dir), 0o777); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if got := names(t, dir); len(got) != 0 {
+					t.Errorf("the directory got %q", got)
+				}
+			})
+		},
 		"a file": func(t *testing.T, dir string) {
 			if err := os.WriteFile(dir, nil, 0o600); err != nil {
 				t.Fatal(err)
@@ -459,7 +475,7 @@ func TestStartRefusesReplacedBinary(t *testing.T) {
 	}
 	raw, _ := testAgent()
 	sum := sha256.Sum256(raw)
-	if _, err := start(ctx, dialServer(t, h.Server), h.cacheDir(), agentName(t), hex.EncodeToString(sum[:])); err == nil {
+	if _, err := start(ctx, dialServer(t, h.Server), h.cacheDir(), agentName(t), hex.EncodeToString(sum[:]), nil); err == nil {
 		t.Fatal("started a replaced binary")
 	}
 	if _, err := os.Stat(mark); err == nil {

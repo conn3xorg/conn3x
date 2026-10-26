@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -63,7 +64,7 @@ func connectionBlock() *configschema.NestedBlock {
 				"agent": {
 					Type:        cty.Bool,
 					Optional:    true,
-					Description: "Run commands through the conn3x agent: a small program conn3x copies to the host and keeps running for the whole run, so each command costs one round trip instead of a new SSH session. An apply uploads it to ~/.cache/conn3x, checked by sha256; a plan only uses a copy already there. Hosts that can't run it fall back to plain shell commands. Not yet used with become. Overrides the CONN3X_AGENT environment variable: on, off, or require, which fails an apply rather than fall back to the shell. Defaults to off.",
+					Description: "Run commands through the conn3x agent: a small program conn3x copies to the host and keeps running for the whole run, so each command costs one round trip instead of a new SSH session. An apply uploads it to ~/.cache/conn3x, checked by sha256; a plan only uses a copy already there. Hosts that can't run it fall back to plain shell commands. With become it runs as root, one agent per host, cached in root's own directory. Overrides the CONN3X_AGENT environment variable: on, off, or require, which fails an apply rather than fall back to the shell. Defaults to off.",
 				},
 				"timeout": {
 					Type:        cty.String,
@@ -87,8 +88,10 @@ type hostConn struct {
 	client   *ssh.Client
 	runner   modules.Runner
 	useAgent bool
-	require  bool // CONN3X_AGENT=require: an apply fails rather than use the shell
-	host     string // for log messages
+	require  bool        // CONN3X_AGENT=require: an apply fails rather than use the shell
+	host     string      // for log messages
+	become   *ssh.Become // set when commands run as root
+	rootKey  string      // names the host in rootAgents
 
 	mu        sync.Mutex
 	agent     *agent.Client
@@ -129,10 +132,18 @@ func (h *hostConn) attach(ctx context.Context, upload bool) error {
 		return h.attachErr
 	}
 	h.tried[i] = true
-	a, err := agent.Attach(ctx, h.client, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload})
+	var a *agent.Client
+	var err error
+	if h.become != nil {
+		a, err = h.attachRoot(ctx, upload)
+	} else {
+		a, err = agent.Attach(ctx, h.client, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload})
+	}
 	switch {
 	case err == nil:
 		h.agent = a
+	case errors.Is(err, ssh.ErrBecome):
+		return err // sudo refused; the shell would fail the same way
 	case upload && h.require:
 		h.attachErr = fmt.Errorf("CONN3X_AGENT=require, but the conn3x agent can't run on %s: %w", h.host, err)
 		return h.attachErr
@@ -142,6 +153,44 @@ func (h *hostConn) attach(ctx context.Context, upload bool) error {
 		log.Printf("[INFO] conn3x: running shell commands on %s until an apply: %v", h.host, err)
 	}
 	return nil
+}
+
+// rootAgents holds the one root agent each host runs, whichever login
+// started it.
+var rootAgents = struct {
+	sync.Mutex
+	m map[string]*rootAgent
+}{m: map[string]*rootAgent{}}
+
+type rootAgent struct {
+	mu sync.Mutex
+	a  *agent.Client
+}
+
+// attachRoot returns the host's running root agent, or starts one. A login
+// only shares it once its own sudo works, as it would have to in the shell.
+func (h *hostConn) attachRoot(ctx context.Context, upload bool) (*agent.Client, error) {
+	rootAgents.Lock()
+	r := rootAgents.m[h.rootKey]
+	if r == nil {
+		r = &rootAgent{}
+		rootAgents.m[h.rootKey] = r
+	}
+	rootAgents.Unlock()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.a != nil && r.a.Err() == nil {
+		if _, err := h.become.Run(ctx, "true", nil); err != nil {
+			return nil, err
+		}
+		return r.a, nil
+	}
+	a, err := agent.Attach(ctx, h.client, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload, Become: h.become})
+	if err == nil {
+		r.a = a
+	}
+	return a, err
 }
 
 // alive reports whether the connection, and its agent if it has one,
@@ -237,9 +286,7 @@ func pooled(ctx context.Context, conn cty.Value) (*hostConn, error) {
 		}
 		password = []byte(strings.TrimRight(string(raw), "\r\n"))
 	}
-	// Under sudo the shell stays in charge until the agent can become root.
 	useAgent, require := wantAgent(conn)
-	useAgent = useAgent && !useSudo
 	key := poolKey(cfg, useSudo, password, useAgent, require)
 
 	pool.Lock()
@@ -283,9 +330,10 @@ func pooled(ctx context.Context, conn cty.Value) (*hostConn, error) {
 		close(entry.ready)
 		return nil, err
 	}
-	h := &hostConn{client: client, runner: client, useAgent: useAgent, require: require, host: cfg.Host}
+	h := &hostConn{client: client, runner: client, useAgent: useAgent, require: require, host: cfg.Host, rootKey: rootKey(cfg)}
 	if useSudo {
-		h.runner = &ssh.Become{Client: client, Password: password}
+		h.become = &ssh.Become{Client: client, Password: password}
+		h.runner = h.become
 	}
 	entry.conn = h
 	close(entry.ready)
@@ -304,6 +352,12 @@ func poolKey(cfg ssh.Config, become bool, password []byte, useAgent, require boo
 		sum.Write([]byte{0})
 	}
 	return hex.EncodeToString(sum.Sum(nil))
+}
+
+// rootKey names the machine an ssh block reaches, whatever the login: the
+// address, the bastions on the way and how its host key is checked.
+func rootKey(cfg ssh.Config) string {
+	return poolKey(ssh.Config{Host: cfg.Host, Port: cfg.Port, Jumps: cfg.Jumps, HostKey: cfg.HostKey, KnownHostsFile: cfg.KnownHostsFile}, true, nil, true, false)
 }
 
 // optional reads an attribute added after v0.1, which older values lack.

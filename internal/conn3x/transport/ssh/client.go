@@ -369,6 +369,9 @@ func (b *syncBuffer) Bytes() []byte {
 	return bytes.Clone(b.buf.Bytes())
 }
 
+// Addr is the host and port the client is connected to.
+func (c *Client) Addr() string { return c.addr }
+
 // Alive reports whether the connection still answers a keepalive.
 func (c *Client) Alive() bool {
 	_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)

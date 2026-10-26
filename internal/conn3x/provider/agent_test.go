@@ -253,13 +253,77 @@ func TestAgentDeathSurfacesError(t *testing.T) {
 	}
 }
 
-func TestBecomeStaysOnShellForNow(t *testing.T) {
+func isRootStart(cmd string) bool { return strings.HasPrefix(cmd, "exec sudo -S -p 'conn3x-sudo-") }
+
+func TestBecomeUsesTheAgent(t *testing.T) {
 	f, _ := newAgentTest(t)
 	f.server.FakeSudo(t, "nopasswd")
 	f.withConn(map[string]cty.Value{"agent": cty.True, "become": cty.True})
 	f.lifecycle()
-	if cmds := f.commands(); slices.ContainsFunc(cmds, isProbe) {
-		t.Fatalf("a become host probed for the agent:\n%s", strings.Join(cmds, "\n---\n"))
+	cmds := f.commands()
+	if n := len(slices.DeleteFunc(slices.Clone(cmds), func(c string) bool { return !isRootStart(c) })); n != 1 {
+		t.Fatalf("started %d root agents, want 1; commands:\n%s", n, strings.Join(cmds, "\n---\n"))
+	}
+	// Besides sudo's checks, every command went through the agent.
+	for _, c := range cmds {
+		if !isProbe(c) && !isRootStart(c) && !strings.Contains(c, "mktemp") && !strings.Contains(c, "sudo -n -- true") {
+			t.Errorf("ran outside the agent: %q", c)
+		}
+	}
+}
+
+func TestBecomeOneRootAgentPerHost(t *testing.T) {
+	f, _ := newAgentTest(t)
+	f.server.FakeSudo(t, "password:s3cret")
+	pw := func(p string) cty.Value {
+		file := filepath.Join(t.TempDir(), "pw")
+		if err := os.WriteFile(file, []byte(p+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return cty.StringVal(file)
+	}
+	f.withConn(map[string]cty.Value{"agent": cty.True, "become": cty.True, "become_password_file": pw("s3cret")})
+	first := f.conn
+	f.withConn(map[string]cty.Value{"user": cty.StringVal("other")})
+	second := f.conn
+
+	// Two logins to the same host, dialled at once.
+	conns := make([]*hostConn, 2)
+	var wg sync.WaitGroup
+	for i, conn := range []cty.Value{first, second} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := dialForApply(ctx, conn)
+			if err != nil {
+				t.Error(err)
+			}
+			conns[i] = h
+		}()
+	}
+	wg.Wait()
+	if t.Failed() {
+		return
+	}
+	if conns[0] == conns[1] {
+		t.Fatal("two logins shared one connection")
+	}
+	if conns[0].agent == nil || conns[0].agent != conns[1].agent {
+		t.Fatal("the two logins don't share one root agent")
+	}
+	for _, h := range conns {
+		if res, err := h.Run(ctx, `echo "$SUDO_USER"`, nil); err != nil || string(res.Stdout) != "fake\n" {
+			t.Fatalf("got %q, %v", res.Stdout, err)
+		}
+	}
+	if n := len(slices.DeleteFunc(f.server.Commands(), func(c string) bool { return !isRootStart(c) })); n != 1 {
+		t.Fatalf("started %d root agents, want 1", n)
+	}
+
+	// A login whose sudo fails doesn't get the running root agent.
+	f.withConn(map[string]cty.Value{"user": cty.StringVal("third"), "become_password_file": pw("wrong")})
+	if _, err := dialForApply(ctx, f.conn); err == nil || !strings.Contains(err.Error(), "incorrect password") {
+		t.Fatalf("dial with a wrong password = %v, want the incorrect password error", err)
 	}
 }
 
