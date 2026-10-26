@@ -39,6 +39,8 @@ func FileConformance(t *testing.T, sh, r modules.Runner) {
 		wantErr     bool // "f exists but is not a regular file"
 		fallback    bool // a FileReader must leave it to the shell
 		root        bool
+		notRoot     bool // root can read anything
+		unreadable  bool // "f exists but can't be read"
 		linux       bool // only on Linux
 	}{
 		{name: "missing"},
@@ -54,11 +56,16 @@ func FileConformance(t *testing.T, sh, r modules.Runner) {
 		{name: "symlink owned by nobody", setup: "printf target > t && chmod 0640 t && ln -s t f && chown -h 65534:65534 f", want: file.Actual{Exists: true, Content: "target", Mode: "0777", Owner: "nobody"}, root: true, linux: true},
 		{name: "dangling symlink", setup: "ln -s nowhere f", wantErr: true},
 		{name: "directory", setup: "mkdir f", wantErr: true},
+		// Unreadable is an error, never an empty file the plan would overwrite.
+		{name: "unreadable", setup: "printf x > f && chmod 0000 f", unreadable: true, fallback: true, notRoot: true},
 		{name: "unknown owner", setup: "printf x > f && chmod 0644 f && chown 4242:4242 f", want: file.Actual{Exists: true, Content: "x", Mode: "0644", Owner: "UNKNOWN", Group: "UNKNOWN"}, fallback: true, root: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if c.root && me != "root" {
 				t.Skip("needs root to chown")
+			}
+			if c.notRoot && me == "root" {
+				t.Skip("root can read any file")
 			}
 			if c.linux && !linux {
 				t.Skip("needs Linux")
@@ -78,6 +85,10 @@ func FileConformance(t *testing.T, sh, r modules.Runner) {
 			}
 
 			switch {
+			case c.unreadable:
+				if wantErr == nil || wantErr.Error() != p+" exists but can't be read by "+me {
+					t.Fatalf("the shell gives %v, want can't be read", wantErr)
+				}
 			case c.wantErr:
 				if wantErr == nil || wantErr.Error() != p+" exists but is not a regular file" {
 					t.Fatalf("the shell gives %v, want not a regular file", wantErr)

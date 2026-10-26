@@ -56,6 +56,10 @@ func NormalizeMode(mode string) string {
 
 const notRegular = 3
 
+// unreadable is the exit code for a file the login user can't read. Without
+// it, base64's failure is lost in the pipe and the file reads as empty.
+const unreadable = 4
+
 // Read reports the file's current state. A missing file is not an error.
 // A runner that is a modules.FileReader answers natively when it can.
 func Read(ctx context.Context, r modules.Runner, p string) (Actual, error) {
@@ -76,13 +80,17 @@ func Read(ctx context.Context, r modules.Runner, p string) (Actual, error) {
 	script := fmt.Sprintf(`p=%s
 [ -e "$p" ] || [ -L "$p" ] || { echo missing; exit 0; }
 [ -f "$p" ] || exit %d
+[ -r "$p" ] || { id -un; exit %d; }
 echo present
 stat -c '%%a %%U %%G' -- "$p" 2>/dev/null || stat -f '%%Lp %%Su %%Sg' "$p"
-base64 < "$p" | tr -d '\n'`, q, notRegular)
+base64 < "$p" | tr -d '\n'`, q, notRegular, unreadable)
 	res, err := run(ctx, r, script, nil)
 	if err != nil {
 		if res.ExitCode == notRegular {
 			return Actual{}, notRegularError(p)
+		}
+		if res.ExitCode == unreadable {
+			return Actual{}, fmt.Errorf("%s exists but can't be read by %s", p, strings.TrimSpace(string(res.Stdout)))
 		}
 		return Actual{}, err
 	}
