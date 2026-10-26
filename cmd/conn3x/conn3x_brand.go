@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,13 +13,19 @@ import (
 	"github.com/mitchellh/cli"
 
 	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/conn3x/version"
 	"github.com/opentofu/opentofu/internal/getproviders"
+	"github.com/opentofu/opentofu/internal/tfdiags"
+	tfversion "github.com/opentofu/opentofu/version"
 )
 
 // The subcommands come from OpenTofu and describe themselves as such.
 // brand rewrites their help text so the CLI speaks as conn3x.
 var helpBrand = strings.NewReplacer(
+	// Comparisons go in argument order, so this keeps the version help's
+	// one true mention of OpenTofu.
+	"the OpenTofu release", "the OpenTofu release",
 	"OpenTofu", "Conn3x",
 	"Usage: tofu ", "Usage: conn3x ",
 	"tofu -help", "conn3x -help",
@@ -68,6 +75,29 @@ func (c *conn3xVersionCommand) Synopsis() string {
 	return "Show the current Conn3x version"
 }
 
+// versionJSON prints version -json: OpenTofu's fields, plus conn3x_version.
+type versionJSON struct{ out io.Writer }
+
+func (versionJSON) Diagnostics(tfdiags.Diagnostics) {}
+
+func (v versionJSON) PrintVersion(tofu, prerelease, platform string, fips bool, providers map[string]string) bool {
+	if prerelease != "" {
+		tofu += "-" + prerelease
+	}
+	b, err := json.MarshalIndent(struct {
+		Conn3x    string            `json:"conn3x_version"`
+		Tofu      string            `json:"terraform_version"`
+		Platform  string            `json:"platform"`
+		FIPS      bool              `json:"fips140,omitempty"`
+		Providers map[string]string `json:"provider_selections"`
+	}{version.Version, tofu, platform, fips, providers}, "", "  ")
+	if err != nil {
+		return false
+	}
+	_, err = fmt.Fprintln(v.out, string(b))
+	return err == nil
+}
+
 // stdout is where the conn3x version command writes; tests replace it.
 var stdout io.Writer = os.Stdout
 
@@ -82,12 +112,21 @@ func brandTree(cmd *command.Command) {
 	if cmd.Name == "version" {
 		cmd.Short = "Show the current Conn3x version"
 		cmd.Long = "Displays the version of Conn3x and the OpenTofu release it is built on."
-		cmd.Run = func(command.Meta) int {
+		view := cmd.CommandLine.View
+		cmd.Run = func(m command.Meta) int {
+			if view.ViewType == arguments.ViewJSON {
+				return command.VersionCommand{
+					Meta:              m,
+					Version:           tfversion.Version,
+					VersionPrerelease: tfversion.Prerelease,
+					Platform:          getproviders.CurrentPlatform,
+				}.Execute(versionJSON{stdout})
+			}
 			return (&conn3xVersionCommand{Out: stdout}).Run(nil)
 		}
 	}
 	if cmd.Name == "init" && cmd.Run != nil {
-		cmd.Run = suggestEncryption(cmd.Run)
+		cmd.Run = suggestEncryption(cmd.Run, cmd.CommandLine.View)
 	}
 	for i := range cmd.Commands {
 		brandTree(&cmd.Commands[i])

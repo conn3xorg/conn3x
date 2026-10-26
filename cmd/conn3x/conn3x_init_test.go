@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/command/arguments"
 )
 
 const encryptedState = `terraform {
@@ -66,13 +67,29 @@ func TestInitSuggestsEncryption(t *testing.T) {
 	stderr = &out
 	t.Cleanup(func() { stderr = old })
 
-	if code := suggestEncryption(func(command.Meta) int { return 1 })(command.Meta{}); code != 1 || out.Len() != 0 {
+	if code := suggestEncryption(func(command.Meta) int { return 1 }, &arguments.View{})(command.Meta{}); code != 1 || out.Len() != 0 {
 		t.Fatalf("a failed init warned anyway (exit %d): %q", code, out.String())
 	}
-	if code := suggestEncryption(func(command.Meta) int { return 0 })(command.Meta{}); code != 0 {
+	if code := suggestEncryption(func(command.Meta) int { return 0 }, &arguments.View{})(command.Meta{}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	if !strings.Contains(out.String(), "isn't encrypted") || !strings.Contains(out.String(), "TF_ENCRYPTION") {
 		t.Fatalf("no suggestion after init:\n%s", out.String())
+	}
+}
+
+// With -json, stderr belongs to machines; the plain-text suggestion is left out.
+func TestInitJSONSkipsSuggestion(t *testing.T) {
+	t.Setenv("TF_ENCRYPTION", "")
+	t.Chdir(configDir(t, "terraform {}\n"))
+	i, _ := findCommand(brandedRoot(t), "init")
+	i.CommandLine.View.ViewType = arguments.ViewJSON
+	var out strings.Builder
+	old := stderr
+	stderr = &out
+	t.Cleanup(func() { stderr = old })
+	inner := suggestEncryption(func(command.Meta) int { return 0 }, i.CommandLine.View)
+	if inner(command.Meta{}); out.Len() != 0 {
+		t.Fatalf("init -json printed %q", out.String())
 	}
 }
