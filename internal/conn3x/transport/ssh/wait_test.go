@@ -77,3 +77,19 @@ func TestDialWaitDoesNotRetryABadPrivateKey(t *testing.T) {
 		t.Fatalf("bad key: err = %v after %s; want an immediate error", err, time.Since(start))
 	}
 }
+
+// A name that does not resolve will not start resolving by waiting, so a
+// jump host or target with a typo fails at once rather than at the timeout.
+func TestDialWaitDoesNotRetryUnknownHosts(t *testing.T) {
+	keys := sshtest.NewKeys(t)
+	start := time.Now()
+	_, err := DialWait(context.Background(), Config{Host: "10.0.0.1", User: "x", PrivateKey: keys.ClientKey,
+		KnownHostsFile: keys.KnownHosts(t, "10.0.0.1:22"), Jumps: []Jump{{Host: "bastion.invalid", Port: 22}}}, 30*time.Second)
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		t.Fatalf("err = %v, want a DNS error", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("an unknown host was retried for %s", d)
+	}
+}

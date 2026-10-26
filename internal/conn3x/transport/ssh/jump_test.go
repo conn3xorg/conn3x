@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -85,7 +86,7 @@ func TestParseJump(t *testing.T) {
 		"[2001:db8::1]:2200":              {Host: "2001:db8::1", Port: 2200},
 	} {
 		got, err := ParseJump(in)
-		if err != nil || got != want {
+		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Errorf("ParseJump(%q) = %+v, %v; want %+v", in, got, err, want)
 		}
 	}
@@ -93,5 +94,20 @@ func TestParseJump(t *testing.T) {
 		if _, err := ParseJump(bad); err == nil {
 			t.Errorf("ParseJump(%q) accepted", bad)
 		}
+	}
+}
+
+// A hop with its own key, as from an IdentityFile in its ssh_config entry,
+// logs in with that key rather than the target's.
+func TestJumpHostWithItsOwnKey(t *testing.T) {
+	target, jump := sshtest.New(t), sshtest.New(t)
+	c := dial(t, Config{
+		Host: target.Host, Port: target.Port, User: "test", PrivateKey: target.ClientKey,
+		KnownHostsFile: knownHostsFor(t, target, jump),
+		Jumps:          []Jump{{Host: jump.Host, Port: jump.Port, User: "test", PrivateKey: jump.ClientKey}},
+	})
+	c.Close()
+	if jump.Forwards() != 1 {
+		t.Fatalf("jump forwarded %d connections", jump.Forwards())
 	}
 }

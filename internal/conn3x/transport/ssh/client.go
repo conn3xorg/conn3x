@@ -37,7 +37,8 @@ type Config struct {
 	KnownHostsFile string // default ~/.ssh/known_hosts when HostKey is empty
 	Timeout        time.Duration
 	// Jumps are hosts to connect through first, in order, like ssh -J. Each
-	// is checked against KnownHostsFile and uses the same key.
+	// is checked against KnownHostsFile and uses the same key unless it has
+	// its own.
 	Jumps []Jump
 }
 
@@ -46,6 +47,8 @@ type Jump struct {
 	Host string
 	Port int    // default 22
 	User string // default the target's user
+	// PrivateKey is this hop's own key, PEM; empty means the target's.
+	PrivateKey []byte
 }
 
 // ParseJump reads a jump host the way ssh -J writes one: [user@]host[:port],
@@ -107,7 +110,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	// Each hop is reached through the one before it; the last is the target.
 	hops := make([]Config, 0, len(cfg.Jumps)+1)
 	for _, j := range cfg.Jumps {
-		hop := Config{Host: j.Host, Port: j.Port, User: j.User, KnownHostsFile: cfg.KnownHostsFile}
+		hop := Config{Host: j.Host, Port: j.Port, User: j.User, PrivateKey: j.PrivateKey, KnownHostsFile: cfg.KnownHostsFile}
 		if hop.Port == 0 {
 			hop.Port = 22
 		}
@@ -124,12 +127,19 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 			via[i].Close()
 		}
 	}
-	for _, hop := range hops {
+	for i, hop := range hops {
 		addr := net.JoinHostPort(hop.Host, strconv.Itoa(hop.Port))
 		hostKeyCallback, algorithms, err := hostKeyCheck(hop, addr)
 		if err != nil {
 			closeAll()
 			return nil, err
+		}
+		hopAuth := auth
+		if i < len(cfg.Jumps) && len(hop.PrivateKey) > 0 {
+			if hopAuth, err = authMethod(hop); err != nil {
+				closeAll()
+				return nil, fmt.Errorf("ssh %s: %w", addr, err)
+			}
 		}
 		var raw net.Conn
 		if len(via) == 0 {
@@ -145,7 +155,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		_ = raw.SetDeadline(deadline)
 		conn, chans, reqs, err := gossh.NewClientConn(raw, addr, &gossh.ClientConfig{
 			User:              hop.User,
-			Auth:              []gossh.AuthMethod{auth},
+			Auth:              []gossh.AuthMethod{hopAuth},
 			HostKeyCallback:   hostKeyCallback,
 			HostKeyAlgorithms: algorithms,
 			Timeout:           cfg.Timeout,

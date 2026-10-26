@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -55,7 +56,7 @@ func connectionBlock() *configschema.NestedBlock {
 				"ssh_config_file": {
 					Type:        cty.String,
 					Optional:    true,
-					Description: "An OpenSSH config file, such as ~/.ssh/config, to read HostName, User, Port, IdentityFile, ProxyJump and UserKnownHostsFile from, with host as the Host alias. Anything set in this block wins. Nothing is read unless this is set.",
+					Description: "An OpenSSH config file, such as ~/.ssh/config, to read HostName, User, Port, IdentityFile, ProxyJump and UserKnownHostsFile from, with host as the Host alias. Each ProxyJump hop is looked up the same way. Anything set in this block wins. Nothing is read unless this is set.",
 				},
 				"private_key_file": {Type: cty.String, Optional: true, Description: "Path to a private key. Defaults to the SSH agent."},
 				"host_key":         {Type: cty.String, Optional: true, Description: "Pinned host public key, in authorized_keys format."},
@@ -357,7 +358,11 @@ func poolKey(cfg ssh.Config, become bool, password []byte, useAgent, require boo
 // as: the address, the bastions on the way, how its host key is checked
 // and the user, but not the key or the password.
 func rootKey(cfg ssh.Config) string {
-	return poolKey(ssh.Config{Host: cfg.Host, Port: cfg.Port, User: cfg.User, Jumps: cfg.Jumps, HostKey: cfg.HostKey, KnownHostsFile: cfg.KnownHostsFile}, true, nil, true, false)
+	jumps := make([]ssh.Jump, len(cfg.Jumps))
+	for i, j := range cfg.Jumps {
+		jumps[i] = ssh.Jump{Host: j.Host, Port: j.Port, User: j.User}
+	}
+	return poolKey(ssh.Config{Host: cfg.Host, Port: cfg.Port, User: cfg.User, Jumps: jumps, HostKey: cfg.HostKey, KnownHostsFile: cfg.KnownHostsFile}, true, nil, true, false)
 }
 
 // optional reads an attribute added after v0.1, which older values lack.
@@ -427,7 +432,9 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 			}
 		}
 		if pj := get("ProxyJump"); !explicitJumps && pj != "" && pj != "none" {
-			jumps = strings.Split(pj, ",")
+			if cfg.Jumps, err = proxyJumps(parsed, pj, 0); err != nil {
+				return ssh.Config{}, err
+			}
 		}
 		if name := get("HostName"); name != "" {
 			cfg.Host = name
@@ -451,6 +458,56 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 		cfg.PrivateKey = key
 	}
 	return cfg, nil
+}
+
+// proxyJumps resolves a ProxyJump value the way OpenSSH does: each hop's
+// alias is looked up in the same file for its HostName, User, Port and
+// IdentityFile, and its own ProxyJump hops come before it. A user or port
+// written in the hop itself wins.
+func proxyJumps(parsed *sshconfig.Config, value string, depth int) ([]ssh.Jump, error) {
+	if depth > 8 {
+		return nil, fmt.Errorf("ssh_config_file: ProxyJump %q goes through too many hops; is there a loop?", value)
+	}
+	var out []ssh.Jump
+	for _, spec := range strings.Split(value, ",") {
+		spec = strings.TrimSpace(spec)
+		jump, err := ssh.ParseJump(spec)
+		if err != nil {
+			return nil, err
+		}
+		alias := jump.Host
+		get := func(key string) string { v, _ := parsed.Get(alias, key); return v }
+		if pj := get("ProxyJump"); pj != "" && pj != "none" {
+			before, err := proxyJumps(parsed, pj, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, before...)
+		}
+		if name := get("HostName"); name != "" {
+			jump.Host = name
+		}
+		if jump.User == "" {
+			jump.User = get("User")
+		}
+		_, after, _ := strings.Cut(spec, "@")
+		if _, _, err := net.SplitHostPort(after); err != nil { // no port written in the hop
+			if p := get("Port"); p != "" {
+				n, err := strconv.Atoi(p)
+				if err != nil || n < 1 || n > 65535 {
+					return nil, fmt.Errorf("ssh_config_file: Port %q for %s is not a port", p, alias)
+				}
+				jump.Port = n
+			}
+		}
+		if file := expandHome(get("IdentityFile")); file != "" {
+			if jump.PrivateKey, err = os.ReadFile(file); err != nil {
+				return nil, fmt.Errorf("reading private key %s for %s: %w", file, alias, err)
+			}
+		}
+		out = append(out, jump)
+	}
+	return out, nil
 }
 
 func stringOr(v cty.Value, fallback string) string {

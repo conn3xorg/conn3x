@@ -49,6 +49,11 @@ func retryable(err error) bool {
 	if errors.Is(err, ErrHostKey) {
 		return false
 	}
+	// net.DNSError is a net.Error, but a name the resolver says does not
+	// exist won't start existing by waiting. Timeouts and SERVFAIL still retry.
+	if dnsErr := (*net.DNSError)(nil); errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		return false
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) ||
 		errors.Is(err, io.EOF) ||
