@@ -12,6 +12,7 @@ import (
 	"os/user"
 	"strconv"
 	"syscall"
+	"time"
 
 	sddbus "github.com/coreos/go-systemd/v22/dbus"
 
@@ -99,6 +100,11 @@ func lookupNames(uid, gid uint32) (owner, group string, err error) {
 	return u.Username, g.Name, nil
 }
 
+// unitTimeout is how long a unit read waits for systemd, as long as
+// systemctl show does. After that the shell is asked instead; tests
+// shorten it.
+var unitTimeout = 25 * time.Second
+
 // readUnit asks systemd over D-Bus for unit's properties, keeping the
 // strings and booleans in the form "systemctl show" prints them. Without
 // D-Bus, or on any D-Bus error, the shell is asked instead.
@@ -106,6 +112,8 @@ func lookupNames(uid, gid uint32) (owner, group string, err error) {
 // ponytail: one D-Bus connection per read; keep one open if reads of many
 // units show up in a profile.
 func readUnit(ctx context.Context, unit string) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, unitTimeout)
+	defer cancel()
 	c, err := sddbus.NewWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("no D-Bus connection to systemd: %w", err)

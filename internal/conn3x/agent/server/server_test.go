@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -206,6 +208,37 @@ func TestReadUnitWithoutDBusIsUnsupported(t *testing.T) {
 	c := client(t)
 	if _, err := c.ReadUnit(context.Background(), "sshd.service"); !errors.Is(err, errors.ErrUnsupported) {
 		t.Fatalf("ReadUnit = %v, want unsupported", err)
+	}
+}
+
+func TestReadUnitTimesOutAsUnsupported(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("godbus reads DBUS_SYSTEM_BUS_ADDRESS only on Linux")
+	}
+	// A system bus that accepts and then says nothing.
+	sock := filepath.Join(t.TempDir(), "s")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { c.Close() })
+		}
+	}()
+	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+sock)
+	unitTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { unitTimeout = 25 * time.Second })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := client(t).ReadUnit(ctx, "sshd.service"); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("ReadUnit = %v, want unsupported once the agent gives up", err)
 	}
 }
 
