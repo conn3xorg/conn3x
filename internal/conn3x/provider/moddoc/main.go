@@ -96,11 +96,17 @@ func page(name, rt string, b *configschema.Block) string {
 			continue
 		}
 		desc := escape(at.Description)
+		requirement := "No"
 		switch {
 		case at.Required:
-			args = append(args, fmt.Sprintf("| `%s` | %s | Yes | %s |", a, typeName(at.Type), desc))
-		case at.Optional:
-			args = append(args, fmt.Sprintf("| `%s` | %s | No | %s |", a, typeName(at.Type), desc))
+			requirement = "Yes"
+		case inPair(b, a):
+			requirement = "One of"
+		default:
+		}
+		switch {
+		case at.Required || at.Optional:
+			args = append(args, fmt.Sprintf("| `%s` | %s | %s | %s |", a, typeName(at.Type), requirement, desc))
 		default:
 			readOnly = append(readOnly, fmt.Sprintf("| `%s` | %s | %s |", a, typeName(at.Type), desc))
 		}
@@ -170,12 +176,31 @@ func escape(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
 // firstOfPair reports whether attr is the alphabetically first of two
 // alternatives, described as "Set this or <other>", so examples set one.
 func firstOfPair(b *configschema.Block, attr string) bool {
+	other := pairedAttr(b, attr)
+	return other != "" && attr < other
+}
+
+func inPair(b *configschema.Block, attr string) bool {
+	if other := pairedAttr(b, attr); other != "" {
+		return true
+	}
+	for name, at := range b.Attributes {
+		if at.Optional && pairedAttr(b, name) == attr {
+			return true
+		}
+	}
+	return false
+}
+
+func pairedAttr(b *configschema.Block, attr string) string {
 	m := pairRe.FindStringSubmatch(b.Attributes[attr].Description)
 	if m == nil {
-		return false
+		return ""
 	}
-	_, ok := b.Attributes[m[1]]
-	return ok && attr < m[1]
+	if _, ok := b.Attributes[m[1]]; !ok {
+		return ""
+	}
+	return m[1]
 }
 
 var pairRe = regexp.MustCompile(`Set this or ([a-z_]+)\b`)

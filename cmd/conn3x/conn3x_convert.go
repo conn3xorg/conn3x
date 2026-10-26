@@ -22,7 +22,10 @@ func convertCommand() command.Command {
 
 Write the result beside the playbook so the files it copies resolve. With -i, hosts and logins come from the inventory. Exits 0 when every task converted, 3 when some need review, and 1 on errors.`,
 	}
-	ans.CommandLine.PositionalArg(&playbook, "PLAYBOOK", false)
+	// Optional to the parser so runConvert can say what's missing; the
+	// usage line still shows it as required.
+	ans.CommandLine.PositionalArg(&playbook, "PLAYBOOK", true)
+	ans.UsageOverride.Usage = "conn3x [global options] convert ansible [options] <PLAYBOOK>"
 	ans.CommandLine.StringVar(&out, "out", "", "Write the circuits to this file instead of standard output.")
 	ans.CommandLine.StringVar(&inventory, "i", "", "Inventory file (INI or YAML) to fill in each play's hosts and login from.")
 	ans.CommandLine.StringVar(&inventory, "inventory", "", "Same as -i.")
@@ -37,6 +40,10 @@ Write the result beside the playbook so the files it copies resolve. With -i, ho
 }
 
 func runConvert(playbook, inventory, out string, stdout, stderr io.Writer) int {
+	if playbook == "" {
+		fmt.Fprintln(stderr, "Error: a playbook path is required, as in: conn3x convert ansible site.yml")
+		return 1
+	}
 	var opts ansible.Options
 	if inventory != "" {
 		inv, err := ansible.ReadInventory(inventory)

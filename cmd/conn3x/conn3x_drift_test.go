@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/opentofu/opentofu/internal/command"
 )
 
 func TestDriftIsACommand(t *testing.T) {
@@ -117,5 +119,50 @@ func TestRunConvertWithInventory(t *testing.T) {
 	}
 	if code := runConvert("../../internal/conn3x/convert/ansible/testdata/web/site.yml", "missing.ini", "", &out, &errOut); code != 1 {
 		t.Fatalf("missing inventory exited %d", code)
+	}
+}
+
+// With -chdir, conn3x has already moved into that directory by the time
+// drift runs, so the child plan has to start where conn3x was started.
+func TestDriftPlanStartsInOriginalDir(t *testing.T) {
+	p := driftPlan("/bin/conn3x", "/home/me", []string{"-chdir=sub", "drift"})
+	if p.Dir != "/home/me" {
+		t.Fatalf("plan runs in %q", p.Dir)
+	}
+}
+
+// A plan that failed before reporting anything is an error, not "no drift".
+func TestDriftFailedPlanIsNotClean(t *testing.T) {
+	var out strings.Builder
+	if code := reportDrift(driftReport{}, 1, &out); code != 1 || out.Len() != 0 {
+		t.Fatalf("exit %d, printed %q", code, out.String())
+	}
+}
+
+func TestDriftRejectsJSON(t *testing.T) {
+	d, _ := findCommand(brandedRoot(t), "drift")
+	var errOut strings.Builder
+	old := stderr
+	stderr = &errOut
+	t.Cleanup(func() { stderr = old })
+	if code := command.RunCommand(d, testMeta(t), []string{"-json"}); code != 1 {
+		t.Fatalf("drift -json exited %d", code)
+	}
+	if !strings.Contains(errOut.String(), "-json") {
+		t.Fatalf("stderr: %q", errOut.String())
+	}
+}
+
+func TestConvertNeedsPlaybook(t *testing.T) {
+	c, _ := findCommand(brandedRoot(t), "convert")
+	if diags := c.Commands[0].CommandLine.RemainCheck(nil); diags.HasErrors() {
+		t.Fatalf("a missing playbook is a usage error: %s", diags.Err())
+	}
+	if u := commandUsage("convert ", c.Commands[0]); !strings.Contains(u, "ansible [options] <PLAYBOOK>") {
+		t.Fatalf("usage:\n%s", u)
+	}
+	var out, errOut strings.Builder
+	if code := runConvert("", "", "", &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "playbook path is required") {
+		t.Fatalf("exit %d: %q", code, errOut.String())
 	}
 }

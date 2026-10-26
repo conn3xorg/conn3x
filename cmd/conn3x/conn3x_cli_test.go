@@ -4,11 +4,17 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/command/views"
+	"github.com/opentofu/opentofu/internal/command/workdir"
 	"github.com/opentofu/opentofu/internal/conn3x/version"
+	"github.com/opentofu/opentofu/internal/terminal"
 )
 
 func TestHelpUsesConn3xName(t *testing.T) {
@@ -92,7 +98,8 @@ func TestRootUsageIsBranded(t *testing.T) {
 		if !strings.Contains(u, "Usage: conn3x [global options] "+name) {
 			t.Errorf("%s usage:\n%s", name, u)
 		}
-		if strings.Contains(u, "OpenTofu") || strings.Contains(u, "Usage: tofu") {
+		// version names the OpenTofu release it is built on, and only that.
+		if strings.Contains(strings.ReplaceAll(u, "the OpenTofu release", ""), "OpenTofu") || strings.Contains(u, "Usage: tofu") {
 			t.Errorf("%s usage still names OpenTofu or tofu:\n%s", name, u)
 		}
 	}
@@ -113,5 +120,66 @@ func TestTreeVersionPrintsConn3x(t *testing.T) {
 	}
 	if first := strings.SplitN(out.String(), "\n", 2)[0]; first != version.String() {
 		t.Fatalf("first line %q, want %q", first, version.String())
+	}
+}
+
+// testMeta is enough of a Meta to run a tree command in the current directory.
+func testMeta(t *testing.T) command.Meta {
+	t.Helper()
+	streams, done := terminal.StreamsForTesting(t)
+	t.Cleanup(func() { done(t) })
+	return command.Meta{View: views.NewView(streams), WorkingDir: workdir.NewDir(".")}
+}
+
+func TestVersionHelpNamesOpenTofu(t *testing.T) {
+	v, _ := findCommand(brandedRoot(t), "version")
+	if u := commandUsage("", v); !strings.Contains(u, "the OpenTofu release it is built on") {
+		t.Fatalf("version usage:\n%s", u)
+	}
+}
+
+func TestVersionJSON(t *testing.T) {
+	t.Chdir(t.TempDir())
+	v, _ := findCommand(brandedRoot(t), "version")
+	var out strings.Builder
+	old := stdout
+	stdout = &out
+	t.Cleanup(func() { stdout = old })
+	if code := command.RunCommand(v, testMeta(t), []string{"-json"}); code != 0 {
+		t.Fatalf("version -json exited %d", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("not JSON: %s\n%s", err, out.String())
+	}
+	for _, k := range []string{"conn3x_version", "terraform_version", "platform", "provider_selections"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("no %q in %s", k, out.String())
+		}
+	}
+	if got["conn3x_version"] != version.Version {
+		t.Errorf("conn3x_version = %v, want %s", got["conn3x_version"], version.Version)
+	}
+}
+
+func TestFmtFormatsCircuits(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	messy := "circuit \"web\" {\nhosts = {}\n}\n"
+	for _, name := range []string{"a.circuit.hcl", "b.circuit.hcl"} {
+		if err := os.WriteFile(name, []byte(messy), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"a.circuit.hcl"}, nil} {
+		if code := command.RunCommand(command.FmtCommander(nil), testMeta(t), args); code != 0 {
+			t.Fatalf("fmt %v exited %d", args, code)
+		}
+	}
+	for _, name := range []string{"a.circuit.hcl", "b.circuit.hcl"} {
+		got, _ := os.ReadFile(filepath.Join(dir, name))
+		if !strings.Contains(string(got), "  hosts = {}") {
+			t.Errorf("%s not formatted:\n%s", name, got)
+		}
 	}
 }

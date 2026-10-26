@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -87,5 +88,38 @@ func TestHandwrittenPagesMatchModules(t *testing.T) {
 		if _, ok := mods[name]; !ok && e.Name() != "README.md" {
 			t.Errorf("pages/%s has no module", e.Name())
 		}
+	}
+}
+
+func TestMarksBothSidesOfAPair(t *testing.T) {
+	dir := t.TempDir()
+	if err := write(dir); err != nil {
+		t.Fatal(err)
+	}
+	for page, names := range map[string][]string{
+		"file":      {"content", "content_wo"},
+		"firewalld": {"port", "service"},
+		"wait_for":  {"path", "port"},
+	} {
+		got, err := os.ReadFile(filepath.Join(dir, page+".md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range names {
+			if !strings.Contains(string(got), "| `"+name+"` |") ||
+				!regexp.MustCompile("(?m)^\\| `"+name+"` \\| [^|]+ \\| One of \\|").Match(got) {
+				t.Errorf("%s.md does not mark %s as One of:\n%s", page, name, got)
+			}
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "sysctl.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile("(?m)^\\| `value` \\| string \\| Yes \\|").Match(got) {
+		t.Error("a required single field no longer says Yes")
+	}
+	if !regexp.MustCompile("(?m)^\\| `on_remove` \\| string \\| No \\|").Match(got) {
+		t.Error("an optional single field no longer says No")
 	}
 }

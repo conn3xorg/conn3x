@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/configs"
 	"github.com/opentofu/opentofu/internal/encryption/config"
 )
@@ -30,11 +31,12 @@ https://opentofu.org/docs/language/state/encryption/
 `
 
 // suggestEncryption wraps init so a successful run ends with the
-// suggestion when state isn't encrypted.
-func suggestEncryption(run func(command.Meta) int) func(command.Meta) int {
+// suggestion when state isn't encrypted. With -json it stays quiet, since
+// the suggestion is plain text.
+func suggestEncryption(run func(command.Meta) int, view *arguments.View) func(command.Meta) int {
 	return func(m command.Meta) int {
 		code := run(m)
-		if code == 0 && !stateEncrypted(".") {
+		if code == 0 && view.ViewType != arguments.ViewJSON && !stateEncrypted(".") {
 			fmt.Fprint(stderr, encryptionSuggestion)
 		}
 		return code

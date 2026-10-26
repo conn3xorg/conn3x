@@ -27,7 +27,7 @@ builds:
       - -trimpath
       - -overlay=/tmp/conn3x-overlay-{{ .ShortCommit }}/overlay.json
     ldflags:
-      - -s -w -X github.com/opentofu/opentofu/internal/conn3x/version.Version={{ .Version }}
+      - -s -w -X github.com/opentofu/opentofu/internal/conn3x/version.Version={{ .Version }} -X github.com/opentofu/opentofu/version.dev=no
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
