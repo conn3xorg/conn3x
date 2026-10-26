@@ -64,3 +64,35 @@ func TestRevisionAbsentStaysAbsent(t *testing.T) {
 		t.Fatalf("no-op plan on old state revision = %#v, want null", got)
 	}
 }
+
+// Settings that change nothing on the host now, such as on_remove or how
+// Conn3x logs in, keep the revision, so handlers don't fire for them. A
+// content change still gives a new one.
+func TestRevisionKeptForSettingsThatDontTouchTheHost(t *testing.T) {
+	f := newFileTest(t)
+	state := f.read(f.create("x", nil))
+	rev := state.GetAttr("revision")
+
+	cfg := f.config(map[string]cty.Value{"content": cty.StringVal("x"), "on_remove": cty.StringVal("delete")})
+	planned := f.plan(state, cfg).PlannedState
+	if !planned.GetAttr("revision").RawEquals(rev) {
+		t.Fatalf("on_remove alone: planned revision = %#v, want %#v", planned.GetAttr("revision"), rev)
+	}
+	after := f.apply(state, planned, cfg)
+	if !after.GetAttr("revision").RawEquals(rev) || after.GetAttr("on_remove").AsString() != "delete" {
+		t.Fatalf("on_remove alone: after apply revision %#v, on_remove %#v", after.GetAttr("revision"), after.GetAttr("on_remove"))
+	}
+
+	conn := f.conn.AsValueMap()
+	conn["timeout"] = cty.StringVal("90s")
+	conn["become_password_file"] = cty.StringVal("/nonexistent")
+	cfg = f.config(map[string]cty.Value{"content": cty.StringVal("x"), "on_remove": cty.StringVal("delete"), "ssh": cty.ObjectVal(conn)})
+	if got := f.plan(after, cfg).PlannedState.GetAttr("revision"); !got.RawEquals(rev) {
+		t.Fatalf("ssh settings alone: planned revision = %#v, want %#v", got, rev)
+	}
+
+	cfg = f.config(map[string]cty.Value{"content": cty.StringVal("y"), "on_remove": cty.StringVal("delete")})
+	if got := f.plan(after, cfg).PlannedState.GetAttr("revision"); got.IsKnown() {
+		t.Fatalf("content change: planned revision = %#v, want unknown", got)
+	}
+}

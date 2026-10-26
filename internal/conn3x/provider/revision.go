@@ -23,8 +23,8 @@ func revisionAttr() *configschema.Attribute {
 	}
 }
 
-// planRevision keeps the prior revision when the plan changes nothing else,
-// and leaves it unknown when the host is about to change.
+// planRevision keeps the prior revision when the plan changes nothing on
+// the host, and leaves it unknown when the host is about to change.
 func planRevision(prior, planned cty.Value) cty.Value {
 	if planned.IsNull() || !planned.Type().IsObjectType() || !planned.Type().HasAttribute("revision") {
 		return planned
@@ -35,10 +35,43 @@ func planRevision(prior, planned cty.Value) cty.Value {
 		return cty.ObjectVal(vals)
 	}
 	vals["revision"] = prior.GetAttr("revision")
-	if same := cty.ObjectVal(vals); same.RawEquals(prior) {
+	if same := cty.ObjectVal(vals); hostSettings(same, prior).RawEquals(prior) {
 		return same
 	}
 	vals["revision"] = cty.UnknownVal(cty.String)
+	return cty.ObjectVal(vals)
+}
+
+// offHost are settings that change nothing on the host when they change:
+// what to do on removal, and how long to wait for a reboot or a wait_for.
+var offHost = []string{"on_remove", "timeout"}
+
+// sshMachine are the ssh settings that choose which machine is reached.
+// The rest only change how Conn3x logs in to it.
+var sshMachine = []string{"host", "port", "ssh_config_file"}
+
+// hostSettings is planned with every setting that doesn't touch the host
+// taken from prior, so comparing it with prior compares only what does.
+func hostSettings(planned, prior cty.Value) cty.Value {
+	vals := planned.AsValueMap()
+	for _, name := range offHost {
+		if _, ok := vals[name]; ok {
+			vals[name] = prior.GetAttr(name)
+		}
+	}
+	if ssh, ok := vals["ssh"]; ok {
+		was := prior.GetAttr("ssh")
+		if ssh.IsNull() || !ssh.IsKnown() || was.IsNull() || !was.IsKnown() {
+			return cty.ObjectVal(vals)
+		}
+		conn := was.AsValueMap()
+		for _, name := range sshMachine {
+			if _, ok := conn[name]; ok {
+				conn[name] = ssh.GetAttr(name)
+			}
+		}
+		vals["ssh"] = cty.ObjectVal(conn)
+	}
 	return cty.ObjectVal(vals)
 }
 
