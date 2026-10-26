@@ -363,19 +363,16 @@ func TestRequireTurnsUnavailableIntoError(t *testing.T) {
 			if tc.attr != cty.NilVal {
 				f.withConn(map[string]cty.Value{"agent": tc.attr})
 			}
-			bin := t.TempDir()
-			if err := os.WriteFile(filepath.Join(bin, "uname"), []byte("#!/bin/sh\necho riscv64\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			f.server.Env = append(f.server.Env, "PATH="+bin+":"+os.Getenv("PATH"))
+			// A build with no agent in it.
+			agentPayload = func(string) ([]byte, [32]byte, error) { return nil, [32]byte{}, errors.New("not embedded") }
 
 			cfg := f.config(map[string]cty.Value{"content": cty.StringVal("hi\n")})
 			null := cty.NullVal(cfg.Type())
 			resp := f.p.ApplyResourceChange(ctx, providers.ApplyResourceChangeRequest{
 				TypeName: "conn3x_file", PriorState: null, PlannedState: f.plan(null, cfg).PlannedState, Config: cfg,
 			})
-			if !resp.Diagnostics.HasErrors() || !strings.Contains(resp.Diagnostics.Err().Error(), "riscv64") {
-				t.Fatalf("apply on a host that can't run the agent = %v, want an error naming riscv64", resp.Diagnostics.Err())
+			if !resp.Diagnostics.HasErrors() || !strings.Contains(resp.Diagnostics.Err().Error(), "has none") {
+				t.Fatalf("apply without an agent to run = %v, want an error saying the build has none", resp.Diagnostics.Err())
 			}
 			if _, err := os.Stat(f.path); err == nil {
 				t.Fatal("the file was written through the shell anyway")

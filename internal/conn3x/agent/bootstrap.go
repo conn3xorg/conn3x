@@ -33,6 +33,16 @@ type Options struct {
 // goarch maps what uname -m says to the agent built for it.
 var goarch = map[string]string{"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
+// hostPath is the PATH every script sets before anything else, so no
+// sha256sum, mkdir or gunzip the login user put on their PATH runs in its
+// place, as root under become. Tests put fakes in front of it.
+var hostPath = "/usr/sbin:/usr/bin:/sbin:/bin"
+
+// hostScript fills in a script and sets hostPath at its top.
+func hostScript(format string, a ...any) string {
+	return "PATH=" + hostPath + "; export PATH\n" + fmt.Sprintf(format, a...)
+}
+
 // helpers are the shell functions every bootstrap script uses. A directory
 // is usable only if it is ours, private and not a symlink, and nobody but
 // us and root can rename it or anything above it. Under become "us" is
@@ -40,12 +50,14 @@ var goarch = map[string]string{"x86_64": "amd64", "amd64": "amd64", "aarch64": "
 // start. A directory others can write to counts only with the sticky bit,
 // as /var/tmp has, which stops them renaming what isn't theirs. The one
 // exception is for a login user: a directory writable by their own primary
-// group, as umask 002 with per-user groups makes ~/.cache.
+// group, as umask 002 with per-user groups makes ~/.cache, and only when
+// that group is named after them.
 const helpers = `umask 077
-me=$(id -u) mygid=$(id -g)
+me=$(id -u) mygid=$(id -g) pergroup=
+[ "$(id -gn)" = "$(id -un)" ] && pergroup=1
 sum256() { { sha256sum "$1" || shasum -a 256 "$1"; } 2>/dev/null | cut -d' ' -f1; }
 guarded() { ls -ldn -- "$1" 2>/dev/null | { read -r m n u g r || exit 1; case $u in 0|"$me") ;; *) exit 1 ;; esac
-  case $m in ?????????[tT]*) ;; ????????w*) exit 1 ;; ?????w*) [ "$me" != 0 ] && [ "$g" = "$mygid" ] ;; esac; }; }
+  case $m in ?????????[tT]*) ;; ????????w*) exit 1 ;; ?????w*) [ "$me" != 0 ] && [ -n "$pergroup" ] && [ "$g" = "$mygid" ] ;; esac; }; }
 usable() { [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ] && case $(ls -ld "$1") in drwx------*) true ;; *) false ;; esac || return 1
   _p=$(cd -P -- "$1" && pwd -P) || return 1
   while guarded "$_p"; do [ "$_p" = / ] && return 0; _p=${_p%%/*}; _p=${_p:-/}; done; return 1; }
@@ -64,6 +76,8 @@ case $m in x86_64|amd64) name=%s ;; aarch64|arm64) name=%s ;; *) exit 0 ;; esac
 if systemctl is-active --quiet fapolicyd 2>/dev/null; then echo fapolicyd; exit 0; fi
 command -v gunzip >/dev/null 2>&1 && echo gunzip
 uid=$(id -u)
+# sudo can keep the login user's XDG_CACHE_HOME, which may point into their home.
+[ "$uid" = 0 ] && XDG_CACHE_HOME=
 trap 'exit 1' HUP INT TERM
 found=
 for d in "${XDG_CACHE_HOME:-$HOME/.cache}/conn3x" "$HOME/.conn3x" "/var/tmp/conn3x-$uid" "/dev/shm/conn3x-$uid"; do
@@ -166,7 +180,7 @@ func Attach(ctx context.Context, c *ssh.Client, o Options) (*Client, error) {
 	if o.Become != nil {
 		run = o.Become.Run
 	}
-	res, err := run(ctx, fmt.Sprintf(probeScript, ssh.Quote(builds["amd64"].name), ssh.Quote(builds["arm64"].name), create), nil)
+	res, err := run(ctx, hostScript(probeScript, ssh.Quote(builds["amd64"].name), ssh.Quote(builds["arm64"].name), create), nil)
 	if errors.Is(err, ssh.ErrBecome) {
 		return nil, err // the shell would fail the same way
 	}
@@ -216,7 +230,7 @@ func Attach(ctx context.Context, c *ssh.Client, o Options) (*Client, error) {
 		if !d.exec {
 			continue
 		}
-		res, err := run(ctx, fmt.Sprintf(uploadScript, ssh.Quote(d.path), ssh.Quote(b.name), b.sum, unpack), gz)
+		res, err := run(ctx, hostScript(uploadScript, ssh.Quote(d.path), ssh.Quote(b.name), b.sum, unpack), gz)
 		switch {
 		case err != nil:
 			failures = append(failures, fmt.Sprintf("uploading to %s: %v", d.path, err))
@@ -240,7 +254,7 @@ func Attach(ctx context.Context, c *ssh.Client, o Options) (*Client, error) {
 // start runs the agent cached in dir, if its sha256 is still want, and
 // waits for its hello.
 func start(ctx context.Context, c *ssh.Client, dir, name, want string, become *ssh.Become) (*Client, error) {
-	script := fmt.Sprintf(startScript, ssh.Quote(dir), ssh.Quote(name), want)
+	script := hostScript(startScript, ssh.Quote(dir), ssh.Quote(name), want)
 	if become != nil {
 		a, err := startBecome(ctx, c, script, become)
 		if err != nil && !errors.Is(err, ssh.ErrBecome) {
