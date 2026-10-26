@@ -100,10 +100,12 @@ container, in about five.
   package and service changes headed for it.
 - **Keeps your providers, modules and state.** Conn3x is built on OpenTofu, so every
   Terraform and OpenTofu provider works unchanged.
-- **Covers the everyday work.** Files and templates, packages and repositories,
-  services, users and SSH keys, cron jobs and timers, sysctl, mounts, the hostname and
-  time zone, firewalld and ufw, SELinux, downloads, archives, git checkouts, reboots and
-  host facts. [Every module](https://docs.conn3x.org/modules/file) is in the docs.
+- **Covers the everyday work.** Files, templates, and lines or blocks inside them;
+  packages and repositories, services, users and SSH keys, cron jobs and timers,
+  sysctl, mounts, the hostname, time zone and locale, firewalld and ufw, SELinux,
+  downloads, archives, git checkouts, reboots, waits and guarded commands, plus facts
+  about each host to plan with. [Every module](https://docs.conn3x.org/modules/file)
+  is in the docs.
 - **Tells you what changed by hand.** `conn3x drift` reports drift across both layers
   and exits 2 when it finds some, so a scheduled job can alert on it.
 - **Brings your playbooks.** `conn3x convert ansible -i inventory site.yml` turns a
@@ -121,7 +123,8 @@ container, in about five.
 | Cloud addresses into host config | Inventory scripts or plugins | An expression |
 | Drift on hosts | Run the playbook in check mode | `conn3x drift`, both layers |
 
-It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu today.
+It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu today,
+and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian 13.
 Network devices come next, then Windows.
 
 ## Built on OpenTofu
