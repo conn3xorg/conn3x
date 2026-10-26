@@ -25,3 +25,21 @@ func TestEveryResourceTypeIsAStepModule(t *testing.T) {
 		}
 	}
 }
+
+// Circuits sort every ssh setting into ones a host object may override and
+// ones only the ssh block takes; a new setting must land in one of them.
+func TestCircuitsKnowEverySSHSetting(t *testing.T) {
+	known := map[string]bool{}
+	for _, name := range configs.Conn3xSSHSettings() {
+		known[name] = true
+	}
+	for name := range connectionBlock().Block.Attributes {
+		if !known[name] {
+			t.Errorf("ssh setting %q is missing from hostOverrides or sshOnly in internal/configs", name)
+		}
+		delete(known, name)
+	}
+	for name := range known {
+		t.Errorf("internal/configs lists %q, which the ssh block doesn't have", name)
+	}
+}

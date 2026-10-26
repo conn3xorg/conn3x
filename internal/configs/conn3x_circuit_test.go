@@ -198,6 +198,48 @@ func TestCircuitErrors(t *testing.T) {
     }
   }
 }`, "exactly one module"},
+		"two different modules": {`circuit "a" {
+  hosts = { h = "1.2.3.4" }
+  ssh {
+    user = "root"
+  }
+  step "s" {
+    package {
+      name = "nginx"
+    }
+    service {
+      name = "nginx"
+    }
+  }
+}`, "exactly one module"},
+		"lifecycle block": {`circuit "a" {
+  hosts = { h = "1.2.3.4" }
+  ssh {
+    user = "root"
+  }
+  step "s" {
+    package {
+      name = "nginx"
+    }
+    lifecycle {
+      prevent_destroy = true
+    }
+  }
+}`, `one module block, not "lifecycle"`},
+		"unknown block": {`circuit "a" {
+  hosts = { h = "1.2.3.4" }
+  ssh {
+    user = "root"
+  }
+  step "s" {
+    package {
+      name = "nginx"
+    }
+    retries {
+      count = 3
+    }
+  }
+}`, `one module block, not "retries"`},
 		"duplicate step": {`circuit "a" {
   hosts = { h = "1.2.3.4" }
   ssh {
@@ -262,6 +304,29 @@ circuit "a" {
 				t.Fatalf("error %q does not mention %q", diags.Error(), tc.want)
 			}
 		})
+	}
+}
+
+func TestUnsupportedStepBlockPointsAtItsType(t *testing.T) {
+	_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": `circuit "a" {
+  hosts = { h = "1.2.3.4" }
+  ssh {
+    user = "root"
+  }
+  step "s" {
+    package {
+      name = "nginx"
+    }
+    lifecycle {
+      prevent_destroy = true
+    }
+  }
+}`})
+	if len(diags) != 1 {
+		t.Fatalf("want one diagnostic, got %d: %s", len(diags), diags.Error())
+	}
+	if rng := diags[0].Subject; rng == nil || rng.Start.Line != 10 || rng.Start.Column != 5 || rng.End.Column != 14 {
+		t.Fatalf("subject %v should cover the lifecycle keyword", rng)
 	}
 }
 
@@ -866,5 +931,31 @@ circuit "app" {
 	// Reported once per circuit, not once per step.
 	if _, d := mod.ManagedResources["conn3x_file.app__two"].ForEach.Value(nil); d.HasErrors() {
 		t.Fatalf("second step repeats the error: %v", d)
+	}
+}
+
+// Fields that aren't ssh settings are the user's own data, read with
+// each.value, and stay allowed.
+func TestHostObjectKeepsCustomFields(t *testing.T) {
+	src := `
+circuit "app" {
+  hosts = { a = { address = "10.0.0.1", role = "db" }, b = { address = "10.0.0.2", role = "web" } }
+  ssh {
+    user = "root"
+  }
+  step "one" {
+    file {
+      path    = "/etc/role"
+      content = each.value.role
+    }
+  }
+}
+`
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	if _, d := mod.ManagedResources["conn3x_file.app__one"].ForEach.Value(nil); d.HasErrors() {
+		t.Fatalf("a custom field was rejected: %v", d)
 	}
 }

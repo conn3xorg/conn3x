@@ -48,7 +48,7 @@ func TestHostObjectsOverrideSSH(t *testing.T) {
 	}
 }
 
-// A field a host object doesn't take, such as become, fails validate
+// An ssh setting only the ssh block takes, such as become, fails validate
 // instead of silently doing nothing.
 func TestHostObjectUnknownFieldFailsValidate(t *testing.T) {
 	w := &workdir{t: t, dir: t.TempDir()}

@@ -265,8 +265,9 @@ func eachMeansHost(expr hclsyntax.Expression, rng hcl.Range) hclsyntax.Expressio
 	}
 }
 
-// checkedHosts is a circuit's hosts that rejects host objects with fields
-// Conn3x doesn't read, such as become, which would otherwise do nothing.
+// checkedHosts is a circuit's hosts that rejects host objects setting an ssh
+// setting only the ssh block takes, such as become, which would otherwise do
+// nothing.
 type checkedHosts struct {
 	hcl.Expression
 }
@@ -276,9 +277,9 @@ func (h *checkedHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) 
 	if diags.HasErrors() || v.IsNull() {
 		return v, diags
 	}
-	accepted := map[string]bool{"address": true}
-	for _, name := range hostOverrides {
-		accepted[name] = true
+	rejected := map[string]bool{}
+	for _, name := range sshOnly {
+		rejected[name] = true
 	}
 	check := func(who string, ty cty.Type) {
 		if !ty.IsObjectType() {
@@ -286,7 +287,7 @@ func (h *checkedHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) 
 		}
 		var names []string
 		for _, name := range sortedAttrs(ty) {
-			if !accepted[name] {
+			if rejected[name] {
 				names = append(names, fmt.Sprintf("%q", name))
 			}
 		}
@@ -298,7 +299,7 @@ func (h *checkedHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) 
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Unsupported field in host object",
-			Detail: fmt.Sprintf("%s sets %s, which a host object doesn't take. A host object takes address, %s and %s. Other ssh settings, such as become, go in the circuit's ssh block.",
+			Detail: fmt.Sprintf("%s sets %s, which only the circuit's ssh block takes. A host object can set address, %s and %s, plus any fields of your own to read with each.value.",
 				who, strings.Join(names, ", "), strings.Join(hostOverrides[:last], ", "), hostOverrides[last]),
 			Subject: &rng,
 		})

@@ -289,6 +289,25 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			})
 		}
 	}
+	if len(body.Blocks) > 1 {
+		unsupported := false
+		for _, block := range body.Blocks {
+			if _, ok := circuitModules[block.Type]; ok || block.Type == "template" {
+				continue
+			}
+			unsupported = true
+			rng := block.TypeRange
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unsupported block in step",
+				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify and one module block, not %q.", block.Type),
+				Subject:  &rng,
+			})
+		}
+		if unsupported {
+			return nil, diags
+		}
+	}
 	if len(body.Blocks) != 1 {
 		rng := step.DefRange
 		return nil, append(diags, &hcl.Diagnostic{
@@ -364,6 +383,17 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 // hostOverrides are the ssh settings a host object in hosts may set for
 // itself, over the circuit's ssh block.
 var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "jump_hosts"}
+
+// sshOnly are the ssh settings a host object can't set. Naming one in a host
+// object is an error, because it would otherwise do nothing; any other field
+// is the user's own data, read with each.value.
+var sshOnly = []string{"host", "ssh_config_file", "known_hosts_file", "become", "become_password_file", "agent", "timeout"}
+
+// Conn3xSSHSettings lists every ssh setting circuits know about, so the
+// provider can check it against its schema.
+func Conn3xSSHSettings() []string {
+	return append(append([]string{}, hostOverrides...), sshOnly...)
+}
 
 // sshBlockFor builds a step's ssh block. A host in hosts is either an
 // address or an object with an address and any of hostOverrides:
