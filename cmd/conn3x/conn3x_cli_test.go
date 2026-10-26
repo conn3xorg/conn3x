@@ -5,6 +5,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -157,5 +159,27 @@ func TestVersionJSON(t *testing.T) {
 	}
 	if got["conn3x_version"] != version.Version {
 		t.Errorf("conn3x_version = %v, want %s", got["conn3x_version"], version.Version)
+	}
+}
+
+func TestFmtFormatsCircuits(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	messy := "circuit \"web\" {\nhosts = {}\n}\n"
+	for _, name := range []string{"a.circuit.hcl", "b.circuit.hcl"} {
+		if err := os.WriteFile(name, []byte(messy), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"a.circuit.hcl"}, nil} {
+		if code := command.RunCommand(command.FmtCommander(nil), testMeta(t), args); code != 0 {
+			t.Fatalf("fmt %v exited %d", args, code)
+		}
+	}
+	for _, name := range []string{"a.circuit.hcl", "b.circuit.hcl"} {
+		got, _ := os.ReadFile(filepath.Join(dir, name))
+		if !strings.Contains(string(got), "  hosts = {}") {
+			t.Errorf("%s not formatted:\n%s", name, got)
+		}
 	}
 }
