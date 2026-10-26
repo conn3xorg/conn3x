@@ -102,7 +102,7 @@ func TestPoolKeySeparatesJumpPaths(t *testing.T) {
 	a := ssh.Config{Host: "10.0.1.5", User: "deploy", Jumps: []ssh.Jump{{Host: "bastion-a", Port: 22}}}
 	b := a
 	b.Jumps = []ssh.Jump{{Host: "bastion-b", Port: 22}}
-	if poolKey(a, false, nil) == poolKey(b, false, nil) {
+	if poolKey(a, false, nil, false, false) == poolKey(b, false, nil, false, false) {
 		t.Fatal("two jump paths share one pooled connection")
 	}
 }

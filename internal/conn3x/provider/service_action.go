@@ -90,7 +90,7 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 	if req.PlannedState.IsNull() || !req.PriorState.IsNull() {
 		return resp
 	}
-	host, err := dialConnection(ctx, req.PlannedState.GetAttr("ssh"))
+	host, err := dialForApply(ctx, req.PlannedState.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp

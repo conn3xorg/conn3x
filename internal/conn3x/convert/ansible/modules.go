@@ -278,7 +278,10 @@ func fileModule(in *input) ([]step, string) {
 		in.ignore("recurse")
 		return one("directory", in.owners(attrs))
 	case "link":
-		return one("link", in.owners([]attr{s("path", path), s("target", in.str("src"))}))
+		if in.has("owner") || in.has("group") || in.has("mode") {
+			return nil, "sets owner, group or mode on a link, which a Conn3x link step doesn't manage"
+		}
+		return one("link", []attr{s("path", path), s("target", in.str("src"))})
 	}
 	return nil, "changes an existing file's attributes or removes it, which the converter can't translate yet"
 }
