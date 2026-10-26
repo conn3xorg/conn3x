@@ -50,6 +50,8 @@ func FileConformance(t *testing.T, sh, r modules.Runner) {
 		{name: "mode 4755", setup: "printf x > f && chmod 4755 f", want: file.Actual{Exists: true, Content: "x", Mode: "4755", Owner: me}, linux: true},
 		// The mode and owner are the link's own, the content its target's.
 		{name: "symlink", setup: "printf target > t && chmod 0640 t && ln -s t f", want: file.Actual{Exists: true, Content: "target", Mode: "0777", Owner: me}},
+		// The owner is the link's too, not its target's.
+		{name: "symlink owned by nobody", setup: "printf target > t && chmod 0640 t && ln -s t f && chown -h 65534:65534 f", want: file.Actual{Exists: true, Content: "target", Mode: "0777", Owner: "nobody"}, root: true, linux: true},
 		{name: "dangling symlink", setup: "ln -s nowhere f", wantErr: true},
 		{name: "directory", setup: "mkdir f", wantErr: true},
 		{name: "unknown owner", setup: "printf x > f && chmod 0644 f && chown 4242:4242 f", want: file.Actual{Exists: true, Content: "x", Mode: "0644", Owner: "UNKNOWN", Group: "UNKNOWN"}, fallback: true, root: true},
