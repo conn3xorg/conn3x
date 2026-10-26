@@ -73,6 +73,23 @@ just what you did.
 - CI has to pass: `lint`, `test`, `build`, and `DCO`.
 - PRs are squash-merged, so the PR title becomes the commit subject.
 
+## When a pull request goes quiet
+
+Life happens, and nobody owes the project their evenings. So you know what
+to expect:
+
+- We aim to reply to a new PR within a few days.
+- If a PR is waiting on you, there's no deadline. After two weeks without
+  activity we'll check in, just to see whether you still want to finish it.
+- After a month with no reply, we may finish the change ourselves or close
+  the PR. If we finish it, your commits stay in it, or you're credited with
+  a `Co-authored-by:` line, and you're thanked in the release notes either
+  way.
+- A closed PR can always be reopened. Come back whenever you like.
+
+The same goes for issues. If you've said you'll take one and two weeks pass
+without a PR, it's open for someone else.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the
