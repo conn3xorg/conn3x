@@ -142,6 +142,9 @@ func (p *Provider) PlanResourceChange(_ context.Context, req providers.PlanResou
 	if rt, ok := resourceTypes[req.TypeName]; ok {
 		resp := rt.plan(req)
 		resp.PlannedState = planRevision(req.PriorState, resp.PlannedState)
+		if anotherMachine(req.PriorState, resp.PlannedState) {
+			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("port"))
+		}
 		return resp
 	}
 	return providers.PlanResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}

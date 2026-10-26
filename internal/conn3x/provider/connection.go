@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -598,6 +599,49 @@ func hostPort(ssh cty.Value) string {
 		return ssh.GetAttr("host").AsString() + ":" + port.AsBigFloat().Text('f', 0)
 	}
 	return ssh.GetAttr("host").AsString()
+}
+
+// anotherMachine reports whether the same host address now reaches a
+// different machine, as a new port can: the keys recorded for the old and
+// new addresses have none in common. When either isn't recorded it can't
+// tell, and the plan stays an update; connecting still checks the key.
+func anotherMachine(prior, planned cty.Value) bool {
+	if prior.IsNull() || planned.IsNull() || !planned.Type().HasAttribute("ssh") {
+		return false
+	}
+	was, now := prior.GetAttr("ssh"), planned.GetAttr("ssh")
+	if !was.IsWhollyKnown() || !now.IsWhollyKnown() || was.IsNull() || now.IsNull() ||
+		!was.GetAttr("host").RawEquals(now.GetAttr("host")) { // a new host already replaces
+		return false
+	}
+	before, err := sshConfig(was)
+	if err != nil {
+		return false
+	}
+	after, err := sshConfig(now)
+	if err != nil || before.Host == after.Host && portOr22(before.Port) == portOr22(after.Port) {
+		return false
+	}
+	old, _ := ssh.KnownKeys(before)
+	cur, _ := ssh.KnownKeys(after)
+	if len(old) == 0 || len(cur) == 0 {
+		return false
+	}
+	for _, a := range old {
+		for _, b := range cur {
+			if bytes.Equal(a.Marshal(), b.Marshal()) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func portOr22(port int) int {
+	if port == 0 {
+		return 22
+	}
+	return port
 }
 
 // agentPayload is where attach gets the agent; tests swap it.

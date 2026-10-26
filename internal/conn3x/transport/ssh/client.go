@@ -364,26 +364,14 @@ func hostKeyCheck(cfg Config, addr string) (gossh.HostKeyCallback, []string, err
 		}, []string{pinned.Type()}, nil
 	}
 
-	file := cfg.KnownHostsFile
-	if file == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, nil, fmt.Errorf("%w: no known_hosts file and no home directory: %v", ErrHostKey, err)
-		}
-		file = filepath.Join(home, ".ssh", "known_hosts")
-	}
-	check, err := knownhosts.New(file)
+	file, check, err := knownHosts(cfg, addr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: cannot read known_hosts file %s for %s: %v", ErrHostKey, file, addr, err)
+		return nil, nil, err
 	}
 
 	var algorithms []string
-	probe := &net.TCPAddr{IP: net.IPv4zero}
-	var keyErr *knownhosts.KeyError
-	if err := check(addr, probe, probeKey{}); errors.As(err, &keyErr) {
-		for _, k := range keyErr.Want {
-			algorithms = append(algorithms, algorithmsFor(k.Key.Type())...)
-		}
+	for _, k := range recorded(check, addr) {
+		algorithms = append(algorithms, algorithmsFor(k.Type())...)
 	}
 
 	return func(hostname string, remote net.Addr, key gossh.PublicKey) error {
@@ -400,6 +388,57 @@ func hostKeyCheck(cfg Config, addr string) (gossh.HostKeyCallback, []string, err
 			return fmt.Errorf("%w: %s: %v", ErrHostKey, addr, err)
 		}
 	}, algorithms, nil
+}
+
+// KnownKeys returns the host keys cfg's target is trusted with: its pinned
+// host_key, or the keys its known_hosts file records for its address. None
+// means the address isn't recorded.
+func KnownKeys(cfg Config) ([]gossh.PublicKey, error) {
+	if cfg.Port == 0 {
+		cfg.Port = 22
+	}
+	if cfg.HostKey != "" {
+		pinned, _, _, _, err := gossh.ParseAuthorizedKey([]byte(cfg.HostKey))
+		if err != nil {
+			return nil, err
+		}
+		return []gossh.PublicKey{pinned}, nil
+	}
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	_, check, err := knownHosts(cfg, addr)
+	if err != nil {
+		return nil, err
+	}
+	return recorded(check, addr), nil
+}
+
+func knownHosts(cfg Config, addr string) (string, gossh.HostKeyCallback, error) {
+	file := cfg.KnownHostsFile
+	if file == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", nil, fmt.Errorf("%w: no known_hosts file and no home directory: %v", ErrHostKey, err)
+		}
+		file = filepath.Join(home, ".ssh", "known_hosts")
+	}
+	check, err := knownhosts.New(file)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: cannot read known_hosts file %s for %s: %v", ErrHostKey, file, addr, err)
+	}
+	return file, check, nil
+}
+
+// recorded asks check about a key no host has, so it answers with the keys
+// it does have for addr.
+func recorded(check gossh.HostKeyCallback, addr string) []gossh.PublicKey {
+	var keys []gossh.PublicKey
+	var keyErr *knownhosts.KeyError
+	if err := check(addr, &net.TCPAddr{IP: net.IPv4zero}, probeKey{}); errors.As(err, &keyErr) {
+		for _, k := range keyErr.Want {
+			keys = append(keys, k.Key)
+		}
+	}
+	return keys
 }
 
 // algorithmsFor lists the signature algorithms a host key type can use.
