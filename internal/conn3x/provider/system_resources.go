@@ -179,3 +179,34 @@ func applyTimezone(ctx context.Context, req providers.ApplyResourceChangeRequest
 		return nil
 	})
 }
+
+func localeSchema() providers.Schema {
+	return singletonSchema("The host's system locale: LANG.", "Locale name, such as en_US.UTF-8 or C.UTF-8. A locale that isn't installed is generated where locale-gen exists; on the Red Hat family, add a package step for its glibc-langpack first.")
+}
+
+func validateLocale(cfg cty.Value) tfdiags.Diagnostics {
+	return validateName(cfg, system.ValidateLocale)
+}
+
+func planLocale(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planSynced(req, "locale", nil, []string{"name"})
+}
+
+func readLocale(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		lang, err := system.ReadLocale(ctx, h)
+		if err != nil {
+			return cty.NilVal, err
+		}
+		return withSync(prior, system.NormalizeLocale(lang) == system.NormalizeLocale(prior.GetAttr("name").AsString())), nil
+	})
+}
+
+func applyLocale(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applySingleton(ctx, req, func(ctx context.Context, h *hostConn, name string) error {
+		if err := system.ApplyLocale(ctx, h, name); err != nil {
+			return fmt.Errorf("locale %s: %w", name, err)
+		}
+		return nil
+	})
+}
