@@ -65,14 +65,18 @@ func TestAgentBench(t *testing.T) {
 			env = []string{"CONN3X_AGENT=require"}
 		}
 		r.must(t, dir, env, "init", "-no-color")
+		// ponytail: -parallelism=8 in both modes. At the default 10, the
+		// shell runs ten commands at once on one connection and sshd's
+		// MaxSessions (10) refuses one with "open failed". Drop it once
+		// the shell caps its sessions per connection.
 		for _, step := range []struct {
 			phase string
 			args  []string
 			want  string
 		}{
-			{"cold_apply", []string{"apply", "-auto-approve", "-no-color"}, "66 added"},
-			{"refresh_plan", []string{"plan", "-no-color"}, "No changes."},
-			{"second_plan", []string{"plan", "-no-color"}, "No changes."},
+			{"cold_apply", []string{"apply", "-auto-approve", "-no-color", "-parallelism=8"}, "66 added"},
+			{"refresh_plan", []string{"plan", "-no-color", "-parallelism=8"}, "No changes."},
+			{"second_plan", []string{"plan", "-no-color", "-parallelism=8"}, "No changes."},
 		} {
 			start := time.Now()
 			out := r.must(t, dir, env, step.args...)
