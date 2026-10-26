@@ -289,7 +289,7 @@ func dialForApply(ctx context.Context, conn cty.Value) (*hostConn, error) {
 }
 
 func dial(ctx context.Context, conn cty.Value, upload bool) (*hostConn, error) {
-	h, err := pooled(ctx, conn)
+	h, err := pooled(ctx, conn, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +299,10 @@ func dial(ctx context.Context, conn cty.Value, upload bool) (*hostConn, error) {
 	return h, nil
 }
 
-func pooled(ctx context.Context, conn cty.Value) (*hostConn, error) {
+// pooled returns the pooled connection for conn, dialing it if need be.
+// A dial waits for the host as long as conn's timeout says, or maxWait
+// when that is shorter and not zero.
+func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostConn, error) {
 	cfg, err := sshConfig(conn)
 	if err != nil {
 		return nil, err
@@ -348,6 +351,9 @@ func pooled(ctx context.Context, conn cty.Value) (*hostConn, error) {
 		if wait, err = time.ParseDuration(v); err != nil {
 			wait = defaultConnectWait
 		}
+	}
+	if maxWait > 0 && maxWait < wait {
+		wait = maxWait
 	}
 	client, err := ssh.DialWait(ctx, cfg, wait)
 	if err != nil {
@@ -591,6 +597,38 @@ func planID(req providers.PlanResourceChangeRequest, parts ...string) cty.Value 
 		}
 	}
 	return cty.StringVal(id)
+}
+
+// readWait is how long a refresh waits for a host that doesn't answer.
+// Unlike an apply, a refresh can go on without it; see reachable.
+const readWait = 10 * time.Second
+
+// UnreachableSummary heads the warning reachable gives. drift treats it as
+// an error, since a host it couldn't read can't be called unchanged.
+const UnreachableSummary = "Host not reachable during refresh"
+
+// unreachable holds the addresses a refresh couldn't reach, so the rest of
+// a host's steps keep their state at once instead of each waiting again.
+var unreachable sync.Map
+
+// reachable dials the host a step's prior state names, for a refresh. When
+// nothing answers there, as when sshd has moved to the port the
+// configuration now names, it returns a warning instead, and the step
+// keeps its state. Any other dial error is left for the read to report.
+func reachable(ctx context.Context, conn cty.Value) tfdiags.Diagnostics {
+	cfg, err := sshConfig(conn)
+	if err != nil {
+		return nil
+	}
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(portOr22(cfg.Port)))
+	if _, down := unreachable.Load(addr); !down {
+		if _, err := pooled(ctx, conn, readWait); err == nil || !ssh.Unreachable(err) {
+			return nil
+		}
+		unreachable.Store(addr, true)
+	}
+	return tfdiags.Diagnostics{tfdiags.Sourceless(tfdiags.Warning, UnreachableSummary, fmt.Sprintf(
+		"Nothing answered at %s, so this step keeps what the last apply recorded. If sshd has moved to the address or port in your configuration, the plan uses that one. If the host is down, applying will fail to connect to it.", addr))}
 }
 
 // hostPort names a known ssh block's host: the address, plus the port when it isn't 22.

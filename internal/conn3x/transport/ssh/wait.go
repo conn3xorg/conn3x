@@ -44,6 +44,10 @@ func DialWait(ctx context.Context, cfg Config, wait time.Duration) (*Client, err
 	}
 }
 
+// Unreachable reports whether a dial failed for want of an answer at the
+// address, rather than from something the host said, such as a wrong key.
+func Unreachable(err error) bool { return retryable(err) }
+
 // retryable reports whether a dial error could go away on its own.
 func retryable(err error) bool {
 	if errors.Is(err, ErrHostKey) {

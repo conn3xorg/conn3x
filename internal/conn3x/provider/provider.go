@@ -133,9 +133,26 @@ func (p *Provider) UpgradeResourceIdentity(context.Context, providers.UpgradeRes
 
 func (p *Provider) ReadResource(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
+		if conn := priorSSH(req.PriorState); !conn.IsNull() {
+			if diags := reachable(ctx, conn); len(diags) > 0 {
+				return providers.ReadResourceResponse{NewState: req.PriorState, Private: req.Private, Diagnostics: diags}
+			}
+		}
 		return rt.read(ctx, req)
 	}
 	return providers.ReadResourceResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
+}
+
+// priorSSH is a step's recorded ssh block, or null when it has none.
+func priorSSH(prior cty.Value) cty.Value {
+	if prior.IsNull() || !prior.IsKnown() || !prior.Type().IsObjectType() || !prior.Type().HasAttribute("ssh") {
+		return cty.NullVal(cty.DynamicPseudoType)
+	}
+	conn := prior.GetAttr("ssh")
+	if !conn.IsWhollyKnown() {
+		return cty.NullVal(cty.DynamicPseudoType)
+	}
+	return conn
 }
 
 func (p *Provider) PlanResourceChange(_ context.Context, req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
