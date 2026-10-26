@@ -234,3 +234,31 @@ func rewriteLoopRef(e *hclsyntax.ScopeTraversalExpr, looping bool) hcl.Diagnosti
 	}, t[2:]...)
 	return nil
 }
+
+// eachMeansHost evaluates expr, from the circuit's ssh block, with each
+// bound to the host as in a plain step. The ssh block's syntax is shared by
+// every step, so it is wrapped rather than rewritten in place:
+//
+//	[for each in [{ key = each.value.host_key, value = each.value.host }] : expr][0]
+func eachMeansHost(expr hclsyntax.Expression, rng hcl.Range) hclsyntax.Expression {
+	lit := func(v cty.Value) *hclsyntax.LiteralValueExpr {
+		return &hclsyntax.LiteralValueExpr{Val: v, SrcRange: rng}
+	}
+	host := &hclsyntax.ObjectConsExpr{
+		Items: []hclsyntax.ObjectConsItem{
+			{KeyExpr: lit(cty.StringVal("key")), ValueExpr: eachPath(rng, "value", "host_key")},
+			{KeyExpr: lit(cty.StringVal("value")), ValueExpr: eachPath(rng, "value", "host")},
+		},
+		SrcRange: rng, OpenRange: rng,
+	}
+	return &hclsyntax.IndexExpr{
+		Collection: &hclsyntax.ForExpr{
+			ValVar:   "each",
+			CollExpr: &hclsyntax.TupleConsExpr{Exprs: []hclsyntax.Expression{host}, SrcRange: rng, OpenRange: rng},
+			ValExpr:  expr,
+			SrcRange: rng, OpenRange: rng, CloseRange: rng,
+		},
+		Key:      lit(cty.Zero),
+		SrcRange: rng, OpenRange: rng, BracketRange: rng,
+	}
+}

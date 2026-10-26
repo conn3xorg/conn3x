@@ -371,6 +371,10 @@ var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "ju
 func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range, hostPath []string) *hclsyntax.Block {
 	ssh := hclsyntax.Attributes{}
 	for k, v := range sshAttrs {
+		if len(hostPath) > 1 {
+			// A looping step's each is the instance; the ssh block means the host.
+			v = &hclsyntax.Attribute{Name: v.Name, Expr: eachMeansHost(v.Expr, v.SrcRange), SrcRange: v.SrcRange, NameRange: v.NameRange, EqualsRange: v.EqualsRange}
+		}
 		ssh[k] = v
 	}
 	attr := func(name string, expr hclsyntax.Expression) *hclsyntax.Attribute {
@@ -382,7 +386,7 @@ func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range, hostPath []s
 	ssh["host"] = attr("host", try(eachPath(sshRange, append(hostPath[:len(hostPath):len(hostPath)], "address")...), eachPath(sshRange, hostPath...)))
 	for _, name := range hostOverrides {
 		var fallback hclsyntax.Expression = &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.DynamicPseudoType), SrcRange: sshRange}
-		if a, ok := sshAttrs[name]; ok {
+		if a, ok := ssh[name]; ok {
 			fallback = a.Expr
 		}
 		ssh[name] = attr(name, try(eachPath(sshRange, append(hostPath[:len(hostPath):len(hostPath)], name)...), fallback))

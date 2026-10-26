@@ -785,3 +785,45 @@ func TestLoopingStepLowersTwice(t *testing.T) {
 		}
 	}
 }
+
+// In a looping step, each.key and each.value in the circuit's ssh block
+// still mean the host, not the host/item instance.
+func TestLoopingStepSSHMeansTheHost(t *testing.T) {
+	src := `
+circuit "app" {
+  hosts = { a = "10.0.0.1" }
+  ssh {
+    user             = "u-${each.key}"
+    known_hosts_file = "/kh/${try(each.value.address, each.value)}"
+  }
+  step "conf" {
+    for_each = ["x"]
+    file {
+      path    = "/etc/${item.value}"
+      content = "x"
+    }
+  }
+}
+`
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	r := mod.ManagedResources["conn3x_file.app__conf"]
+	inst := cty.ObjectVal(map[string]cty.Value{
+		"host_key": cty.StringVal("a"), "host": cty.StringVal("10.0.0.1"),
+		"item_key": cty.StringVal("x"), "item": cty.StringVal("x"),
+	})
+	ctx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{"each": cty.ObjectVal(map[string]cty.Value{"key": cty.StringVal("a/x"), "value": inst})},
+		Functions: map[string]function.Function{"try": tryfunc.TryFunc},
+	}
+	ssh, _, _ := r.Config.PartialContent(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "ssh"}}})
+	sshAttrs, _ := ssh.Blocks[0].Body.JustAttributes()
+	for name, want := range map[string]string{"user": "u-a", "known_hosts_file": "/kh/10.0.0.1"} {
+		got, d := sshAttrs[name].Expr.Value(ctx)
+		if d.HasErrors() || got.AsString() != want {
+			t.Errorf("ssh %s = %#v (%v), want %q", name, got, d, want)
+		}
+	}
+}
