@@ -23,6 +23,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrHostKey is wrapped by every host key verification failure.
@@ -101,6 +102,8 @@ type Client struct {
 	reported int  // the limit last logged
 	closed   int  // sessions closed but not yet given back; see done
 	pinging  bool // a goroutine is giving them back
+
+	alive singleflight.Group // the keepalive Alive callers share
 }
 
 // defaultMaxSessions caps the sessions open at once on one connection.
@@ -597,8 +600,13 @@ func (b *syncBuffer) Bytes() []byte {
 func (c *Client) Addr() string { return c.addr }
 
 // Alive reports whether the connection still answers a keepalive.
+// Callers checking at once share one: keepalives go out one at a time, so
+// one each would queue a round trip per caller.
 func (c *Client) Alive() bool {
-	_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)
+	_, err, _ := c.alive.Do("", func() (any, error) {
+		_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)
+		return nil, err
+	})
 	return err == nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,6 +315,29 @@ func TestSessionsEndingTogetherShareAKeepalive(t *testing.T) {
 	// locally, 17 on a CI runner.
 	if got := s.Keepalives(); got >= n*3/4 {
 		t.Fatalf("%d commands sent %d keepalives, want fewer than %d", n, got, n*3/4)
+	}
+}
+
+// Alive checks made together share a keepalive. Each refresh read checks
+// its pooled connection, and keepalives go out one at a time, so a check
+// each would queue a round trip per read behind the others.
+func TestAliveChecksTogetherShareAKeepalive(t *testing.T) {
+	s := sshtest.New(t)
+	s.SetDelay(20 * time.Millisecond)
+	c := dial(t, testConfig(t, s))
+	before := s.Keepalives()
+	const n = 32
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() {
+			if !c.Alive() {
+				t.Error("Alive = false on a live connection")
+			}
+		})
+	}
+	wg.Wait()
+	if got := s.Keepalives() - before; got >= n/2 {
+		t.Fatalf("%d checks sent %d keepalives, want fewer than %d", n, got, n/2)
 	}
 }
 
