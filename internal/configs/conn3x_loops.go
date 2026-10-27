@@ -82,7 +82,7 @@ func itemPairs(items cty.Value) ([]itemPair, error) {
 	if items.IsNull() {
 		return nil, fmt.Errorf("for_each is null; give it a map, or a list or set of strings")
 	}
-	var pairs []itemPair
+	pairs := []itemPair{} // empty but not nil: nil means a key is unknown
 	switch {
 	case ty.IsMapType() || ty.IsObjectType():
 		for it := items.ElementIterator(); it.Next(); {

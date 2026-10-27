@@ -723,6 +723,39 @@ func TestLoopingStepLowersToHostItemProduct(t *testing.T) {
 	}
 }
 
+// An empty for_each is known and has no instances, as with OpenTofu's own
+// for_each. Treating it as unknown failed the plan with "cannot be
+// determined until apply".
+func TestLoopingStepWithEmptyForEachHasNoInstances(t *testing.T) {
+	for name, items := range map[string]string{"list": "[]", "map": "{}"} {
+		t.Run(name, func(t *testing.T) {
+			src := `circuit "app" {
+  hosts = { a = "10.0.0.1" }
+  ssh {
+    user = "root"
+  }
+  step "tools" {
+    for_each = ` + items + `
+    package {
+      name = item.value
+    }
+  }
+}`
+			mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+			if diags.HasErrors() {
+				t.Fatal(diags.Error())
+			}
+			v, vDiags := mod.ManagedResources["conn3x_package.app__tools"].ForEach.Value(nil)
+			if vDiags.HasErrors() {
+				t.Fatal(vDiags.Error())
+			}
+			if !v.IsWhollyKnown() || v.LengthInt() != 0 {
+				t.Fatalf("for_each = %#v, want a known, empty object", v)
+			}
+		})
+	}
+}
+
 func TestLoopingStepRewritesReferences(t *testing.T) {
 	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": loopingCircuit})
 	if diags.HasErrors() {
