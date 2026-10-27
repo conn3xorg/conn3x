@@ -28,7 +28,7 @@ resource "digitalocean_droplet" "bench" {
   name     = each.value
   image    = "rockylinux-10-x64"
   size     = "s-1vcpu-1gb"
-  region   = "nyc3"
+  region   = "nyc1"
   tags     = ["conn3x-ci"]
   ssh_keys = [digitalocean_ssh_key.ci.fingerprint]
 
