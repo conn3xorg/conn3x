@@ -29,7 +29,7 @@ step "reboot_for_kernel" {
 
 **Triggers.** `triggers` is a map of strings. Any change to it reboots the host again, so tie it to what needs a reboot, such as a kernel version.
 
-**Reading.** A `reboot` step has nothing on the host to drift, so plans don't connect to check it.
+**Reading.** A `reboot` step has nothing on the host to drift, so a refresh reads nothing for it. It still checks that the host answers, as it does for every step; see [How plan reads hosts](/internals/plan-reads).
 
 ## Removal
 
