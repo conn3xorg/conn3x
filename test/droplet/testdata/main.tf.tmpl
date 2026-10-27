@@ -26,7 +26,7 @@ resource "digitalocean_droplet" "web" {
   name     = "conn3x-ci-{{.RunID}}"
   image    = "{{.Image}}"
   size     = "s-1vcpu-1gb"
-  region   = "nyc3"
+  region   = "nyc1"
   tags     = ["conn3x-ci"]
   ssh_keys = [digitalocean_ssh_key.ci.fingerprint]
 
@@ -173,7 +173,7 @@ resource "digitalocean_droplet" "edge" {
   name     = "conn3x-ci-{{.RunID}}-edge"
   image    = "ubuntu-24-04-x64"
   size     = "s-1vcpu-1gb"
-  region   = "nyc3"
+  region   = "nyc1"
   tags     = ["conn3x-ci"]
   ssh_keys = [digitalocean_ssh_key.ci.fingerprint]
 
