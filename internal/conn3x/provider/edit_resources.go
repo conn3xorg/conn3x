@@ -184,8 +184,10 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 }
 
 // editFile reads a file, applies fn and writes it back only if it changed,
-// keeping its mode and ownership.
+// keeping its mode and ownership. Edits to one file on a host take turns,
+// so one doesn't write over another it read the file before.
 func editFile(ctx context.Context, h *hostConn, path string, create bool, fn func(string) (string, error)) error {
+	defer lockHost(h, "edit\x00"+path)()
 	actual, err := file.Read(ctx, h, path)
 	if err != nil {
 		return err
