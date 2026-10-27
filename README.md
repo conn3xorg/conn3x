@@ -110,6 +110,9 @@ container, in about five.
   and exits 2 when it finds some, so a scheduled job can alert on it.
 - **Brings your playbooks.** `conn3x convert ansible -i inventory site.yml` turns a
   playbook into circuits and marks anything it can't translate for you to finish.
+- **Borrows what others have written.** [conn3x.org/circuits](https://conn3x.org/circuits)
+  lists shared circuits, such as nginx, users and a hardened baseline, that you add with
+  one `module` block. Written one worth sharing? List it there.
 - **Leaves nothing on your servers.** No Python, no agent. Conn3x connects over SSH,
   checks the host key every time, and runs plain shell commands, as root or through sudo.
 
