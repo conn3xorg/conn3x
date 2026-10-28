@@ -128,12 +128,8 @@ func refresh(ctx context.Context, h modules.Runner, family pkg.Family) error {
 	if family != pkg.Deb {
 		return nil // dnf reads new repositories on its next run
 	}
-	res, err := h.Run(ctx, "apt-get -q -o DPkg::Lock::Timeout=300 update", nil)
-	if err != nil {
-		return err
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("apt-get update: %s", strings.TrimSpace(string(res.Stderr)))
+	if err := pkg.Run(ctx, h, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err != nil {
+		return fmt.Errorf("apt-get update: %w", err)
 	}
 	return nil
 }

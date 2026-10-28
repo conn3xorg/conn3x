@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
@@ -212,14 +213,14 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		}
 		switch d.State {
 		case Absent:
-			return run(ctx, r, "dnf -y remove "+ssh.Quote(d.Name))
+			return Run(ctx, r, "dnf -y remove "+ssh.Quote(d.Name))
 		case Latest:
-			if err := run(ctx, r, "dnf -y install "+ssh.Quote(d.Name)); err != nil {
+			if err := Run(ctx, r, "dnf -y install "+ssh.Quote(d.Name)); err != nil {
 				return err
 			}
-			return run(ctx, r, "dnf -y upgrade "+ssh.Quote(d.Name))
+			return Run(ctx, r, "dnf -y upgrade "+ssh.Quote(d.Name))
 		default:
-			return run(ctx, r, "dnf -y install "+ssh.Quote(spec))
+			return Run(ctx, r, "dnf -y install "+ssh.Quote(spec))
 		}
 	case Deb:
 		spec := d.Name
@@ -227,22 +228,50 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			spec += "=" + d.Version
 		}
 		if d.State == Absent {
-			return run(ctx, r, aptGet+" remove "+ssh.Quote(d.Name))
+			return Run(ctx, r, aptGet+" remove "+ssh.Quote(d.Name))
 		}
-		err := run(ctx, r, aptGet+" install "+ssh.Quote(spec))
+		err := Run(ctx, r, aptGet+" install "+ssh.Quote(spec))
 		if err != nil && (strings.Contains(err.Error(), "Unable to locate package") || strings.Contains(err.Error(), "has no installation candidate")) {
 			// Fresh hosts often have no package lists yet.
-			if err := run(ctx, r, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err != nil {
+			if err := Run(ctx, r, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err != nil {
 				return err
 			}
-			err = run(ctx, r, aptGet+" install "+ssh.Quote(spec))
+			err = Run(ctx, r, aptGet+" install "+ssh.Quote(spec))
 		}
 		return err
 	}
 	return fmt.Errorf("unknown package family %q", family)
 }
 
-func run(ctx context.Context, r modules.Runner, cmd string) error {
+// Another apt or dnf can hold the package manager's lock, such as a step
+// of another circuit on the same host, or unattended-upgrades or
+// dnf-makecache on a host that just booted. apt's DPkg::Lock::Timeout
+// doesn't cover the lists lock apt-get update takes, and dnf5 doesn't wait
+// for rpm's lock, so Run tries again until lockWait has passed.
+var lockWait, lockPoll = 5 * time.Minute, 5 * time.Second
+
+// Run runs a package manager command, waiting out another one's lock.
+func Run(ctx context.Context, r modules.Runner, cmd string) error {
+	deadline := time.Now().Add(lockWait)
+	for {
+		err := runOnce(ctx, r, cmd)
+		if err == nil || !lockHeld(err) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(lockPoll):
+		}
+	}
+}
+
+func lockHeld(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "Could not get lock") || strings.Contains(msg, "transaction lock")
+}
+
+func runOnce(ctx context.Context, r modules.Runner, cmd string) error {
 	res, err := r.Run(ctx, cmd, nil)
 	if err != nil {
 		return err
