@@ -15,5 +15,5 @@ publish an advisory and credit you, unless you'd rather stay anonymous.
 
 ## Supported versions
 
-Conn3x has not had a release yet. After the first release, security fixes
-go to the latest minor version.
+Security fixes go to the latest minor version, so upgrade to the newest
+release to get them.
