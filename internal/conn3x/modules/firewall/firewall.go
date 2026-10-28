@@ -171,7 +171,10 @@ func ReadUFW(ctx context.Context, r modules.Runner, u UFWRule) (bool, error) {
 }
 
 // ApplyUFW adds or deletes the rule. Spec contains only validated words, so
-// it is safe to pass unquoted.
+// it is safe to pass unquoted. ufw rewrites its rule files without a lock
+// of its own, so two rules applied at once on one host can lose one, as a
+// step with for_each does. flock makes them take turns, and the rule is
+// read back so a lost write fails the step.
 func ApplyUFW(ctx context.Context, r modules.Runner, u UFWRule, present bool) error {
 	if err := u.Validate(); err != nil {
 		return err
@@ -180,8 +183,18 @@ func ApplyUFW(ctx context.Context, r modules.Runner, u UFWRule, present bool) er
 	if !present {
 		cmd = "ufw delete " + u.Spec()
 	}
-	res, err := r.Run(ctx, cmd, nil)
-	return check(res, err)
+	res, err := r.Run(ctx, "flock /run/conn3x-ufw.lock "+cmd, nil)
+	if err := check(res, err); err != nil {
+		return err
+	}
+	added, err := ReadUFW(ctx, r, u)
+	if err != nil {
+		return err
+	}
+	if added != present {
+		return fmt.Errorf("ufw %s ran, but ufw show added doesn't agree", u.Spec())
+	}
+	return nil
 }
 
 func check(res ssh.Result, err error) error {

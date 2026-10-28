@@ -48,7 +48,7 @@ step "ssh_limit" {
 
 **Reading.** On every plan, Conn3x lists the rules with `ufw show added` and looks for this one. That works whether or not ufw is enabled.
 
-**Applying.** Conn3x runs `ufw allow 22/tcp`, or `ufw allow from 10.0.0.0/8 to any port 5432 proto tcp` when you set `from`. ufw saves its rules, so they hold across reboots.
+**Applying.** Conn3x runs `ufw allow 22/tcp`, or `ufw allow from 10.0.0.0/8 to any port 5432 proto tcp` when you set `from`. ufw saves its rules, so they hold across reboots. ufw has no lock of its own, so Conn3x changes one rule at a time on each host and reads the rule back afterwards, failing the step if ufw didn't keep it.
 
 **Enabling ufw.** Conn3x adds rules but doesn't enable ufw. Rules take effect once ufw is enabled. Allow SSH before you enable it, so the firewall doesn't cut off your SSH connection.
 

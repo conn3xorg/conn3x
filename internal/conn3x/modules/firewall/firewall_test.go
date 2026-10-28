@@ -3,7 +3,13 @@
 
 package firewall
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+)
 
 func TestFirewalldValidate(t *testing.T) {
 	for _, ok := range []Firewalld{
@@ -76,5 +82,40 @@ func TestUFWAdded(t *testing.T) {
 	}
 	if ufwAdded(out, UFWRule{Action: "allow", Port: "22"}) || ufwAdded(out, UFWRule{Action: "allow", Port: "2/tcp"}) {
 		t.Error("matched a different rule")
+	}
+}
+
+// ufwHost keeps rules the way ufw show added prints them. With lose set,
+// it drops writes, as ufw does when two run at once.
+type ufwHost struct {
+	rules []string
+	lose  bool
+	ran   []string
+}
+
+func (h *ufwHost) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error) {
+	h.ran = append(h.ran, cmd)
+	if cmd == "ufw show added" {
+		return ssh.Result{Stdout: []byte("Added user rules (see 'ufw status' for running firewall):\n" + strings.Join(h.rules, "\n") + "\n")}, nil
+	}
+	if rule, ok := strings.CutPrefix(cmd, "flock /run/conn3x-ufw.lock ufw "); ok && !h.lose {
+		h.rules = append(h.rules, "ufw "+rule)
+	}
+	return ssh.Result{}, nil
+}
+
+func TestApplyUFWTakesTurnsAndChecksTheRuleLanded(t *testing.T) {
+	u := UFWRule{Action: "allow", Port: "80/tcp"}
+	h := &ufwHost{}
+	if err := ApplyUFW(context.Background(), h, u, true); err != nil {
+		t.Fatal(err)
+	}
+	if h.ran[0] != "flock /run/conn3x-ufw.lock ufw allow 80/tcp" {
+		t.Errorf("ran %q, want ufw under flock", h.ran[0])
+	}
+
+	h = &ufwHost{lose: true}
+	if err := ApplyUFW(context.Background(), h, u, true); err == nil || !strings.Contains(err.Error(), "doesn't agree") {
+		t.Errorf("apply = %v, want it to fail when the rule didn't land", err)
 	}
 }
