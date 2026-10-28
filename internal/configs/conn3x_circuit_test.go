@@ -15,6 +15,7 @@ import (
 	"github.com/zclconf/go-cty/cty/function"
 
 	"github.com/opentofu/opentofu/internal/configs/symlib"
+	"github.com/opentofu/opentofu/internal/lang/marks"
 )
 
 func loadCircuitModule(t *testing.T, files map[string]string) (*Module, hcl.Diagnostics) {
@@ -1032,5 +1033,27 @@ circuit "app" {
 	}
 	if _, d := mod.ManagedResources["conn3x_file.app__one"].ForEach.Value(nil); d.HasErrors() {
 		t.Fatalf("a custom field was rejected: %v", d)
+	}
+}
+
+// A for_each built from an ephemeral or sensitive value keeps its marks, so
+// the for_each checks report it instead of the loop panicking on it.
+func TestLoopingStepForEachKeepsMarks(t *testing.T) {
+	hosts := hcl.StaticExpr(cty.ObjectVal(map[string]cty.Value{"a": cty.StringVal("10.0.0.1")}), hcl.Range{})
+	for name, items := range map[string]cty.Value{
+		"marked set":     cty.SetVal([]cty.Value{cty.StringVal("k")}).Mark(marks.Ephemeral),
+		"marked element": cty.ListVal([]cty.Value{cty.StringVal("k").Mark(marks.Sensitive)}),
+		"marked map":     cty.MapVal(map[string]cty.Value{"k": cty.StringVal("v")}).Mark(marks.Ephemeral),
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &hostItemProduct{hosts: hosts, items: hcl.StaticExpr(items, hcl.Range{})}
+			v, diags := p.Value(nil)
+			if diags.HasErrors() {
+				t.Fatal(diags.Error())
+			}
+			if !v.IsMarked() {
+				t.Fatalf("for_each = %#v, want it marked", v)
+			}
+		})
 	}
 }
