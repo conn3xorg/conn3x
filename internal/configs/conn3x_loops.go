@@ -38,10 +38,14 @@ func (p *hostItemProduct) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 	if diags.HasErrors() {
 		return cty.DynamicVal, diags
 	}
+	// Marks (ephemeral, sensitive) ride on the result, where the for_each
+	// checks report them; iterating a marked value would panic.
+	hosts, hostMarks := hosts.Unmark()
+	items, itemMarks := items.Unmark()
 	if !hosts.IsKnown() || !items.IsKnown() {
-		return cty.DynamicVal, diags
+		return cty.DynamicVal.WithMarks(hostMarks, itemMarks), diags
 	}
-	pairs, err := itemPairs(items)
+	pairs, keyMarks, err := itemPairs(items)
 	if err != nil {
 		rng := p.items.Range()
 		return cty.DynamicVal, append(diags, &hcl.Diagnostic{
@@ -52,7 +56,7 @@ func (p *hostItemProduct) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 		})
 	}
 	if pairs == nil {
-		return cty.DynamicVal, diags
+		return cty.DynamicVal.WithMarks(hostMarks, itemMarks, keyMarks), diags
 	}
 	out := map[string]cty.Value{}
 	for it := hosts.ElementIterator(); it.Next(); {
@@ -64,9 +68,9 @@ func (p *hostItemProduct) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 		}
 	}
 	if len(out) == 0 {
-		return cty.EmptyObjectVal, diags
+		return cty.EmptyObjectVal.WithMarks(hostMarks, itemMarks, keyMarks), diags
 	}
-	return cty.ObjectVal(out), diags
+	return cty.ObjectVal(out).WithMarks(hostMarks, itemMarks, keyMarks), diags
 }
 
 type itemPair struct {
@@ -76,13 +80,15 @@ type itemPair struct {
 
 // itemPairs reads for_each: a map or object by key, or a list or set of
 // strings with each string as its own key. It returns nil while any key is
-// still unknown.
-func itemPairs(items cty.Value) ([]itemPair, error) {
+// still unknown. Marks on list or set strings, which become keys, are
+// returned separately.
+func itemPairs(items cty.Value) ([]itemPair, cty.ValueMarks, error) {
 	ty := items.Type()
 	if items.IsNull() {
-		return nil, fmt.Errorf("for_each is null; give it a map, or a list or set of strings")
+		return nil, nil, fmt.Errorf("for_each is null; give it a map, or a list or set of strings")
 	}
 	pairs := []itemPair{} // empty but not nil: nil means a key is unknown
+	marks := cty.ValueMarks{}
 	switch {
 	case ty.IsMapType() || ty.IsObjectType():
 		for it := items.ElementIterator(); it.Next(); {
@@ -93,22 +99,27 @@ func itemPairs(items cty.Value) ([]itemPair, error) {
 		seen := map[string]bool{}
 		for it := items.ElementIterator(); it.Next(); {
 			_, v := it.Element()
+			marked := v
+			v, m := v.Unmark()
+			for k := range m {
+				marks[k] = struct{}{}
+			}
 			if !v.IsKnown() {
-				return nil, nil
+				return nil, marks, nil
 			}
 			if v.IsNull() || !v.Type().Equals(cty.String) {
-				return nil, fmt.Errorf("a list or set in for_each must hold strings, which become the item keys; use a map for anything else")
+				return nil, nil, fmt.Errorf("a list or set in for_each must hold strings, which become the item keys; use a map for anything else")
 			}
 			if seen[v.AsString()] {
-				return nil, fmt.Errorf("for_each lists %q twice; each item needs its own key", v.AsString())
+				return nil, nil, fmt.Errorf("for_each lists %q twice; each item needs its own key", v.AsString())
 			}
 			seen[v.AsString()] = true
-			pairs = append(pairs, itemPair{v.AsString(), v})
+			pairs = append(pairs, itemPair{v.AsString(), marked})
 		}
 	default:
-		return nil, fmt.Errorf("for_each must be a map, or a list or set of strings, not %s", ty.FriendlyName())
+		return nil, nil, fmt.Errorf("for_each must be a map, or a list or set of strings, not %s", ty.FriendlyName())
 	}
-	return pairs, nil
+	return pairs, marks, nil
 }
 
 func (p *hostItemProduct) Variables() []hcl.Traversal {
