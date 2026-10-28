@@ -152,7 +152,9 @@ func Read(ctx context.Context, r modules.Runner, family Family, name string, can
 		}
 		if res.ExitCode == 0 {
 			fields := strings.Fields(string(res.Stdout))
-			if len(fields) >= 2 && fields[0] == "ii" {
+			// The second letter is the status: "ii" is installed, and so is
+			// "hi", a package held with apt-mark hold.
+			if len(fields) >= 2 && len(fields[0]) >= 2 && fields[0][1] == 'i' {
 				a = Actual{Installed: true, Version: fields[1]}
 			}
 		}

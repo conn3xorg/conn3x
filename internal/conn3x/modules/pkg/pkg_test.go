@@ -84,6 +84,11 @@ func TestReadDeb(t *testing.T) {
 	if err != nil || !a.Installed || a.Version != "1.24.0-2ubuntu7" {
 		t.Fatalf("got %+v, %v", a, err)
 	}
+	// Held with apt-mark hold ("hi") is still installed.
+	hi := &scriptedHost{answers: []answer{{"dpkg-query", ok("hi  1.24.0-2ubuntu7\n")}}}
+	if a, _ := Read(ctx, hi, Deb, "nginx", false); !a.Installed || a.Version != "1.24.0-2ubuntu7" {
+		t.Fatalf("held package: %+v", a)
+	}
 	// Removed but config left behind ("rc") is not installed.
 	rc := &scriptedHost{answers: []answer{{"dpkg-query", ok("rc  1.24.0-2ubuntu7\n")}}}
 	if a, _ := Read(ctx, rc, Deb, "nginx", false); a.Installed {
