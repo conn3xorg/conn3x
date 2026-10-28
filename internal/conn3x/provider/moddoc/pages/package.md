@@ -54,7 +54,7 @@ step "gone" {
 
 **Versions.** `version` matches the start of the installed version, so `"1.26.3"` matches `1:1.26.3-2.el10`. Give the epoch or the release as well when you need an exact match.
 
-**Applying.** Conn3x runs `dnf -y install`, `upgrade` or `remove`, or `apt-get install` or `remove` non-interactively, keeping existing configuration files. On Debian and Ubuntu it waits up to five minutes for another process holding the dpkg lock, such as unattended upgrades. When `apt` can't find a package on a fresh host, Conn3x refreshes the package lists once and tries again.
+**Applying.** Conn3x runs `dnf -y install`, `upgrade` or `remove`, or `apt-get install` or `remove` non-interactively, keeping existing configuration files. When another apt or dnf holds the package manager's lock, such as a step from another circuit on the same host or unattended upgrades on a host that just booted, Conn3x waits up to five minutes for it. When `apt` can't find a package on a fresh host, Conn3x refreshes the package lists once and tries again.
 
 ## Removal
 

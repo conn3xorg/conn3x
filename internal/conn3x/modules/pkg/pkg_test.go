@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
@@ -253,5 +254,47 @@ func TestReadRPMVirtualProvide(t *testing.T) {
 	a, err := Read(ctx, h, RPM, "wget", false)
 	if err != nil || !a.Installed || a.Version != "0:2.2.1-1.fc45" {
 		t.Fatalf("got %+v, %v", a, err)
+	}
+}
+
+// lockedHost fails the first busy commands with a lock error, as apt and
+// dnf do while another package manager runs, then succeeds.
+type lockedHost struct {
+	busy   int
+	stderr string
+	ran    int
+}
+
+func (h *lockedHost) Run(_ context.Context, _ string, _ []byte) (ssh.Result, error) {
+	h.ran++
+	if h.ran <= h.busy {
+		return ssh.Result{ExitCode: 100, Stderr: []byte(h.stderr)}, nil
+	}
+	return ok(""), nil
+}
+
+func TestRunWaitsForAnotherPackageManagersLock(t *testing.T) {
+	defer func(w, p time.Duration) { lockWait, lockPoll = w, p }(lockWait, lockPoll)
+	lockWait, lockPoll = time.Second, time.Millisecond
+
+	for _, stderr := range []string{
+		"E: Could not get lock /var/lib/apt/lists/lock. It is held by process 170 (apt-get)",
+		"error: can't create transaction lock on /var/lib/rpm/.rpm.lock (Resource temporarily unavailable)",
+	} {
+		h := &lockedHost{busy: 2, stderr: stderr}
+		if err := Run(ctx, h, "apt-get update"); err != nil || h.ran != 3 {
+			t.Errorf("with %q: Run = %v after %d tries, want success on the third", stderr, err, h.ran)
+		}
+	}
+
+	h := &lockedHost{busy: 1, stderr: "E: Unable to locate package nope"}
+	if err := Run(ctx, h, "apt-get install nope"); err == nil || h.ran != 1 {
+		t.Errorf("Run = %v after %d tries, want other errors to fail at once", err, h.ran)
+	}
+
+	lockWait = 10 * time.Millisecond
+	h = &lockedHost{busy: 1 << 30, stderr: "E: Could not get lock /var/lib/dpkg/lock-frontend"}
+	if err := Run(ctx, h, "apt-get install curl"); err == nil || !strings.Contains(err.Error(), "Could not get lock") {
+		t.Errorf("Run = %v, want the lock error once lockWait has passed", err)
 	}
 }
