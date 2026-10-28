@@ -93,6 +93,10 @@ func applyRepository(ctx context.Context, req providers.ApplyResourceChangeReque
 			return err
 		}
 		r := repoFrom(v)
+		// A repository refreshes the package lists, so it takes turns with
+		// package steps: apt-get update beside apt-get install can fail.
+		unlock := lockHost(h, "packages")
+		defer unlock()
 		if err := do(ctx, h, family, r); err != nil {
 			return fmt.Errorf("repository %s: %w", r.Name, err)
 		}
