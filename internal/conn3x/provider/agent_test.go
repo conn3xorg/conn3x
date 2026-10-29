@@ -274,7 +274,7 @@ func TestBecomeUsesTheAgent(t *testing.T) {
 	}
 	// Besides sudo's checks, every command went through the agent.
 	for _, c := range cmds {
-		if !isProbe(c) && !isRootStart(c) && !strings.Contains(c, "mktemp") && !strings.Contains(c, "sudo -n -- true") {
+		if !isProbe(c) && !isRootStart(c) && !strings.Contains(c, "mktemp") && !strings.Contains(c, "sudo -n -- /bin/sh -c true") {
 			t.Errorf("ran outside the agent: %q", c)
 		}
 	}

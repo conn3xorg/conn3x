@@ -462,14 +462,16 @@ func KnownHostsLine(addr string, key gossh.PublicKey) string {
 // command after "--". Like sudo -S, it writes the -p prompt to stderr
 // before reading each password attempt; FAKE_SUDO_SPLIT=1 writes the
 // prompt in two pieces, a moment apart. FAKE_SUDO_LOG records every line
-// it reads as a password.
+// it reads as a password. FAKE_SUDO_CACHE names a file standing for cached
+// credentials shared by every session, as with timestamp_type=global: once
+// a password has been accepted, sudo asks for none unless given -k.
 const fakeSudoScript = `#!/bin/sh
-nonint=0; stdin=0; prompt=
+nonint=0; stdin=0; prompt=; kill=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -n) nonint=1; shift ;;
     -S) stdin=1; shift ;;
-    -k) shift ;;
+    -k) kill=1; shift ;;
     -v) validate=1; shift ;;
     -p) prompt=$2; shift 2 ;;
     --) shift; break ;;
@@ -481,6 +483,10 @@ case "$FAKE_SUDO" in
   nopasswd) ;;
   password:*)
     want=${FAKE_SUDO#password:}
+    if [ $kill = 0 ] && [ -n "$FAKE_SUDO_CACHE" ] && [ -e "$FAKE_SUDO_CACHE" ]; then
+      [ "${validate:-0}" = 1 ] && exit 0
+      SUDO_USER=fake exec "$@"
+    fi
     if [ $nonint = 1 ]; then echo "sudo: a password is required" >&2; exit 1; fi
     # Like real sudo, read up to three password attempts from stdin.
     tries=0
@@ -498,7 +504,8 @@ case "$FAKE_SUDO" in
       [ "$got" = "$want" ] && break
       tries=$((tries + 1))
     done
-    if [ "$got" != "$want" ]; then echo "sudo: $tries incorrect password attempts" >&2; exit 1; fi ;;
+    if [ "$got" != "$want" ]; then echo "sudo: $tries incorrect password attempts" >&2; exit 1; fi
+    if [ $kill = 0 ] && [ -n "$FAKE_SUDO_CACHE" ]; then : > "$FAKE_SUDO_CACHE"; fi ;;
 esac
 [ "${validate:-0}" = 1 ] && exit 0
 SUDO_USER=fake exec "$@"

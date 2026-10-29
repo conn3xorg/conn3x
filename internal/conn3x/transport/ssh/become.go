@@ -40,8 +40,15 @@ func (b *Become) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 	var res Result
 	var err error
 	if b.needsPass {
+		// -k ignores credentials the probe's "sudo -v" cached, which some
+		// hosts share across sessions (timestamp_type=global): without it
+		// sudo wouldn't read the password line and the command would.
+		// shortcut: the password is written before sudo prompts, so a
+		// sudoers rule letting /bin/sh run without one only for some
+		// arguments still hands it to the command; wait for a marked
+		// prompt, as the agent's startBecome does, if that ever matters.
 		in := append(append(append([]byte(nil), b.Password...), '\n'), stdin...)
-		res, err = b.Client.Run(ctx, "sudo -S -p '' -- "+inner, in)
+		res, err = b.Client.Run(ctx, "sudo -k -S -p '' -- "+inner, in)
 	} else {
 		res, err = b.Client.Run(ctx, "sudo -n -- "+inner, stdin)
 	}
@@ -74,9 +81,10 @@ func (b *Become) ready(ctx context.Context) error {
 	return b.probeErr
 }
 
-// probe learns whether sudo will ask for a password.
+// probe learns whether sudo will ask for a password. It asks about
+// /bin/sh, the command Run hands sudo, so a NOPASSWD rule for it counts.
 func (b *Become) probe(ctx context.Context) {
-	res, err := b.Client.Run(ctx, "sudo -n -- true", nil)
+	res, err := b.Client.Run(ctx, "sudo -n -- /bin/sh -c true", nil)
 	switch {
 	case err != nil:
 		b.probeErr = err
