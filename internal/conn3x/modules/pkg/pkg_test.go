@@ -303,3 +303,30 @@ func TestRunWaitsForAnotherPackageManagersLock(t *testing.T) {
 		t.Errorf("Run = %v, want the lock error once lockWait has passed", err)
 	}
 }
+
+// A package that's already as wanted needs no package manager run, which
+// would otherwise wait on apt's lock for nothing.
+func TestSettledSkipsPackagesAlreadyAsWanted(t *testing.T) {
+	notInstalled := &scriptedHost{answers: []answer{{"dpkg-query", ssh.Result{ExitCode: 1}}}}
+	installed := &scriptedHost{answers: []answer{{"dpkg-query", ok("ii 7.88.1-10\n")}}}
+	for _, tc := range []struct {
+		name string
+		h    *scriptedHost
+		d    Desired
+		want bool
+	}{
+		{"absent and wanted absent", notInstalled, Desired{Name: "telnetd", State: Absent}, true},
+		{"absent and wanted present", notInstalled, Desired{Name: "curl", State: Present}, false},
+		{"installed and wanted present", installed, Desired{Name: "curl", State: Present}, true},
+		{"installed and wanted absent", installed, Desired{Name: "curl", State: Absent}, false},
+	} {
+		if got := Settled(ctx, tc.h, Deb, tc.d); got != tc.want {
+			t.Errorf("%s: Settled = %v, want %v", tc.name, got, tc.want)
+		}
+		for _, c := range tc.h.ran {
+			if strings.Contains(c, "apt-get") {
+				t.Errorf("%s: ran %q", tc.name, c)
+			}
+		}
+	}
+}

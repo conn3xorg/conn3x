@@ -189,6 +189,16 @@ func NeedsChange(d Desired, a Actual) bool {
 	}
 }
 
+// Settled reports whether the host already has the package as d wants it,
+// so Apply has nothing to do. A package that's absent and should stay so
+// is the common case: running apt-get remove for it anyway queues behind
+// every other package step and behind apt's lock, which a host that just
+// booted holds for minutes while unattended-upgrades runs.
+func Settled(ctx context.Context, r modules.Runner, family Family, d Desired) bool {
+	a, err := Read(ctx, r, family, d.Name, d.State == Latest)
+	return err == nil && !NeedsChange(d, a)
+}
+
 // versionMatches accepts an exact match, or want as the leading part of a
 // full version: "1.26.3" matches "1:1.26.3-2.el10".
 func versionMatches(actual, want string) bool {

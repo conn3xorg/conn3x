@@ -188,9 +188,11 @@ func applyPackage(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
 	}
-	unlock := lockHost(host, "packages")
-	err = pkg.Apply(ctx, host, family, d)
-	unlock()
+	if !pkg.Settled(ctx, host, family, d) {
+		unlock := lockHost(host, "packages")
+		err = pkg.Apply(ctx, host, family, d)
+		unlock()
+	}
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("package %s: %w", d.Name, err))
 		return resp
