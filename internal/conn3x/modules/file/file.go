@@ -161,13 +161,6 @@ func Apply(ctx context.Context, r modules.Runner, d Desired) error {
 	if err := d.Validate(); err != nil {
 		return err
 	}
-	var owner strings.Builder
-	if d.Owner != "" {
-		fmt.Fprintf(&owner, "chown -- %s \"$tmp\"\n", ssh.Quote(d.Owner))
-	}
-	if d.Group != "" {
-		fmt.Fprintf(&owner, "chgrp -- %s \"$tmp\"\n", ssh.Quote(d.Group))
-	}
 	script := fmt.Sprintf(`set -e
 p=%s
 mkdir -p -- "$(dirname -- "$p")"
@@ -180,9 +173,36 @@ mv -f -- "$tmp" "$p"
 trap - EXIT
 `+SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
-		ssh.Quote(d.Path), NormalizeMode(d.Mode), owner.String())
+		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group))
 	_, err := run(ctx, r, script, []byte(d.Content))
 	return err
+}
+
+// Ownership is the script that gives "$tmp" its owner and group before it
+// replaces "$p". An empty owner or group keeps the one "$p" has now, since
+// "$tmp" belongs to whoever ran mktemp, often root through become. Keeping
+// it is best effort: a login user can't give a file to someone else.
+func Ownership(owner, group string) string {
+	var b strings.Builder
+	if owner == "" || group == "" {
+		b.WriteString(`if [ -e "$p" ]; then
+  ids=$(stat -c '%u %g' -- "$p" 2>/dev/null || stat -f '%u %g' "$p")
+`)
+		if owner == "" {
+			b.WriteString("  chown -- \"${ids% *}\" \"$tmp\" 2>/dev/null || true\n")
+		}
+		if group == "" {
+			b.WriteString("  chgrp -- \"${ids#* }\" \"$tmp\" 2>/dev/null || true\n")
+		}
+		b.WriteString("fi\n")
+	}
+	if owner != "" {
+		fmt.Fprintf(&b, "chown -- %s \"$tmp\"\n", ssh.Quote(owner))
+	}
+	if group != "" {
+		fmt.Fprintf(&b, "chgrp -- %s \"$tmp\"\n", ssh.Quote(group))
+	}
+	return b.String()
 }
 
 // SyncFile and SyncDir flush "$tmp" and the directory holding "$p" to disk.
