@@ -69,4 +69,4 @@ When you delete a `user` step, `on_remove` decides what happens on the host. The
 
 ## From Ansible
 
-`conn3x convert ansible` turns `user` tasks into `user` steps, carrying over `uid`, `group`, `groups`, `home`, `shell` and `system`, and dropping `create_home`, since Conn3x always creates a home directory for a new user. A task with `append: true` stays a TODO, because `groups` in Conn3x is the full list, and so does one with `state: absent`.
+`conn3x convert ansible` turns `user` tasks into `user` steps, carrying over `uid`, `group`, `groups`, `home`, `shell` and `system`. Conn3x always creates a home directory for a new user, so a task with `create_home: no` stays a TODO. So does one with `append: true`, because `groups` in Conn3x is the full list, and so does one with `state: absent`.

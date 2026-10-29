@@ -85,6 +85,7 @@ circuit "web_servers" {
   }
 
   # Conn3x keeps the job in /etc/cron.d rather than the user's crontab.
+  # TODO(convert): Delete the "#Ansible: clean tmp" job Ansible left in the user's crontab, or it runs twice.
   step "nightly_cleanup" {
     cron {
       name     = "clean-tmp"

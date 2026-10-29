@@ -260,7 +260,10 @@ func copyModule(in *input) ([]step, string) {
 	if m, ok := in.mode("mode"); ok {
 		attrs = append(attrs, m)
 	}
-	in.ignore("backup", "force")
+	if !in.bool("force", true) {
+		return nil, "sets force: no, so Ansible writes the file only when it's missing; Conn3x would replace it on every apply"
+	}
+	in.ignore("backup")
 	return one("file", in.owners(attrs))
 }
 
@@ -401,7 +404,9 @@ func userModule(in *input) ([]step, string) {
 	if in.has("system") {
 		attrs = append(attrs, attr{key: "system", val: cty.BoolVal(in.bool("system", false))})
 	}
-	in.ignore("create_home")
+	if !in.bool("create_home", true) {
+		return nil, "sets create_home: no; Conn3x always creates the home directory"
+	}
 	return one("user", attrs)
 }
 
@@ -446,7 +451,8 @@ func cronModule(in *input) ([]step, string) {
 	name := strings.Trim(cronName.ReplaceAllString(in.str("name"), "-"), "-")
 	attrs := []attr{s("name", name), s("schedule", schedule), s("command", in.str("job"))}
 	attrs = in.optional(attrs, "user", "user")
-	return one("cron", attrs, "Conn3x keeps the job in /etc/cron.d rather than the user's crontab.")
+	return one("cron", attrs, "Conn3x keeps the job in /etc/cron.d rather than the user's crontab.",
+		fmt.Sprintf("TODO(convert): Delete the \"#Ansible: %s\" job Ansible left in the user's crontab, or it runs twice.", in.str("name")))
 }
 
 func sysctlModule(in *input) ([]step, string) {
@@ -543,6 +549,11 @@ func mountModule(in *input) ([]step, string) {
 func commandModule(in *input) ([]step, string) {
 	cmd := in.str("cmd")
 	if n, ok := in.args["_raw"]; ok {
+		for _, f := range strings.Fields(n.Value) {
+			if k, _, ok := strings.Cut(f, "="); ok && inlineArgs[k] {
+				return nil, "sets " + k + " inside the command line; move it under args so the converter can read it"
+			}
+		}
 		cmd = in.render("command", n.Value)
 	}
 	if cmd == "" {
@@ -554,6 +565,11 @@ func commandModule(in *input) ([]step, string) {
 	attrs := []attr{s("command", cmd)}
 	attrs = in.optional(attrs, "creates", "creates")
 	attrs = in.optional(attrs, "removes", "removes")
+	for _, k := range []string{"creates", "removes"} {
+		if strings.ContainsAny(in.str(k), "*?[") {
+			return nil, k + " is a glob pattern; Conn3x tests the path as written"
+		}
+	}
 	in.ignore("executable")
 	if !in.has("creates") && !in.has("removes") {
 		return nil, "runs on every play; give it a creates, removes or unless guard, or triggers, so Conn3x knows when it's done"
@@ -586,5 +602,8 @@ func waitForModule(in *input) ([]step, string) {
 	in.ignore("delay")
 	return one("wait_for", attrs)
 }
+
+// inlineArgs are the options Ansible pulls out of a free-form command line.
+var inlineArgs = map[string]bool{"chdir": true, "creates": true, "removes": true, "executable": true, "stdin": true, "stdin_add_newline": true, "strip_empty_ends": true, "warn": true}
 
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
