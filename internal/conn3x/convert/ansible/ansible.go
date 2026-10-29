@@ -38,6 +38,7 @@ type Options struct {
 	// Inventory, when set, fills in each play's hosts and login instead of
 	// leaving variables for them.
 	Inventory *Inventory
+	files     *sourceFiles
 }
 
 // Convert reads the playbook at path and translates it.
@@ -49,6 +50,16 @@ func ConvertWith(path string, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	return ConvertSource(src, path, opts)
+}
+
+// ConvertSource is ConvertWith for a playbook already read into memory.
+// path locates the playbook for relative files and error messages. A key
+// file a repository task names is read from disk beside the playbook.
+func ConvertSource(src []byte, path string, opts Options) (Result, error) {
+	if opts.files == nil {
+		opts.files = &sourceFiles{dir: filepath.Dir(path)}
+	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(src, &doc); err != nil {
 		return Result{}, fmt.Errorf("%s: %w", path, err)
@@ -56,13 +67,42 @@ func ConvertWith(path string, opts Options) (Result, error) {
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.SequenceNode {
 		return Result{}, fmt.Errorf("%s: a playbook is a list of plays", path)
 	}
-	c := &converter{dir: filepath.Dir(path), file: filepath.Base(path), inv: opts.Inventory}
+	c := &converter{dir: filepath.Dir(path), file: filepath.Base(path), inv: opts.Inventory, files: opts.files}
 	return c.run(doc.Content[0]), nil
+}
+
+type sourceFiles struct {
+	dir   string
+	read  func(string) ([]byte, error)
+	cache map[string][]byte
+}
+
+func (f *sourceFiles) contents(name string) (string, error) {
+	if f.cache == nil {
+		f.cache = map[string][]byte{}
+	}
+	if data, ok := f.cache[name]; ok {
+		return string(data), nil
+	}
+	if name == "." || name == ".." || strings.HasPrefix(name, "/") || strings.ContainsAny(name, `\`) || filepath.Base(name) != name {
+		return "", fmt.Errorf("%s must name a file beside the playbook", name)
+	}
+	read := f.read
+	if read == nil {
+		read = func(name string) ([]byte, error) { return os.ReadFile(filepath.Join(f.dir, name)) }
+	}
+	data, err := read(name)
+	if err != nil {
+		return "", err
+	}
+	f.cache[name] = data
+	return string(data), nil
 }
 
 type converter struct {
 	dir, file string
 	inv       *Inventory
+	files     *sourceFiles
 	res       Result
 	hostVars  map[string]bool // groups that still need a hosts variable
 	needUser  bool
@@ -277,7 +317,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, "uses the "+mod+" module, which has no Conn3x equivalent yet")
 		return
 	}
-	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil}
+	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil, files: c.files}
 	steps, reason := m(in)
 	if reason == "" && items != nil {
 		reason = loopSteps(steps, in.itemUsed)

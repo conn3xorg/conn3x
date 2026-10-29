@@ -5,6 +5,7 @@ package ansible
 
 import (
 	"fmt"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,6 +47,7 @@ type input struct {
 	problem  string
 	loop     bool // the task loops, so {{ item }} means the current item
 	itemUsed bool
+	files    *sourceFiles
 }
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
@@ -240,6 +242,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"shell":           commandModule,
 	"reboot":          rebootModule,
 	"wait_for":        waitForModule,
+	"yum_repository":  yumRepositoryModule,
+	"apt_repository":  aptRepositoryModule,
 }
 
 func copyModule(in *input) ([]step, string) {
@@ -586,5 +590,127 @@ func waitForModule(in *input) ([]step, string) {
 	in.ignore("delay")
 	return one("wait_for", attrs)
 }
+
+func repositoryStep(in *input, name, url string, key []byte, suites, components []string) ([]step, string) {
+	if strings.Contains(url, "$") || strings.Contains(url, "{{") {
+		return nil, "has a repository URL with a variable, which the converter can't prove Conn3x will render the same way"
+	}
+	if name == "" || url == "" {
+		return nil, "has no repository name or base URL"
+	}
+	attrs := []attr{s("name", name), s("url", url), s("key", string(key))}
+	if len(suites) > 0 {
+		vals := make([]cty.Value, len(suites))
+		for i, v := range suites {
+			vals[i] = cty.StringVal(v)
+		}
+		attrs = append(attrs, attr{key: "suites", val: cty.ListVal(vals)})
+	}
+	if len(components) > 0 {
+		vals := make([]cty.Value, len(components))
+		for i, v := range components {
+			vals[i] = cty.StringVal(v)
+		}
+		attrs = append(attrs, attr{key: "components", val: cty.ListVal(vals)})
+	}
+	return one("repository", attrs)
+}
+
+func yumRepositoryModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	name := in.str("name")
+	description := in.str("description")
+	if name == "" || description == "" {
+		return nil, "has no repository name or description"
+	}
+	if in.has("mirrorlist") {
+		return nil, "selects a mirrorlist rather than a fixed baseurl, which Conn3x can't carry over"
+	}
+	url := in.str("baseurl")
+	if url == "" {
+		return nil, "has no baseurl"
+	}
+	if in.has("gpgcheck") && !in.bool("gpgcheck", true) {
+		return nil, "sets gpgcheck to false; Conn3x always verifies repository signatures"
+	}
+	if in.has("enabled") && !in.bool("enabled", true) {
+		return nil, "sets enabled to false; a disabled source is not a Conn3x repository step"
+	}
+	gpgkey := in.str("gpgkey")
+	if gpgkey == "" {
+		return nil, "has no gpgkey"
+	}
+	if !strings.HasPrefix(gpgkey, "file:///") {
+		return nil, "uses a remote gpgkey; copy the ASCII-armored key beside the playbook and use file:///key.asc"
+	}
+	if filepath.Ext(gpgkey) == ".gpg" {
+		return nil, "uses a binary gpgkey; convert it to ASCII armor and use a .asc key"
+	}
+	keyName := filepath.Base(gpgkey)
+	key, err := in.files.contents(keyName)
+	if err != nil {
+		in.fail(fmt.Sprintf("could not read %s beside the playbook: %v", keyName, err))
+		return nil, in.problem
+	}
+	if !strings.Contains(key, "-----BEGIN PGP PUBLIC KEY BLOCK-----") {
+		return nil, "does not have an ASCII-armored signing key in gpgkey"
+	}
+	in.ignore("description", "gpgcheck", "enabled")
+	return repositoryStep(in, name, url, []byte(key), nil, nil)
+}
+
+func aptRepositoryModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	repo := in.str("repo")
+	if repo == "" {
+		return nil, "has no repo line"
+	}
+	in.ignore("filename")
+	parsed := strings.Fields(repo)
+	if len(parsed) < 3 || parsed[0] != "deb" || parsed[1] == "" || parsed[2] == "" || strings.HasPrefix(parsed[1], "[") {
+		return nil, "has a repo line whose URL or suites cannot be carried over"
+	}
+	if len(parsed) > 2 && strings.HasPrefix(parsed[2], "[") {
+		return nil, "has a repo line with options that the converter can't prove Conn3x will render the same way"
+	}
+	url, suites := parsed[1], strings.Fields(parsed[2])
+	name, ok := aptRepositoryName(url)
+	if !ok {
+		return nil, "has no repository name Conn3x can derive from its URL"
+	}
+	keyName := in.str("key_file")
+	if keyName == "" {
+		return nil, "has no signing key beside the playbook that Conn3x can carry over; put the ASCII-armored key there and set key_file"
+	}
+	if filepath.Ext(keyName) == ".gpg" {
+		return nil, "points key_file at a binary key; convert it to ASCII armor and use the .asc file"
+	}
+	key, err := in.files.contents(keyName)
+	if err != nil {
+		in.fail(fmt.Sprintf("could not read %s beside the playbook: %v", keyName, err))
+		return nil, in.problem
+	}
+	if !strings.Contains(key, "-----BEGIN PGP PUBLIC KEY BLOCK-----") {
+		return nil, "does not have an ASCII-armored signing key in key_file"
+	}
+	return repositoryStep(in, name, url, []byte(key), suites, parsed[3:])
+}
+
+func aptRepositoryName(rawURL string) (string, bool) {
+	u, err := neturl.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return "", false
+	}
+	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	path := strings.Trim(strings.TrimSuffix(u.Path, "/"), "/")
+	parts := []string{host}
+	if path != "" {
+		parts = append(parts, path)
+	}
+	name := strings.Trim(repoName.ReplaceAllString(strings.Join(parts, "_"), "-"), "-")
+	return name, name != ""
+}
+
+var repoName = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
 
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
