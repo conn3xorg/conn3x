@@ -534,6 +534,29 @@ func TestGuardedGroupWritable(t *testing.T) {
 	}
 }
 
+// usable checks every directory above, not only the directory and /: one
+// open to others two levels up lets them swap everything below it. The
+// helpers reach the host through hostScript's Sprintf, which turns the
+// loop's "%%/*" into "%/*", so the test formats them the same way.
+func TestUsableChecksEveryParent(t *testing.T) {
+	mid := filepath.Join(t.TempDir(), "mid")
+	dir := filepath.Join(mid, "a", "conn3x")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := hostScript(helpers + `usable "$1"`)
+	usable := func() error { return exec.Command("/bin/sh", "-c", script, "sh", dir).Run() }
+	if err := usable(); err != nil {
+		t.Fatalf("usable on a private tree = %v, want accepted", err)
+	}
+	if err := os.Chmod(mid, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := usable(); err == nil {
+		t.Fatal("usable accepted a directory below one anybody can write to")
+	}
+}
+
 // Root ignores XDG_CACHE_HOME, which sudo may keep from the login user and
 // which can point into their home even when HOME is root's.
 func TestRootIgnoresXDGCacheHome(t *testing.T) {

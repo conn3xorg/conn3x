@@ -51,7 +51,8 @@ func hostScript(format string, a ...any) string {
 // as /var/tmp has, which stops them renaming what isn't theirs. The one
 // exception is for a login user: a directory writable by their own primary
 // group, as umask 002 with per-user groups makes ~/.cache, and only when
-// that group is named after them.
+// that group is named after them. They go through hostScript's Sprintf
+// with each script, so "%%" here reaches the shell as one "%".
 const helpers = `umask 077
 me=$(id -u) mygid=$(id -g) pergroup=
 [ "$(id -gn)" = "$(id -un)" ] && pergroup=1
