@@ -99,6 +99,25 @@ func TestBecomeWrongPasswordNeverSeesCommandInput(t *testing.T) {
 	}
 }
 
+// Cached sudo credentials, shared across sessions as with
+// timestamp_type=global, can't turn the password line into command input.
+// The probe's "sudo -v" caches them, and a sudo that didn't prompt would
+// hand the password to the command, writing it into a file step's file.
+func TestBecomeCachedCredentialsKeepStdinIntact(t *testing.T) {
+	s, cfg := becomeServer(t, "password:s3cret")
+	s.Env = append(s.Env, "FAKE_SUDO_CACHE="+s.Dir+"/timestamp")
+	b := &Become{Client: dial(t, cfg), Password: []byte("s3cret")}
+	for i := 0; i < 2; i++ {
+		res, err := b.Run(context.Background(), "cat", []byte("file content"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(res.Stdout) != "file content" {
+			t.Fatalf("run %d: command read %q (stderr %q)", i, res.Stdout, res.Stderr)
+		}
+	}
+}
+
 // A probe cut short by its context is tried again by the next Run rather
 // than failing every Run after it.
 func TestBecomeProbeRetriesAfterCancel(t *testing.T) {

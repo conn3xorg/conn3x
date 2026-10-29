@@ -9,15 +9,18 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh/sshtest"
 )
@@ -30,6 +33,65 @@ func dial(t *testing.T, cfg Config) *Client {
 	}
 	t.Cleanup(func() { c.Close() })
 	return c
+}
+
+// Dial closes its connection to the SSH agent once the handshake is done,
+// whether it succeeded or not. DialWait dials a booting host dozens of
+// times, and every connection left open is held by ssh-agent too.
+func TestDialClosesAgentConnection(t *testing.T) {
+	s := sshtest.New(t)
+	key, err := gossh.ParseRawPrivateKey(s.ClientKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring := agent.NewKeyring()
+	if err := keyring.Add(agent.AddedKey{PrivateKey: key}); err != nil {
+		t.Fatal(err)
+	}
+	// t.TempDir paths can be too long for a unix socket on macOS.
+	dir, err := os.MkdirTemp("", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	l, err := net.Listen("unix", filepath.Join(dir, "sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	var open atomic.Int64
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			open.Add(1)
+			go func() {
+				_ = agent.ServeAgent(keyring, conn)
+				conn.Close()
+				open.Add(-1)
+			}()
+		}
+	}()
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(dir, "sock"))
+
+	cfg := testConfig(t, s)
+	cfg.PrivateKey = nil
+	c := dial(t, cfg)
+	if _, err := c.Run(context.Background(), "true", nil); err != nil {
+		t.Fatal(err)
+	}
+	refused := cfg
+	refused.HostKey, refused.KnownHostsFile = "", filepath.Join(t.TempDir(), "known_hosts")
+	if _, err := Dial(context.Background(), refused); err == nil {
+		t.Fatal("Dial with no record of the host key succeeded")
+	}
+	for deadline := time.Now().Add(5 * time.Second); open.Load() != 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d agent connections still open after Dial returned", open.Load())
+		}
+	}
 }
 
 func TestRunCapturesOutputAndExit(t *testing.T) {
@@ -358,6 +420,26 @@ func TestUnansweredKeepaliveClosesConnection(t *testing.T) {
 	defer cancel()
 	if _, err := c.Run(ctx, "true", nil); err == nil || errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Run waiting for a slot = %v, want the connection's error", err)
+	}
+}
+
+// Alive gives up on a server that stops answering, as the slot keepalives
+// do, instead of hanging the refresh that asked.
+func TestAliveGivesUpOnUnansweredKeepalive(t *testing.T) {
+	defer func(d time.Duration) { keepaliveTimeout = d }(keepaliveTimeout)
+	keepaliveTimeout = 200 * time.Millisecond
+	s := sshtest.New(t)
+	s.IgnoreKeepalives = true
+	c := dial(t, testConfig(t, s))
+	alive := make(chan bool, 1)
+	go func() { alive <- c.Alive() }()
+	select {
+	case ok := <-alive:
+		if ok {
+			t.Fatal("Alive = true on a server that never answered")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Alive still waiting for an answer after 5s")
 	}
 }
 

@@ -97,7 +97,6 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 	name := req.PlannedState.GetAttr("name").AsString()
 	if s := req.PlannedState.GetAttr("serial"); !s.IsNull() && s.True() {
 		mu := serialLock(name)

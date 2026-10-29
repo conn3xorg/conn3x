@@ -225,19 +225,21 @@ func (c *Client) ping() {
 // keepalive waits for the server to answer a keepalive. A server that
 // hasn't answered within c.timeout is taken for gone: the connection is
 // closed, so the pool dials a new one and commands waiting for a slot
-// fail rather than hang.
-func (c *Client) keepalive() {
-	answered := make(chan struct{})
+// fail rather than hang. It reports whether the server answered.
+func (c *Client) keepalive() bool {
+	answered := make(chan error, 1)
 	go func() {
-		_, _, _ = c.conn.SendRequest("keepalive@openssh.com", true, nil)
-		close(answered)
+		_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)
+		answered <- err
 	}()
 	select {
-	case <-answered:
+	case err := <-answered:
+		return err == nil
 	case <-time.After(c.timeout):
 		log.Printf("[WARN] conn3x: %s did not answer a keepalive in %s; closing the connection", c.addr, c.timeout)
 		_ = c.Close()
 		<-answered
+		return false
 	}
 }
 
@@ -278,9 +280,14 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 15 * time.Second
 	}
-	auth, err := authMethod(cfg)
+	auth, agentConn, err := authMethod(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("ssh %s: %w", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), err)
+	}
+	if agentConn != nil {
+		// Every hop's handshake is over when Dial returns, and nothing
+		// after it signs.
+		defer agentConn.Close()
 	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
@@ -314,7 +321,8 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		}
 		hopAuth := auth
 		if i < len(cfg.Jumps) && len(hop.PrivateKey) > 0 {
-			if hopAuth, err = authMethod(hop); err != nil {
+			// A hop's own key never opens the agent.
+			if hopAuth, _, err = authMethod(hop); err != nil {
 				closeAll()
 				return nil, fmt.Errorf("ssh %s: %w", addr, err)
 			}
@@ -459,23 +467,26 @@ func (probeKey) Type() string                          { return "conn3x-probe" }
 func (probeKey) Marshal() []byte                       { return []byte("conn3x-probe") }
 func (probeKey) Verify([]byte, *gossh.Signature) error { return errors.New("probe key") }
 
-func authMethod(cfg Config) (gossh.AuthMethod, error) {
+// authMethod returns how to authenticate as cfg says and, when that is the
+// SSH agent, the connection to it. The agent is needed only during the
+// handshake, so the caller closes that connection once it is done.
+func authMethod(cfg Config) (gossh.AuthMethod, net.Conn, error) {
 	if len(cfg.PrivateKey) > 0 {
 		signer, err := gossh.ParsePrivateKey(cfg.PrivateKey)
 		if err != nil {
-			return nil, fmt.Errorf("parsing private_key: %w", err)
+			return nil, nil, fmt.Errorf("parsing private_key: %w", err)
 		}
-		return gossh.PublicKeys(signer), nil
+		return gossh.PublicKeys(signer), nil, nil
 	}
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
-		return nil, errors.New("no private_key given and no SSH agent (SSH_AUTH_SOCK is not set)")
+		return nil, nil, errors.New("no private_key given and no SSH agent (SSH_AUTH_SOCK is not set)")
 	}
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to the SSH agent: %w", err)
+		return nil, nil, fmt.Errorf("connecting to the SSH agent: %w", err)
 	}
-	return gossh.PublicKeysCallback(agent.NewClient(conn).Signers), nil
+	return gossh.PublicKeysCallback(agent.NewClient(conn).Signers), conn, nil
 }
 
 // Run executes cmd with /bin/sh in the C locale, feeding it stdin. A non-zero
@@ -599,15 +610,13 @@ func (b *syncBuffer) Bytes() []byte {
 // Addr is the host and port the client is connected to.
 func (c *Client) Addr() string { return c.addr }
 
-// Alive reports whether the connection still answers a keepalive.
+// Alive reports whether the connection still answers a keepalive, and
+// closes it if no answer comes in time; see keepalive.
 // Callers checking at once share one: keepalives go out one at a time, so
 // one each would queue a round trip per caller.
 func (c *Client) Alive() bool {
-	_, err, _ := c.alive.Do("", func() (any, error) {
-		_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)
-		return nil, err
-	})
-	return err == nil
+	ok, _, _ := c.alive.Do("", func() (any, error) { return c.keepalive(), nil })
+	return ok.(bool)
 }
 
 // Close ends the connection, and those to any jump hosts.

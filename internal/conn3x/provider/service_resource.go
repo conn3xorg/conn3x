@@ -112,7 +112,6 @@ func readService(ctx context.Context, req providers.ReadResourceRequest) provide
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 	actual, err := service.Read(ctx, host, req.PriorState.GetAttr("name").AsString())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
@@ -137,7 +136,6 @@ func applyService(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 
 	d := desiredService(target)
 	if req.PlannedState.IsNull() {
