@@ -6,8 +6,6 @@ package provider
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -381,18 +379,15 @@ func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostCo
 	return h, nil
 }
 
+// poolKey only keys the in-memory pool, so it joins the parts as they are:
+// hashing would add nothing, and the key and password are already in memory.
 func poolKey(cfg ssh.Config, become bool, password []byte, useAgent, require bool) string {
-	sum := sha256.New()
-	for _, part := range [][]byte{
-		[]byte(cfg.Host), []byte(strconv.Itoa(cfg.Port)), []byte(cfg.User), cfg.PrivateKey,
-		[]byte(cfg.HostKey), []byte(cfg.KnownHostsFile), []byte(strconv.FormatBool(become)), password,
-		[]byte(fmt.Sprint(cfg.Jumps)), // the same host through another bastion is another connection
-		[]byte(strconv.FormatBool(useAgent)), []byte(strconv.FormatBool(require)),
-	} {
-		sum.Write(part)
-		sum.Write([]byte{0})
-	}
-	return hex.EncodeToString(sum.Sum(nil))
+	return strings.Join([]string{
+		cfg.Host, strconv.Itoa(cfg.Port), cfg.User, string(cfg.PrivateKey),
+		cfg.HostKey, cfg.KnownHostsFile, strconv.FormatBool(become), string(password),
+		fmt.Sprint(cfg.Jumps), // the same host through another bastion is another connection
+		strconv.FormatBool(useAgent), strconv.FormatBool(require),
+	}, "\x00")
 }
 
 // rootKey names the machine an ssh block reaches and the user it logs in
