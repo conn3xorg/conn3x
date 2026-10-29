@@ -1057,3 +1057,15 @@ func TestLoopingStepForEachKeepsMarks(t *testing.T) {
 		})
 	}
 }
+
+func TestHandlerSerialPassesThrough(t *testing.T) {
+	src := strings.Replace(handlerCircuit, "      name = \"nginx\"\n", "      name   = \"nginx\"\n      serial = true\n", 1)
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	attrs, _ := mod.ManagedResources["conn3x_service_action.web__restart_nginx"].Config.JustAttributes()
+	if _, ok := attrs["serial"]; !ok {
+		t.Fatal("serial not passed to the service action")
+	}
+}
