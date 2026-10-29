@@ -63,4 +63,4 @@ When you delete a `cron` step, `on_remove` decides what happens on the host. The
 
 ## From Ansible
 
-`conn3x convert ansible` turns `cron` tasks into `cron` steps. `minute`, `hour`, `day`, `month` and `weekday` become `schedule`, with `*` for any you leave out, and `special_time` becomes a macro such as `@daily`. `job` becomes `command`, and the task's `name` becomes the file name, with other characters replaced by `-`. The job moves from the user's crontab to `/etc/cron.d`. A task with `cron_file` or `state: absent` stays a TODO.
+`conn3x convert ansible` turns `cron` tasks into `cron` steps. `minute`, `hour`, `day`, `month` and `weekday` become `schedule`, with `*` for any you leave out, and `special_time` becomes a macro such as `@daily`. `job` becomes `command`, and the task's `name` becomes the file name, with other characters replaced by `-`. The job moves from the user's crontab to `/etc/cron.d`, so the step comes with a TODO to delete the old crontab line, or the job runs twice. A task with `cron_file` or `state: absent` stays a TODO.

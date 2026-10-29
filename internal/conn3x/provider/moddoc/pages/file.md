@@ -73,4 +73,4 @@ When you delete a `file` step, `on_remove` decides what happens on the host. The
 
 ## From Ansible
 
-`conn3x convert ansible` turns `copy` tasks with `content` or `src` into `file` steps, reading `src` from your playbook's `files/` directory. `copy` with `remote_src` stays a TODO.
+`conn3x convert ansible` turns `copy` tasks with `content` or `src` into `file` steps, reading `src` from your playbook's `files/` directory. `copy` with `remote_src` stays a TODO, and so does `force: no`, since Ansible then writes the file only when it's missing.
