@@ -103,3 +103,14 @@ func TestServiceActionInPlaceUpdateRunsNothing(t *testing.T) {
 		t.Fatalf("in-place update tried to reach the host: %v", resp.Diagnostics.Err())
 	}
 }
+
+// Handlers with serial = true restarting the same unit share one lock, so
+// k3s on three servers restarts one host at a time and keeps etcd quorum.
+func TestServiceActionSerialLockIsPerUnit(t *testing.T) {
+	if serialLock("k3s") != serialLock("k3s.service") {
+		t.Error("k3s and k3s.service got different locks")
+	}
+	if serialLock("k3s") == serialLock("nginx") {
+		t.Error("different units share a lock")
+	}
+}

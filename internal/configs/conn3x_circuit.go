@@ -488,7 +488,7 @@ func stepNotify(step *hcl.Block) ([]notifyRef, hcl.Diagnostics) {
 }
 
 var handlerServiceSchema = &hcl.BodySchema{
-	Attributes: []hcl.AttributeSchema{{Name: "name", Required: true}, {Name: "action"}},
+	Attributes: []hcl.AttributeSchema{{Name: "name", Required: true}, {Name: "action"}, {Name: "serial"}},
 }
 
 // lowerHandler turns a handler into a conn3x_service_action whose triggers
@@ -505,7 +505,7 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 		return nil, append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "A handler needs exactly one service block",
-			Detail:   "Handlers restart or reload a service: handler \"name\" { service { name = \"nginx\" } }, with an optional action = \"reload\".",
+			Detail:   "Handlers restart or reload a service: handler \"name\" { service { name = \"nginx\" } }, with an optional action = \"reload\" and serial = true.",
 			Subject:  &rng,
 		})
 	}
