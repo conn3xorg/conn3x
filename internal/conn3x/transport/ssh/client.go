@@ -225,19 +225,21 @@ func (c *Client) ping() {
 // keepalive waits for the server to answer a keepalive. A server that
 // hasn't answered within c.timeout is taken for gone: the connection is
 // closed, so the pool dials a new one and commands waiting for a slot
-// fail rather than hang.
-func (c *Client) keepalive() {
-	answered := make(chan struct{})
+// fail rather than hang. It reports whether the server answered.
+func (c *Client) keepalive() bool {
+	answered := make(chan error, 1)
 	go func() {
-		_, _, _ = c.conn.SendRequest("keepalive@openssh.com", true, nil)
-		close(answered)
+		_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)
+		answered <- err
 	}()
 	select {
-	case <-answered:
+	case err := <-answered:
+		return err == nil
 	case <-time.After(c.timeout):
 		log.Printf("[WARN] conn3x: %s did not answer a keepalive in %s; closing the connection", c.addr, c.timeout)
 		_ = c.Close()
 		<-answered
+		return false
 	}
 }
 
@@ -608,15 +610,13 @@ func (b *syncBuffer) Bytes() []byte {
 // Addr is the host and port the client is connected to.
 func (c *Client) Addr() string { return c.addr }
 
-// Alive reports whether the connection still answers a keepalive.
+// Alive reports whether the connection still answers a keepalive, and
+// closes it if no answer comes in time; see keepalive.
 // Callers checking at once share one: keepalives go out one at a time, so
 // one each would queue a round trip per caller.
 func (c *Client) Alive() bool {
-	_, err, _ := c.alive.Do("", func() (any, error) {
-		_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)
-		return nil, err
-	})
-	return err == nil
+	ok, _, _ := c.alive.Do("", func() (any, error) { return c.keepalive(), nil })
+	return ok.(bool)
 }
 
 // Close ends the connection, and those to any jump hosts.

@@ -423,6 +423,26 @@ func TestUnansweredKeepaliveClosesConnection(t *testing.T) {
 	}
 }
 
+// Alive gives up on a server that stops answering, as the slot keepalives
+// do, instead of hanging the refresh that asked.
+func TestAliveGivesUpOnUnansweredKeepalive(t *testing.T) {
+	defer func(d time.Duration) { keepaliveTimeout = d }(keepaliveTimeout)
+	keepaliveTimeout = 200 * time.Millisecond
+	s := sshtest.New(t)
+	s.IgnoreKeepalives = true
+	c := dial(t, testConfig(t, s))
+	alive := make(chan bool, 1)
+	go func() { alive <- c.Alive() }()
+	select {
+	case ok := <-alive:
+		if ok {
+			t.Fatal("Alive = true on a server that never answered")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Alive still waiting for an answer after 5s")
+	}
+}
+
 // BenchmarkQuickCommandsAtDelay runs 64 quick commands at once on a host
 // 50 ms away, so the cap of 8 turns over many times.
 func BenchmarkQuickCommandsAtDelay(b *testing.B) {
