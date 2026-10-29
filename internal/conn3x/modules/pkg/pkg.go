@@ -243,8 +243,9 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			return Run(ctx, r, aptGet+" remove "+ssh.Quote(d.Name))
 		}
 		err := Run(ctx, r, aptGet+" install "+ssh.Quote(spec))
-		if err != nil && (strings.Contains(err.Error(), "Unable to locate package") || strings.Contains(err.Error(), "has no installation candidate")) {
-			// Fresh hosts often have no package lists yet.
+		if err != nil && staleLists(err) {
+			// Fresh hosts often have no package lists yet, and an image a few
+			// weeks old has lists naming versions the mirror has since dropped.
 			if err := Run(ctx, r, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err != nil {
 				return err
 			}
@@ -253,6 +254,15 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		return err
 	}
 	return fmt.Errorf("unknown package family %q", family)
+}
+
+// staleLists reports whether apt failed because its package lists are
+// missing or out of date, which apt-get update fixes.
+func staleLists(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "Unable to locate package") ||
+		strings.Contains(msg, "has no installation candidate") ||
+		strings.Contains(msg, "Unable to fetch some archives")
 }
 
 // Another apt or dnf can hold the package manager's lock, such as a step

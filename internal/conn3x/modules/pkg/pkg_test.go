@@ -330,3 +330,24 @@ func TestSettledSkipsPackagesAlreadyAsWanted(t *testing.T) {
 		}
 	}
 }
+
+// An image a few weeks old lists versions the mirror has dropped, so the
+// download 404s until the lists are refreshed.
+func TestApplyDebRefreshesListsWhenDownloadIsGone(t *testing.T) {
+	calls := 0
+	h := &fnHost{fn: func(cmd string) ssh.Result {
+		if strings.Contains(cmd, "apt-get") && strings.Contains(cmd, "install") {
+			calls++
+			if calls == 1 {
+				return ssh.Result{ExitCode: 100, Stderr: []byte("E: Failed to fetch http://deb.debian.org/debian/pool/main/u/unbound/unbound_1.22.0-2_amd64.deb  404  Not Found\nE: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?\n")}
+			}
+		}
+		return ok("")
+	}}
+	if err := Apply(ctx, h, Deb, Desired{Name: "unbound", State: Present}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || !strings.Contains(strings.Join(h.ran, "\n"), " update") {
+		t.Fatalf("expected an update and a retry, ran %v", h.ran)
+	}
+}
