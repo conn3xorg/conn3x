@@ -83,13 +83,6 @@ func ApplyDownload(ctx context.Context, r modules.Runner, d Download) error {
 	if mode == "" {
 		mode = "0644"
 	}
-	var owner strings.Builder
-	if d.Owner != "" {
-		fmt.Fprintf(&owner, "chown -- %s \"$tmp\"\n", ssh.Quote(d.Owner))
-	}
-	if d.Group != "" {
-		fmt.Fprintf(&owner, "chgrp -- %s \"$tmp\"\n", ssh.Quote(d.Group))
-	}
 	script := fmt.Sprintf(`set -e
 p=%[1]s
 url=%[2]s
@@ -108,7 +101,7 @@ mv -f -- "$tmp" "$p"
 trap - EXIT
 `+file.SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
-		ssh.Quote(d.Dest), ssh.Quote(d.URL), d.SHA256, mode, owner.String())
+		ssh.Quote(d.Dest), ssh.Quote(d.URL), d.SHA256, mode, file.Ownership(d.Owner, d.Group))
 	res, err := r.Run(ctx, script, nil)
 	return check(res, err)
 }

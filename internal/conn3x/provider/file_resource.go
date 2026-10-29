@@ -104,7 +104,7 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 	if !vals["state"].IsKnown() {
 		// Whether the file should exist isn't known yet, so neither is
 		// anything read from it.
-		if vals["mode"].IsNull() {
+		if req.Config.GetAttr("mode").IsNull() {
 			vals["mode"] = cty.UnknownVal(cty.String)
 		}
 		vals["content_wo"] = cty.NullVal(cty.String)
@@ -115,7 +115,9 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 		return planAbsentFile(req, resp, vals)
 	}
 	vals["in_sync"] = cty.NullVal(cty.Bool)
-	if vals["mode"].IsNull() {
+	// Check the config, not the proposal: mode is computed, so the proposal
+	// carries the refreshed mode and the default would never come back.
+	if req.Config.GetAttr("mode").IsNull() {
 		vals["mode"] = cty.StringVal(defaultMode)
 		if !req.Config.GetAttr("content_wo").IsNull() {
 			vals["mode"] = cty.StringVal("0600")

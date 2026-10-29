@@ -315,3 +315,32 @@ func TestValidateRejectsBadSSHTimeout(t *testing.T) {
 		t.Fatal("timeout = \"soon\" accepted")
 	}
 }
+
+// mode is computed, so core proposes the refreshed mode when the config
+// leaves it out. A file someone chmods must still plan back to the default.
+func TestPlanDefaultModeReturnsAfterDrift(t *testing.T) {
+	f := newFileTest(t)
+	state := f.create("hello\n", nil)
+	drifted := state.AsValueMap()
+	drifted["mode"] = cty.StringVal("0666")
+	cfg := f.config(map[string]cty.Value{"content": cty.StringVal("hello\n")})
+	planned := f.plan(cty.ObjectVal(drifted), cfg).PlannedState
+	if got := planned.GetAttr("mode"); !got.RawEquals(cty.StringVal("0644")) {
+		t.Fatalf("mode = %#v, want 0644", got)
+	}
+}
+
+func TestPlanDirectoryDefaultModeReturnsAfterDrift(t *testing.T) {
+	r := resourceTypes["conn3x_directory"]
+	cfg := objFor(r.schema(), map[string]cty.Value{"path": cty.StringVal("/srv/app")})
+	prior := cfg.AsValueMap()
+	prior["id"], prior["mode"] = cty.StringVal("h:/srv/app"), cty.StringVal("0777")
+	proposed := cfg.AsValueMap()
+	proposed["mode"] = prior["mode"]
+	planned := r.plan(providers.PlanResourceChangeRequest{
+		PriorState: cty.ObjectVal(prior), ProposedNewState: cty.ObjectVal(proposed), Config: cfg,
+	}).PlannedState
+	if got := planned.GetAttr("mode"); !got.RawEquals(cty.StringVal("0755")) {
+		t.Fatalf("mode = %#v, want 0755", got)
+	}
+}

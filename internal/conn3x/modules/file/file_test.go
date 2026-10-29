@@ -151,6 +151,64 @@ func TestFailedApplyLeavesNothingBehind(t *testing.T) {
 	}
 }
 
+// With owner and group unset, a rewrite keeps the ones the file has, even
+// though the temporary file that replaces it was made by someone else.
+func TestApplyKeepsOwnershipWhenUnset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.conf")
+	if err := os.WriteFile(path, []byte("old\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	root := os.Getuid() == 0
+	want := ""
+	if root {
+		// Any user and group will do: the file is app:app, Apply runs as root.
+		want = "4242 4243"
+		if err := os.Chown(path, 4242, 4243); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		// Without root only the group can move, to another group we're in.
+		out, _ := localRunner{}.Run(ctx, "id -G", nil)
+		natural := strings.Fields(owners(t, path))[1] // what a new file gets
+		for _, g := range strings.Fields(string(out.Stdout)) {
+			if g != natural && exec.Command("chgrp", g, path).Run() == nil {
+				want = fmt.Sprintf("%d %s", os.Getuid(), g)
+				break
+			}
+		}
+		if want == "" {
+			t.Skip("needs root, or a second group to move the file to")
+		}
+	}
+	if err := Apply(ctx, localRunner{}, Desired{Path: path, Content: "new\n", Mode: "0640"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := owners(t, path); got != want {
+		t.Fatalf("owner and group = %s, want %s", got, want)
+	}
+
+	// A set group still wins, and the unset owner is still kept.
+	if !root {
+		return
+	}
+	if err := Apply(ctx, localRunner{}, Desired{Path: path, Content: "new\n", Mode: "0640", Group: "0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := owners(t, path); got != "4242 0" {
+		t.Fatalf("owner and group = %s, want 4242 0", got)
+	}
+}
+
+// owners is the numeric owner and group of p, as "uid gid".
+func owners(t *testing.T, p string) string {
+	t.Helper()
+	res, err := localRunner{}.Run(ctx, "stat -c '%u %g' -- "+ssh.Quote(p)+" 2>/dev/null || stat -f '%u %g' "+ssh.Quote(p), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(res.Stdout))
+}
+
 func TestReadRejectsDirectory(t *testing.T) {
 	if _, err := Read(ctx, localRunner{}, t.TempDir()); err == nil {
 		t.Fatal("reading a directory as a file succeeded")

@@ -53,7 +53,7 @@ func validateDirectory(cfg cty.Value) tfdiags.Diagnostics {
 
 func planDirectory(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	return planPathResource(req, "directory", func(vals map[string]cty.Value) {
-		if vals["mode"].IsNull() {
+		if req.Config.GetAttr("mode").IsNull() { // the proposal carries the refreshed mode
 			vals["mode"] = cty.StringVal("0755")
 		}
 		if m := vals["mode"]; m.IsKnown() {

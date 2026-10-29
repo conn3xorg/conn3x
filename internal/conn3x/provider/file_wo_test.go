@@ -169,6 +169,17 @@ func TestFileWriteOnlyDefaultsToPrivateMode(t *testing.T) {
 	}
 }
 
+// Moving a secret from content to content_wo makes the file private, even
+// though the file already exists at 0644.
+func TestFileSwitchToWriteOnlyMakesModePrivate(t *testing.T) {
+	f := newWOTest(t)
+	plain := f.create("s3cret", nil)
+	cfg := f.config(map[string]cty.Value{"content_wo": cty.StringVal("s3cret")})
+	if got := f.plan(plain, cfg).PlannedState.GetAttr("mode"); !got.RawEquals(cty.StringVal("0600")) {
+		t.Fatalf("mode = %#v, want 0600", got)
+	}
+}
+
 func TestFileWriteOnlyApplyChecksPlannedKey(t *testing.T) {
 	f := newWOTest(t)
 	cfg := f.config(map[string]cty.Value{"content_wo": cty.StringVal("s3cret")})
