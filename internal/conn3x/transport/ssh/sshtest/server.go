@@ -358,8 +358,11 @@ func (s *Server) forward(nc gossh.NewChannel) {
 func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request, exited, free func()) {
 	defer free()
 	defer func() {
-		ch.Close()
+		// exited goes first: the client's keepalive can follow its close
+		// as soon as ours is sent, and one that finds the session not yet
+		// marked would be answered without freeing it.
 		exited()
+		ch.Close()
 		for req := range reqs {
 			if req.WantReply {
 				_ = req.Reply(false, nil)
