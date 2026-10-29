@@ -232,6 +232,10 @@ var keywords = map[string]bool{
 	"failed_when": true, "until": true, "retries": true, "delay": true, "delegate_to": true,
 	"run_once": true, "args": true, "environment": true, "vars": true, "block": true, "rescue": true,
 	"always": true, "no_log": true, "check_mode": true, "diff": true, "listen": true, "become_method": true,
+	"become_exe": true, "become_flags": true, "connection": true, "remote_user": true, "port": true,
+	"throttle": true, "timeout": true, "async": true, "poll": true, "any_errors_fatal": true,
+	"ignore_unreachable": true, "delegate_facts": true, "module_defaults": true, "collections": true,
+	"debugger": true, "action": true, "local_action": true,
 }
 
 // translatable keywords are handled; the rest stop a task from converting.
@@ -254,6 +258,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			return
 		}
 	}
+	module := ""
 	for _, k := range sortedKeys(t) {
 		if k == "loop" && items != nil {
 			continue
@@ -262,6 +267,15 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			c.issue(body, name, node, "uses "+k+", which the converter can't translate yet")
 			return
 		}
+		if keywords[k] {
+			continue
+		}
+		// Any key that isn't a keyword is a module, and a task has only one.
+		if module != "" {
+			c.issue(body, name, node, "has both "+module+" and "+k+", and the converter can't tell which is the module")
+			return
+		}
+		module = k
 	}
 	if b := t["become"]; b != nil && truthy(scalar(b)) != playBecome {
 		c.issue(body, name, node, "sets become differently from its play; give it its own circuit with its own ssh block")

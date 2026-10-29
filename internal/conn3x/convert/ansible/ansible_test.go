@@ -80,6 +80,17 @@ func TestRefusesWhatItCantProve(t *testing.T) {
 		"appends to the user's":   "user: {name: bob, groups: wheel, append: true}",
 		"permanent and immediate": "firewalld: {service: http, permanent: true, state: enabled}",
 		"mode on a link":          "file: {src: /opt/a, dest: /usr/local/bin/a, state: link, owner: root}",
+		"uses connection":         "command: ./deploy.sh\n      args: {creates: /tmp/done}\n      connection: local",
+		"uses remote_user":        "package: {name: vim}\n      remote_user: deploy",
+		"uses throttle":           "package: {name: vim}\n      throttle: 1",
+		"uses timeout":            "package: {name: vim}\n      timeout: 30",
+		"uses become_flags":       "package: {name: vim}\n      become_flags: -H",
+		"which is the module":     "package: {name: vim}\n      pip: {name: requests}",
+		"force: no":               "copy: {dest: /etc/a, content: x, force: no}",
+		"creates is a glob":       "command: {cmd: make, creates: /opt/*.done}",
+		"removes is a glob":       "command: {cmd: make clean, removes: '/opt/build[0-9]'}",
+		"sets chdir inside":       "command: make chdir=/opt/src\n      args: {creates: /opt/src/out}",
+		"create_home: no":         "user: {name: bob, create_home: no}",
 	} {
 		res := convertString(t, "- hosts: all\n  vars: {name: x}\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
@@ -88,6 +99,18 @@ func TestRefusesWhatItCantProve(t *testing.T) {
 		if !strings.Contains(string(res.HCL), "TODO(convert)") {
 			t.Errorf("%q: no TODO in the output", task)
 		}
+	}
+}
+
+// A cron job moves from the user's crontab to /etc/cron.d, so the old line
+// has to go by hand.
+func TestCronSaysToRemoveTheOldJob(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  tasks:\n    - cron: {name: backup, hour: '2', job: /usr/local/bin/backup}\n")
+	if res.Converted != 1 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	if want := `TODO(convert): Delete the "#Ansible: backup" job`; !strings.Contains(string(res.HCL), want) {
+		t.Errorf("output lacks %q:\n%s", want, res.HCL)
 	}
 }
 
