@@ -158,18 +158,29 @@ func Apply(ctx context.Context, r modules.Runner, d Desired) error {
 
 // Restart restarts the unit; handlers use it.
 func Restart(ctx context.Context, r modules.Runner, name string) error {
-	if !unitPattern.MatchString(name) {
-		return fmt.Errorf("unit name %q is not valid", name)
-	}
-	return run(ctx, r, "systemctl restart -- "+ssh.Quote(Unit(name)))
+	return act(ctx, r, name, "restart")
 }
 
 // Reload asks the unit to reload its configuration.
 func Reload(ctx context.Context, r modules.Runner, name string) error {
-	if !unitPattern.MatchString(name) {
-		return fmt.Errorf("unit name %q is not valid", name)
+	return act(ctx, r, name, "reload")
+}
+
+// act runs a handler's systemctl verb, reloading systemd first when the
+// unit file changed. A handler is notified by the step that changed it,
+// after the service step planned against the old file, so that step
+// can't be relied on to have reloaded.
+func act(ctx context.Context, r modules.Runner, name, verb string) error {
+	a, err := Read(ctx, r, name)
+	if err != nil {
+		return err
 	}
-	return run(ctx, r, "systemctl reload -- "+ssh.Quote(Unit(name)))
+	if a.NeedsReload {
+		if err := run(ctx, r, "systemctl daemon-reload"); err != nil {
+			return err
+		}
+	}
+	return run(ctx, r, "systemctl "+verb+" -- "+ssh.Quote(Unit(name)))
 }
 
 func run(ctx context.Context, r modules.Runner, cmd string) error {

@@ -195,3 +195,30 @@ func TestReadUnitFallsBackOnlyWhenUnsupported(t *testing.T) {
 		t.Fatalf("got %v after running %q; want the agent's error and no shell", err, h.ran)
 	}
 }
+
+// A handler that restarts or reloads a unit whose file changed reloads
+// systemd first, or the unit would come back with its old settings.
+func TestHandlerReloadsSystemdWhenUnitChanged(t *testing.T) {
+	for _, tc := range []struct {
+		fn   func(context.Context, *host, string) error
+		verb string
+	}{
+		{func(c context.Context, h *host, n string) error { return Restart(c, h, n) }, "restart"},
+		{func(c context.Context, h *host, n string) error { return Reload(c, h, n) }, "reload"},
+	} {
+		for _, changed := range []string{"yes", "no"} {
+			h := &host{show: show("loaded", "active", "enabled", changed)}
+			if err := tc.fn(ctx, h, "web"); err != nil {
+				t.Fatal(err)
+			}
+			all := strings.Join(h.ran, "\n")
+			want := "systemctl " + tc.verb + " -- 'web.service'"
+			if !strings.HasSuffix(all, want) {
+				t.Errorf("%s, NeedDaemonReload=%s: last command isn't %q in:\n%s", tc.verb, changed, want, all)
+			}
+			if got := strings.Contains(all, "daemon-reload"); got != (changed == "yes") {
+				t.Errorf("%s, NeedDaemonReload=%s: daemon-reload ran = %v in:\n%s", tc.verb, changed, got, all)
+			}
+		}
+	}
+}
