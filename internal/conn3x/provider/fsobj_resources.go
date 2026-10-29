@@ -207,7 +207,6 @@ func readPathResource(ctx context.Context, req providers.ReadResourceRequest, re
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer h.Close()
 	state, err := read(ctx, h, req.PriorState)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
@@ -242,7 +241,6 @@ func applyPathResource(ctx context.Context, req providers.ApplyResourceChangeReq
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer h.Close()
 	if req.PlannedState.IsNull() {
 		if err := remove(ctx, h, req.PriorState); err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(err)

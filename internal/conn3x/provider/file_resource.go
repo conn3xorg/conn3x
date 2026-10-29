@@ -215,7 +215,6 @@ func readFile(ctx context.Context, req providers.ReadResourceRequest) providers.
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer client.Close()
 
 	path := req.PriorState.GetAttr("path").AsString()
 	if fileAbsent(req.PriorState) {
@@ -259,7 +258,6 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 			resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 			return resp
 		}
-		defer client.Close()
 		if err := file.Delete(ctx, client, req.PriorState.GetAttr("path").AsString()); err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(err)
 		}
@@ -272,7 +270,6 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer client.Close()
 
 	if fileAbsent(planned) {
 		path := planned.GetAttr("path").AsString()

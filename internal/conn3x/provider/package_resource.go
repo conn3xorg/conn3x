@@ -140,7 +140,6 @@ func readPackage(ctx context.Context, req providers.ReadResourceRequest) provide
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 	actual, err := readPackageOnHost(ctx, host, desiredPackage(req.PriorState))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
@@ -177,7 +176,6 @@ func applyPackage(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 
 	d := desiredPackage(target)
 	if req.PlannedState.IsNull() {

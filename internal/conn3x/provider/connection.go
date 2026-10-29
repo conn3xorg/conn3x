@@ -231,9 +231,6 @@ func (h *hostConn) alive() bool {
 	return h.client.Alive()
 }
 
-// Close returns the connection to the pool; it stays open for the run.
-func (h *hostConn) Close() error { return nil }
-
 const defaultConnectWait = 3 * time.Minute
 
 type pooledConn struct {

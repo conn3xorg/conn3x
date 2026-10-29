@@ -115,7 +115,6 @@ func readCommand(ctx context.Context, req providers.ReadResourceRequest) provide
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 	ok, err := command.Satisfied(ctx, host, commandGuards(req.PriorState))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
@@ -139,7 +138,6 @@ func applyCommand(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 
 	guards := commandGuards(req.PlannedState)
 	vals := req.PlannedState.AsValueMap()

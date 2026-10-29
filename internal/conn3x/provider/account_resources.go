@@ -308,7 +308,6 @@ func readAccount(ctx context.Context, req providers.ReadResourceRequest, read fu
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 	state, err := read(ctx, host, req.PriorState.GetAttr("name").AsString())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
@@ -335,7 +334,6 @@ func applyAccount(ctx context.Context, req providers.ApplyResourceChangeRequest,
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 	if req.PlannedState.IsNull() {
 		if err := remove(ctx, host, target.GetAttr("name").AsString()); err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(err)

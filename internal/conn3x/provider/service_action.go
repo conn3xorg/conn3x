@@ -95,7 +95,6 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer host.Close()
 	name := req.PlannedState.GetAttr("name").AsString()
 	if req.PlannedState.GetAttr("action").AsString() == "reload" {
 		err = service.Reload(ctx, host, name)
