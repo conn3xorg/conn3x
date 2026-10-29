@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -29,6 +30,7 @@ func serviceActionSchema() providers.Schema {
 				"name":     {Type: cty.String, Required: true, Description: "Unit name."},
 				"action":   {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default) or \"reload\"."},
 				"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the action runs again whenever it changes."},
+				"serial":   {Type: cty.Bool, Optional: true, Description: "Act on one host at a time, waiting for systemctl to return before the next."},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 		},
@@ -97,6 +99,11 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 	}
 	defer host.Close()
 	name := req.PlannedState.GetAttr("name").AsString()
+	if s := req.PlannedState.GetAttr("serial"); !s.IsNull() && s.True() {
+		mu := serialLock(name)
+		mu.Lock()
+		defer mu.Unlock()
+	}
 	if req.PlannedState.GetAttr("action").AsString() == "reload" {
 		err = service.Reload(ctx, host, name)
 	} else {
@@ -106,6 +113,15 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("service %s: %w", service.Unit(name), err))
 	}
 	return resp
+}
+
+var serialLocks sync.Map // unit name => *sync.Mutex
+
+// serialLock returns the lock that serial actions on unit take, one per
+// unit across every host and circuit in this apply.
+func serialLock(unit string) *sync.Mutex {
+	mu, _ := serialLocks.LoadOrStore(service.Unit(unit), &sync.Mutex{})
+	return mu.(*sync.Mutex)
 }
 
 // upgradedTriggers reports the first plan after upgrading: handlers used to
