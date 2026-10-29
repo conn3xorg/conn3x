@@ -16,7 +16,12 @@ import (
 )
 
 // Provider implements providers.Interface in process.
-type Provider struct{}
+type Provider struct {
+	// stopped is cancelled by Stop, which is how OpenTofu asks for work in
+	// flight to end on Ctrl-C or SIGTERM. Nil in a Provider built bare.
+	stopped context.Context
+	stop    context.CancelFunc
+}
 
 // resourceType is everything the provider needs to serve one resource type.
 type resourceType struct {
@@ -62,7 +67,18 @@ var resourceTypes = map[string]resourceType{
 
 // New returns the built-in conn3x provider.
 func New() (providers.Interface, error) {
-	return &Provider{}, nil
+	ctx, stop := context.WithCancel(context.Background())
+	return &Provider{stopped: ctx, stop: stop}, nil
+}
+
+// withStop returns ctx, also cancelled when Stop is called.
+func (p *Provider) withStop(ctx context.Context) (context.Context, context.CancelFunc) {
+	if p.stopped == nil {
+		return ctx, func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	unhook := context.AfterFunc(p.stopped, cancel)
+	return ctx, func() { unhook(); cancel() }
 }
 
 var _ providers.Interface = (*Provider)(nil)
@@ -118,7 +134,12 @@ func (p *Provider) ConfigureProvider(context.Context, providers.ConfigureProvide
 
 func (p *Provider) Close(context.Context) error { return nil }
 
-func (p *Provider) Stop(context.Context) error { return nil }
+func (p *Provider) Stop(context.Context) error {
+	if p.stop != nil {
+		p.stop()
+	}
+	return nil
+}
 
 func (p *Provider) UpgradeResourceState(_ context.Context, req providers.UpgradeResourceStateRequest) providers.UpgradeResourceStateResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
@@ -133,6 +154,8 @@ func (p *Provider) UpgradeResourceIdentity(context.Context, providers.UpgradeRes
 
 func (p *Provider) ReadResource(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
+		ctx, done := p.withStop(ctx)
+		defer done()
 		if conn := priorSSH(req.PriorState); !conn.IsNull() {
 			if diags := reachable(ctx, conn); len(diags) > 0 {
 				return providers.ReadResourceResponse{NewState: req.PriorState, Private: req.Private, Diagnostics: diags}
@@ -169,6 +192,8 @@ func (p *Provider) PlanResourceChange(_ context.Context, req providers.PlanResou
 
 func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
+		ctx, done := p.withStop(ctx)
+		defer done()
 		resp := rt.apply(ctx, req)
 		resp.NewState = applyRevision(req.PlannedState, resp.NewState)
 		return resp
@@ -184,6 +209,8 @@ func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSou
 	if req.TypeName != "conn3x_host" {
 		return providers.ReadDataSourceResponse{Diagnostics: unsupported("data source " + req.TypeName)}
 	}
+	ctx, done := p.withStop(ctx)
+	defer done()
 	return readHostData(ctx, req)
 }
 
