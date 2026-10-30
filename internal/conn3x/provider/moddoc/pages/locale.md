@@ -42,4 +42,4 @@ A `locale` step has no `on_remove`. When you delete it, Conn3x stops managing th
 
 ## From Ansible
 
-`conn3x convert ansible` turns `community.general.locale_gen` tasks that name one locale into `locale` steps. `locale_gen` only generates a locale, while a `locale` step also makes it the host's `LANG`, so the step carries a TODO saying so. A task with `state: absent`, several locales or a loop, or a second `locale_gen` task in the same play, stays a TODO.
+`conn3x convert ansible` leaves `community.general.locale_gen` as a TODO. `locale_gen` only generates a locale, while a `locale` step also makes it the host's `LANG`, so a conversion would change something your playbook never asked for. Use a `locale` step if you do want it as the system locale.

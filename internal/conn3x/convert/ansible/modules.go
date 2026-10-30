@@ -20,7 +20,6 @@ import (
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
-	"github.com/opentofu/opentofu/internal/conn3x/modules/system"
 )
 
 const (
@@ -745,23 +744,10 @@ func yumRepositoryModule(in *input) ([]step, string) {
 	return one("repository", []attr{s("name", name), s("url", urls[0]), {key: "key", raw: fmt.Sprintf(`file("${path.module}/%s")`, keyFile)}}, notes...)
 }
 
-func localeGenModule(in *input) ([]step, string) {
-	if in.loop {
-		return nil, "loops over locales, and a host has one system locale, which a locale step sets"
-	}
-	in.state("present", "present")
-	names := in.list("name")
-	if in.problem != "" {
-		return nil, in.problem
-	}
-	if len(names) != 1 {
-		return nil, "doesn't name exactly one locale; a locale step also sets the system locale, and a host has one"
-	}
-	if err := system.ValidateLocale(names[0]); err != nil {
-		return nil, "can't be a locale step: " + err.Error()
-	}
-	return one("locale", []attr{s("name", names[0])},
-		fmt.Sprintf("TODO(convert): This step also sets the host's LANG to %s, which locale_gen didn't. To only generate the locale, use a guarded command step instead.", names[0]))
+// A locale step also sets the host's LANG, which locale_gen doesn't, so
+// converting one would change something the playbook never asked for.
+func localeGenModule(*input) ([]step, string) {
+	return nil, "only generates a locale, and a locale step also sets the host's LANG; use a guarded command step, or a locale step if you do want it as the system locale"
 }
 
 // inlineArgs are the options Ansible pulls out of a free-form command line.

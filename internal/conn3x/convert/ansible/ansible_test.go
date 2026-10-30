@@ -222,12 +222,6 @@ func TestConvertsRepositoriesAndLocale(t *testing.T) {
 			"description dropped",
 		},
 		"community.general.yum_repository: {name: d, file: d, enabled: yes, baseurl: [ 'http://example.com/' ], gpgcheck: yes, gpgkey: [ 'file:///etc/pki/docker.asc' ]}": {`name = "d"`},
-		"community.general.locale_gen: {name: en_GB.UTF-8}": {
-			`name = "en_GB.UTF-8"`,
-			"TODO(convert): This step also sets the host's LANG to en_GB.UTF-8",
-		},
-		"ansible.builtin.locale_gen: {name: [de_DE.UTF-8], state: present}": {`name = "de_DE.UTF-8"`},
-		"locale_gen: name=fr_FR.UTF-8":                                      {`name = "fr_FR.UTF-8"`},
 	} {
 		res := convertWithKey(t, "    - "+task+"\n")
 		if res.Converted != 1 || len(res.Review) != 0 {
@@ -267,9 +261,6 @@ func TestRefusesRepositoriesAndLocalesItCantProve(t *testing.T) {
 		"sets priority":           "yum_repository: {" + yum + ", priority: 10}",
 		"may only use letters":    "yum_repository: {name: 'a b', baseurl: 'http://example.com/', gpgcheck: true, gpgkey: 'http://example.com/docker.asc'}",
 		"no usable file name":     "yum_repository: {name: d, baseurl: 'http://example.com/', gpgcheck: true, gpgkey: 'http://example.com/a\"b'}",
-		"exactly one locale":      "locale_gen: {name: [en_GB.UTF-8, de_DE.UTF-8]}",
-		"not a name such as":      "locale_gen: {name: 'bad name'}",
-		"loops over locales":      "locale_gen: {name: \"{{ item }}\"}\n      loop: [en_GB.UTF-8, de_DE.UTF-8]",
 	} {
 		res := convertWithKey(t, "    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
@@ -279,8 +270,8 @@ func TestRefusesRepositoriesAndLocalesItCantProve(t *testing.T) {
 			t.Errorf("%q: no TODO in the output", task)
 		}
 	}
-	// state: absent on the other two modules, written separately as the map keys collide.
-	for _, task := range []string{"yum_repository: {" + yum + ", state: absent}", "locale_gen: {name: en_GB.UTF-8, state: absent}"} {
+	// state: absent, written separately as the map keys collide.
+	for _, task := range []string{"yum_repository: {" + yum + ", state: absent}"} {
 		res := convertWithKey(t, "    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, `state "absent"`) {
 			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
@@ -288,10 +279,12 @@ func TestRefusesRepositoriesAndLocalesItCantProve(t *testing.T) {
 	}
 }
 
-// Two locale steps would each set LANG back on every apply.
-func TestSecondLocaleInAPlayIsLeft(t *testing.T) {
-	res := convertWithKey(t, "    - locale_gen: {name: en_GB.UTF-8}\n    - locale_gen: {name: de_DE.UTF-8}\n")
-	if res.Converted != 1 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "second locale") {
-		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+// A locale step sets LANG too, so locale_gen can't convert faithfully.
+func TestLocaleGenIsLeft(t *testing.T) {
+	for _, task := range []string{"locale_gen: {name: en_GB.UTF-8}", "ansible.builtin.locale_gen: name=fr_FR.UTF-8", "community.general.locale_gen: {name: [en_GB.UTF-8, de_DE.UTF-8]}"} {
+		res := convertWithKey(t, "    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "sets the host's LANG") {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
 	}
 }
