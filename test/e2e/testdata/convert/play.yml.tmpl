@@ -23,3 +23,14 @@
       user:
         name: app
         shell: /bin/sh
+    - name: App setting
+      community.general.ini_file:
+        path: /opt/app/app.ini
+        section: main
+        option: port
+        value: "8080"
+    - name: New mirror
+      ansible.builtin.replace:
+        path: /etc/conn3x-mirrors.conf
+        regexp: '^mirror = old\.example\.com/([a-z]+)$'
+        replace: 'mirror = new.example.com/\1'

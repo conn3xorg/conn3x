@@ -44,6 +44,8 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_link":             {linkSchema, validateLink, planLink, readLink, applyLink, upgradeWith(linkSchema)},
 	"conn3x_line":             {lineKind.schema, lineKind.validate, lineKind.plan, lineKind.read, lineKind.apply, upgradeWith(lineKind.schema)},
 	"conn3x_block":            {blockKind.schema, blockKind.validate, blockKind.plan, blockKind.read, blockKind.apply, upgradeWith(blockKind.schema)},
+	"conn3x_ini":              {iniKind.schema, iniKind.validate, iniKind.plan, iniKind.read, iniKind.apply, upgradeWith(iniKind.schema)},
+	"conn3x_replace":          {replaceKind.schema, replaceKind.validate, replaceKind.plan, replaceKind.read, replaceKind.apply, upgradeWith(replaceKind.schema)},
 	"conn3x_authorized_key":   {authorizedKeySchema, validateAuthorizedKey, planAuthorizedKey, readAuthorizedKey, applyAuthorizedKey, upgradeWith(authorizedKeySchema)},
 	"conn3x_cron":             {cronSchema, validateCron, planCron, readCron, applyCron, upgradeWith(cronSchema)},
 	"conn3x_timer":            {timerSchema, validateTimer, planTimer, readTimer, applyTimer, upgradeWith(timerSchema)},

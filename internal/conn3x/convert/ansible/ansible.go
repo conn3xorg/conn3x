@@ -400,6 +400,9 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 						args["_raw"] = v
 					}
 				}
+				// Marks the task as free-form: this split ignores quoting,
+				// so a module that needs exact text refuses it.
+				args["_raw"] = v
 			}
 		}
 		for ak, av := range mapping(t["args"]) {

@@ -53,3 +53,72 @@ func TestLineAndBlock(t *testing.T) {
 		})
 	}
 }
+
+type iniVars struct {
+	Port, KeyFile, KnownHosts string
+	Grow                      bool
+}
+
+func TestIniAndReplace(t *testing.T) {
+	for _, image := range linuxImages {
+		t.Run(image, func(t *testing.T) {
+			h := startHost(t, image)
+			w := newWorkdir(t, "ini_replace")
+			vars := iniVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts}
+			h.exec("# app settings\n[main]\n; the port\nport = 80\nname = demo\n\n[other]\nport = 1\n", "sh", "-c", "cat > /etc/conn3x-app.ini; chmod 0640 /etc/conn3x-app.ini; chown root:daemon /etc/conn3x-app.ini")
+			h.exec("old.example.com a\nold.example.com b\nkeep\n", "sh", "-c", "cat > /etc/conn3x-real.conf; chmod 0600 /etc/conn3x-real.conf; ln -s /etc/conn3x-real.conf /etc/conn3x-link.conf")
+			w.writeAs("main.circuit.hcl", vars)
+			w.mustConn3x("init", "-no-color")
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+
+			wantINI := "# app settings\n[main]\n; the port\nport = 8080\nname = demo\n\n[other]\nport = 1\n[new]\nkey=v\n"
+			wantConf := "new.example.com:443 a\nnew.example.com:443 b\nkeep\n"
+			check := func(when string) {
+				t.Helper()
+				if got := h.exec("", "cat", "/etc/conn3x-app.ini"); got != wantINI {
+					t.Fatalf("%s: ini file = %q", when, got)
+				}
+				if got := h.exec("", "cat", "/etc/conn3x-real.conf"); got != wantConf {
+					t.Fatalf("%s: replaced file = %q", when, got)
+				}
+				if got := h.exec("", "sh", "-c", "stat -c '%a %U %G' /etc/conn3x-app.ini /etc/conn3x-real.conf; readlink /etc/conn3x-link.conf"); got != "640 root daemon\n600 root root\n/etc/conn3x-real.conf\n" {
+					t.Fatalf("%s: modes and link = %q", when, got)
+				}
+			}
+			check("after apply")
+			if got := h.exec("", "sh", "-c", "test -e /etc/conn3x-never.ini && echo there || echo missing"); got != "missing\n" {
+				t.Fatalf("removing an option created the file: %s", got)
+			}
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+				t.Fatalf("plan after apply is not empty:\n%s", out)
+			}
+			if out, code := w.conn3x("drift", "-no-color"); code != 0 {
+				t.Fatalf("drift right after apply exited %d:\n%s", code, out)
+			}
+
+			// Hand edits show up, and an apply puts them right.
+			h.exec("", "sh", "-c", "sed -i 's/^port = 8080/port = 99/' /etc/conn3x-app.ini; echo old.example.com c >> /etc/conn3x-real.conf")
+			out, code := w.conn3x("drift", "-no-color")
+			if code != 2 {
+				t.Fatalf("drift after a hand edit exited %d, want 2:\n%s", code, out)
+			}
+			for _, want := range []string{`conn3x_ini.cfg__port["box"]`, `conn3x_replace.cfg__mirror["box"]`} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("drift output is missing %q:\n%s", want, out)
+				}
+			}
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+			wantConf += "new.example.com:443 c\n"
+			check("after fixing drift")
+
+			// A replacement that matches its own output is stopped, with the
+			// file untouched, rather than growing on every plan.
+			vars.Grow = true
+			w.writeAs("main.circuit.hcl", vars)
+			if out, code := w.conn3x("apply", "-auto-approve", "-no-color"); code == 0 || !strings.Contains(out, "still matches") {
+				t.Fatalf("a replacement that never settles applied, exit %d:\n%s", code, out)
+			}
+			check("after the refused replace")
+		})
+	}
+}

@@ -1,0 +1,55 @@
+circuit "cfg" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "port" {
+    ini {
+      path    = "/etc/conn3x-app.ini"
+      section = "main"
+      option  = "port"
+      value   = "8080"
+    }
+  }
+
+  step "new_section" {
+    ini {
+      path            = "/etc/conn3x-app.ini"
+      section         = "new"
+      option          = "key"
+      value           = "v"
+      no_extra_spaces = true
+    }
+  }
+
+  step "nothing_to_remove" {
+    ini {
+      path   = "/etc/conn3x-never.ini"
+      option = "key"
+      state  = "absent"
+      create = true
+    }
+  }
+
+  step "mirror" {
+    replace {
+      path    = "/etc/conn3x-link.conf"
+      regexp  = "^old\\.example\\.com( [a-z]+)$"
+      replace = "new.example.com:443$${1}"
+    }
+  }
+{{if .Grow}}
+  step "grows" {
+    replace {
+      path    = "/etc/conn3x-real.conf"
+      regexp  = "(keep)"
+      replace = "$1$1"
+    }
+  }
+{{end}}
+}

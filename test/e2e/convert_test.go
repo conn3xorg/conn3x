@@ -21,7 +21,7 @@ func TestConvertAnsibleThenApply(t *testing.T) {
 			w := newWorkdir(t, "convert")
 			w.writeAs("play.yml", nil)
 			out, code := w.conn3x("convert", "ansible", "-out", "play.tf", "play.yml")
-			if code != 0 || !strings.Contains(out, "Converted all 5 tasks.") {
+			if code != 0 || !strings.Contains(out, "Converted all 7 tasks.") {
 				t.Fatalf("convert exited %d:\n%s", code, out)
 			}
 
@@ -39,10 +39,14 @@ func TestConvertAnsibleThenApply(t *testing.T) {
 				}
 			}
 
+			h.exec("# mirrors\nmirror = old.example.com/base\nmirror = old.example.com/extra\n", "sh", "-c", "cat > /etc/conn3x-mirrors.conf")
 			w.mustConn3x("init", "-no-color")
 			w.mustConn3x("apply", "-auto-approve", "-no-color")
 			if got := h.exec("", "sh", "-c", "stat -c '%a' /opt/app /opt/app/app.conf; cat /opt/app/app.conf; grep -c 'Managed by Conn3x' /etc/issue.net; id -u app >/dev/null && echo app; command -v tree"); !strings.HasPrefix(got, "750\n640\nport = 8080\n1\napp\n") {
 				t.Fatalf("host after apply:\n%s", got)
+			}
+			if got := h.exec("", "cat", "/opt/app/app.ini", "/etc/conn3x-mirrors.conf"); got != "[main]\nport = 8080\n# mirrors\nmirror = new.example.com/base\nmirror = new.example.com/extra\n" {
+				t.Fatalf("converted ini and replace steps left:\n%s", got)
 			}
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 				t.Fatalf("plan after apply:\n%s", out)

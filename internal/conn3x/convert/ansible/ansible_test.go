@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -285,6 +286,164 @@ func TestLocaleGenIsLeft(t *testing.T) {
 		res := convertWithKey(t, "    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "sets the host's LANG") {
 			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}
+
+func TestConvertsIniAndReplace(t *testing.T) {
+	for task, wants := range map[string][]string{
+		"community.general.ini_file: {path: /etc/a.ini, section: main, option: port, value: '8080'}": {
+			"ini {", `path      = "/etc/a.ini"`, `section   = "main"`, `value     = "8080"`, "create    = true", "uncomment = true", "symlink",
+		},
+		"ini_file: {dest: /etc/a.ini, section: null, option: port, value: 80, create: no, modify_inactive_option: no, follow: yes, no_extra_spaces: yes}": {
+			`value           = "80"`, "no_extra_spaces = true",
+		},
+		"ini_file: {path: /etc/a.ini, section: main, option: port, state: absent}": {`state   = "absent"`},
+		"ansible.builtin.replace: {path: /etc/hosts, regexp: 'old\\.example', replace: new.example}": {
+			"replace {", `regexp  = "old\\.example"`, `replace = "new.example"`,
+		},
+		`replace: {dest: /etc/a, regexp: 'a(b+)c', replace: 'x\1y\g<1>\\'}`:               {`replace = "x$${1}y$${1}\\"`},
+		`replace: {path: /etc/a, regexp: '(?P<k>[a-z]+)=', replace: '\g<k>: $5 \g<0>\n'}`: {`replace = "$${k}: $$5 $${0}\n"`},
+		"replace: {path: /etc/a, regexp: '^#.*$\\n'}":                                     {`replace = ""`},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+		for _, want := range wants {
+			if !strings.Contains(string(res.HCL), want) {
+				t.Errorf("%q: output lacks %q:\n%s", task, want, res.HCL)
+			}
+		}
+	}
+}
+
+func TestRefusesIniAndReplaceItCantProve(t *testing.T) {
+	const ini, rep = "ini_file: {path: /a, section: s, option: o, value: 'v', ", "replace: {path: /a, replace: 'x', regexp: "
+	for task, reason := range map[string]string{
+		"ini_file: path=/a section=s option=o value='a b'":                           "key=value text",
+		"replace: path=/a regexp='a b' replace=c":                                    "key=value text",
+		"ini_file: {path: /a, section: s}":                                           "whole section",
+		"ini_file: {path: /a, section: s, option: o}":                                "no value",
+		"ini_file: {path: /a, section: s, option: o, value: v, state: absent}":       "whatever its value",
+		"ini_file: {path: /a, section: s, option: o, state: absent, create: no}":     "create: no",
+		"ini_file: {path: /a, section: '', option: o, value: v}":                     "empty section",
+		"ini_file: {path: /a, section: s, option: o, value: yes}":                    "may read",
+		"ini_file: {path: /a, section: s, option: o, value: 1.10}":                   "may read",
+		"ini_file: {path: /a, section: s, option: o, value: 0644}":                   "may read",
+		"ini_file: {path: /a, section: s, option: o, value: \"{{ b }}\"}":            "may read",
+		ini + "exclusive: no}":                                                       "exclusive",
+		ini + "allow_no_value: yes}":                                                 "allow_no_value",
+		ini + "ignore_spaces: yes}":                                                  "ignore_spaces",
+		ini + "backup: yes}":                                                         "backup",
+		ini + "mode: '0600'}":                                                        "sets mode",
+		ini + "owner: root}":                                                         "sets owner",
+		ini + "section_has_values: []}":                                              "section_has_values",
+		ini + "values: [a, b]}":                                                      "sets values",
+		"ini_file: {path: /a, section: s, option: 'a=b', value: v}":                  "can't be an ini step",
+		"ini_file: {path: /a, section: s, option: o, value: '{# c #}'}":              "Jinja comment",
+		"ini_file: {path: /a, option: o, value: \"{{ item }}\"}\n      loop: [a, b]": "loops",
+		"replace: {path: /a, replace: x}":                                            "no regexp",
+		"replace: {path: /a, regexp: 1.5, replace: x}":                               "may read",
+		"replace: {path: /a, regexp: a, replace: yes}":                               "may read",
+		rep + "a, after: b}":                                                         "sets after",
+		rep + "a, before: b}":                                                        "sets before",
+		rep + "a, backup: yes}":                                                      "backup",
+		rep + "a, encoding: latin-1}":                                                "encoding",
+		rep + "a, validate: 'x %s'}":                                                 "sets validate",
+		rep + "a, mode: '0600'}":                                                     "sets mode",
+		// Python and Go read these differently, or Go can't read them.
+		rep + "'a(?=b)'}":      "lookaround",
+		rep + "'a(?!b)'}":      "lookaround",
+		rep + "'(?<=a)b'}":     "lookaround",
+		rep + "'(?<!a)b'}":     "lookaround",
+		rep + "'(?i)a'}":       "flag",
+		rep + "'(?s)a.b'}":     "flag",
+		rep + "'(?x) a'}":      "flag",
+		rep + "'(?#c)a'}":      "flag",
+		rep + "'(?P=n)a'}":     "flag",
+		rep + "'(a)\\1'}":      "\\1",
+		rep + "'\\d+'}":        "\\d",
+		rep + "'\\w+'}":        "\\w",
+		rep + "'a\\s'}":        "\\s",
+		rep + "'\\ba'}":        "\\b",
+		rep + "'a\\Z'}":        "\\Z",
+		rep + "'\\x41'}":       "\\x",
+		rep + "'\\pL'}":        "\\p",
+		rep + "'[\\d]a'}":      "\\d",
+		rep + "'[[:alpha:]]'}": "[:",
+		rep + "'a{,3}b'}":      "{,n}",
+		rep + "'a*+b'}":        "can't compile",
+		rep + "'(a'}":          "can't compile",
+		rep + "'a{2000}'}":     "can't compile",
+		rep + "'x*'}":          "match nothing",
+		rep + "'^'}":           "match nothing",
+		rep + "'^.*$'}":        "match nothing",
+		rep + "'a|'}":          "match nothing",
+		rep + "'(a*)+b'}":      "repeat of something",
+		// Replacements.
+		"replace: {path: /a, regexp: '(a)', replace: '\\2'}":                          "group 2",
+		"replace: {path: /a, regexp: '(a)', replace: '\\g<k>'}":                       "group k",
+		"replace: {path: /a, regexp: 'a', replace: '\\1'}":                            "group 1",
+		"replace: {path: /a, regexp: '(a)', replace: '\\12'}":                         "\\1",
+		"replace: {path: /a, regexp: '(a)', replace: '\\0'}":                          "\\0",
+		"replace: {path: /a, regexp: '(a)', replace: '\\q'}":                          "\\q",
+		"replace: {path: /a, regexp: '(a)', replace: 'b\\'}":                          "lone",
+		"replace: {path: /a, regexp: '(a)', replace: '\\g<1'}":                        "\\g",
+		"replace: {path: /a, regexp: 'foo', replace: 'foofoo'}":                       "never settles",
+		"replace: {path: /a, regexp: 'foo', replace: 'foo bar'}":                      "never settles",
+		"replace: {path: /a, regexp: 'a', replace: '{# c #}'}":                        "Jinja comment",
+		"replace: {path: /a, regexp: \"{{ item }}\", replace: x}\n      loop: [a, b]": "loops",
+	} {
+		res := convertString(t, "- hosts: all\n  vars: {b: yes}\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+		if !strings.Contains(string(res.HCL), "TODO(convert)") {
+			t.Errorf("%q: no TODO in the output", task)
+		}
+	}
+}
+
+// Expected results are Python's: what ansible.builtin.replace's regexp does.
+// Go has to give the same for every pattern the converter lets through.
+func TestProvenRegexpsMatchPython(t *testing.T) {
+	for _, tc := range []struct{ pattern, py, in, want string }{
+		{`^a=.*$`, `a=0`, "a=1\nb=2\na=3\n", "a=0\nb=2\na=0\n"},
+		{`b+?`, `X`, "abbbc", "aXXXc"},
+		{`a|ab`, `X`, "ab abc", "Xb Xbc"},
+		{`(a|ab)(c|bcd)`, `[\1|\2]`, "abcd", "[a|bcd]"},
+		{`(a)|(b)`, `<\1\2>`, "ab", "<a><b>"},
+		{`(?:a|b)+c`, `X`, "abac", "X"},
+		{`(a|b)+c`, `\1`, "abac", "a"},
+		{`[^#\n]+$`, `X`, "ab#cd\nef\n", "ab#X\nX\n"},
+		{`[^#]x`, `Y`, "a\nx#x\n", "aY#x\n"},
+		{`\Aa`, `X`, "a\na\n", "X\na\n"},
+		{`a$`, `X`, "a\r\na\n", "a\r\nX\n"},
+		{`a\nb`, `c`, "a\nb\n", "c\n"},
+		{`é.`, `\g<0>!`, "éa ñ", "éa! ñ"},
+		{`.`, `x`, "é\n", "x\n"},
+		{`a{2}`, `X`, "aaaaa", "XXa"},
+		{`a{2,}`, `X`, "aaaaa b aa", "X b X"},
+		{`a{x}`, `X`, "a{x}", "X"},
+		{`[]a]+`, `X`, "]a]b", "Xb"},
+		{`[a\-c]`, `X`, "a-bc", "XXbX"},
+		{`\.\*\$`, `$1`, ".*$", "$1"},
+		{`(?P<k>[a-z]+)=(?P<v>[0-9]+)`, `\g<v>=\g<k>`, "ab=12", "12=ab"},
+		{`x`, `a\tb\nc\\d`, "x", "a\tb\nc\\d"},
+		{`(x)`, `\1\g<1>1`, "x", "xx1"},
+	} {
+		if why := unprovableRegexp(tc.pattern); why != "" {
+			t.Errorf("%q refused: %s", tc.pattern, why)
+			continue
+		}
+		tmpl, why := goTemplate(tc.py, regexp.MustCompile(tc.pattern))
+		if why != "" {
+			t.Errorf("%q: %s", tc.py, why)
+			continue
+		}
+		if got := regexp.MustCompile("(?m)"+tc.pattern).ReplaceAllString(tc.in, tmpl); got != tc.want {
+			t.Errorf("%q -> %q on %q: got %q, want %q", tc.pattern, tc.py, tc.in, got, tc.want)
 		}
 	}
 }

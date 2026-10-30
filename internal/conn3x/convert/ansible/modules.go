@@ -218,6 +218,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"file":            fileModule,
 	"lineinfile":      lineModule,
 	"blockinfile":     blockModule,
+	"ini_file":        iniFileModule,
+	"replace":         replaceModule,
 	"template":        templateModule,
 	"package":         packageModule,
 	"dnf":             packageModule,

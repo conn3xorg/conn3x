@@ -54,6 +54,8 @@ var circuitModules = map[string]string{
 	"link":             "conn3x_link",
 	"line":             "conn3x_line",
 	"block":            "conn3x_block",
+	"ini":              "conn3x_ini",
+	"replace":          "conn3x_replace",
 	"file":             "conn3x_file",
 	"package":          "conn3x_package",
 	"service":          "conn3x_service",
@@ -669,7 +671,7 @@ func warnOnConflictingEdits(steps hcl.Blocks) hcl.Diagnostics {
 		switch module.Type {
 		case "file", "template":
 			whole[v.AsString()] = step.DefRange
-		case "line", "block":
+		case "line", "block", "ini", "replace":
 			parts[v.AsString()] = step.DefRange
 		}
 	}

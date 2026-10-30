@@ -104,3 +104,122 @@ func TestBlockRejectsBrokenMarkers(t *testing.T) {
 		t.Fatal("marker without {mark} accepted")
 	}
 }
+
+func TestINI(t *testing.T) {
+	x := func(v string) INI { return INI{Section: "a", Option: "x", Value: v} }
+	for name, tc := range map[string]struct {
+		in   string
+		spec INI
+		want string
+	}{
+		"adds after the section's last setting": {"[a]\nx = 1\n# tail\n\n[b]\ny = 2\n", INI{Section: "a", Option: "z", Value: "3"}, "[a]\nx = 1\nz = 3\n# tail\n\n[b]\ny = 2\n"},
+		"changes the value":                     {"[a]\nx = 1\n[b]\nx = 1\n", x("2"), "[a]\nx = 2\n[b]\nx = 1\n"},
+		"normalises the line":                   {"[a]\n  x=1 ; old\n", x("2"), "[a]\nx = 2\n"},
+		"no_extra_spaces":                       {"[a]\nx = 1\n", INI{Section: "a", Option: "x", Value: "2", NoExtraSpaces: true}, "[a]\nx=2\n"},
+		"keeps comments by default":             {"; top\n[a]\n# x = 1\ny=2\n", x("9"), "; top\n[a]\n# x = 1\ny=2\nx = 9\n"},
+		"uncomment takes a commented line":      {"[a]\n# x = 1\ny=2\n", INI{Section: "a", Option: "x", Value: "9", Uncomment: true}, "[a]\nx = 9\ny=2\n"},
+		"uncomment ignores prose":               {"[a]\n# x is it\n", INI{Section: "a", Option: "x", Value: "9", Uncomment: true}, "[a]\nx = 9\n# x is it\n"},
+		"repeats collapse to the first":         {"[a]\nx = 1\nw=1\nx = 3\n", x("9"), "[a]\nx = 9\nw=1\n"},
+		"first section of a name only":          {"[a]\nx = 1\n[b]\n[a]\nx = 2\n", x("9"), "[a]\nx = 9\n[b]\n[a]\nx = 2\n"},
+		"adds a missing section":                {"[a]\nx = 1", INI{Section: "n", Option: "x", Value: "9"}, "[a]\nx = 1\n[n]\nx = 9\n"},
+		"no section goes before the first":      {"p = 1\n[a]\nq = 1\n", INI{Option: "q", Value: "9"}, "p = 1\nq = 9\n[a]\nq = 1\n"},
+		"no section in an empty file":           {"", INI{Option: "q", Value: "9"}, "q = 9\n"},
+		"prefix isn't a match":                  {"[a]\nxy = 1\nX = 1\n", x("2"), "[a]\nxy = 1\nX = 1\nx = 2\n"},
+		"bare option is a match":                {"[a]\nx\n", x("1"), "[a]\nx = 1\n"},
+		"empty value":                           {"[a]\nx = 1\n", x(""), "[a]\nx = \n"},
+		"value with an equals sign":             {"[a]\nx = 1\n", x("a=b"), "[a]\nx = a=b\n"},
+		"crlf kept":                             {"[a]\r\nx = 1\r\n", x("2"), "[a]\r\nx = 2\r\n"},
+		"crlf new line":                         {"[a]\r\n", x("2"), "[a]\r\nx = 2\r\n"},
+		"adds the final newline":                {"[a]\nx = 1", x("1"), "[a]\nx = 1\n"},
+		"byte order mark kept when unchanged":   {"\xef\xbb\xbf[a]\nx = 1\n", x("1"), "\xef\xbb\xbf[a]\nx = 1\n"},
+		"byte order mark dropped on a change":   {"\xef\xbb\xbf[a]\nx = 1\n", x("2"), "[a]\nx = 2\n"},
+		"absent":                                {"[a]\nx = 1\n#x = 2\nx = 3\ny=1\n", INI{Section: "a", Option: "x", State: Absent}, "[a]\n#x = 2\ny=1\n"},
+		"absent keeps other sections":           {"[a]\ny=1\n[b]\nx=1\n", INI{Section: "a", Option: "x", State: Absent}, "[a]\ny=1\n[b]\nx=1\n"},
+		"absent without a section":              {"q=1\n[a]\nq=1\n", INI{Option: "q", State: Absent}, "[a]\nq=1\n"},
+		"absent from a missing section":         {"[b]\nx=1\n", INI{Section: "a", Option: "x", State: Absent}, "[b]\nx=1\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ApplyINI(tc.in, tc.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			if again, _ := ApplyINI(got, tc.spec); again != got {
+				t.Fatalf("not idempotent: %q then %q", got, again)
+			}
+		})
+	}
+	for _, bad := range []INI{{}, {Option: "a=b"}, {Option: " a"}, {Option: "#a"}, {Option: "[a"}, {Option: "a\nb"}, {Option: "a", Section: "b]"}, {Option: "a", Value: "b\nc"}, {Option: "a", State: "gone"}} {
+		if bad.Validate() == nil {
+			t.Errorf("Validate(%+v) accepted", bad)
+		}
+	}
+}
+
+func TestReplace(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   string
+		spec Replace
+		want string
+	}{
+		"every match":          {"foo bar foo\nfoo\n", Replace{`foo`, "baz"}, "baz bar baz\nbaz\n"},
+		"no match":             {"a\n", Replace{`foo`, "baz"}, "a\n"},
+		"anchors at each line": {"a=1\nb=2\na=3\n", Replace{`^a=.*$`, "a=0"}, "a=0\nb=2\na=0\n"},
+		"dot stops at a line":  {"ab\ncd\n", Replace{`a.*`, "z"}, "z\ncd\n"},
+		"across lines":         {"a\nb\n", Replace{`a\nb`, "c"}, "c\n"},
+		"group":                {"port 80\n", Replace{`port (\d+)`, "listen ${1}0"}, "listen 800\n"},
+		"named group":          {"k=v\n", Replace{`(?P<key>\w+)=v`, "${key}:v"}, "k:v\n"},
+		"dollar":               {"cost\n", Replace{`cost`, "$$5"}, "$5\n"},
+		"deletes":              {"a#b\n", Replace{`#.*`, ""}, "a\n"},
+		"final newline kept":   {"foo", Replace{`foo`, "bar"}, "bar"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ApplyReplace(tc.in, tc.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			if again, _ := ApplyReplace(got, tc.spec); again != got {
+				t.Fatalf("not idempotent: %q then %q", got, again)
+			}
+		})
+	}
+}
+
+// A replacement the regexp matches again would change the file on every
+// plan, so it's stopped: at validate when the text is fixed, otherwise when
+// the file shows it, and in both cases before anything is written.
+func TestReplaceThatNeverSettles(t *testing.T) {
+	for _, r := range []Replace{{`foo`, "foofoo"}, {`foo`, "foobar"}, {`^a`, "ab"}, {`x*`, "y"}} {
+		if r.Validate() == nil {
+			t.Errorf("Validate(%+v) accepted", r)
+		}
+	}
+	if err := (Replace{`(foo)`, "$1$1"}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyReplace("foo\n", Replace{`(foo)`, "$1$1"}); err == nil {
+		t.Error("a growing backreference was applied")
+	}
+	if got, err := ApplyReplace("bar\n", Replace{`(foo)`, "$1$1"}); err != nil || got != "bar\n" {
+		t.Errorf("no match: %q, %v", got, err)
+	}
+	// These match their own output but leave it alone, so they settle.
+	for _, r := range []Replace{{`a+`, "a"}, {`^foo$`, "foo"}, {`foo$`, "foo bar"}} {
+		if err := r.Validate(); err != nil {
+			t.Errorf("Validate(%+v): %v", r, err)
+		}
+	}
+}
+
+func TestReplaceRefusesBadInput(t *testing.T) {
+	for _, r := range []Replace{{"", "x"}, {"(", "x"}, {`(a)`, "$2"}, {`(a)`, "$1x"}, {`(a)`, "${nope}"}} {
+		if r.Validate() == nil {
+			t.Errorf("Validate(%+v) accepted", r)
+		}
+	}
+}
