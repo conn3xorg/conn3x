@@ -129,7 +129,7 @@ container, in about five.
 It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu today,
 and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian 13.
 Windows comes next, with tested Azure examples, then network devices.
-See the [roadmap](https://docs.conn3x.org/roadmap).
+See the [roadmap](ROADMAP.md).
 
 ## Built on OpenTofu
 
