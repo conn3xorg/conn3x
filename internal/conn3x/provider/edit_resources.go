@@ -28,9 +28,6 @@ type editKind struct {
 	remove func(cty.Value) func(string) (string, error)
 	check  func(cty.Value) error
 	desc   string // what the schema says; a default covers line and block
-	// follow writes through a symlink at path, so the link and the mode of
-	// the file it points to stay as they are.
-	follow bool
 	// missingOK says a missing file already satisfies this edit. Removing
 	// the edit then has nothing to do on a missing file either.
 	missingOK func(cty.Value) bool
@@ -98,9 +95,8 @@ func blockFrom(v cty.Value) edit.Block {
 }
 
 var iniKind = editKind{
-	name:   "ini",
-	desc:   "One option in an INI-style file, which should or should not be there. The rest of the file stays as it is.",
-	follow: true,
+	name: "ini",
+	desc: "One option in an INI-style file, which should or should not be there. The rest of the file stays as it is.",
 	attrs: map[string]*configschema.Attribute{
 		"section":         {Type: cty.String, Optional: true, Description: "The section, added when it's missing. Without it, the option goes before the first section."},
 		"option":          {Type: cty.String, Required: true, Description: "The option's name."},
@@ -138,9 +134,8 @@ func iniFrom(v cty.Value) edit.INI {
 }
 
 var replaceKind = editKind{
-	name:   "replace",
-	desc:   "Every match of a regexp in a file, replaced. The file must already exist.",
-	follow: true,
+	name: "replace",
+	desc: "Every match of a regexp in a file, replaced. The file must already exist.",
 	attrs: map[string]*configschema.Attribute{
 		"regexp":  {Type: cty.String, Required: true, Description: "What to look for. ^ and $ match at each line, and . doesn't match a line break."},
 		"replace": {Type: cty.String, Required: true, Description: "What to put in its place, which can use $1, ${1} and ${name}. Write $$ for a dollar sign. An empty string deletes each match."},
@@ -266,8 +261,12 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 					return cty.ObjectVal(vals), nil
 				}
 			}
+			target, err := editTarget(ctx, h, planned)
+			if err != nil {
+				return cty.NilVal, err
+			}
 			create := planned.GetAttr("create")
-			if err := editFile(ctx, h, k.target(ctx, h, planned), known(create) && create.True(), k.edit(planned)); err != nil {
+			if err := editFile(ctx, h, target, known(create) && create.True(), k.edit(planned)); err != nil {
 				return cty.NilVal, err
 			}
 			return cty.ObjectVal(vals), nil
@@ -280,23 +279,34 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 					return nil
 				}
 			}
-			return editFile(ctx, h, k.target(ctx, h, prior), false, k.remove(prior))
+			target, err := editTarget(ctx, h, prior)
+			if err != nil {
+				return err
+			}
+			return editFile(ctx, h, target, false, k.remove(prior))
 		})
 }
 
-// target is the file to write: path, or what it links to for a kind that
-// follows links. It also keys editFile's lock, so edits through a link and
-// edits to the file itself take turns.
-func (k editKind) target(ctx context.Context, h *hostConn, v cty.Value) string {
+// editTarget is the file to write: what path links to, if it's a link. Going
+// through the link keeps the link, and writes with the target's mode and owner
+// rather than the link's own 0777. It also keys editFile's lock, so edits
+// through a link and edits to the file itself take turns. A link it can't
+// resolve is an error, so editFile never sees the link itself.
+func editTarget(ctx context.Context, h *hostConn, v cty.Value) (string, error) {
 	path := v.GetAttr("path").AsString()
-	if !k.follow {
-		return path
+	q := ssh.Quote(path)
+	res, err := h.Run(ctx, "readlink -f -- "+q+" || ! test -L "+q, nil)
+	if err != nil {
+		return "", err
 	}
-	res, err := h.Run(ctx, "readlink -f -- "+ssh.Quote(path), nil)
-	if real := strings.TrimSpace(string(res.Stdout)); err == nil && res.ExitCode == 0 && real != "" {
-		return real
+	if res.ExitCode != 0 {
+		return "", fmt.Errorf("%s is a symlink that can't be followed", path)
 	}
-	return path
+	// Only readlink's own newline goes: a path can end in a space.
+	if real := strings.TrimSuffix(string(res.Stdout), "\n"); real != "" {
+		return real, nil
+	}
+	return path, nil // readlink fails on a path whose directory isn't there yet
 }
 
 // editFile reads a file, applies fn and writes it back only if it changed,
