@@ -49,6 +49,8 @@ step "migrate" {
 
 **Output.** `stdout` and `stderr` keep the output of the last run, up to 4 KiB each. Both are sensitive, so the plan doesn't print them.
 
+Sensitive hides them from the plan, not from state: the state file keeps both in plain text, so anyone who can read your state can read them. Don't print a secret from a command step. If a command has to produce one, such as a join token, have it write the secret to a file on the host with mode `0600`, and read it there.
+
 ## Removal
 
 Deleting a `command` step changes nothing on the host. To undo what a command did, add a step that does that.
