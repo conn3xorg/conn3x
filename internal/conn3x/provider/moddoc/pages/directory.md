@@ -46,6 +46,8 @@ step "app_tree" {
 
 **Mode.** The default mode is `"0755"`. If the mode on the host changes, the next plan shows the difference.
 
+A `directory` step acts as root on the path you name, and follows a symlink at that path. Don't manage a root-owned path inside a directory a non-root user can write to, because that user can swap what the path points to.
+
 ## Removal
 
 When you delete a `directory` step, `on_remove` decides what happens on the host. The default, `"forget"`, leaves the directory where it is. `"delete"` removes it only when it's empty. A directory with anything in it is left in place, and the apply reports an error.

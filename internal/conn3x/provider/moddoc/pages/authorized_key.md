@@ -54,6 +54,8 @@ step "old_laptop" {
 
 **Changing the key.** Changing `user` or `key` replaces the step. With the default `on_remove`, Conn3x removes the old key and adds the new one.
 
+Conn3x reads and writes `~/.ssh` as the user whose keys it's managing, so a symlink that user planted gets them nothing they couldn't already reach. That means the user has to be able to write there: a `~/.ssh` owned by root, or a home the user can't write to, gives an error. See [GHSA-78rx-v8vx-rjhg](https://github.com/conn3xorg/conn3x/security/advisories/GHSA-78rx-v8vx-rjhg).
+
 ## Removal
 
 When you delete an `authorized_key` step, `on_remove` decides what happens on the host. The default, `"delete"`, removes the key, so a key you rotate out stops working. `"forget"` leaves it in the file.

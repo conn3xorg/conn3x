@@ -67,6 +67,8 @@ The login user has to be able to read the file. If it can't, the plan stops with
 
 **Hand edits.** If someone edits the file on the host, the next plan shows the difference and `conn3x drift` reports it.
 
+A `file` step acts as root on the path you name, and follows a symlink at that path. Don't manage a root-owned path inside a directory a non-root user can write to, because that user can swap what the path points to.
+
 ## Removal
 
 When you delete a `file` step, `on_remove` decides what happens on the host. The default, `"forget"`, leaves the file where it is. `"delete"` removes it.
