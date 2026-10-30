@@ -66,6 +66,7 @@ type converter struct {
 	res       Result
 	hostVars  map[string]bool // groups that still need a hosts variable
 	needUser  bool
+	playNoLog bool // the current play sets no_log to anything but false
 }
 
 func (c *converter) run(plays *yaml.Node) Result {
@@ -150,6 +151,8 @@ func (c *converter) login(circuit, ssh *hclwrite.Body, play string, node *yaml.N
 
 // play turns one play into a circuit.
 func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml.Node) *hclwrite.Block {
+	n := noLogOf(node)
+	c.playNoLog = n != nil && !noLogOff(n)
 	circuit := hclwrite.NewBlock("circuit", []string{name})
 	cb := circuit.Body()
 	var group *Group
@@ -195,6 +198,10 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 	for _, h := range seq(p["handlers"]) {
 		t := mapping(h)
 		hname := scalar(t["name"])
+		if c.hidesValues(h) {
+			c.issue(cb, hname, h, noLogReason)
+			continue
+		}
 		mod, args := moduleOf(t)
 		action := map[string]string{"restarted": "restart", "reloaded": "reload"}[scalar(args["state"])]
 		if (mod != "service" && mod != "systemd" && mod != "systemd_service") || action == "" || len(args) != 2 || scalar(args["name"]) == "" {
@@ -239,11 +246,16 @@ var keywords = map[string]bool{
 }
 
 // translatable keywords are handled; the rest stop a task from converting.
+// no_log gets this far only when it is false.
 var harmless = map[string]bool{"name": true, "notify": true, "args": true, "tags": true, "no_log": true, "become": true}
 
 func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, vars, handlers map[string]string, used map[string]int) {
 	t := mapping(node)
 	name := scalar(t["name"])
+	if c.hidesValues(node) {
+		c.issue(body, name, node, noLogReason)
+		return
+	}
 	for k := range t {
 		if strings.HasPrefix(k, "with_") {
 			c.issue(body, name, node, "uses "+k+", a loop, which the converter can't translate yet")
@@ -371,10 +383,95 @@ func (c *converter) issue(body *hclwrite.Body, name string, node *yaml.Node, rea
 		what = fmt.Sprintf("Task %q", name)
 	}
 	comment(body, fmt.Sprintf("TODO(convert): %s (%s line %d) %s.", what, c.file, node.Line, reason))
+	if c.hidesValues(node) {
+		comment(body, "  Its contents are left out of this file because of no_log; see the playbook.")
+		return
+	}
 	out, _ := yaml.Marshal([]*yaml.Node{node})
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		comment(body, "  "+line)
 	}
+}
+
+// noLogReason is why a task under no_log stays behind. Ansible keeps these
+// values out of its logs; a step would put them in the .tf file and in plans.
+const noLogReason = "sets no_log, so its values are meant to stay out of sight, and converting it would write them to this file and show them in plans"
+
+// hidesValues reports whether no_log covers node or anything inside it: a task
+// and its block's children, a handler, or a list of roles. The nearest setting
+// wins, as in Ansible, so a task can turn its play's no_log off.
+func (c *converter) hidesValues(node *yaml.Node) bool {
+	return (c.playNoLog && noLogOf(node) == nil) || noLogInside(node, map[*yaml.Node]bool{})
+}
+
+// noLogOf finds the no_log node set on a mapping itself or by a YAML merge.
+func noLogOf(n *yaml.Node) *yaml.Node {
+	n = deref(n)
+	m := mapping(n)
+	if v, ok := m["no_log"]; ok {
+		return v
+	}
+	merged := deref(m["<<"])
+	if merged == nil {
+		return nil
+	}
+	if merged.Kind == yaml.SequenceNode {
+		for _, e := range merged.Content {
+			if v := noLogOf(e); v != nil {
+				return v
+			}
+		}
+		return nil
+	}
+	return noLogOf(merged)
+}
+
+// noLogInside walks n, through aliases, for a no_log that isn't false.
+func noLogInside(n *yaml.Node, seen map[*yaml.Node]bool) bool {
+	n = deref(n)
+	if n == nil || seen[n] {
+		return false
+	}
+	seen[n] = true
+	switch n.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == "no_log" && !noLogOff(n.Content[i+1]) {
+				return true
+			}
+			if noLogInside(n.Content[i+1], seen) {
+				return true
+			}
+		}
+	case yaml.SequenceNode:
+		for _, e := range n.Content {
+			if noLogInside(e, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// noLogOff reports whether a no_log value is plainly false, in any spelling
+// Ansible reads as false. A template or an empty value can't be shown to be.
+func noLogOff(n *yaml.Node) bool {
+	n = deref(n)
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return false
+	}
+	switch strings.ToLower(n.Value) {
+	case "false", "no", "off", "n", "f", "0":
+		return true
+	}
+	return false
+}
+
+func deref(n *yaml.Node) *yaml.Node {
+	for n != nil && n.Kind == yaml.AliasNode {
+		n = n.Alias
+	}
+	return n
 }
 
 // moduleOf finds a task's module, without its collection prefix, and its

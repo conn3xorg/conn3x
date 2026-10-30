@@ -447,3 +447,89 @@ func TestProvenRegexpsMatchPython(t *testing.T) {
 		}
 	}
 }
+
+// A secret under no_log must not reach the .tf file: not as a step, and not in
+// the comment that keeps a task for review.
+func TestNoLogIsLeftForReview(t *testing.T) {
+	task := func(noLog string) string {
+		return "  tasks:\n    - name: secret\n      no_log: " + noLog + "\n      copy:\n        dest: /etc/app.key\n        content: hunter2\n"
+	}
+	const plain = "    - name: secret\n      copy:\n        dest: /etc/app.key\n        content: hunter2\n"
+	const play = "- hosts: web\n"
+	for name, tc := range map[string]struct {
+		playbook string
+		reason   bool // the reason is no_log, rather than another one
+	}{
+		"true":             {play + task("true"), true},
+		"yes":              {play + task("yes"), true},
+		"quoted true":      {play + task(`"true"`), true},
+		"one":              {play + task("1"), true},
+		"templated":        {play + task(`"{{ hide }}"`), true},
+		"templated false":  {play + task(`"{{ false }}"`), true},
+		"empty":            {play + task(""), true},
+		"a list":           {play + task("[false]"), true},
+		"alias":            {"- hosts: web\n  vars:\n    x: &on true\n" + task("*on"), true},
+		"merge":            {"- hosts: web\n  vars:\n    d: &d\n      no_log: true\n  tasks:\n    - name: secret\n      <<: *d\n      copy:\n        dest: /etc/app.key\n        content: hunter2\n", true},
+		"before a loop":    {play + "  tasks:\n    - name: secret\n      no_log: true\n      with_items: [hunter2]\n      debug:\n        msg: x\n", true},
+		"play":             {play + "  no_log: true\n  tasks:\n" + plain, true},
+		"play templated":   {play + "  no_log: \"{{ hide }}\"\n  tasks:\n" + plain, true},
+		"play pre_tasks":   {play + "  no_log: true\n  pre_tasks:\n" + plain, true},
+		"play merge":       {"- &p\n  hosts: other\n  no_log: true\n- <<: *p\n  hosts: web\n  tasks:\n" + plain, true},
+		"block":            {play + "  tasks:\n    - no_log: true\n      block:\n" + "    " + strings.ReplaceAll(plain, "\n    ", "\n        "), true},
+		"inside a block":   {play + "  tasks:\n    - block:\n        - name: secret\n          no_log: true\n          copy:\n            dest: /etc/app.key\n            content: hunter2\n", true},
+		"inside rescue":    {play + "  tasks:\n    - block:\n        - debug:\n            msg: x\n      rescue:\n        - name: secret\n          no_log: true\n          copy:\n            content: hunter2\n", true},
+		"handler":          {play + "  handlers:\n    - name: secret\n      no_log: true\n      service:\n        name: hunter2\n        state: restarted\n", true},
+		"play and handler": {play + "  no_log: true\n  handlers:\n    - name: secret\n      service:\n        name: hunter2\n        state: restarted\n", true},
+		"role":             {play + "  roles:\n    - role: app\n      no_log: true\n      password: hunter2\n", false},
+		"play and role":    {play + "  no_log: true\n  roles:\n    - role: app\n      password: hunter2\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := convertString(t, tc.playbook)
+			if strings.Contains(string(res.HCL), "hunter2") {
+				t.Fatalf("the secret reached the file:\n%s", res.HCL)
+			}
+			if res.Converted != 0 || len(res.Review) != 1 {
+				t.Fatalf("converted %d, review %v", res.Converted, res.Review)
+			}
+			if tc.reason && !strings.Contains(res.Review[0].Reason, "write them to this file") {
+				t.Fatalf("reason: %q", res.Review[0].Reason)
+			}
+			if !strings.Contains(string(res.HCL), "TODO(convert)") {
+				t.Fatalf("no TODO:\n%s", res.HCL)
+			}
+			if _, diags := hclparse.NewParser().ParseHCL(res.HCL, "play.tf"); diags.HasErrors() {
+				t.Fatalf("output is not valid HCL: %s\n%s", diags, res.HCL)
+			}
+		})
+	}
+}
+
+// no_log false hides nothing, and the task's own setting beats its play's.
+func TestNoLogFalseStillConverts(t *testing.T) {
+	task := func(noLog string) string {
+		return "  tasks:\n    - name: open\n      no_log: " + noLog + "\n      copy:\n        dest: /etc/app.conf\n        content: fine\n"
+	}
+	for name, playbook := range map[string]string{
+		"false":         "- hosts: web\n" + task("false"),
+		"False":         "- hosts: web\n" + task("False"),
+		"no":            "- hosts: web\n" + task("no"),
+		"quoted":        "- hosts: web\n" + task(`"false"`),
+		"over its play": "- hosts: web\n  no_log: true\n" + task("false"),
+		"play false":    "- hosts: web\n  no_log: false\n  tasks:\n    - name: open\n      copy:\n        dest: /etc/app.conf\n        content: fine\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := convertString(t, playbook)
+			if res.Converted != 1 || len(res.Review) != 0 {
+				t.Fatalf("converted %d, review %v", res.Converted, res.Review)
+			}
+		})
+	}
+}
+
+// One play's no_log doesn't reach the next.
+func TestNoLogStaysInItsPlay(t *testing.T) {
+	res := convertString(t, "- hosts: a\n  no_log: true\n  tasks:\n    - name: secret\n      copy:\n        dest: /a\n        content: hunter2\n- hosts: b\n  tasks:\n    - name: open\n      copy:\n        dest: /b\n        content: fine\n")
+	if res.Converted != 1 || len(res.Review) != 1 || strings.Contains(string(res.HCL), "hunter2") {
+		t.Fatalf("converted %d, review %v:\n%s", res.Converted, res.Review, res.HCL)
+	}
+}
