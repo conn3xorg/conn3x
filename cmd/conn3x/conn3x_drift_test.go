@@ -5,6 +5,7 @@ package main
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -146,6 +147,54 @@ func TestRunConvertWithInventory(t *testing.T) {
 
 // With -chdir, conn3x has already moved into that directory by the time
 // drift runs, so the child plan has to start where conn3x was started.
+func TestDriftConfirmPlanIsANormalPlan(t *testing.T) {
+	p := driftConfirmPlan("/bin/conn3x", "/home/me", []string{"-chdir=x", "drift", "-var", "a=b"})
+	want := []string{"/bin/conn3x", "-chdir=x", "plan", "-json", "-var", "a=b"}
+	if !slices.Equal(p.Args, want) || p.Dir != "/home/me" {
+		t.Fatalf("args %v in %q", p.Args, p.Dir)
+	}
+}
+
+func TestDriftConfirmedKeepsOnlyWhatAPlanWouldChange(t *testing.T) {
+	stream := `{"type":"resource_drift","change":{"resource":{"addr":"google_bigquery_table.events","resource_type":"google_bigquery_table"},"action":"update"}}
+{"type":"resource_drift","change":{"resource":{"addr":"digitalocean_droplet.web","resource_type":"digitalocean_droplet"},"action":"update"}}
+{"type":"resource_drift","change":{"resource":{"addr":"digitalocean_firewall.web","resource_type":"digitalocean_firewall"},"action":"delete"}}
+{"type":"resource_drift","change":{"resource":{"addr":"conn3x_file.page","resource_type":"conn3x_file"},"action":"update"}}
+`
+	r, err := readDrift(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := readDrift(strings.NewReader(`{"type":"planned_change","change":{"resource":{"addr":"digitalocean_droplet.web"},"action":"update"}}
+{"type":"planned_change","change":{"resource":{"addr":"other.new"},"action":"create"}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, code := r.confirmed(plan.planned, 2)
+	if code != 2 {
+		t.Fatalf("code %d", code)
+	}
+	if len(r.cloud) != 2 || len(r.hosts) != 1 {
+		t.Fatalf("cloud %v hosts %v", r.cloud, r.hosts)
+	}
+	if !slices.Equal(r.notes, []string{"  google_bigquery_table.events"}) {
+		t.Fatalf("notes %v", r.notes)
+	}
+}
+
+func TestDriftOnlyNotesIsClean(t *testing.T) {
+	r := driftReport{cloud: []string{"  ~ a.b  changed"}, changedCloud: []string{"a.b"}}
+	r, code := r.confirmed(nil, 2)
+	var out strings.Builder
+	if got := reportDrift(r, code, &out); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+	if !strings.Contains(out.String(), "No drift") || !strings.Contains(out.String(), "a.b") {
+		t.Fatalf("output %q", out.String())
+	}
+}
+
 func TestDriftPlanStartsInOriginalDir(t *testing.T) {
 	p := driftPlan("/bin/conn3x", "/home/me", []string{"-chdir=sub", "drift"})
 	if p.Dir != "/home/me" {

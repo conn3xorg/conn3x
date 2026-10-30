@@ -20,12 +20,16 @@ import (
 
 // driftCommand reports what changed outside Conn3x since the last apply,
 // split into the cloud resources and the host steps. It runs a refresh-only
-// plan and exits 2 when anything drifted, like plan -detailed-exitcode.
+// plan and exits 2 when anything drifted, like plan -detailed-exitcode. Cloud
+// APIs also change values nobody set, such as a table's row count, so a cloud
+// resource only counts when a normal plan would change it back.
 func driftCommand() command.Command {
 	cmd := command.Command{
 		Name:  "drift",
 		Short: "Report what changed outside Conn3x, in the cloud and on hosts",
 		Long: `Reads every resource and host step again and reports what no longer matches the last apply, grouped into cloud resources and host steps. Nothing is changed.
+
+A cloud resource whose changes your config wouldn't undo, such as a table's row count, is listed but isn't drift.
 
 Exits 0 when nothing drifted, 2 when something did, and 1 on errors. It takes the same options as plan, except -json: for machine-readable drift, run plan -refresh-only -json.`,
 		GroupID: command.MainCommandGroup.ID,
@@ -65,33 +69,64 @@ func driftPlan(self, dir string, args []string) *exec.Cmd {
 	return plan
 }
 
-func runDrift(args []string, dir string, out, errOut io.Writer) int {
-	self, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(errOut, "Error: finding the conn3x binary: %s\n", err)
-		return 1
-	}
-	plan := driftPlan(self, dir, args)
+// driftConfirmPlan is the normal plan that says which drifted cloud resources
+// the config would change back.
+func driftConfirmPlan(self, dir string, args []string) *exec.Cmd {
+	planArgs := driftPlanArgs(args)
+	planArgs = slices.DeleteFunc(planArgs, func(a string) bool {
+		return a == "-refresh-only" || a == "-detailed-exitcode"
+	})
+	plan := exec.Command(self, planArgs...)
+	plan.Dir = dir
+	return plan
+}
+
+// runPlan runs a plan and collects its JSON stream.
+func runPlan(plan *exec.Cmd, errOut io.Writer) (driftReport, int, error) {
 	plan.Stderr = errOut
 	pipe, err := plan.StdoutPipe()
 	if err == nil {
 		err = plan.Start()
 	}
 	if err != nil {
-		fmt.Fprintf(errOut, "Error: running the refresh-only plan: %s\n", err)
-		return 1
+		return driftReport{}, 1, fmt.Errorf("running the plan: %w", err)
 	}
 	r, readErr := readDrift(pipe)
-	planCode := 0
+	code := 0
 	if err := plan.Wait(); err != nil {
-		planCode = 1
+		code = 1
 		if exit, ok := err.(*exec.ExitError); ok {
-			planCode = exit.ExitCode()
+			code = exit.ExitCode()
 		}
 	}
 	if readErr != nil {
-		fmt.Fprintf(errOut, "Error: reading the plan: %s\n", readErr)
+		return r, 1, fmt.Errorf("reading the plan: %w", readErr)
+	}
+	return r, code, nil
+}
+
+func runDrift(args []string, dir string, out, errOut io.Writer) int {
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(errOut, "Error: finding the conn3x binary: %s\n", err)
 		return 1
+	}
+	r, planCode, err := runPlan(driftPlan(self, dir, args), errOut)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error: %s\n", err)
+		return 1
+	}
+	if len(r.changedCloud) > 0 && planCode != 1 && len(r.errors) == 0 {
+		confirm, confirmCode, err := runPlan(driftConfirmPlan(self, dir, args), errOut)
+		if err != nil {
+			fmt.Fprintf(errOut, "Error: %s\n", err)
+			return 1
+		}
+		if confirmCode == 1 || len(confirm.errors) > 0 {
+			r.errors = append(r.errors, confirm.errors...)
+			return reportDrift(r, 1, out)
+		}
+		r, planCode = r.confirmed(confirm.planned, planCode)
 	}
 	return reportDrift(r, planCode, out)
 }
@@ -122,6 +157,34 @@ func driftExit(r driftReport, planCode int) int {
 type driftReport struct {
 	cloud, hosts, errors []string
 	outputsOnly          bool
+	// changedCloud holds the addresses in cloud reported as changed rather
+	// than gone; notes holds those the config wouldn't change back.
+	changedCloud []string
+	notes        []string
+	// planned holds the addresses a normal plan would change.
+	planned []string
+}
+
+// confirmed moves the changed cloud resources a normal plan leaves alone from
+// drift to notes.
+//
+// shortcut: planCode goes to 0 when nothing is left, which also hides an output
+// that changed alongside; upgrade if someone alerts on outputs alone.
+func (r driftReport) confirmed(planned []string, planCode int) (driftReport, int) {
+	var kept []string
+	for _, line := range r.cloud {
+		addr := strings.TrimSuffix(strings.TrimPrefix(line, "  ~ "), "  changed")
+		if !slices.Contains(r.changedCloud, addr) || slices.Contains(planned, addr) {
+			kept = append(kept, line)
+			continue
+		}
+		r.notes = append(r.notes, "  "+addr)
+	}
+	r.cloud = kept
+	if len(r.cloud)+len(r.hosts) == 0 {
+		planCode = 0
+	}
+	return r, planCode
 }
 
 // readDrift collects the drifted resources and errors from plan -json.
@@ -156,6 +219,13 @@ func readDrift(r io.Reader) (driftReport, error) {
 				rep.hosts = append(rep.hosts, line)
 			} else {
 				rep.cloud = append(rep.cloud, line)
+				if msg.Change.Action != "delete" {
+					rep.changedCloud = append(rep.changedCloud, msg.Change.Resource.Addr)
+				}
+			}
+		case "planned_change":
+			if slices.Contains([]string{"update", "replace", "delete"}, msg.Change.Action) {
+				rep.planned = append(rep.planned, msg.Change.Resource.Addr)
 			}
 		case "diagnostic":
 			// A host the refresh couldn't reach is only a warning to plan,
@@ -183,6 +253,7 @@ func (r driftReport) write(w io.Writer) {
 		return
 	case n == 0 && len(r.errors) == 0:
 		fmt.Fprintln(w, "No drift: the cloud and the hosts match the last apply.")
+		r.writeNotes(w)
 		return
 	case n == 1:
 		fmt.Fprintln(w, "Drift found in 1 resource.")
@@ -202,5 +273,12 @@ func (r driftReport) write(w io.Writer) {
 	}
 	if n > 0 {
 		fmt.Fprintln(w, "\nRun conn3x plan to see what Conn3x would change to put them back.")
+	}
+	r.writeNotes(w)
+}
+
+func (r driftReport) writeNotes(w io.Writer) {
+	if len(r.notes) > 0 {
+		fmt.Fprintf(w, "\nChanged, but your config wouldn't change them back\n%s\n", strings.Join(r.notes, "\n"))
 	}
 }
