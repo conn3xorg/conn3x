@@ -1,0 +1,27 @@
+circuit "cfg" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+{{if .WithLine}}
+  step "port" {
+    line {
+      path      = "/etc/conn3x-link.conf"
+      regexp    = "^port ="
+      line      = "port = 8080"
+      on_remove = "delete"
+    }
+  }
+{{end}}
+  step "tuning" {
+    block {
+      path    = "/etc/conn3x-link.conf"
+      content = "workers = 4"
+    }
+  }
+}
