@@ -5,7 +5,9 @@ package ansible
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -15,6 +17,10 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
+
+	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/system"
 )
 
 const (
@@ -240,6 +246,9 @@ var modules = map[string]func(*input) ([]step, string){
 	"shell":           commandModule,
 	"reboot":          rebootModule,
 	"wait_for":        waitForModule,
+	"apt_repository":  aptRepositoryModule,
+	"yum_repository":  yumRepositoryModule,
+	"locale_gen":      localeGenModule,
 }
 
 func copyModule(in *input) ([]step, string) {
@@ -601,6 +610,158 @@ func waitForModule(in *input) ([]step, string) {
 	}
 	in.ignore("delay")
 	return one("wait_for", attrs)
+}
+
+// aptLine is a one-line apt source: deb, optional [options], URL, suite and
+// any components. Anything else, such as deb-src or a ppa: name, doesn't match.
+var aptLine = regexp.MustCompile(`^deb(?:\s+\[([^\]]*)\])?\s+(\S+)\s+(\S+)((?:\s+\S+)*)$`)
+
+var keyFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.+-]*$`)
+
+// repoKey finds the armored key a playbook names by URL or host path. Conn3x
+// needs the key itself, and the converter doesn't download anything, so it has
+// to be beside the playbook under the same file name.
+func (in *input) repoKey(from string) (key, file, reason string) {
+	u, err := url.Parse(from)
+	if err != nil {
+		return "", "", fmt.Sprintf("names the signing key %q, which the converter can't read as a path or URL", from)
+	}
+	base := path.Base(u.Path)
+	if !keyFileName.MatchString(base) {
+		return "", "", fmt.Sprintf("names the signing key %q, which has no usable file name", from)
+	}
+	file = in.local("files", base)
+	if file == "" {
+		return "", "", fmt.Sprintf("needs the signing key itself, which Conn3x stores on the host; save %s as files/%s beside the playbook and convert again", from, base)
+	}
+	data, err := os.ReadFile(filepath.Join(in.dir, file))
+	if err != nil {
+		return "", "", fmt.Sprintf("can't read the signing key %s: %v", file, err)
+	}
+	return string(data), file, ""
+}
+
+func stringList(ss []string) cty.Value {
+	vals := make([]cty.Value, len(ss))
+	for i, v := range ss {
+		vals[i] = cty.StringVal(v)
+	}
+	return cty.ListVal(vals)
+}
+
+func aptRepositoryModule(in *input) ([]step, string) {
+	if in.loop {
+		return nil, "loops over repository lines, which the converter can't translate yet; write one task for each"
+	}
+	in.state("present", "present")
+	line := strings.TrimSpace(in.str("repo"))
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	m := aptLine.FindStringSubmatch(line)
+	if m == nil {
+		return nil, fmt.Sprintf("has the repo %q, which isn't a one-line deb source with a URL and suite; deb-src and ppa: stay for a person", line)
+	}
+	if !in.bool("update_cache", true) || !in.bool("update-cache", true) {
+		return nil, "sets update_cache: no; Conn3x always runs apt-get update after writing a repository"
+	}
+	in.ignore("install_python_apt") // only what Ansible itself needs on the host
+	signedBy := ""
+	for _, opt := range strings.Fields(m[1]) {
+		v, ok := strings.CutPrefix(opt, "signed-by=")
+		if !ok {
+			return nil, fmt.Sprintf("sets the apt option %q, which a repository step doesn't have", opt)
+		}
+		signedBy = v
+	}
+	if !strings.HasPrefix(signedBy, "/") {
+		return nil, "doesn't name a key file with signed-by=/path; a repository step trusts one key for this repository only, and the converter can't tell which"
+	}
+	source, suite, components := m[2], m[3], strings.Fields(m[4])
+	flat := strings.HasSuffix(suite, "/")
+	if flat != (len(components) == 0) {
+		return nil, fmt.Sprintf("has the suite %q with %d components; apt wants components unless the suite ends in /", suite, len(components))
+	}
+	u, err := url.Parse(source)
+	if err != nil {
+		return nil, fmt.Sprintf("has the URL %q, which the converter can't read", source)
+	}
+	key, keyFile, reason := in.repoKey(signedBy)
+	if reason != "" {
+		return nil, reason
+	}
+	// The suite and components are in the name so that two sources from one URL get a file each.
+	name := slug(strings.Join(append([]string{u.Host + u.Path, suite}, components...), " "))
+	if err := (repo.Repo{Name: name, URL: source, Key: key, Suites: []string{suite}, Components: components}).Validate(pkg.Deb); err != nil {
+		return nil, "can't be a repository step: " + err.Error()
+	}
+	attrs := []attr{s("name", name), s("url", source), {key: "key", raw: fmt.Sprintf(`file("${path.module}/%s")`, keyFile)}, {key: "suites", val: stringList([]string{suite})}}
+	if len(components) > 0 {
+		attrs = append(attrs, attr{key: "components", val: stringList(components)})
+	}
+	return one("repository", attrs,
+		fmt.Sprintf("Check that %s is the key %s holds on the host.", keyFile, signedBy),
+		"TODO(convert): Delete the .list file Ansible left in /etc/apt/sources.list.d for this repository, or apt sees it twice.")
+}
+
+func yumRepositoryModule(in *input) ([]step, string) {
+	if in.loop {
+		return nil, "loops over repositories, which the converter can't translate yet; write one task for each"
+	}
+	in.state("present", "present")
+	name := in.str("name")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	urls := in.list("baseurl")
+	if len(urls) != 1 {
+		return nil, "doesn't set exactly one baseurl; a repository step has one URL, and no metalink or mirrorlist"
+	}
+	if !in.bool("enabled", true) {
+		return nil, "sets enabled: no; Conn3x always enables the repository"
+	}
+	if !in.bool("gpgcheck", false) {
+		return nil, "doesn't set gpgcheck: yes; Conn3x always checks signatures, which Ansible leaves to the host's own setting"
+	}
+	if in.has("file") && in.str("file") != name {
+		return nil, "sets file to something other than name; Conn3x names the .repo file after the repository"
+	}
+	keys := in.list("gpgkey")
+	if len(keys) != 1 {
+		return nil, "doesn't set exactly one gpgkey; a repository step has one key"
+	}
+	key, keyFile, reason := in.repoKey(keys[0])
+	if reason != "" {
+		return nil, reason
+	}
+	if err := (repo.Repo{Name: name, URL: urls[0], Key: key}).Validate(pkg.RPM); err != nil {
+		return nil, "can't be a repository step: " + err.Error()
+	}
+	notes := []string{fmt.Sprintf("Check that %s is the key at %s.", keyFile, keys[0])}
+	if in.has("description") {
+		in.ignore("description")
+		notes = append(notes, "description dropped: Conn3x labels the repository with its name.")
+	}
+	return one("repository", []attr{s("name", name), s("url", urls[0]), {key: "key", raw: fmt.Sprintf(`file("${path.module}/%s")`, keyFile)}}, notes...)
+}
+
+func localeGenModule(in *input) ([]step, string) {
+	if in.loop {
+		return nil, "loops over locales, and a host has one system locale, which a locale step sets"
+	}
+	in.state("present", "present")
+	names := in.list("name")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if len(names) != 1 {
+		return nil, "doesn't name exactly one locale; a locale step also sets the system locale, and a host has one"
+	}
+	if err := system.ValidateLocale(names[0]); err != nil {
+		return nil, "can't be a locale step: " + err.Error()
+	}
+	return one("locale", []attr{s("name", names[0])},
+		fmt.Sprintf("TODO(convert): This step also sets the host's LANG to %s, which locale_gen didn't. To only generate the locale, use a guarded command step instead.", names[0]))
 }
 
 // inlineArgs are the options Ansible pulls out of a free-form command line.

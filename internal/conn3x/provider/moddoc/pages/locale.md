@@ -39,3 +39,7 @@ step "locale" {
 ## Removal
 
 A `locale` step has no `on_remove`. When you delete it, Conn3x stops managing the locale and leaves the host as it is.
+
+## From Ansible
+
+`conn3x convert ansible` turns `community.general.locale_gen` tasks that name one locale into `locale` steps. `locale_gen` only generates a locale, while a `locale` step also makes it the host's `LANG`, so the step carries a TODO saying so. A task with `state: absent`, several locales or a loop, or a second `locale_gen` task in the same play, stays a TODO.

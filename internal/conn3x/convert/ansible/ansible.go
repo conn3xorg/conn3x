@@ -319,6 +319,15 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		notify = append(notify, "handler."+h)
 	}
 
+	// A second locale step would fight the first over LANG on every apply.
+	if steps[0].module == "locale" {
+		if used["locale step"] > 0 {
+			c.issue(body, name, node, "generates a second locale; a locale step also sets the system locale, and a host has one")
+			return
+		}
+		used["locale step"] = 1
+	}
+
 	base := slug(firstNonEmpty(name, mod))
 	for i, s := range steps {
 		stepName := base

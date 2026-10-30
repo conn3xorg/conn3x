@@ -173,3 +173,125 @@ func TestRefusesOtherLoops(t *testing.T) {
 		}
 	}
 }
+
+const armoredKey = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nabc\n-----END PGP PUBLIC KEY BLOCK-----\n"
+
+// convertWithKey converts a playbook with docker.asc in files/ beside it.
+func convertWithKey(t *testing.T, tasks string) Result {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "files", "docker.asc"), []byte(armoredKey), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "play.yml")
+	if err := os.WriteFile(path, []byte("- hosts: all\n  tasks:\n"+tasks), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Convert(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, diags := hclparse.NewParser().ParseHCL(res.HCL, "play.tf"); diags.HasErrors() {
+		t.Fatalf("output is not valid HCL: %s\n%s", diags, res.HCL)
+	}
+	return res
+}
+
+func TestConvertsRepositoriesAndLocale(t *testing.T) {
+	const aptRepo = "repo: 'deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable'"
+	for task, wants := range map[string][]string{
+		"ansible.builtin.apt_repository: {" + aptRepo + "}": {
+			`name       = "download_docker_com_linux_ubuntu_noble_stable"`,
+			`url        = "https://download.docker.com/linux/ubuntu"`,
+			`key        = file("${path.module}/files/docker.asc")`,
+			`suites     = ["noble"]`,
+			`components = ["stable"]`,
+			"TODO(convert): Delete the .list file",
+		},
+		"apt_repository: {repo: 'deb [signed-by=/k/docker.asc] http://example.com/repo ./', update_cache: yes}": {
+			`suites = ["./"]`,
+		},
+		"community.general.apt_repository: {" + aptRepo + "}": {`suites     = ["noble"]`},
+		"ansible.builtin.yum_repository: {name: docker-ce, description: Docker, baseurl: 'https://example.com/$releasever/', gpgcheck: true, gpgkey: 'https://example.com/docker.asc'}": {
+			`name = "docker-ce"`,
+			`url  = "https://example.com/$releasever/"`,
+			`key  = file("${path.module}/files/docker.asc")`,
+			"description dropped",
+		},
+		"community.general.yum_repository: {name: d, file: d, enabled: yes, baseurl: [ 'http://example.com/' ], gpgcheck: yes, gpgkey: [ 'file:///etc/pki/docker.asc' ]}": {`name = "d"`},
+		"community.general.locale_gen: {name: en_GB.UTF-8}": {
+			`name = "en_GB.UTF-8"`,
+			"TODO(convert): This step also sets the host's LANG to en_GB.UTF-8",
+		},
+		"ansible.builtin.locale_gen: {name: [de_DE.UTF-8], state: present}": {`name = "de_DE.UTF-8"`},
+		"locale_gen: name=fr_FR.UTF-8":                                      {`name = "fr_FR.UTF-8"`},
+	} {
+		res := convertWithKey(t, "    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+		for _, want := range wants {
+			if !strings.Contains(string(res.HCL), want) {
+				t.Errorf("%q: output lacks %q:\n%s", task, want, res.HCL)
+			}
+		}
+	}
+}
+
+func TestRefusesRepositoriesAndLocalesItCantProve(t *testing.T) {
+	const keyed = "deb [signed-by=/k/docker.asc] http://example.com/r noble main"
+	const yum = "name: d, baseurl: 'http://example.com/', gpgcheck: true, gpgkey: 'http://example.com/docker.asc'"
+	for reason, task := range map[string]string{
+		`state "absent"`:          "apt_repository: {repo: '" + keyed + "', state: absent}",
+		"sets filename":           "apt_repository: {repo: '" + keyed + "', filename: docker}",
+		"sets validate_certs":     "apt_repository: {repo: '" + keyed + "', validate_certs: false}",
+		"sets mode":               "apt_repository: {repo: '" + keyed + "', mode: '0644'}",
+		"update_cache: no":        "apt_repository: {repo: '" + keyed + "', update_cache: no}",
+		"isn't a one-line deb":    "apt_repository: {repo: 'ppa:nginx/stable'}",
+		"deb-src":                 "apt_repository: {repo: 'deb-src [signed-by=/k/docker.asc] http://example.com/r noble main'}",
+		"apt option":              "apt_repository: {repo: 'deb [arch=amd64 signed-by=/k/docker.asc] http://example.com/r noble main'}",
+		"doesn't name a key file": "apt_repository: {repo: 'deb http://example.com/r noble main'}",
+		"0 components":            "apt_repository: {repo: 'deb [signed-by=/k/docker.asc] http://example.com/r noble'}",
+		"1 components":            "apt_repository: {repo: 'deb [signed-by=/k/docker.asc] http://example.com/r ./ main'}",
+		"must be an http":         "apt_repository: {repo: 'deb [signed-by=/k/docker.asc] ftp://example.com/r noble main'}",
+		"save /k/missing.asc":     "apt_repository: {repo: 'deb [signed-by=/k/missing.asc] http://example.com/r noble main'}",
+		"loops over repository":   "apt_repository: {repo: 'deb [signed-by=/k/docker.asc] http://example.com/r {{ item }} main'}\n      loop: [a, b]",
+		"exactly one baseurl":     "yum_repository: {name: d, metalink: 'http://example.com/m', gpgcheck: true, gpgkey: 'http://example.com/docker.asc'}",
+		"enabled: no":             "yum_repository: {" + yum + ", enabled: no}",
+		"gpgcheck: yes":           "yum_repository: {name: d, baseurl: 'http://example.com/', gpgkey: 'http://example.com/docker.asc'}",
+		"other than name":         "yum_repository: {" + yum + ", file: other}",
+		"exactly one gpgkey":      "yum_repository: {name: d, baseurl: 'http://example.com/', gpgcheck: true}",
+		"sets priority":           "yum_repository: {" + yum + ", priority: 10}",
+		"may only use letters":    "yum_repository: {name: 'a b', baseurl: 'http://example.com/', gpgcheck: true, gpgkey: 'http://example.com/docker.asc'}",
+		"no usable file name":     "yum_repository: {name: d, baseurl: 'http://example.com/', gpgcheck: true, gpgkey: 'http://example.com/a\"b'}",
+		"exactly one locale":      "locale_gen: {name: [en_GB.UTF-8, de_DE.UTF-8]}",
+		"not a name such as":      "locale_gen: {name: 'bad name'}",
+		"loops over locales":      "locale_gen: {name: \"{{ item }}\"}\n      loop: [en_GB.UTF-8, de_DE.UTF-8]",
+	} {
+		res := convertWithKey(t, "    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+		if !strings.Contains(string(res.HCL), "TODO(convert)") {
+			t.Errorf("%q: no TODO in the output", task)
+		}
+	}
+	// state: absent on the other two modules, written separately as the map keys collide.
+	for _, task := range []string{"yum_repository: {" + yum + ", state: absent}", "locale_gen: {name: en_GB.UTF-8, state: absent}"} {
+		res := convertWithKey(t, "    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, `state "absent"`) {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}
+
+// Two locale steps would each set LANG back on every apply.
+func TestSecondLocaleInAPlayIsLeft(t *testing.T) {
+	res := convertWithKey(t, "    - locale_gen: {name: en_GB.UTF-8}\n    - locale_gen: {name: de_DE.UTF-8}\n")
+	if res.Converted != 1 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "second locale") {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}
