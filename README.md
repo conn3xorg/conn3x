@@ -8,8 +8,8 @@
 <p align="center">
   <a href="https://github.com/conn3xorg/conn3x/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/conn3xorg/conn3x/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MPL-2.0" src="https://img.shields.io/badge/license-MPL--2.0-13233a"></a>
-  <a href="https://scorecard.dev/viewer/?uri=github.com/conn3xorg/conn3x"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/conn3xorg/conn3x/badge"></a>
-  <a href="https://github.com/conn3xorg/conn3x/discussions"><img alt="Discussions" src="https://img.shields.io/github/discussions/conn3xorg/conn3x?color=e85d0c"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/conn3xorg/conn3x"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/conn3xorg/conn3x?label=openssf%20scorecard&cacheSeconds=86400"></a>
+  <a href="https://github.com/conn3xorg/conn3x/discussions"><img alt="Discussions" src="https://img.shields.io/badge/discussions-join%20in-e85d0c"></a>
 </p>
 
 Provisioning a server and configuring it are one job, but it usually takes two tools:
