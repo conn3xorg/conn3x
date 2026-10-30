@@ -3,7 +3,77 @@
 
 package sshkey
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+)
+
+// recRunner records every command and its stdin, and replays canned results
+// in order, so a test can see what Read and Apply ask the host to run.
+type recRunner struct {
+	results []ssh.Result
+	cmds    []string
+	stdins  [][]byte
+}
+
+func (r *recRunner) Run(_ context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	r.cmds = append(r.cmds, cmd)
+	r.stdins = append(r.stdins, stdin)
+	res := ssh.Result{}
+	if len(r.results) > 0 {
+		res = r.results[0]
+		r.results = r.results[1:]
+	}
+	return res, nil
+}
+
+var loc = Location{Dir: "/home/deploy/.ssh", File: "/home/deploy/.ssh/authorized_keys", Owner: "deploy", Group: "deploy"}
+
+func TestReadRunsAsTheUser(t *testing.T) {
+	r := &recRunner{results: []ssh.Result{{Stdout: []byte(alice + "\n")}}}
+	got, err := Read(context.Background(), r, loc)
+	if err != nil || got != alice+"\n" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	cmd := r.cmds[0]
+	if !strings.Contains(cmd, "runuser -u 'deploy'") || !strings.Contains(cmd, `id -u -- 'deploy'`) {
+		t.Fatalf("read did not drop to the user:\n%s", cmd)
+	}
+	if !strings.Contains(cmd, "'/home/deploy/.ssh/authorized_keys'") {
+		t.Fatalf("read did not name the file:\n%s", cmd)
+	}
+}
+
+func TestReadErrorsWhenTheFileCannotBeRead(t *testing.T) {
+	r := &recRunner{results: []ssh.Result{{ExitCode: 1, Stderr: []byte("cat: Permission denied")}}}
+	if _, err := Read(context.Background(), r, loc); err == nil || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("err = %v, want it to mention the refusal", err)
+	}
+}
+
+func TestApplyWritesEditedContentAsTheUser(t *testing.T) {
+	// First call is the read (empty file), second is the write.
+	r := &recRunner{results: []ssh.Result{{}, {}}}
+	if err := Apply(context.Background(), r, loc, alice, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.cmds) != 2 {
+		t.Fatalf("expected a read then a write, got %d commands", len(r.cmds))
+	}
+	write := r.cmds[1]
+	if !strings.Contains(write, "runuser -u 'deploy'") || !strings.Contains(write, "chmod 0600") || !strings.Contains(write, "mktemp") {
+		t.Fatalf("write did not run as the user with a temp file:\n%s", write)
+	}
+	if string(r.stdins[1]) != alice+"\n" {
+		t.Fatalf("content written = %q", r.stdins[1])
+	}
+	if strings.Contains(write, "chown") {
+		t.Fatalf("write still chowns as root:\n%s", write)
+	}
+}
 
 const (
 	alice  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl alice@laptop"

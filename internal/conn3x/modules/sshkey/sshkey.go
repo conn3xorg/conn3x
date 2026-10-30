@@ -13,7 +13,6 @@ import (
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/account"
-	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
@@ -79,14 +78,56 @@ func Locate(ctx context.Context, r modules.Runner, user string) (Location, error
 	return Location{Dir: dir, File: dir + "/authorized_keys", Owner: user, Group: u.Group}, nil
 }
 
-// Read returns the current authorized_keys content.
+// asUser wraps a shell script so it runs as user rather than as whoever is
+// connected. The path work below is under the user's own home, which the
+// user controls, so doing it as root would let the user redirect it with a
+// symlink and have root read or take ownership of a file elsewhere. Running
+// as the user instead means the kernel checks the user's own permissions on
+// every path, so following a link the user planted grants nothing they
+// couldn't already reach, and no root-owned path is ever touched. The whole
+// script runs in one drop, so there is no root-then-user window to race.
+//
+// runuser is in util-linux on every supported distro and runs the command
+// directly, so it works even for an account whose shell is nologin; su,
+// which goes through the login shell, is only a fallback. When Conn3x is
+// already connected as the user, neither is needed or available without
+// root, so the script runs as is.
+func asUser(user, script string) string {
+	q := ssh.Quote(user)
+	inner := ssh.Quote(script)
+	return fmt.Sprintf(`if [ "$(id -u)" = "$(id -u -- %[1]s 2>/dev/null)" ]; then
+  sh -c %[2]s
+elif command -v runuser >/dev/null 2>&1; then
+  runuser -u %[1]s -- sh -c %[2]s
+else
+  su %[1]s -c %[2]s
+fi`, q, inner)
+}
+
+// Read returns the current authorized_keys content, read as the user so a
+// symlink in their ~/.ssh can't make a privileged read return a file they
+// couldn't read themselves. A missing file reads as empty; a file that
+// can't be read is an error, so an unexpected link is refused, not treated
+// as absent.
 func Read(ctx context.Context, r modules.Runner, loc Location) (string, error) {
-	a, err := file.Read(ctx, r, loc.File)
-	return a.Content, err
+	script := fmt.Sprintf(`f=%s
+[ -e "$f" ] || exit 0
+cat -- "$f"`, ssh.Quote(loc.File))
+	res, err := r.Run(ctx, asUser(loc.Owner, script), nil)
+	if err != nil {
+		return "", err
+	}
+	if res.ExitCode != 0 {
+		return "", fmt.Errorf("reading %s as %s: %s", loc.File, loc.Owner, strings.TrimSpace(string(res.Stderr)))
+	}
+	return string(res.Stdout), nil
 }
 
 // Apply makes the key present or absent, creating ~/.ssh (0700) and
-// authorized_keys (0600) owned by the user, the modes sshd insists on.
+// authorized_keys (0600), the modes sshd insists on. Everything runs as the
+// user, so the files it creates are owned by the user without a chown, and a
+// symlink pointing out of what the user owns makes mkdir or chmod fail
+// rather than letting root act on another path.
 func Apply(ctx context.Context, r modules.Runner, loc Location, key string, present bool) error {
 	current, err := Read(ctx, r, loc)
 	if err != nil {
@@ -96,17 +137,25 @@ func Apply(ctx context.Context, r modules.Runner, loc Location, key string, pres
 	if err != nil {
 		return err
 	}
-	q := ssh.Quote(loc.Dir)
-	res, err := r.Run(ctx, fmt.Sprintf(`set -e
-mkdir -p -- %[1]s
-chmod 0700 %[1]s
-chown -- %[2]s %[1]s
-if command -v restorecon >/dev/null 2>&1; then restorecon -- %[1]s 2>/dev/null || true; fi`, q, ssh.Quote(loc.Owner+":"+loc.Group)), nil)
+	script := fmt.Sprintf(`set -e
+d=%[1]s
+f=%[2]s
+mkdir -p -- "$d"
+chmod 0700 "$d"
+tmp=$(mktemp "$d/.conn3x.XXXXXX")
+trap 'rm -f -- "$tmp"' EXIT
+cat > "$tmp"
+chmod 0600 "$tmp"
+mv -f -- "$tmp" "$f"
+trap - EXIT
+if command -v restorecon >/dev/null 2>&1; then restorecon -- "$d" "$f" 2>/dev/null || true; fi`,
+		ssh.Quote(loc.Dir), ssh.Quote(loc.File))
+	res, err := r.Run(ctx, asUser(loc.Owner, script), []byte(edited))
 	if err != nil {
 		return err
 	}
 	if res.ExitCode != 0 {
-		return fmt.Errorf("preparing %s: %s", loc.Dir, strings.TrimSpace(string(res.Stderr)))
+		return fmt.Errorf("writing %s as %s: %s", loc.File, loc.Owner, strings.TrimSpace(string(res.Stderr)))
 	}
-	return file.Apply(ctx, r, file.Desired{Path: loc.File, Content: edited, Mode: "0600", Owner: loc.Owner, Group: loc.Group})
+	return nil
 }
