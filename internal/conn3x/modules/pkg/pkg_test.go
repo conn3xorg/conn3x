@@ -351,3 +351,53 @@ func TestApplyDebRefreshesListsWhenDownloadIsGone(t *testing.T) {
 		t.Fatalf("expected an update and a retry, ran %v", h.ran)
 	}
 }
+
+// A first-boot apt-get update that replaces a Packages file while an install
+// runs leaves apt's cache naming versions it can no longer place.
+func TestApplyDebRefreshesListsWhenListsChangeDuringInstall(t *testing.T) {
+	calls := 0
+	h := &fnHost{fn: func(cmd string) ssh.Result {
+		if strings.Contains(cmd, " install ") {
+			calls++
+			if calls == 1 {
+				return ssh.Result{ExitCode: 100, Stderr: []byte("E: Can't find a source to download version '1:4.13+dfsg1-4ubuntu3.2' of 'libsubid4:amd64'\n")}
+			}
+		}
+		return ok("")
+	}}
+	if err := Apply(ctx, h, Deb, Desired{Name: "podman", State: Present}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || !strings.Contains(strings.Join(h.ran, "\n"), " update") {
+		t.Fatalf("expected an update and a retry, ran %v", h.ran)
+	}
+}
+
+// A successful install, and a failure lists can't explain, run no update. A
+// package that really doesn't exist gets one retry and keeps apt's error.
+func TestApplyDebRefreshesOnlyForStaleLists(t *testing.T) {
+	for _, tc := range []struct {
+		name, stderr string
+		exit         int
+		runs         int
+		wantErr      string
+	}{
+		{name: "success", runs: 1},
+		{name: "dpkg failure", stderr: "E: Sub-process /usr/bin/dpkg returned an error code (1)\n", exit: 100, runs: 1, wantErr: "dpkg returned"},
+		{name: "missing package", stderr: "E: Unable to locate package nope\n", exit: 100, runs: 3, wantErr: "Unable to locate package nope"},
+	} {
+		h := &fnHost{fn: func(cmd string) ssh.Result {
+			if strings.Contains(cmd, " install ") {
+				return ssh.Result{ExitCode: tc.exit, Stderr: []byte(tc.stderr)}
+			}
+			return ok("")
+		}}
+		err := Apply(ctx, h, Deb, Desired{Name: "nope", State: Present})
+		if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.wantErr)
+		}
+		if len(h.ran) != tc.runs {
+			t.Errorf("%s: ran %v, want %d commands", tc.name, h.ran, tc.runs)
+		}
+	}
+}
