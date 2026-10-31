@@ -246,6 +246,8 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		if err != nil && staleLists(err) {
 			// Fresh hosts often have no package lists yet, and an image a few
 			// weeks old has lists naming versions the mirror has since dropped.
+			// A first-boot apt-get update can also replace the lists while this
+			// install runs. Taking the lists lock here waits that one out too.
 			if err := Run(ctx, r, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err != nil {
 				return err
 			}
@@ -257,12 +259,13 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 }
 
 // staleLists reports whether apt failed because its package lists are
-// missing or out of date, which apt-get update fixes.
+// missing, out of date or changed under it, which apt-get update fixes.
 func staleLists(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "Unable to locate package") ||
 		strings.Contains(msg, "has no installation candidate") ||
-		strings.Contains(msg, "Unable to fetch some archives")
+		strings.Contains(msg, "Unable to fetch some archives") ||
+		strings.Contains(msg, "Can't find a source to download version")
 }
 
 // Another apt or dnf can hold the package manager's lock, such as a step
