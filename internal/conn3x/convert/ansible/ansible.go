@@ -68,6 +68,7 @@ type converter struct {
 	needUser  bool
 	playNoLog bool   // the current play sets no_log to anything but false
 	runAs     string // who the current play's tasks run as, as an expression; empty when it's open
+	otherUser string // what in the current play makes Ansible run as someone a circuit wouldn't
 }
 
 func (c *converter) run(plays *yaml.Node) Result {
@@ -183,6 +184,7 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 	}
 
 	c.runAs = c.effectiveUser(p, group, become, ssh)
+	c.otherUser = playChangesUser(p, group, become)
 	vars := map[string]string{}
 	for k, v := range mapping(p["vars"]) {
 		if v.Kind == yaml.ScalarNode {
@@ -257,6 +259,71 @@ func (c *converter) effectiveUser(p map[string]*yaml.Node, group *Group, become 
 		return `"root"`
 	}
 	return strings.TrimSpace(string(ssh.GetAttribute("user").Expr().BuildTokens(nil).Bytes()))
+}
+
+// playChangesUser names what makes a play's tasks run as a user the circuit
+// wouldn't run them as, or returns "". A circuit runs as root under become and
+// otherwise as its login user. With become on, remote_user only picks who logs
+// in; become_user is ignored when become is plainly off.
+func playChangesUser(p map[string]*yaml.Node, group *Group, become bool) string {
+	vars := mapping(p["vars"])
+	inventory := func(key string) []string {
+		if group == nil {
+			return nil
+		}
+		return group.Values(key)
+	}
+	becomeOff := p["become"] != nil && noLogOff(p["become"])
+	if !becomeOff {
+		if n := p["become_user"]; n != nil && scalar(n) != "root" {
+			return "become_user"
+		}
+		if n := vars["ansible_become_user"]; n != nil && scalar(n) != "root" {
+			return "ansible_become_user"
+		}
+		for _, v := range inventory("ansible_become_user") {
+			if v != "root" {
+				return "ansible_become_user"
+			}
+		}
+	}
+	if vars["ansible_become"] != nil || len(inventory("ansible_become")) > 0 {
+		return "ansible_become"
+	}
+	if become {
+		return ""
+	}
+	if p["remote_user"] != nil {
+		return "remote_user"
+	}
+	for _, key := range []string{"ansible_user", "ansible_ssh_user"} {
+		if vars[key] != nil {
+			return key
+		}
+	}
+	if len(inventory("ansible_ssh_user")) > 0 {
+		return "ansible_ssh_user"
+	}
+	return ""
+}
+
+// sameForAnyUser lists modules whose result on the host doesn't depend on who
+// ran them: they change the system, or name their user themselves. It lists
+// what is safe, so a module nobody thought about goes to review. known_hosts
+// isn't here only because it needs no help: it proves its own user.
+func sameForAnyUser(mod string, args map[string]*yaml.Node) bool {
+	switch mod {
+	case "package", "dnf", "yum", "apt", "service", "systemd", "systemd_service",
+		"user", "group", "authorized_key", "known_hosts", "sysctl", "hostname", "timezone",
+		"firewalld", "ufw", "seboolean", "sefcontext", "mount", "debug",
+		"apt_repository", "yum_repository":
+		return true
+	case "cron":
+		return args["user"] != nil // otherwise it's the crontab of whoever runs it
+	case "wait_for":
+		return args["path"] == nil // a path can be out of one user's reach and not another's
+	}
+	return false
 }
 
 // keywords are task keys that are not the module.
@@ -342,6 +409,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if extra := in.unused(); len(extra) > 0 {
 			reason = "sets " + strings.Join(extra, ", ") + ", which the converter can't translate yet"
 		}
+	}
+	if reason == "" && c.otherUser != "" && !sameForAnyUser(mod, args) {
+		reason = fmt.Sprintf("depends on which user runs it, such as who owns what it creates, and this play sets %s; a circuit runs as root under become and otherwise as its login user. Set the login user in the ssh block, or owner on the step, and check the result", c.otherUser)
 	}
 	if reason != "" {
 		c.issue(body, name, node, reason)

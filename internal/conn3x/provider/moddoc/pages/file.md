@@ -76,3 +76,5 @@ When you delete a `file` step, `on_remove` decides what happens on the host. The
 ## From Ansible
 
 `conn3x convert ansible` turns `copy` tasks with `content` or `src` into `file` steps, reading `src` from your playbook's `files/` directory. `copy` with `remote_src` stays a TODO, and so does `force: no`, since Ansible then writes the file only when it's missing.
+
+A play that sets `become_user`, or `remote_user` without `become`, sends these tasks to review with the reason, because who runs them decides who owns what they create. A circuit runs as root under `become` and otherwise as its login user.
