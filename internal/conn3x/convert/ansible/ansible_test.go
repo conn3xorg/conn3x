@@ -738,7 +738,6 @@ func TestNoLogStillRefusesTheseModules(t *testing.T) {
 	}
 }
 
-<<<<<<< Updated upstream
 func TestPlayThatChangesTheUserSendsUserDependentTasksToReview(t *testing.T) {
 	const tasks = `  tasks:
     - copy: {dest: /a, content: x}
@@ -792,7 +791,9 @@ func TestChangedUserDoesNotHideAModulesOwnReason(t *testing.T) {
 	res := convertString(t, "- hosts: all\n  remote_user: deploy\n  tasks:\n    - command: 'true'\n")
 	if len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "runs on every play") {
 		t.Fatalf("review %+v", res.Review)
-=======
+	}
+}
+
 func TestConvertsPip(t *testing.T) {
 	res := convertString(t, `- hosts: all
   become: true
@@ -859,6 +860,5 @@ func TestPipGoesToReviewWhenThePlayChangesTheUser(t *testing.T) {
 	res := convertString(t, "- hosts: all\n  become: true\n  become_user: app\n  tasks:\n    - pip: {name: six, virtualenv: /opt/v}\n")
 	if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "become_user") {
 		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
->>>>>>> Stashed changes
 	}
 }
