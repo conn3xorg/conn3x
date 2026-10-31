@@ -27,6 +27,8 @@ func directorySchema() providers.Schema {
 			"owner":     {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
 			"group":     {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the directory, \"delete\" removes it when it is empty."},
+			"state":     {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which removes the directory when it is empty and keeps it gone."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "With state \"absent\", whether the directory is already gone. Null otherwise."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -45,6 +47,7 @@ func validateDirectory(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
+	diags = diags.Append(validateState(cfg, "mode", "owner", "group"))
 	if err := directoryFrom(cfg).Validate(); err != nil {
 		diags = diags.Append(attrError("path", err.Error()))
 	}
@@ -53,6 +56,20 @@ func validateDirectory(cfg cty.Value) tfdiags.Diagnostics {
 
 func planDirectory(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	return planPathResource(req, "directory", func(vals map[string]cty.Value) {
+		switch {
+		case !vals["state"].IsKnown():
+			// Whether the directory should exist isn't known yet, so
+			// neither is anything read from it.
+			if req.Config.GetAttr("mode").IsNull() {
+				vals["mode"] = cty.UnknownVal(cty.String)
+			}
+			vals["in_sync"] = cty.UnknownVal(cty.Bool)
+			return
+		case isAbsent(req.ProposedNewState):
+			vals["mode"], vals["in_sync"] = cty.NullVal(cty.String), absentInSync(req)
+			return
+		}
+		vals["in_sync"] = cty.NullVal(cty.Bool)
 		if req.Config.GetAttr("mode").IsNull() { // the proposal carries the refreshed mode
 			vals["mode"] = cty.StringVal("0755")
 		}
@@ -65,6 +82,11 @@ func planDirectory(req providers.PlanResourceChangeRequest) providers.PlanResour
 func readDirectory(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
 		s, err := fsobj.ReadDirectory(ctx, h, prior.GetAttr("path").AsString())
+		if err == nil && isAbsent(prior) {
+			vals := prior.AsValueMap()
+			vals["in_sync"] = cty.BoolVal(!s.Exists)
+			return cty.ObjectVal(vals), nil
+		}
 		if err != nil || !s.Exists {
 			return cty.NullVal(prior.Type()), err
 		}
@@ -75,6 +97,9 @@ func readDirectory(ctx context.Context, req providers.ReadResourceRequest) provi
 func applyDirectory(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	return applyPathResource(ctx, req,
 		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			if isAbsent(planned) {
+				return removeDirectory(ctx, h, planned)
+			}
 			d := directoryFrom(planned)
 			if err := fsobj.ApplyDirectory(ctx, h, d); err != nil {
 				return cty.NilVal, fmt.Errorf("directory %s: %w", d.Path, err)
@@ -91,6 +116,22 @@ func applyDirectory(ctx context.Context, req providers.ApplyResourceChangeReques
 		func(ctx context.Context, h *hostConn, prior cty.Value) error {
 			return fsobj.DeleteDirectory(ctx, h, prior.GetAttr("path").AsString())
 		})
+}
+
+// removeDirectory removes the directory for state = "absent". ReadDirectory
+// refuses anything else at the path, and DeleteDirectory one with files in it.
+func removeDirectory(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+	p := planned.GetAttr("path").AsString()
+	s, err := fsobj.ReadDirectory(ctx, h, p)
+	if err == nil && s.Exists {
+		err = fsobj.DeleteDirectory(ctx, h, p)
+	}
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("removing %s: %w", p, err)
+	}
+	vals := planned.AsValueMap()
+	vals["in_sync"] = cty.True
+	return cty.ObjectVal(vals), nil
 }
 
 func directoryState(base cty.Value, s fsobj.DirectoryState) cty.Value {

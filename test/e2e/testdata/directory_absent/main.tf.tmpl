@@ -1,0 +1,12 @@
+resource "conn3x_directory" "legacy" {
+  path  = "/var/cache/app-legacy"
+  state = "absent"
+
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}

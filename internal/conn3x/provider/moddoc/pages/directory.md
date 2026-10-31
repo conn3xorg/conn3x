@@ -35,6 +35,17 @@ step "app_tree" {
   }
 }
 ```
+
+Make sure an empty directory is gone, and stays gone:
+
+```hcl
+step "old_cache" {
+  directory {
+    path  = "/var/cache/app-legacy"
+    state = "absent"
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
@@ -45,6 +56,8 @@ step "app_tree" {
 **Ownership.** `owner` and `group` are only checked and set when you give them. Leave them out and Conn3x keeps whatever the directory has.
 
 **Mode.** The default mode is `"0755"`. If the mode on the host changes, the next plan shows the difference.
+
+**Absent.** With `state = "absent"`, every plan checks only whether the directory exists. If it does, the plan shows the step out of sync and apply removes it. If it doesn't, the plan shows no change, and a directory that comes back later is removed again by the next apply. Only an empty directory is removed: one with anything in it is left in place, and the apply reports an error. `mode`, `owner` and `group` can't be set alongside it. A file, a symbolic link or anything else that isn't a directory at the path is an error, and is left in place.
 
 A `directory` step acts as root on the path you name, and follows a symlink at that path. Don't manage a root-owned path inside a directory a non-root user can write to, because that user can swap what the path points to.
 

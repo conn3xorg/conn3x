@@ -62,17 +62,9 @@ func validateFile(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	switch state := cfg.GetAttr("state"); {
-	case !state.IsKnown():
-	case fileAbsent(cfg):
-		for _, attr := range []string{"content", "content_wo", "mode", "owner", "group"} {
-			if !cfg.GetAttr(attr).IsNull() {
-				diags = diags.Append(attrError(attr, fmt.Sprintf("%s can't be set with state = %q", attr, stateAbsent)))
-			}
-		}
-	case !state.IsNull() && state.AsString() != statePresent:
-		diags = diags.Append(attrError("state", fmt.Sprintf("state must be %q or %q, not %q", statePresent, stateAbsent, state.AsString())))
-	case cfg.GetAttr("content").IsNull() == cfg.GetAttr("content_wo").IsNull():
+	diags = diags.Append(validateState(cfg, "content", "content_wo", "mode", "owner", "group"))
+	if state := cfg.GetAttr("state"); state.IsKnown() && (state.IsNull() || state.AsString() == statePresent) &&
+		cfg.GetAttr("content").IsNull() == cfg.GetAttr("content_wo").IsNull() {
 		diags = diags.Append(attrError("content", "set exactly one of content and content_wo"))
 	}
 	path, mode := cfg.GetAttr("path"), cfg.GetAttr("mode")
@@ -111,7 +103,7 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 		vals["sha256"], vals["content_hmac"], vals["in_sync"] = cty.UnknownVal(cty.String), cty.UnknownVal(cty.String), cty.UnknownVal(cty.Bool)
 		return finishFilePlan(req, resp, vals)
 	}
-	if fileAbsent(req.ProposedNewState) {
+	if isAbsent(req.ProposedNewState) {
 		return planAbsentFile(req, resp, vals)
 	}
 	vals["in_sync"] = cty.NullVal(cty.Bool)
@@ -158,16 +150,7 @@ func planAbsentFile(req providers.PlanResourceChangeRequest, resp providers.Plan
 	for _, attr := range []string{"content", "content_wo", "content_hmac", "sha256", "mode"} {
 		vals[attr] = cty.NullVal(cty.String)
 	}
-	stale := req.PriorState.IsNull() || !fileAbsent(req.PriorState)
-	if !stale {
-		if s := req.PriorState.GetAttr("in_sync"); !known(s) || s.False() {
-			stale = true
-		}
-	}
-	vals["in_sync"] = cty.True
-	if stale {
-		vals["in_sync"] = cty.UnknownVal(cty.Bool)
-	}
+	vals["in_sync"] = absentInSync(req)
 	return finishFilePlan(req, resp, vals)
 }
 
@@ -196,10 +179,40 @@ func finishFilePlan(req providers.PlanResourceChangeRequest, resp providers.Plan
 	return resp
 }
 
-// fileAbsent reports whether v asks for the file to be gone.
-func fileAbsent(v cty.Value) bool {
+// isAbsent reports whether v asks for its path to be gone.
+func isAbsent(v cty.Value) bool {
 	s := v.GetAttr("state")
 	return s.IsKnown() && !s.IsNull() && s.AsString() == stateAbsent
+}
+
+// absentInSync plans in_sync for a path that must not exist: true when the
+// last refresh found it already gone, unknown when apply has work to do.
+func absentInSync(req providers.PlanResourceChangeRequest) cty.Value {
+	if req.PriorState.IsNull() || !isAbsent(req.PriorState) {
+		return cty.UnknownVal(cty.Bool)
+	}
+	if s := req.PriorState.GetAttr("in_sync"); !known(s) || s.False() {
+		return cty.UnknownVal(cty.Bool)
+	}
+	return cty.True
+}
+
+// validateState checks that state is "present" or "absent", and that none
+// of attrs is set alongside "absent".
+func validateState(cfg cty.Value, attrs ...string) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	switch state := cfg.GetAttr("state"); {
+	case !state.IsKnown() || state.IsNull():
+	case state.AsString() == stateAbsent:
+		for _, attr := range attrs {
+			if !cfg.GetAttr(attr).IsNull() {
+				diags = diags.Append(attrError(attr, fmt.Sprintf("%s can't be set with state = %q", attr, stateAbsent)))
+			}
+		}
+	case state.AsString() != statePresent:
+		diags = diags.Append(attrError("state", fmt.Sprintf("state must be %q or %q, not %q", statePresent, stateAbsent, state.AsString())))
+	}
+	return diags
 }
 
 func readFile(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -219,7 +232,7 @@ func readFile(ctx context.Context, req providers.ReadResourceRequest) providers.
 	}
 
 	path := req.PriorState.GetAttr("path").AsString()
-	if fileAbsent(req.PriorState) {
+	if isAbsent(req.PriorState) {
 		exists, err := file.Exists(ctx, client, path)
 		if err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading %s: %w", path, err))
@@ -273,7 +286,7 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		return resp
 	}
 
-	if fileAbsent(planned) {
+	if isAbsent(planned) {
 		path := planned.GetAttr("path").AsString()
 		// Exists refuses a directory or anything else that isn't a file.
 		exists, err := file.Exists(ctx, client, path)
