@@ -179,7 +179,7 @@ mv -f -- "$tmp" "$f"
 trap - EXIT
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$d" "$f" 2>/dev/null || true; fi`,
 		ssh.Quote(loc.Dir), ssh.Quote(loc.File))
-	res, err := r.Run(ctx, asUser(loc.Owner, script), []byte(edited))
+	res, err := r.Run(ctx, modules.AsUser(loc.Owner, script), []byte(edited))
 	if err != nil {
 		return err
 	}

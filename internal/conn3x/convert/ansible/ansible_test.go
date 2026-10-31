@@ -793,3 +793,72 @@ func TestChangedUserDoesNotHideAModulesOwnReason(t *testing.T) {
 		t.Fatalf("review %+v", res.Review)
 	}
 }
+
+func TestConvertsPip(t *testing.T) {
+	res := convertString(t, `- hosts: all
+  become: true
+  tasks:
+    - ansible.builtin.pip: {name: six, version: "1.16.0", virtualenv: /opt/v}
+    - pip: {name: ["iniconfig==2.0.0", tomli], virtualenv: /opt/v, virtualenv_command: python3 -m venv}
+    - pip: {name: packaging, state: latest, virtualenv: /opt/v, virtualenv_command: virtualenv}
+    - pip: {name: old, state: absent, virtualenv: /opt/v, editable: false, virtualenv_site_packages: false}
+`)
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	for _, want := range []string{"pip {", `name = "six"`, `version = "1.16.0"`, `version = "2.0.0"`, `name = "tomli"`, `state = "latest"`, `state = "absent"`, "virtualenv tool"} {
+		if !strings.Contains(strings.Join(strings.Fields(string(res.HCL)), " "), want) {
+			t.Errorf("output lacks %q:\n%s", want, res.HCL)
+		}
+	}
+}
+
+func TestRefusesPipItCantProve(t *testing.T) {
+	for _, c := range []struct{ task, want string }{
+		{"pip: {name: six}", "outside a virtualenv"},
+		{"pip: {requirements: /opt/r.txt, virtualenv: /opt/v}", "requirements file"},
+		{"pip: {name: six, virtualenv: ~/v}", "clean absolute path"},
+		{"pip: {name: six, virtualenv: v}", "clean absolute path"},
+		{"pip: {name: six, virtualenv: /home/a/v}", "home directory"},
+		{"pip: {name: six, virtualenv: /root/v}", "home directory"},
+		{`pip: {name: "six>=1", virtualenv: /opt/v}`, "plain name"},
+		{`pip: {name: "six[x]==1", virtualenv: /opt/v}`, "plain name"},
+		{"pip: {name: git+https://x.example/y, virtualenv: /opt/v}", "plain name"},
+		{`pip: {name: "six==1.*", virtualenv: /opt/v}`, "exact version"},
+		{`pip: {name: "six==1", version: "1", virtualenv: /opt/v}`, "also sets version"},
+		{`pip: {name: [a, b], version: "1", virtualenv: /opt/v}`, "several names"},
+		{"pip: {name: six, version: 1.10, virtualenv: /opt/v}", "may read as"},
+		{`pip: {name: six, version: "1", state: latest, virtualenv: /opt/v}`, "only applies"},
+		{`pip: {name: six, version: "1", state: absent, virtualenv: /opt/v}`, "only applies"},
+		{"pip: {name: six, state: forcereinstall, virtualenv: /opt/v}", "no Conn3x equivalent"},
+		{"pip: {name: six, extra_args: --index-url=http://x, virtualenv: /opt/v}", "extra_args"},
+		{"pip: {name: six, executable: /opt/v/bin/pip3, virtualenv: /opt/v}", "executable"},
+		{"pip: {name: six, chdir: /tmp, virtualenv: /opt/v}", "chdir"},
+		{"pip: {name: six, umask: '0022', virtualenv: /opt/v}", "umask"},
+		{"pip: {name: six, virtualenv_python: python3.12, virtualenv: /opt/v}", "virtualenv_python"},
+		{"pip: {name: six, virtualenv_command: pyvenv, virtualenv: /opt/v}", "builds its virtualenv"},
+		{"pip: {name: six, virtualenv_site_packages: true, virtualenv: /opt/v}", "site_packages"},
+		{"pip: {name: six, editable: true, virtualenv: /opt/v}", "editable"},
+		{"pip: name=six virtualenv=/opt/v", "key=value"},
+		{"pip: {name: '{{ item }}', virtualenv: /opt/v}\n      loop: [a]", "loops"},
+		{"pip: {name: '{{ pkg }}', virtualenv: /opt/v}", "play variable"},
+		{"pip: {virtualenv: /opt/v}", "names no package"},
+	} {
+		res := convertString(t, "- hosts: all\n  become: true\n  tasks:\n    - "+c.task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, c.want) {
+			t.Errorf("%s: converted %d, review %+v, want %q", c.task, res.Converted, res.Review, c.want)
+		}
+	}
+	res := convertString(t, "- hosts: all\n  tasks:\n    - pip: {name: six, virtualenv: /opt/v, password: s3cret}\n      no_log: true\n")
+	if res.Converted != 0 || strings.Contains(string(res.HCL), "s3cret") {
+		t.Errorf("no_log task: %s", res.HCL)
+	}
+}
+
+// Who runs pip decides who owns the venv and whose code it trusts.
+func TestPipGoesToReviewWhenThePlayChangesTheUser(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  become: true\n  become_user: app\n  tasks:\n    - pip: {name: six, virtualenv: /opt/v}\n")
+	if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "become_user") {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}

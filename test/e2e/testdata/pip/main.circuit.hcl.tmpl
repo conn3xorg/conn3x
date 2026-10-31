@@ -1,0 +1,50 @@
+circuit "py" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "root_pin" {
+    pip {
+      name    = "six"
+      version = "{{.Six}}"
+      venv    = "/opt/rootvenv"
+    }
+  }
+
+  step "user_pin" {
+    pip {
+      name    = "iniconfig"
+      version = "2.0"
+      venv    = "/home/py/venv"
+      user    = "py"
+    }
+  }
+
+  step "newest" {
+    pip {
+      name  = "tomli"
+      state = "latest"
+      venv  = "/opt/rootvenv"
+    }
+  }
+
+  step "any" {
+    pip {
+      name = "packaging"
+      venv = "/opt/rootvenv"
+    }
+  }
+
+  step "gone" {
+    pip {
+      name  = "idna"
+      state = "absent"
+      venv  = "/opt/rootvenv"
+    }
+  }
+}

@@ -79,32 +79,6 @@ func Locate(ctx context.Context, r modules.Runner, user string) (Location, error
 	return Location{Dir: dir, File: dir + "/authorized_keys", Owner: user, Group: u.Group}, nil
 }
 
-// asUser wraps a shell script so it runs as user rather than as whoever is
-// connected. The path work below is under the user's own home, which the
-// user controls, so doing it as root would let the user redirect it with a
-// symlink and have root read or take ownership of a file elsewhere. Running
-// as the user instead means the kernel checks the user's own permissions on
-// every path, so following a link the user planted grants nothing they
-// couldn't already reach, and no root-owned path is ever touched. The whole
-// script runs in one drop, so there is no root-then-user window to race.
-//
-// runuser is in util-linux on every supported distro and runs the command
-// directly, so it works even for an account whose shell is nologin; su,
-// which goes through the login shell, is only a fallback. When Conn3x is
-// already connected as the user, neither is needed or available without
-// root, so the script runs as is.
-func asUser(user, script string) string {
-	q := ssh.Quote(user)
-	inner := ssh.Quote(script)
-	return fmt.Sprintf(`if [ "$(id -u)" = "$(id -u -- %[1]s 2>/dev/null)" ]; then
-  sh -c %[2]s
-elif command -v runuser >/dev/null 2>&1; then
-  runuser -u %[1]s -- sh -c %[2]s
-else
-  su %[1]s -c %[2]s
-fi`, q, inner)
-}
-
 // Read returns the current authorized_keys content, read as the user so a
 // symlink in their ~/.ssh can't make a privileged read return a file they
 // couldn't read themselves. A missing file reads as empty; a file that
@@ -114,7 +88,7 @@ func Read(ctx context.Context, r modules.Runner, loc Location) (string, error) {
 	script := fmt.Sprintf(`f=%s
 [ -e "$f" ] || exit 0
 cat -- "$f"`, ssh.Quote(loc.File))
-	res, err := r.Run(ctx, asUser(loc.Owner, script), nil)
+	res, err := r.Run(ctx, modules.AsUser(loc.Owner, script), nil)
 	if err != nil {
 		return "", err
 	}
@@ -151,7 +125,7 @@ mv -f -- "$tmp" "$f"
 trap - EXIT
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$d" "$f" 2>/dev/null || true; fi`,
 		ssh.Quote(loc.Dir), ssh.Quote(loc.File))
-	res, err := r.Run(ctx, asUser(loc.Owner, script), []byte(edited))
+	res, err := r.Run(ctx, modules.AsUser(loc.Owner, script), []byte(edited))
 	if err != nil {
 		return err
 	}
