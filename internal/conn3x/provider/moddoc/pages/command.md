@@ -58,3 +58,5 @@ Deleting a `command` step changes nothing on the host. To undo what a command di
 ## From Ansible
 
 `conn3x convert ansible` turns `command` and `shell` tasks into `command` steps, carrying over `creates` and `removes`. `chdir` becomes `cd <dir> && ` in front of the command, and `executable` is dropped. Conn3x tests `creates` and `removes` as plain paths, so one with a glob such as `*` stays a TODO, as does a free-form command with `chdir=` or `creates=` written inline. A task with neither `creates` nor `removes` stays a TODO, since Ansible runs it on every play: add a guard or `triggers` so Conn3x knows when it's done.
+
+A play that sets `become_user`, or `remote_user` without `become`, sends these tasks to review with the reason, because a command does what its user can do. A circuit runs as root under `become` and otherwise as its login user.

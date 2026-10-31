@@ -737,3 +737,59 @@ func TestNoLogStillRefusesTheseModules(t *testing.T) {
 		}
 	}
 }
+
+func TestPlayThatChangesTheUserSendsUserDependentTasksToReview(t *testing.T) {
+	const tasks = `  tasks:
+    - copy: {dest: /a, content: x}
+    - file: {path: /b, state: directory}
+    - lineinfile: {path: /c, line: x}
+    - command: {cmd: "true", creates: /d}
+    - cron: {name: j, job: "true"}
+    - wait_for: {path: /e}
+    - package: {name: tree}
+    - cron: {name: k, job: "true", user: app}
+    - wait_for: {port: 22}
+`
+	for _, play := range []string{
+		"become: true\n  become_user: postgres",
+		"become_user: postgres", // become can be on in ansible.cfg
+		"become: '{{ b }}'\n  become_user: postgres",
+		"remote_user: deploy",
+		"become: false\n  remote_user: deploy",
+		"vars: {ansible_become_user: postgres}",
+		"vars: {ansible_become: true}",
+		"vars: {ansible_user: deploy}",
+	} {
+		res := convertString(t, "- hosts: all\n  "+play+"\n"+tasks)
+		if res.Converted != 3 || len(res.Review) != 6 {
+			t.Errorf("%q: converted %d, review %+v", play, res.Converted, res.Review)
+			continue
+		}
+		if r := res.Review[0].Reason; !strings.Contains(r, "depends on which user runs it") {
+			t.Errorf("%q: reason %q", play, r)
+		}
+	}
+}
+
+func TestPlayThatKeepsTheUserConverts(t *testing.T) {
+	for _, play := range []string{
+		"become: true",
+		"become: true\n  become_user: root",
+		"become: true\n  remote_user: deploy", // only picks who logs in
+		"become: false\n  become_user: postgres",
+		"become_user: root",
+	} {
+		res := convertString(t, "- hosts: all\n  "+play+"\n  tasks:\n    - copy: {dest: /a, content: x}\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%q: converted %d, review %+v", play, res.Converted, res.Review)
+		}
+	}
+}
+
+// The module's own reason comes first, and sits beside the tasks it stopped.
+func TestChangedUserDoesNotHideAModulesOwnReason(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  remote_user: deploy\n  tasks:\n    - command: 'true'\n")
+	if len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "runs on every play") {
+		t.Fatalf("review %+v", res.Review)
+	}
+}
