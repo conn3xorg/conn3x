@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/pip"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
 )
 
@@ -411,4 +412,81 @@ func debugModule(in *input) ([]step, string) {
 		note = "Its message isn't copied here, in case it holds a secret; see the playbook."
 	}
 	return []step{{notes: []string{"debug only prints, so it changes nothing on hosts and is left out. " + note}}}, ""
+}
+
+// pipModule converts what's plainly a named package in a named venv, run by
+// the same user. Everything else pip can do goes to review: a requirements
+// file is on the host, where the converter can't read it, extra_args and
+// executable can change where packages come from or go, and forcereinstall
+// never settles.
+func pipModule(in *input) ([]step, string) {
+	if why := exactTask(in); why != "" {
+		return nil, why
+	}
+	if in.has("requirements") {
+		return nil, "installs a requirements file, which is on the host, so the converter can't see what it pins; give each package a pip step with its version"
+	}
+	if !in.has("virtualenv") {
+		return nil, "installs outside a virtualenv; a pip step only installs into a venv, so name one, or use a package step for the OS's own"
+	}
+	if !in.has("name") {
+		return nil, "names no package"
+	}
+	if cmd := in.str("virtualenv_command"); in.has("virtualenv_command") && cmd != "python3 -m venv" && cmd != "virtualenv" {
+		return nil, fmt.Sprintf("builds its virtualenv with %q; a pip step builds a missing one with python3 -m venv", cmd)
+	}
+	if in.bool("virtualenv_site_packages", false) {
+		return nil, "sets virtualenv_site_packages; a pip step's venv can't see system packages"
+	}
+	if in.bool("editable", false) {
+		return nil, "sets editable, which a pip step doesn't have"
+	}
+	venv := in.text("virtualenv")
+	version := in.text("version")
+	st := in.state("present", "present", "installed", "latest", "absent")
+	if st == "installed" {
+		st = "present"
+	}
+	if strings.HasPrefix(venv, "/home/") || strings.HasPrefix(venv, "/root/") {
+		return nil, "uses a virtualenv under a home directory; Ansible may have built it as root there, and a pip step won't run as root in a directory a user controls. Set the step's user to the owner by hand"
+	}
+	names := in.list("name")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if version != "" && len(names) != 1 {
+		return nil, "sets version with several names, which Ansible refuses"
+	}
+	var steps []step
+	for _, n := range names {
+		name, pinned, hasPin := strings.Cut(n, "==")
+		if hasPin && version != "" {
+			return nil, fmt.Sprintf("pins %q and also sets version; write one of them", n)
+		}
+		if !hasPin {
+			pinned = version
+		}
+		d := pip.Desired{Name: name, Venv: venv, State: pip.State(st), Version: pinned}
+		if err := d.Validate(); err != nil {
+			return nil, "can't be a pip step: " + err.Error()
+		}
+		attrs := []attr{s("name", name), s("venv", venv)}
+		if pinned != "" {
+			attrs = append(attrs, s("version", pinned))
+		}
+		if st != "present" {
+			attrs = append(attrs, s("state", st))
+		}
+		steps = append(steps, step{module: "pip", attrs: attrs, suffix: name})
+	}
+	if len(steps) == 0 {
+		return nil, "names no package"
+	}
+	switch {
+	case st == "absent":
+		steps[0].notes = []string{"Ansible builds a missing venv even to remove from it; Conn3x leaves it missing."}
+	case in.str("virtualenv_command") != "python3 -m venv":
+		steps[0].notes = []string{"A missing venv is built with python3 -m venv, not the virtualenv tool, which Ansible fails without. The packages are the same; the venv's own seed packages can differ."}
+	}
+	return steps, ""
 }

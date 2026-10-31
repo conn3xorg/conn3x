@@ -60,6 +60,7 @@ var circuitModules = map[string]string{
 	"replace":          "conn3x_replace",
 	"file":             "conn3x_file",
 	"package":          "conn3x_package",
+	"pip":              "conn3x_pip",
 	"service":          "conn3x_service",
 	"user":             "conn3x_user",
 	"group":            "conn3x_group",
