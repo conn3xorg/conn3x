@@ -1,0 +1,32 @@
+circuit "trust" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "system" {
+    known_hosts {
+      host = "git.example"
+      key  = "{{.Key}}"
+    }
+  }
+
+  step "gone" {
+    known_hosts {
+      host  = "old.example"
+      state = "absent"
+    }
+  }
+
+  step "user" {
+    known_hosts {
+      host = "[git.example]:2222"
+      key  = "{{.Key}}"
+      user = "kh"
+    }
+  }
+}

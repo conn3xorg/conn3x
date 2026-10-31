@@ -32,6 +32,8 @@ const circuitFileExt = ".circuit.hcl"
 // circuitModules maps a step's module block name to its resource type.
 var circuitModules = map[string]string{
 	"authorized_key":   "conn3x_authorized_key",
+	"known_hosts":      "conn3x_known_hosts",
+	"limit":            "conn3x_limit",
 	"command":          "conn3x_command",
 	"cron":             "conn3x_cron",
 	"timer":            "conn3x_timer",
@@ -671,7 +673,7 @@ func warnOnConflictingEdits(steps hcl.Blocks) hcl.Diagnostics {
 		switch module.Type {
 		case "file", "template":
 			whole[v.AsString()] = step.DefRange
-		case "line", "block", "ini", "replace":
+		case "line", "block", "ini", "replace", "limit":
 			parts[v.AsString()] = step.DefRange
 		}
 	}

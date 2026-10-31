@@ -69,6 +69,9 @@
     - name: Say hello
       debug:
         msg: hi
+    - name: Check the disk
+      stat:
+        path: /srv
 
   handlers:
     - name: Reload nginx

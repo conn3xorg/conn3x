@@ -21,7 +21,7 @@ func TestConvertAnsibleThenApply(t *testing.T) {
 			w := newWorkdir(t, "convert")
 			w.writeAs("play.yml", nil)
 			out, code := w.conn3x("convert", "ansible", "-out", "play.tf", "play.yml")
-			if code != 0 || !strings.Contains(out, "Converted all 7 tasks.") {
+			if code != 0 || !strings.Contains(out, "Converted all 11 tasks.") {
 				t.Fatalf("convert exited %d:\n%s", code, out)
 			}
 
@@ -47,6 +47,9 @@ func TestConvertAnsibleThenApply(t *testing.T) {
 			}
 			if got := h.exec("", "cat", "/opt/app/app.ini", "/etc/conn3x-mirrors.conf"); got != "[main]\nport = 8080\n# mirrors\nmirror = new.example.com/base\nmirror = new.example.com/extra\n" {
 				t.Fatalf("converted ini and replace steps left:\n%s", got)
+			}
+			if got := h.exec("", "sh", "-c", "cat /etc/ssh/ssh_known_hosts /root/.ssh/known_hosts; tail -n 1 /etc/security/limits.conf"); got != "git.example.com "+hostKeyAlice+"\nmirror.example.com "+hostKeyAlice+"\napp\tsoft\tnofile\t64000\n" {
+				t.Fatalf("converted known_hosts and limit steps left:\n%s", got)
 			}
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 				t.Fatalf("plan after apply:\n%s", out)

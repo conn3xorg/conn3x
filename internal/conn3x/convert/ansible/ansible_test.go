@@ -5,6 +5,7 @@ package ansible
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,10 +38,10 @@ func TestConvertGolden(t *testing.T) {
 	if _, diags := hclparse.NewParser().ParseHCL(res.HCL, "site.tf"); diags.HasErrors() {
 		t.Fatalf("output is not valid HCL: %s", diags)
 	}
-	if res.Converted != 10 || len(res.Review) != 1 {
+	if res.Converted != 11 || len(res.Review) != 1 {
 		t.Fatalf("converted %d, review %v", res.Converted, res.Review)
 	}
-	for _, want := range []string{"debug"} {
+	for _, want := range []string{"stat"} {
 		found := false
 		for _, r := range res.Review {
 			found = found || strings.Contains(r.Reason, want)
@@ -531,5 +532,208 @@ func TestNoLogStaysInItsPlay(t *testing.T) {
 	res := convertString(t, "- hosts: a\n  no_log: true\n  tasks:\n    - name: secret\n      copy:\n        dest: /a\n        content: hunter2\n- hosts: b\n  tasks:\n    - name: open\n      copy:\n        dest: /b\n        content: fine\n")
 	if res.Converted != 1 || len(res.Review) != 1 || strings.Contains(string(res.HCL), "hunter2") {
 		t.Fatalf("converted %d, review %v:\n%s", res.Converted, res.Review, res.HCL)
+	}
+}
+
+const (
+	hostKeyA = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+	hostLine = "gh.example " + hostKeyA
+)
+
+func TestConvertsKnownHosts(t *testing.T) {
+	for name, c := range map[string]struct {
+		play  string
+		task  string
+		wants []string
+	}{
+		"system file":   {"", "ansible.builtin.known_hosts: {name: gh.example, key: '" + hostLine + "', path: /etc/ssh/ssh_known_hosts}", []string{"known_hosts {", `host = "gh.example"`, `key  = "` + hostKeyA + `"`, "symlink"}},
+		"host alias":    {"", "known_hosts: {host: gh.example, key: '" + hostLine + "', path: /etc/ssh/ssh_known_hosts}", []string{`host = "gh.example"`}},
+		"keeps comment": {"", "known_hosts: {name: gh.example, key: '" + hostLine + " note', path: /etc/ssh/ssh_known_hosts, hash_host: no}", []string{hostKeyA + " note"}},
+		"custom port":   {"", "known_hosts: {name: '[gh.example]:2222', key: '[gh.example]:2222 " + hostKeyA + "', path: /etc/ssh/ssh_known_hosts}", []string{`host = "[gh.example]:2222"`}},
+		"absent":        {"", "known_hosts: {name: gh.example, state: absent, path: /etc/ssh/ssh_known_hosts}", []string{`state = "absent"`}},
+		"become user":   {"  become: true\n", "known_hosts: {name: gh.example, key: '" + hostLine + "'}", []string{`user = "root"`, "~/.ssh is missing"}},
+		"login user":    {"", "known_hosts: {name: gh.example, key: '" + hostLine + "', path: ~/.ssh/known_hosts}", []string{"user = var.ssh_user"}},
+	} {
+		res := convertString(t, "- hosts: all\n"+c.play+"  tasks:\n    - "+c.task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v", name, res.Converted, res.Review)
+		}
+		for _, want := range c.wants {
+			if !strings.Contains(string(res.HCL), want) {
+				t.Errorf("%s: output lacks %q:\n%s", name, want, res.HCL)
+			}
+		}
+	}
+}
+
+func TestRefusesKnownHostsItCantProve(t *testing.T) {
+	const sys = ", path: /etc/ssh/ssh_known_hosts}"
+	line := "key: '" + hostLine + "'"
+	for task, reason := range map[string]string{
+		"known_hosts: name=gh.example path=/etc/ssh/ssh_known_hosts":                        "key=value text",
+		"known_hosts: {name: gh.example, " + line + ", path: /home/a/.ssh/known_hosts}":     "may have acted on this path as root",
+		"known_hosts: {name: gh.example, " + line + ", path: ~deploy/.ssh/known_hosts}":     "may have acted on this path as root",
+		"known_hosts: {name: GH.example, key: 'GH.example " + hostKeyA + "'" + sys:          "capitals",
+		"known_hosts: {name: gh.example, " + line + ", hash_host: yes" + sys:                "hash_host",
+		"known_hosts: {name: gh.example, key: 'gh.example,1.2.3.4 " + hostKeyA + "'" + sys:  "doesn't start with exactly its name",
+		"known_hosts: {name: gh.example, key: '|1|a|b " + hostKeyA + "'" + sys:              "doesn't start with exactly its name",
+		"known_hosts: {name: gh.example, key: '@revoked gh.example " + hostKeyA + "'" + sys: "doesn't start with exactly its name",
+		"known_hosts: {name: gh.example, key: 'other.example " + hostKeyA + "'" + sys:       "doesn't start with exactly its name",
+		"known_hosts: {name: gh.example, key: 'gh.example nonsense'" + sys:                  "can't be a known_hosts step",
+		"known_hosts: {name: gh.example, " + line + ", state: absent" + sys:                 "takes no key",
+		"known_hosts: {name: 'gh*', state: absent" + sys:                                    "can't be a known_hosts step",
+		"known_hosts: {name: gh.example, state: latest" + sys:                               "state",
+		"known_hosts: {name: gh.example, " + line + ", mode: '0600'" + sys:                  "sets mode",
+		"known_hosts: {name: \"{{ h }}\", key: \"{{ k }}\"" + sys:                           "refers to",
+		"known_hosts: {name: \"{{ item }}\", " + line + sys + "\n      loop: [a, b]":        "loops",
+		"known_hosts: {name: gh.example, " + line + sys + "\n      when: x":                 "uses when",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%q: converted %d, review %+v, want %q", task, res.Converted, res.Review, reason)
+		}
+	}
+	// Anything that can change who runs the task leaves the default path open.
+	for _, play := range []string{"  become: true\n  become_user: deploy\n", "  vars_files: [v.yml]\n", "  remote_user: deploy\n", "  vars: {ansible_user: deploy}\n", "  vars: {ansible_become: true}\n"} {
+		res := convertString(t, "- hosts: all\n"+play+"  tasks:\n    - known_hosts: {name: gh.example, "+line+"}\n")
+		if res.Converted != 0 || !strings.Contains(fmt.Sprint(res.Review), "leaves that open") {
+			t.Errorf("%q: converted %d, review %+v", play, res.Converted, res.Review)
+		}
+	}
+	// The task-level forms stop at the keyword check.
+	res := convertString(t, "- hosts: all\n  tasks:\n    - known_hosts: {name: gh.example, "+line+"}\n      become_user: deploy\n")
+	if res.Converted != 0 || !strings.Contains(fmt.Sprint(res.Review), "become_user") {
+		t.Errorf("task become_user: %+v", res.Review)
+	}
+}
+
+func TestKnownHostsDefaultPathWatchesFilesBesideThePlaybook(t *testing.T) {
+	for _, name := range []string{"ansible.cfg", "group_vars"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		play := filepath.Join(dir, "play.yml")
+		if err := os.WriteFile(play, []byte("- hosts: all\n  tasks:\n    - known_hosts: {name: gh.example, key: '"+hostLine+"'}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Convert(play)
+		if err != nil || res.Converted != 0 {
+			t.Errorf("%s beside the playbook: converted %d, %v", name, res.Converted, err)
+		}
+	}
+}
+
+func TestConvertsPamLimits(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  tasks:\n    - community.general.pam_limits: {domain: joe, limit_type: soft, limit_item: nofile, value: 64000}\n    - pam_limits: {dest: /etc/security/limits.d/a.conf, domain: '*', limit_type: '-', limit_item: core, value: unlimited, backup: no, use_max: no, comment: ''}\n    - pam_limits: {domain: '@g', limit_type: hard, limit_item: nice, value: -5}\n")
+	if res.Converted != 3 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	for _, want := range []string{"limit {", `path   = "/etc/security/limits.conf"`, `domain = "joe"`, `value  = "64000"`, `path   = "/etc/security/limits.d/a.conf"`, `type   = "-"`, `value  = "unlimited"`, `value  = "-5"`, "create = true", "symlink"} {
+		if !strings.Contains(string(res.HCL), want) {
+			t.Errorf("output lacks %q:\n%s", want, res.HCL)
+		}
+	}
+}
+
+func TestRefusesPamLimitsItCantProve(t *testing.T) {
+	const base = "pam_limits: {domain: j, limit_type: soft, limit_item: nofile, "
+	for task, reason := range map[string]string{
+		"pam_limits: domain=j limit_type=soft limit_item=nofile value=1":          "key=value text",
+		base + "value: 1, use_max: yes}":                                          "use_max",
+		base + "value: 1, use_min: yes}":                                          "use_min",
+		base + "value: 1, backup: yes}":                                           "backup",
+		base + "value: 1, comment: why}":                                          "comment",
+		base + "value: 1, mode: '0600'}":                                          "sets mode",
+		base + "value: 010}":                                                      "may read",
+		base + "value: 1.5}":                                                      "may read",
+		base + "value: lots}":                                                     "can't be a limit step",
+		base + "value: \"{{ n }}\"}":                                              "refers to",
+		"pam_limits: {domain: j, limit_type: both, limit_item: nofile, value: 1}": "can't be a limit step",
+		"pam_limits: {domain: j, limit_type: soft, limit_item: bogus, value: 1}":  "can't be a limit step",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%q: converted %d, review %+v, want %q", task, res.Converted, res.Review, reason)
+		}
+	}
+}
+
+func TestDebugIsDroppedWithoutItsMessage(t *testing.T) {
+	const secret = "hunter2"
+	for task, want := range map[string]string{
+		"debug: {msg: 'password is " + secret + "'}":                 "isn't copied",
+		"ansible.builtin.debug: {msg: 'password is " + secret + "'}": "isn't copied",
+		"debug: msg='" + secret + "'":                                "isn't copied",
+		"debug: {msg: \"" + secret + " {{ x }}\"}":                   "templated",
+		"debug: {msg: ['" + secret + "']}":                           "templated",
+		"debug: {var: db_password}":                                  "variable db_password",
+		"debug: {var: \"lookup('file', '/" + secret + "')\"}":        "an expression",
+		"debug: {msg: '" + secret + "', verbosity: 2}":               "isn't copied",
+		"debug:": "left out",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+		out := string(res.HCL)
+		if !strings.Contains(out, want) || strings.Contains(out, "step ") {
+			t.Errorf("%q: output lacks %q or has a step:\n%s", task, want, out)
+		}
+		if strings.Contains(out, secret) {
+			t.Errorf("%q: copied the message:\n%s", task, out)
+		}
+		if _, diags := hclparse.NewParser().ParseHCL(res.HCL, "x.tf"); diags.HasErrors() {
+			t.Errorf("%q: %s", task, diags)
+		}
+	}
+}
+
+// A debug task that stays for review still mustn't copy what it prints, in any
+// form that reaches the comment that holds a reviewed task.
+func TestDebugLeftForReviewDoesntCopyItsMessage(t *testing.T) {
+	const secret = "hunter2"
+	msg := "msg: '" + secret + "'"
+	for task, reason := range map[string]string{
+		"debug: {" + msg + "}\n      when: x":               "uses when",
+		"debug: {" + msg + "}\n      register: r":           "uses register",
+		"debug: {" + msg + "}\n      failed_when: true":     "uses failed_when",
+		"debug: {" + msg + "}\n      loop: [a, b]":          "doesn't use item",
+		"debug: {" + msg + ", var: x}":                      "both msg and var",
+		"debug: {" + msg + ", bogus: 1}":                    "sets bogus",
+		"action: debug msg=" + secret:                       "uses action",
+		"action: {module: debug, " + msg + "}":              "uses action",
+		"local_action: ansible.builtin.debug msg=" + secret: "uses local_action",
+		"block:\n        - debug: {" + msg + "}":            "uses block",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%q: converted %d, review %+v, want %q", task, res.Converted, res.Review, reason)
+		}
+		if strings.Contains(string(res.HCL), secret) {
+			t.Errorf("%q: copied the message:\n%s", task, res.HCL)
+		}
+	}
+	res := convertString(t, "- hosts: all\n  handlers:\n    - name: h\n      debug: {"+msg+"}\n  tasks: []\n")
+	if strings.Contains(string(res.HCL), secret) {
+		t.Errorf("handler copied the message:\n%s", res.HCL)
+	}
+}
+
+func TestNoLogStillRefusesTheseModules(t *testing.T) {
+	const secret = "hunter2"
+	for _, task := range []string{"debug: {msg: " + secret + "}", "known_hosts: {name: " + secret + ", key: '" + secret + "', path: /etc/ssh/ssh_known_hosts}", "pam_limits: {domain: " + secret + ", limit_type: soft, limit_item: core, value: 1}"} {
+		for _, playbook := range []string{
+			"- hosts: all\n  tasks:\n    - " + task + "\n      no_log: true\n",
+			"- hosts: all\n  no_log: true\n  tasks:\n    - " + task + "\n",
+		} {
+			res := convertString(t, playbook)
+			if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "no_log") {
+				t.Errorf("%q: converted %d, review %+v", playbook, res.Converted, res.Review)
+			}
+			if strings.Contains(string(res.HCL), secret) {
+				t.Errorf("%q: copied a value:\n%s", playbook, res.HCL)
+			}
+		}
 	}
 }

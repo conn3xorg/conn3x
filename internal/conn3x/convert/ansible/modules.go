@@ -49,7 +49,8 @@ type input struct {
 	dir      string
 	used     map[string]bool
 	problem  string
-	loop     bool // the task loops, so {{ item }} means the current item
+	loop     bool   // the task loops, so {{ item }} means the current item
+	runAs    string // an expression for the user Ansible runs a task as; empty when the play leaves it open
 	itemUsed bool
 }
 
@@ -231,6 +232,9 @@ var modules = map[string]func(*input) ([]step, string){
 	"user":            userModule,
 	"group":           groupModule,
 	"authorized_key":  authorizedKeyModule,
+	"known_hosts":     knownHostsModule,
+	"pam_limits":      pamLimitsModule,
+	"debug":           debugModule,
 	"cron":            cronModule,
 	"sysctl":          sysctlModule,
 	"hostname":        nameOnly("hostname"),

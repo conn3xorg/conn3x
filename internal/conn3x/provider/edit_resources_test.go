@@ -96,7 +96,7 @@ func TestEditsWriteThroughLinksAndKeepTheMode(t *testing.T) {
 			h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
 			tc.set["path"] = str(link)
 			v := editPlanned(t, tc.k, tc.set)
-			target, err := editTarget(ctx, h, v)
+			target, err := editTarget(ctx, h, v.GetAttr("path").AsString())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,7 +134,7 @@ func TestEditTargetOfAPlainPath(t *testing.T) {
 	}
 	h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
 	for _, p := range []string{plain, filepath.Join(dir, "new.conf"), filepath.Join(dir, "no", "dir", "new.conf")} {
-		got, err := editTarget(context.Background(), h, editPlanned(t, lineKind, map[string]cty.Value{"path": cty.StringVal(p)}))
+		got, err := editTarget(context.Background(), h, editPlanned(t, lineKind, map[string]cty.Value{"path": cty.StringVal(p)}).GetAttr("path").AsString())
 		if err != nil || got != p {
 			t.Errorf("%q: got %q, %v", p, got, err)
 		}
@@ -149,7 +149,7 @@ func TestEditTargetRefusesALinkItCantFollow(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
-	if got, err := editTarget(context.Background(), h, editPlanned(t, lineKind, map[string]cty.Value{"path": cty.StringVal(loop)})); err == nil {
+	if got, err := editTarget(context.Background(), h, editPlanned(t, lineKind, map[string]cty.Value{"path": cty.StringVal(loop)}).GetAttr("path").AsString()); err == nil {
 		t.Fatalf("got %q, want an error", got)
 	}
 }

@@ -34,3 +34,21 @@
         path: /etc/conn3x-mirrors.conf
         regexp: '^mirror = old\.example\.com/([a-z]+)$'
         replace: 'mirror = new.example.com/\1'
+    - name: Show the plan
+      debug:
+        msg: "applying to {{ inventory_hostname }}"
+    - name: Trust the git server
+      known_hosts:
+        name: git.example.com
+        key: "git.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+        path: /etc/ssh/ssh_known_hosts
+    - name: Trust the mirror
+      known_hosts:
+        name: mirror.example.com
+        key: "mirror.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+    - name: More open files
+      community.general.pam_limits:
+        domain: app
+        limit_type: soft
+        limit_item: nofile
+        value: 64000

@@ -69,6 +69,7 @@ func TestModeMustBeFourDigits(t *testing.T) {
 func TestAccessAndJobsDeleteOnRemove(t *testing.T) {
 	for rt, attrs := range map[string]map[string]cty.Value{
 		"conn3x_authorized_key": {"user": cty.StringVal("alice"), "key": cty.StringVal("ssh-ed25519 AAAA")},
+		"conn3x_known_hosts":    {"host": cty.StringVal("a.example"), "key": cty.StringVal("ssh-ed25519 AAAA")},
 		"conn3x_cron":           {"name": cty.StringVal("x"), "schedule": cty.StringVal("@daily"), "command": cty.StringVal("true")},
 		"conn3x_timer":          {"name": cty.StringVal("x"), "on_calendar": cty.StringVal("daily"), "command": cty.StringVal("true")},
 	} {

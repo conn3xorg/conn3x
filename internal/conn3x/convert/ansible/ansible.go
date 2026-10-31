@@ -66,7 +66,8 @@ type converter struct {
 	res       Result
 	hostVars  map[string]bool // groups that still need a hosts variable
 	needUser  bool
-	playNoLog bool // the current play sets no_log to anything but false
+	playNoLog bool   // the current play sets no_log to anything but false
+	runAs     string // who the current play's tasks run as, as an expression; empty when it's open
 }
 
 func (c *converter) run(plays *yaml.Node) Result {
@@ -181,6 +182,7 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 		ssh.SetAttributeValue("become", cty.True)
 	}
 
+	c.runAs = c.effectiveUser(p, group, become, ssh)
 	vars := map[string]string{}
 	for k, v := range mapping(p["vars"]) {
 		if v.Kind == yaml.ScalarNode {
@@ -230,6 +232,31 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 		cb.AppendBlock(hb)
 	}
 	return circuit
+}
+
+// effectiveUser is who a play's tasks run as, as an expression, or empty when
+// anything the converter can see could change that. It's for a step whose
+// target depends on the user, like ~/.ssh/known_hosts; login's own choice of
+// user is what the circuit connects as, so it's reused rather than guessed.
+func (c *converter) effectiveUser(p map[string]*yaml.Node, group *Group, become bool, ssh *hclwrite.Body) string {
+	if p["become_user"] != nil || p["vars_files"] != nil || (p["remote_user"] != nil && !become) {
+		return ""
+	}
+	vars := mapping(p["vars"])
+	for _, key := range []string{"ansible_become", "ansible_become_user", "ansible_user", "ansible_ssh_user"} {
+		if vars[key] != nil || (key != "ansible_user" && group != nil && len(group.Values(key)) > 0) {
+			return ""
+		}
+	}
+	for _, name := range []string{"ansible.cfg", "group_vars", "host_vars"} {
+		if _, err := os.Stat(filepath.Join(c.dir, name)); err == nil {
+			return ""
+		}
+	}
+	if become {
+		return `"root"`
+	}
+	return strings.TrimSpace(string(ssh.GetAttribute("user").Expr().BuildTokens(nil).Bytes()))
 }
 
 // keywords are task keys that are not the module.
@@ -303,7 +330,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, "uses the "+mod+" module, which has no Conn3x equivalent yet")
 		return
 	}
-	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil}
+	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil, runAs: c.runAs}
 	steps, reason := m(in)
 	if reason == "" && items != nil {
 		reason = loopSteps(steps, in.itemUsed)
@@ -333,6 +360,11 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 
 	base := slug(firstNonEmpty(name, mod))
 	for i, s := range steps {
+		if s.module == "" {
+			body.AppendNewline()
+			comment(body, fmt.Sprintf("Task %q (%s line %d): %s", firstNonEmpty(name, mod), c.file, node.Line, s.notes[0]))
+			continue
+		}
 		stepName := base
 		if len(steps) > 1 {
 			stepName = base + "_" + slug(s.suffix)
@@ -385,6 +417,10 @@ func (c *converter) issue(body *hclwrite.Body, name string, node *yaml.Node, rea
 	comment(body, fmt.Sprintf("TODO(convert): %s (%s line %d) %s.", what, c.file, node.Line, reason))
 	if c.hidesValues(node) {
 		comment(body, "  Its contents are left out of this file because of no_log; see the playbook.")
+		return
+	}
+	if printsInside(node, map[*yaml.Node]bool{}) {
+		comment(body, "  Its contents are left out of this file because a debug message can hold a secret; see the playbook.")
 		return
 	}
 	out, _ := yaml.Marshal([]*yaml.Node{node})
@@ -446,6 +482,42 @@ func noLogInside(n *yaml.Node, seen map[*yaml.Node]bool) bool {
 	case yaml.SequenceNode:
 		for _, e := range n.Content {
 			if noLogInside(e, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// printsInside walks n, through aliases, for a debug task, in any form that
+// names the module, so leaving a task for review can't copy what it prints.
+func printsInside(n *yaml.Node, seen map[*yaml.Node]bool) bool {
+	n = deref(n)
+	if n == nil || seen[n] {
+		return false
+	}
+	seen[n] = true
+	isDebug := func(s string) bool {
+		f := strings.Fields(s)
+		return len(f) > 0 && f[0][strings.LastIndex(f[0], ".")+1:] == "debug"
+	}
+	switch n.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i].Value, n.Content[i+1]
+			if isDebug(k) {
+				return true
+			}
+			if a := deref(v); (k == "action" || k == "local_action" || k == "module") && a != nil && isDebug(a.Value) {
+				return true
+			}
+			if printsInside(v, seen) {
+				return true
+			}
+		}
+	case yaml.SequenceNode:
+		for _, e := range n.Content {
+			if printsInside(e, seen) {
 				return true
 			}
 		}

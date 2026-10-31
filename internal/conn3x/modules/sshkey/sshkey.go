@@ -1,7 +1,8 @@
 // Copyright (c) The Conn3x Authors
 // SPDX-License-Identifier: MPL-2.0
 
-// Package sshkey manages one public key in a user's authorized_keys.
+// Package sshkey manages one public key in a user's authorized_keys, and one
+// host's keys in a known_hosts file.
 package sshkey
 
 import (

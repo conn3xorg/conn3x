@@ -223,3 +223,51 @@ func TestReplaceRefusesBadInput(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyLimit(t *testing.T) {
+	nofile := Limit{Domain: "joe", Type: "soft", Item: "nofile", Value: "64000"}
+	gone := nofile
+	gone.State, gone.Value = Absent, ""
+	for name, c := range map[string]struct {
+		in   string
+		l    Limit
+		want string
+	}{
+		"adds to an empty file":       {"", nofile, "joe\tsoft\tnofile\t64000\n"},
+		"adds at the end":             {"# head\n@g - core 1\n# End of file\n", nofile, "# head\n@g - core 1\n# End of file\njoe\tsoft\tnofile\t64000\n"},
+		"same value isn't rewritten":  {"joe  soft nofile   64000 # why\n", nofile, "joe  soft nofile   64000 # why\n"},
+		"no ending newline, same":     {"joe soft nofile 64000", nofile, "joe soft nofile 64000"},
+		"changes value, keeps note":   {"joe soft nofile 1024 # old\n", nofile, "joe\tsoft\tnofile\t64000\t# old\n"},
+		"drops later copies":          {"joe soft nofile 1\nx - core 1\njoe soft nofile 2\n", nofile, "joe\tsoft\tnofile\t64000\nx - core 1\n"},
+		"other type or item stays":    {"joe hard nofile 5\njoe soft nproc 5\njo soft nofile 5\n", nofile, "joe hard nofile 5\njoe soft nproc 5\njo soft nofile 5\njoe\tsoft\tnofile\t64000\n"},
+		"comment lines don't count":   {"#joe soft nofile 1\n", nofile, "#joe soft nofile 1\njoe\tsoft\tnofile\t64000\n"},
+		"domain is case sensitive":    {"JOE soft nofile 1\n", nofile, "JOE soft nofile 1\njoe\tsoft\tnofile\t64000\n"},
+		"absent removes every copy":   {"joe soft nofile 1\nx - core 1\njoe soft nofile 2\n", gone, "x - core 1\n"},
+		"absent with nothing to take": {"x - core 1", gone, "x - core 1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ApplyLimit(c.in, c.l)
+			if err != nil || got != c.want {
+				t.Fatalf("got %q, %v\nwant %q", got, err, c.want)
+			}
+			again, err := ApplyLimit(got, c.l)
+			if err != nil || again != got {
+				t.Fatalf("not settled: %q, %v", again, err)
+			}
+		})
+	}
+}
+
+func TestLimitValidate(t *testing.T) {
+	ok := func(d, ty, it, v string) Limit { return Limit{Domain: d, Type: ty, Item: it, Value: v} }
+	for _, l := range []Limit{ok("joe", "soft", "nofile", "1"), ok("*", "-", "core", "unlimited"), ok("@g", "hard", "as", "infinity"), ok("1000:", "hard", "as", "-1"), ok("a", "soft", "nice", "-20"), ok("a", "soft", "chroot", "0"), {Domain: "a", Type: "-", Item: "core", State: Absent}} {
+		if err := l.Validate(); err != nil {
+			t.Errorf("%+v: %v", l, err)
+		}
+	}
+	for _, l := range []Limit{ok("", "soft", "nofile", "1"), ok("a b", "soft", "nofile", "1"), ok("a#", "soft", "nofile", "1"), ok("a", "both", "nofile", "1"), ok("a", "soft", "bogus", "1"), ok("a", "soft", "nofile", ""), ok("a", "soft", "nofile", "-2"), ok("a", "soft", "nofile", "1\n"), ok("a", "soft", "nice", "20"), ok("a", "soft", "nice", "unlimited"), {Domain: "a", Type: "-", Item: "core", Value: "1", State: Absent}, {Domain: "a", Type: "-", Item: "core", Value: "1", State: "x"}} {
+		if err := l.Validate(); err == nil {
+			t.Errorf("accepted %+v", l)
+		}
+	}
+}

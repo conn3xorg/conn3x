@@ -1,0 +1,30 @@
+circuit "limits" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "joe" {
+    limit {
+      path   = "/etc/security/limits.d/90-c3x.conf"
+      domain = "joe"
+      type   = "soft"
+      item   = "nofile"
+      value  = "64000"
+    }
+  }
+
+  step "ops" {
+    limit {
+      path   = "/etc/security/limits.d/90-c3x.conf"
+      domain = "@ops"
+      type   = "-"
+      item   = "core"
+      value  = "unlimited"
+    }
+  }
+}

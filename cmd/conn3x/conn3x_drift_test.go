@@ -126,7 +126,7 @@ func TestRunConvertExitCodes(t *testing.T) {
 	if code := runConvert("../../internal/conn3x/convert/ansible/testdata/web/site.yml", "", "", &out, &errOut); code != 3 {
 		t.Fatalf("exit %d, want 3:\n%s", code, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "Converted 10 tasks. 1 thing needs you") || !strings.Contains(out.String(), `circuit "web_servers"`) {
+	if !strings.Contains(errOut.String(), "Converted 11 tasks. 1 thing needs you") || !strings.Contains(out.String(), `circuit "web_servers"`) {
 		t.Fatalf("stdout:\n%s\nstderr:\n%s", out.String(), errOut.String())
 	}
 	if code := runConvert("nope.yml", "", "", &out, &errOut); code != 1 {

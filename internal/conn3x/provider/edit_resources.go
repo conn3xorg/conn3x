@@ -133,6 +133,36 @@ func iniFrom(v cty.Value) edit.INI {
 	}
 }
 
+var limitKind = editKind{
+	name: "limit",
+	desc: "One PAM limit in a limits.conf file, which should or should not be there. The rest of the file stays as it is.",
+	attrs: map[string]*configschema.Attribute{
+		"domain": {Type: cty.String, Required: true, Description: "Who the limit applies to: a user, @group, * or a range, as in limits.conf(5)."},
+		"type":   {Type: cty.String, Required: true, Description: "\"soft\", \"hard\" or \"-\" for both."},
+		"item":   {Type: cty.String, Required: true, Description: "What is limited, such as nofile or nproc."},
+		"value":  {Type: cty.String, Optional: true, Description: "The limit: a number, or \"unlimited\", \"infinity\" or \"-1\". Required unless state is \"absent\"."},
+		"state":  {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\"."},
+	},
+	edit: func(v cty.Value) func(string) (string, error) {
+		l := limitFrom(v)
+		return func(s string) (string, error) { return edit.ApplyLimit(s, l) }
+	},
+	remove: func(v cty.Value) func(string) (string, error) {
+		l := limitFrom(v)
+		l.State = edit.Absent
+		return func(s string) (string, error) { return edit.ApplyLimit(s, l) }
+	},
+	check:     func(v cty.Value) error { return limitFrom(v).Validate() },
+	missingOK: func(v cty.Value) bool { return limitFrom(v).State == edit.Absent },
+}
+
+func limitFrom(v cty.Value) edit.Limit {
+	return edit.Limit{
+		Domain: stringOr(v.GetAttr("domain"), ""), Type: stringOr(v.GetAttr("type"), ""), Item: stringOr(v.GetAttr("item"), ""),
+		Value: stringOr(v.GetAttr("value"), ""), State: edit.State(stringOr(v.GetAttr("state"), "")),
+	}
+}
+
 var replaceKind = editKind{
 	name: "replace",
 	desc: "Every match of a regexp in a file, replaced. The file must already exist.",
@@ -261,7 +291,7 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 					return cty.ObjectVal(vals), nil
 				}
 			}
-			target, err := editTarget(ctx, h, planned)
+			target, err := editTarget(ctx, h, planned.GetAttr("path").AsString())
 			if err != nil {
 				return cty.NilVal, err
 			}
@@ -279,7 +309,7 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 					return nil
 				}
 			}
-			target, err := editTarget(ctx, h, prior)
+			target, err := editTarget(ctx, h, prior.GetAttr("path").AsString())
 			if err != nil {
 				return err
 			}
@@ -292,8 +322,7 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 // rather than the link's own 0777. It also keys editFile's lock, so edits
 // through a link and edits to the file itself take turns. A link it can't
 // resolve is an error, so editFile never sees the link itself.
-func editTarget(ctx context.Context, h *hostConn, v cty.Value) (string, error) {
-	path := v.GetAttr("path").AsString()
+func editTarget(ctx context.Context, h *hostConn, path string) (string, error) {
 	q := ssh.Quote(path)
 	res, err := h.Run(ctx, "readlink -f -- "+q+" || ! test -L "+q, nil)
 	if err != nil {

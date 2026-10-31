@@ -108,10 +108,12 @@ circuit "web_servers" {
     }
   }
 
-  # TODO(convert): Task "Say hello" (site.yml line 69) uses the debug module, which has no Conn3x equivalent yet.
-  #   - name: Say hello
-  #     debug:
-  #       msg: hi
+  # Task "Say hello" (site.yml line 69): debug only prints, so it changes nothing on hosts and is left out. Its message isn't copied here, in case it holds a secret; see the playbook.
+
+  # TODO(convert): Task "Check the disk" (site.yml line 72) uses the stat module, which has no Conn3x equivalent yet.
+  #   - name: Check the disk
+  #     stat:
+  #       path: /srv
 
   handler "reload_nginx" {
     service {

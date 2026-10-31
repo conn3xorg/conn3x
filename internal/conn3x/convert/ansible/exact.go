@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
 )
 
 // YAML 1.1, which Ansible reads, turns unquoted yes into True, 1.10 into 1.1
@@ -302,4 +303,112 @@ func goTemplate(py string, re *regexp.Regexp) (string, string) {
 		}
 	}
 	return b.String(), ""
+}
+
+// knownHostsModule proves which file a task changes before it converts. An
+// explicit home path under become runs as root in Ansible, leaving a root-owned
+// file there, while the step acts as the user, so only the default path counts:
+// there Ansible and the step are the same user on the same file.
+func knownHostsModule(in *input) ([]step, string) {
+	if why := exactTask(in); why != "" {
+		return nil, why
+	}
+	st := in.state("present", "present", "absent")
+	name := in.text("name")
+	if name == "" {
+		name = in.text("host")
+	}
+	if name != strings.ToLower(name) {
+		return nil, "has a name with capitals; Ansible lowers it but keeps the key's text as written, so write both in lowercase"
+	}
+	if in.bool("hash_host", false) {
+		return nil, "sets hash_host, which a known_hosts step doesn't have"
+	}
+	attrs := []attr{s("host", name)}
+	if st == "present" {
+		key := strings.TrimRight(in.text("key"), "\n")
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		first, rest, _ := strings.Cut(key, " ")
+		if first != name {
+			return nil, "has a key line that doesn't start with exactly its name; a known_hosts step has one host and can't write several names, a hashed name or a marker"
+		}
+		if err := sshkey.ValidateKnownHost(name, strings.TrimSpace(rest)); err != nil {
+			return nil, "can't be a known_hosts step: " + err.Error()
+		}
+		attrs = append(attrs, s("key", strings.TrimSpace(rest)))
+	} else {
+		if in.has("key") {
+			return nil, "sets key with state: absent; a known_hosts step removes all of a host's keys and takes no key"
+		}
+		if err := sshkey.ValidateKnownHost(name, ""); err != nil {
+			return nil, "can't be a known_hosts step: " + err.Error()
+		}
+		attrs = append(attrs, s("state", st))
+	}
+	notes := []string{"If a line already lists this host with other names, Ansible rewrites or removes that whole line; Conn3x keeps the other names."}
+	switch path := in.str("path"); path {
+	case sshkey.SystemKnownHosts:
+		notes = append(notes, "Ansible replaces a symlink at this path with a file; Conn3x writes through the link.")
+	case "", "~/.ssh/known_hosts":
+		if in.runAs == "" {
+			return nil, "uses the default known_hosts of whoever Ansible runs as, and this play leaves that open: it, or a file beside it, can change the user (become_user, remote_user, ansible_user, ansible_become, vars_files, ansible.cfg, group_vars or host_vars). Set the step's user by hand"
+		}
+		attrs = append(attrs, attr{key: "user", raw: in.runAs})
+		notes = append(notes, "This is ~/.ssh/known_hosts of the user Ansible runs as. Ansible fails when ~/.ssh is missing; Conn3x creates it.")
+	default:
+		return nil, "edits " + path + "; a known_hosts step changes a user's own file, as that user, or " + sshkey.SystemKnownHosts + ", and Ansible may have acted on this path as root. Use one of those, or a file step"
+	}
+	return one("known_hosts", attrs, notes...)
+}
+
+func pamLimitsModule(in *input) ([]step, string) {
+	if why := exactTask(in); why != "" {
+		return nil, why
+	}
+	for _, key := range []string{"use_min", "use_max", "backup"} {
+		if in.bool(key, false) {
+			return nil, "sets " + key + ", which a limit step doesn't have"
+		}
+	}
+	if in.str("comment") != "" {
+		return nil, "sets comment, which a limit step doesn't have"
+	}
+	l := edit.Limit{Domain: in.text("domain"), Type: in.text("limit_type"), Item: in.text("limit_item"), Value: in.text("value")}
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if err := l.Validate(); err != nil {
+		return nil, "can't be a limit step: " + err.Error()
+	}
+	path := firstNonEmpty(in.str("dest"), "/etc/security/limits.conf")
+	return one("limit", []attr{
+		s("path", path), s("domain", l.Domain), s("type", l.Type), s("item", l.Item), s("value", l.Value),
+		{key: "create", val: cty.True},
+	}, "Ansible replaces a symlink at this path with a file and keeps repeated lines for a limit; Conn3x writes through the link and keeps one line. PAM ends up with the same limit.")
+}
+
+var plainVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// debugModule drops the task, since it changes nothing on a host. What it
+// printed is never copied: a message can hold a secret, and a variable's value
+// isn't known here, so at most the comment names the variable.
+func debugModule(in *input) ([]step, string) {
+	if in.has("msg") && in.has("var") {
+		return nil, "sets both msg and var, which Ansible refuses"
+	}
+	in.ignore("msg", "var", "verbosity")
+	note := "It printed nothing worth keeping here."
+	switch v, m := in.args["var"], in.args["msg"]; {
+	case v != nil && plainVarName.MatchString(scalar(v)):
+		note = "It printed the variable " + scalar(v) + "; check whether anything still needs that value."
+	case v != nil:
+		note = "It printed an expression; check whether anything still needs that value."
+	case m != nil && m.Kind != yaml.ScalarNode, m != nil && strings.Contains(m.Value, "{"), in.has("_raw") && strings.Contains(in.args["_raw"].Value, "{"):
+		note = "It printed a templated message; check whether anything still needs those values."
+	case m != nil, in.has("_raw"):
+		note = "Its message isn't copied here, in case it holds a secret; see the playbook."
+	}
+	return []step{{notes: []string{"debug only prints, so it changes nothing on hosts and is left out. " + note}}}, ""
 }

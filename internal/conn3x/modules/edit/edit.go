@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // Package edit changes part of a text file: one line, a marked block of
-// lines, one option in an INI file, or every match of a regexp. The edits are pure functions of the file's content; the caller
+// lines, one option in an INI file, one PAM limit, or every match of a regexp. The edits are pure functions of the file's content; the caller
 // reads and writes the file through the file module, so writes stay atomic
 // and keep the file's mode, owner and SELinux label.
 package edit
