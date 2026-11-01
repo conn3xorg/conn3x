@@ -46,3 +46,45 @@ func TestOpenRegularRefusesWhatWasNotStated(t *testing.T) {
 		t.Fatal("opened a FIFO for reading")
 	}
 }
+
+// A read as root leaves anything someone else could change to the shell.
+func TestCheckRoute(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	base, err := os.MkdirTemp("/var", "conn3x-route-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	if err := os.Chmod(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.Mkdir(base+"/d", 0o755))
+	must(os.WriteFile(base+"/d/f", []byte("x"), 0o600))
+	must(os.Symlink("d/f", base+"/rootlink"))
+	must(os.Symlink("../"+filepath.Base(base)+"/d/f", base+"/up"))
+	must(os.Symlink(base+"/d/f", base+"/theirlink"))
+	must(os.Lchown(base+"/theirlink", 65534, 65534))
+	must(os.Mkdir(base+"/theirs", 0o755))
+	must(os.Chown(base+"/theirs", 65534, 65534))
+	must(os.Mkdir(base+"/open", 0o777))
+	must(os.Chmod(base+"/open", 0o777))
+	must(os.Mkdir(base+"/sticky", 0o755))
+	must(os.Chmod(base+"/sticky", os.ModeSticky|0o777))
+
+	for p, ok := range map[string]bool{
+		"/d/f": true, "/missing/f": true, "/rootlink": true, "/up": true, "/theirs": true, "/sticky/f": true,
+		"/theirlink": false, "/theirs/f": false, "/open/f": false, "/sticky/a/f": false,
+	} {
+		if err := checkRoute(base + p); (err == nil) != ok {
+			t.Errorf("%s: %v, want ok=%v", p, err, ok)
+		}
+	}
+}

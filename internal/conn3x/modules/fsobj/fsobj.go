@@ -41,7 +41,7 @@ func ReadDirectory(ctx context.Context, r modules.Runner, p string) (DirectorySt
 [ -e "$p" ] || [ -L "$p" ] || { echo missing; exit 0; }
 [ -d "$p" ] && [ ! -L "$p" ] || exit %d
 stat -c '%%a %%U %%G' -- "$p" 2>/dev/null || stat -f '%%Lp %%Su %%Sg' "$p"`, ssh.Quote(p), notDirectory)
-	res, err := r.Run(ctx, script, nil)
+	res, err := r.Run(ctx, modules.Guard(script, modules.Follow(p)), nil)
 	if err != nil {
 		return DirectoryState{}, err
 	}
@@ -76,7 +76,17 @@ func ApplyDirectory(ctx context.Context, r modules.Runner, d Directory) error {
 		return err
 	}
 	q := ssh.Quote(d.Path)
-	cmds := []string{"mkdir -p -- " + q, "chmod -- " + file.NormalizeMode(d.Mode) + " " + q}
+	// A link is refused before anything acts on it. In a sticky directory a
+	// plain mkdir makes sure the directory is the one made here, not one
+	// someone else got in first with and could still swap.
+	cmds := []string{"p=" + q,
+		`[ ! -L "$p" ] || { echo "$p exists but is not a directory" >&2; exit 3; }`,
+		`if [ ! -e "$p" ]; then
+  mkdir -p -- "$(dirname -- "$p")"
+  if [ -k "$(dirname -- "$p")" ]; then mkdir -- "$p"; else mkdir -p -- "$p"; fi
+fi`,
+		`[ -d "$p" ] || { echo "$p exists but is not a directory" >&2; exit 3; }`,
+		"chmod -- " + file.NormalizeMode(d.Mode) + " " + q}
 	if d.Owner != "" {
 		cmds = append(cmds, "chown -- "+ssh.Quote(d.Owner)+" "+q)
 	}
@@ -84,16 +94,17 @@ func ApplyDirectory(ctx context.Context, r modules.Runner, d Directory) error {
 		cmds = append(cmds, "chgrp -- "+ssh.Quote(d.Group)+" "+q)
 	}
 	cmds = append(cmds, "if command -v restorecon >/dev/null 2>&1; then restorecon -- "+q+" 2>/dev/null || true; fi")
-	return run(ctx, r, "set -e\n"+strings.Join(cmds, "\n"))
+	script := "set -e\n" + strings.Join(cmds, "\n")
+	return run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group}, modules.Follow(d.Path)))
 }
 
 // DeleteDirectory removes the directory only when it is empty, so removing
 // a resource never deletes content.
 func DeleteDirectory(ctx context.Context, r modules.Runner, p string) error {
 	q := ssh.Quote(p)
-	res, err := r.Run(ctx, fmt.Sprintf(`[ -d %[1]s ] || exit 0
+	res, err := r.Run(ctx, modules.Guard(fmt.Sprintf(`[ -d %[1]s ] || exit 0
 [ -z "$(ls -A -- %[1]s)" ] || { echo "not empty" >&2; exit 3; }
-rmdir -- %[1]s`, q), nil)
+rmdir -- %[1]s`, q), modules.Parent(p)), nil)
 	if err != nil {
 		return err
 	}
@@ -132,10 +143,10 @@ const notLink = 3
 
 // ReadLink reports where the link points. A real file at the path is an error.
 func ReadLink(ctx context.Context, r modules.Runner, p string) (LinkState, error) {
-	res, err := r.Run(ctx, fmt.Sprintf(`p=%s
+	res, err := r.Run(ctx, modules.Guard(fmt.Sprintf(`p=%s
 if [ -L "$p" ]; then printf 'link\n'; readlink -- "$p"; exit 0; fi
 [ -e "$p" ] && exit %d
-echo missing`, ssh.Quote(p), notLink), nil)
+echo missing`, ssh.Quote(p), notLink), modules.Parent(p)), nil)
 	if err != nil {
 		return LinkState{}, err
 	}
@@ -162,14 +173,14 @@ func ApplyLink(ctx context.Context, r modules.Runner, l Link) error {
 		return err
 	}
 	q := ssh.Quote(l.Path)
-	return run(ctx, r, fmt.Sprintf(`set -e
+	return run(ctx, r, modules.Guard(fmt.Sprintf(`set -e
 tmp=$(dirname -- %[1]s)/.conn3x-link.$$
 ln -s -- %[2]s "$tmp"
 # -T replaces the old link itself instead of following it into a directory.
 if ! mv -fT -- "$tmp" %[1]s 2>/dev/null; then
   rm -f -- "$tmp"
   ln -sfn -- %[2]s %[1]s
-fi`, q, ssh.Quote(l.Target)))
+fi`, q, ssh.Quote(l.Target)), modules.Parent(l.Path)))
 }
 
 // DeleteLink removes the link, and refuses to remove anything that isn't one.
@@ -178,7 +189,7 @@ func DeleteLink(ctx context.Context, r modules.Runner, p string) error {
 	if err != nil || !s.Exists {
 		return err
 	}
-	return run(ctx, r, "rm -f -- "+ssh.Quote(p))
+	return run(ctx, r, modules.Guard("rm -f -- "+ssh.Quote(p), modules.Parent(p)))
 }
 
 func run(ctx context.Context, r modules.Runner, script string) error {

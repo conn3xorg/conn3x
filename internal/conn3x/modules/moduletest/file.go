@@ -52,8 +52,9 @@ func FileConformance(t *testing.T, sh, r modules.Runner) {
 		{name: "mode 4755", setup: "printf x > f && chmod 4755 f", want: file.Actual{Exists: true, Content: "x", Mode: "4755", Owner: me}, linux: true},
 		// The mode and owner are the link's own, the content its target's.
 		{name: "symlink", setup: "printf target > t && chmod 0640 t && ln -s t f", want: file.Actual{Exists: true, Content: "target", Mode: "0777", Owner: me}},
-		// The owner is the link's too, not its target's.
-		{name: "symlink owned by nobody", setup: "printf target > t && chmod 0640 t && ln -s t f && chown -h 65534:65534 f", want: file.Actual{Exists: true, Content: "target", Mode: "0777", Owner: "nobody"}, root: true, linux: true},
+		// Root doesn't follow a link someone else owns. Run as that user, the
+		// target is out of reach, as it is here.
+		{name: "symlink owned by nobody", setup: "printf target > t && chmod 0640 t && ln -s t f && chown -h 65534:65534 f", fallback: true, root: true, linux: true},
 		{name: "dangling symlink", setup: "ln -s nowhere f", wantErr: true},
 		{name: "directory", setup: "mkdir f", wantErr: true},
 		// Unreadable is an error, never an empty file the plan would overwrite.
@@ -86,7 +87,7 @@ func FileConformance(t *testing.T, sh, r modules.Runner) {
 
 			switch {
 			case c.unreadable:
-				if wantErr == nil || wantErr.Error() != p+" exists but can't be read by "+me {
+				if wantErr == nil || wantErr.Error() != p+" exists but can't be read by "+me+"; give it to that user, or if a new release moved it, run conn3x apply -refresh=false once" {
 					t.Fatalf("the shell gives %v, want can't be read", wantErr)
 				}
 			case c.wantErr:

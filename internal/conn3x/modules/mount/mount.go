@@ -134,13 +134,13 @@ func Apply(ctx context.Context, r modules.Runner, m Mount) error {
 	case a.Mounted:
 		script = "umount " + p + " && mount " + p
 	}
-	return check(r.Run(ctx, script, nil))
+	return check(r.Run(ctx, modules.GuardRoot(script, modules.Follow(m.Path)), nil))
 }
 
 // Delete unmounts the file system and removes its fstab entry.
 func Delete(ctx context.Context, r modules.Runner, m Mount) error {
 	p := ssh.Quote(m.Path)
-	if err := check(r.Run(ctx, "if findmnt -M "+p+" >/dev/null 2>&1; then umount "+p+"; fi", nil)); err != nil {
+	if err := check(r.Run(ctx, modules.GuardRoot("if findmnt -M "+p+" >/dev/null 2>&1; then umount "+p+"; fi", modules.Follow(m.Path)), nil)); err != nil {
 		return err
 	}
 	return writeFstab(ctx, r, edit.Line{Regexp: m.entryRegexp(), State: edit.Absent})

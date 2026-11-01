@@ -10,7 +10,9 @@ import (
 	"io"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +26,9 @@ import (
 // what it points to. Any error means the agent can't be sure it would give
 // the shell's answer, and the shell is asked instead. Nothing is written.
 func readFile(path string) (*agentpb.FileStat, error) {
+	if err := checkRoute(path); err != nil {
+		return nil, err
+	}
 	var ls syscall.Stat_t
 	if err := syscall.Lstat(path, &ls); err != nil {
 		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ENOTDIR) {
@@ -76,6 +81,80 @@ func readFile(path string) (*agentpb.FileStat, error) {
 		Group:   group,
 		Content: content,
 	}, nil
+}
+
+// checkRoute leaves a read to the shell unless, as root, nobody else can change
+// the way to p. The shell's modules.Guard decides what happens then, reading as
+// the user who owns the way there; this only has to recognize the plain case.
+// Each component sits in a directory found safe already, so it can't change
+// after it is looked at, and the read that follows goes the same way.
+func checkRoute(p string) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	rest := strings.Split(p, "/")
+	cur, sticky, hops := "/", false, 0
+	for len(rest) > 0 {
+		c := rest[0]
+		rest = rest[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			var st syscall.Stat_t
+			if err := syscall.Stat(cur, &st); err != nil {
+				return err
+			}
+			sticky = st.Mode&syscall.S_ISVTX != 0
+			continue
+		}
+		next := filepath.Join(cur, c)
+		var st syscall.Stat_t
+		if err := syscall.Lstat(next, &st); err != nil {
+			if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ENOTDIR) {
+				if sticky && len(rest) > 0 {
+					return errRoute(p)
+				}
+				return nil
+			}
+			return &os.PathError{Op: "lstat", Path: next, Err: err}
+		}
+		isLink := st.Mode&syscall.S_IFMT == syscall.S_IFLNK
+		if st.Uid != 0 {
+			if isLink || len(rest) > 0 || sticky {
+				return errRoute(p)
+			}
+			return nil
+		}
+		if isLink {
+			if hops++; hops > 40 {
+				return errRoute(p)
+			}
+			t, err := os.Readlink(next)
+			if err != nil {
+				return err
+			}
+			if strings.HasPrefix(t, "/") {
+				cur, sticky = "/", false
+			}
+			rest = append(strings.Split(t, "/"), rest...)
+			continue
+		}
+		sticky = false
+		if len(rest) > 0 && st.Mode&syscall.S_IFMT == syscall.S_IFDIR && st.Mode&0o22 != 0 {
+			if st.Mode&syscall.S_ISVTX == 0 {
+				return errRoute(p)
+			}
+			sticky = true
+		}
+		cur = next
+	}
+	return nil
+}
+
+func errRoute(p string) error {
+	return fmt.Errorf("the way to %s isn't only root's to change", p)
 }
 
 // names finds the owner's and group's names; tests swap it.

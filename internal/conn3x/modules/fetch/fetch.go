@@ -64,7 +64,7 @@ func (d Download) Validate() error {
 
 // ReadDownload returns the SHA-256 of the file at dest, or "" if it is missing.
 func ReadDownload(ctx context.Context, r modules.Runner, dest string) (string, error) {
-	res, err := r.Run(ctx, fmt.Sprintf("if [ -f %[1]s ]; then sha256sum -- %[1]s; fi", ssh.Quote(dest)), nil)
+	res, err := r.Run(ctx, modules.Guard(fmt.Sprintf("if [ -f %[1]s ]; then sha256sum -- %[1]s; fi", ssh.Quote(dest)), modules.Follow(dest)), nil)
 	if err := check(res, err); err != nil {
 		return "", err
 	}
@@ -97,12 +97,12 @@ got=$(sha256sum -- "$tmp" | cut -d' ' -f1)
 if [ "$got" != "$want" ]; then echo "checksum mismatch for $url: got $got, want $want" >&2; exit 1; fi
 chmod %[4]s "$tmp"
 %[5]s`+file.SyncFile+`
-mv -f -- "$tmp" "$p"
+`+file.Replace+`
 trap - EXIT
 `+file.SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
 		ssh.Quote(d.Dest), ssh.Quote(d.URL), d.SHA256, mode, file.Ownership(d.Owner, d.Group))
-	res, err := r.Run(ctx, script, nil)
+	res, err := r.Run(ctx, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group}, modules.Parent(d.Dest)), nil)
 	return check(res, err)
 }
 
@@ -127,7 +127,7 @@ func (a Archive) Validate() error {
 
 // ReadArchive reports whether the archive's creates path exists.
 func ReadArchive(ctx context.Context, r modules.Runner, a Archive) (bool, error) {
-	res, err := r.Run(ctx, "test -e "+ssh.Quote(a.Creates), nil)
+	res, err := r.Run(ctx, modules.Guard("test -e "+ssh.Quote(a.Creates), modules.Follow(a.Creates)), nil)
 	if err != nil {
 		return false, err
 	}
@@ -135,7 +135,8 @@ func ReadArchive(ctx context.Context, r modules.Runner, a Archive) (bool, error)
 }
 
 // ApplyArchive unpacks the archive: zip files with unzip, anything else with
-// tar, which detects the compression itself.
+// tar, which detects the compression itself. Everything lands in dest, owned
+// by whoever unpacks it, and dest keeps its own mode and owner.
 func ApplyArchive(ctx context.Context, r modules.Runner, a Archive) error {
 	if err := a.Validate(); err != nil {
 		return err
@@ -147,12 +148,19 @@ test -f "$src" || { echo "$src does not exist" >&2; exit 1; }
 mkdir -p -- "$dest"
 case "$src" in
 *.zip) command -v unzip >/dev/null 2>&1 || { echo "unzip is not installed; add a package step for it first" >&2; exit 1; }
-  unzip -q -o "$src" -d "$dest" ;;
-*) tar -xf "$src" -C "$dest" ;;
+  names=$(unzip -Z1 "$src") ;;
+*) names=$(tar -tf "$src") ;;
+esac
+if printf '%%s\n' "$names" | grep -Eq '^/|(^|/)\.\.(/|$)'; then
+  echo "$src has entries outside the directory it unpacks into, so it was not unpacked" >&2; exit 1
+fi
+case "$src" in
+*.zip) unzip -q -o "$src" -d "$dest" ;;
+*) tar -xf "$src" -C "$dest" --no-same-owner --no-overwrite-dir ;;
 esac
 test -e %[3]s || { echo "unpacked $src, but it did not create %[3]s" >&2; exit 1; }`,
 		ssh.Quote(a.Src), ssh.Quote(a.Dest), ssh.Quote(a.Creates))
-	res, err := r.Run(ctx, script, nil)
+	res, err := r.Run(ctx, modules.Guard(script, modules.Follow(a.Src), modules.Follow(a.Dest), modules.Follow(a.Creates)), nil)
 	return check(res, err)
 }
 
@@ -230,7 +238,7 @@ const gitInstalled = `command -v git >/dev/null 2>&1 || { echo "git is not insta
 
 // Checkout returns the commit checked out at dest, or "" if there is none.
 func Checkout(ctx context.Context, r modules.Runner, dest string) (string, error) {
-	res, err := r.Run(ctx, fmt.Sprintf("if [ -d %[1]s/.git ]; then git -C %[1]s rev-parse HEAD; fi", ssh.Quote(dest)), nil)
+	res, err := r.Run(ctx, modules.Guard(fmt.Sprintf("if [ -d %[1]s/.git ]; then git -C %[1]s rev-parse HEAD; fi", ssh.Quote(dest)), modules.Whole(dest+"/.git/config")), nil)
 	if err := check(res, err); err != nil {
 		return "", err
 	}
@@ -254,7 +262,7 @@ git -C "$dest" remote set-url origin %[3]s
 git -C "$dest" cat-file -e %[4]s^{commit} 2>/dev/null || git -C "$dest" fetch --quiet --tags origin
 git -C "$dest" cat-file -e %[4]s^{commit} 2>/dev/null || git -C "$dest" fetch --quiet origin %[4]s
 git -C "$dest" checkout --quiet --force --detach %[4]s`, gitInstalled, ssh.Quote(g.Dest), ssh.Quote(g.Repo), commit)
-	res, err := r.Run(ctx, script, nil)
+	res, err := r.Run(ctx, modules.Guard(script, modules.Whole(g.Dest+"/.git/config")), nil)
 	return check(res, err)
 }
 

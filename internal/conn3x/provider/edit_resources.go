@@ -12,6 +12,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
+	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
@@ -324,11 +325,24 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 // resolve is an error, so editFile never sees the link itself.
 func editTarget(ctx context.Context, h *hostConn, path string) (string, error) {
 	q := ssh.Quote(path)
-	res, err := h.Run(ctx, "readlink -f -- "+q+" || ! test -L "+q, nil)
+	// Run as a user, the answer only stands if that user can write there:
+	// the edit that follows acts on the answer, on its own route.
+	res, err := h.Run(ctx, modules.Guard(`r=$(readlink -f -- `+q+` 2>/dev/null) || { ! test -L `+q+`; exit; }
+if [ -n "$CONN3X_ROUTE_USER" ] && [ -n "$r" ]; then
+  if [ -e "$r" ]; then test -w "$r"; else test -w "$(dirname -- "$r")"; fi || {
+    if [ -L `+q+` ]; then echo `+q+`" leads to $r, which $CONN3X_ROUTE_USER can't write" >&2
+    else echo `+q+`" can't be written by $CONN3X_ROUTE_USER; give the file to $CONN3X_ROUTE_USER first" >&2; fi
+    exit 1
+  }
+fi
+printf '%s\n' "$r"`, modules.Follow(path)), nil)
 	if err != nil {
 		return "", err
 	}
 	if res.ExitCode != 0 {
+		if msg := strings.TrimSpace(string(res.Stderr)); msg != "" {
+			return "", errors.New(msg)
+		}
 		return "", fmt.Errorf("%s is a symlink that can't be followed", path)
 	}
 	// Only readlink's own newline goes: a path can end in a space.

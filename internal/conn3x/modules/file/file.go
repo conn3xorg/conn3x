@@ -84,13 +84,13 @@ func Read(ctx context.Context, r modules.Runner, p string) (Actual, error) {
 echo present
 stat -c '%%a %%U %%G' -- "$p" 2>/dev/null || stat -f '%%Lp %%Su %%Sg' "$p"
 base64 < "$p" | tr -d '\n'`, q, notRegular, unreadable)
-	res, err := run(ctx, r, script, nil)
+	res, err := run(ctx, r, modules.Guard(script, modules.Follow(p)), nil)
 	if err != nil {
 		if res.ExitCode == notRegular {
 			return Actual{}, notRegularError(p)
 		}
 		if res.ExitCode == unreadable {
-			return Actual{}, fmt.Errorf("%s exists but can't be read by %s", p, strings.TrimSpace(string(res.Stdout)))
+			return Actual{}, fmt.Errorf("%s exists but can't be read by %s; give it to that user, or if a new release moved it, run conn3x apply -refresh=false once", p, strings.TrimSpace(string(res.Stdout)))
 		}
 		return Actual{}, err
 	}
@@ -126,10 +126,10 @@ base64 < "$p" | tr -d '\n'`, q, notRegular, unreadable)
 // file the login user can't read still counts. Something else at the path
 // is an error, as it is for Read.
 func Exists(ctx context.Context, r modules.Runner, p string) (bool, error) {
-	res, err := run(ctx, r, fmt.Sprintf(`p=%s
+	res, err := run(ctx, r, modules.Guard(fmt.Sprintf(`p=%s
 [ -e "$p" ] || [ -L "$p" ] || { echo missing; exit 0; }
 [ -f "$p" ] || exit %d
-echo present`, ssh.Quote(p), notRegular), nil)
+echo present`, ssh.Quote(p), notRegular), modules.Follow(p)), nil)
 	if err != nil {
 		if res.ExitCode == notRegular {
 			return false, notRegularError(p)
@@ -169,12 +169,12 @@ trap 'rm -f -- "$tmp"' EXIT
 cat > "$tmp"
 chmod %s "$tmp"
 %s`+SyncFile+`
-mv -f -- "$tmp" "$p"
+`+Replace+`
 trap - EXIT
 `+SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
 		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group))
-	_, err := run(ctx, r, script, []byte(d.Content))
+	_, err := run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group}, modules.Parent(d.Path)), []byte(d.Content))
 	return err
 }
 
@@ -205,6 +205,10 @@ func Ownership(owner, group string) string {
 	return b.String()
 }
 
+// Replace moves "$tmp" over "$p". -T keeps it from going inside a directory, or
+// a link to one, at "$p"; mv without it is for a developer's Mac.
+const Replace = `if mv --version >/dev/null 2>&1; then mv -fT -- "$tmp" "$p"; else mv -f -- "$tmp" "$p"; fi`
+
 // SyncFile and SyncDir flush "$tmp" and the directory holding "$p" to disk.
 // GNU sync takes paths; where sync doesn't, everything is flushed instead.
 const (
@@ -214,7 +218,7 @@ const (
 
 // Delete removes the file. Deleting a missing file succeeds.
 func Delete(ctx context.Context, r modules.Runner, p string) error {
-	_, err := run(ctx, r, "rm -f -- "+ssh.Quote(p), nil)
+	_, err := run(ctx, r, modules.Guard("rm -f -- "+ssh.Quote(p), modules.Parent(p)), nil)
 	return err
 }
 
