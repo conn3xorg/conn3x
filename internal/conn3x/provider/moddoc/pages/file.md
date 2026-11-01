@@ -67,7 +67,7 @@ The login user has to be able to read the file. If it can't, the plan stops with
 
 **Hand edits.** If someone edits the file on the host, the next plan shows the difference and `conn3x drift` reports it.
 
-A step working as root checks who can change the path first. If another user owns a directory on the way, the step runs as that user, so it can only do what they could, and `owner` can't be set to someone else there. If several users could change the path, it stops with an error instead.
+A step working as root checks who can change the path first. If another user owns a directory on the way, the step runs as that user, so it can only do what they could, and `owner` can't be set to someone else there. If several users could change the path, it stops with an error instead. [Paths as root](/guides/paths-as-root) lists the errors and what to do about each.
 
 ## Removal
 

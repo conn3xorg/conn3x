@@ -59,7 +59,7 @@ step "old_cache" {
 
 **Absent.** With `state = "absent"`, every plan checks only whether the directory exists. If it does, the plan shows the step out of sync and apply removes it. If it doesn't, the plan shows no change, and a directory that comes back later is removed again by the next apply. Only an empty directory is removed: one with anything in it is left in place, and the apply reports an error. `mode`, `owner` and `group` can't be set alongside it. A file, a symbolic link or anything else that isn't a directory at the path is an error, and is left in place.
 
-A step working as root checks who can change the path first. If another user owns a directory on the way, the step runs as that user, so it can only do what they could, and `owner` can't be set to someone else there. If several users could change the path, it stops with an error instead.
+A step working as root checks who can change the path first. If another user owns a directory on the way, the step runs as that user, so it can only do what they could, and `owner` can't be set to someone else there. If several users could change the path, it stops with an error instead. [Paths as root](/guides/paths-as-root) lists the errors and what to do about each.
 
 ## Removal
 
