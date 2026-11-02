@@ -76,6 +76,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_file":           {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
 	"conn3x_windows_group":          {winGroupSchema, validateWinGroup, planWinGroup, readWinGroup, applyWinGroup, upgradeWith(winGroupSchema)},
 	"conn3x_windows_firewall_rule":  {winFirewallRuleSchema, validateWinFirewallRule, planWinFirewallRule, readWinFirewallRule, applyWinFirewallRule, upgradeWith(winFirewallRuleSchema)},
+	"conn3x_windows_package":        {winPackageSchema, validateWinPackage, planWinPackage, readWinPackage, applyWinPackage, upgradeWith(winPackageSchema)},
 	"conn3x_windows_powershell":     {winPowershellSchema, validateWinPowershell, planWinPowershell, readWinPowershell, applyWinPowershell, upgradeWith(winPowershellSchema)},
 	"conn3x_windows_registry_value": {winRegistrySchema, validateWinRegistry, planWinRegistry, readWinRegistry, applyWinRegistry, upgradeWith(winRegistrySchema)},
 	"conn3x_windows_reboot":         {winRebootSchema, validateReboot, planWinReboot, readWinReboot, applyWinReboot, upgradeWith(winRebootSchema)},

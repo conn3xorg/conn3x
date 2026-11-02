@@ -1418,6 +1418,9 @@ func TestSystemReadsChangeNothing(t *testing.T) {
 		if _, err := windows.ReadGroup(ctx, c, windows.Group{Name: "Administrators", Members: []string{"Guest", "c3-nobody"}}); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := windows.PackageInstalled(ctx, c, sevenZipCode); err != nil {
+			t.Fatal(err)
+		}
 		// A key that doesn't exist must stay that way.
 		if _, err := windows.ReadRegistry(ctx, c, windows.RegistryValue{Key: `HKLM\SOFTWARE\Conn3xNeverMade`, Name: "x", Type: "string"}, false); err != nil {
 			t.Fatal(err)

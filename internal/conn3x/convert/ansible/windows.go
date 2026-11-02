@@ -399,3 +399,16 @@ func strList(list []string) cty.Value {
 	}
 	return cty.ListVal(v)
 }
+
+func winPackageModule(in *input) ([]step, string) {
+	code := strings.ToUpper(in.str("product_id"))
+	if in.state("present", "present", "absent") == "absent" {
+		if code == "" {
+			return nil, "removes a package by its path; windows_package removes by product_code, so give it the MSI's ProductCode"
+		}
+		in.ignore("path", "arguments", "creates_path", "creates_service", "creates_version", "log_path")
+		return one("windows_package", []attr{s("product_code", code), s("state", "absent")})
+	}
+	// Ansible's task has no checksum, and Conn3x installs only what it can check.
+	return nil, "has no SHA-256 for the package; write a windows_package with product_code, source or url, and sha256"
+}
