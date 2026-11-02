@@ -56,10 +56,18 @@ func preflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := az(ctx, "rest", "--method", "post",
-		"--url", "https://management.azure.com/subscriptions/"+sub+"/providers/Microsoft.CostManagement/query?api-version=2023-03-01",
-		"--body", `{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"c":{"name":"Cost","function":"Sum"}}}}`,
-		"--query", "properties.rows", "-o", "json")
+	// Cost Management throttles hard, and a 429 says nothing about the spend.
+	var out string
+	for try := 1; ; try++ {
+		out, err = az(ctx, "rest", "--method", "post",
+			"--url", "https://management.azure.com/subscriptions/"+sub+"/providers/Microsoft.CostManagement/query?api-version=2023-03-01",
+			"--body", `{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"c":{"name":"Cost","function":"Sum"}}}}`,
+			"--query", "properties.rows", "-o", "json")
+		if err == nil || try == 6 || !strings.Contains(err.Error(), "Too Many Requests") {
+			break
+		}
+		time.Sleep(time.Minute)
+	}
 	if err != nil {
 		t.Fatalf("can't read this month's cost, so not spending more: %v", err)
 	}
@@ -69,7 +77,10 @@ func preflight(t *testing.T) {
 	}
 	var cost float64
 	if len(rows) > 0 {
-		cost, _ = rows[0][0].(float64)
+		var ok bool
+		if cost, ok = rows[0][0].(float64); !ok {
+			t.Fatalf("can't read this month's cost, so not spending more: %v", rows[0])
+		}
 	}
 	t.Logf("month to date: $%.2f", cost)
 	if cost >= maxMonthCost {
