@@ -38,7 +38,7 @@ jobs:
           bash scripts/dco-check_test.sh
           bash scripts/build-agent_test.sh
       - name: Real-host test helpers
-        run: go test ./test/droplet/...
+        run: go test ./test/droplet/... ./test/azure/...
 
   # A plan must change nothing on a Windows host, and a value must never become
   # code. The parser in pwsh checks that; the runner has pwsh preinstalled.

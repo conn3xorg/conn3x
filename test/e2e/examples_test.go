@@ -34,6 +34,8 @@ func TestExamplesValidate(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "deploy.pub"), []byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyExampleOnlyExampleOnlyExampleOnly example\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			// The azure example encrypts state, so init needs its passphrase.
+			t.Setenv("TF_VAR_state_passphrase", "only-for-this-validate")
 			w := &workdir{t: t, dir: dir}
 			w.mustConn3x("init", "-no-color")
 			w.mustConn3x("validate", "-no-color")
