@@ -64,6 +64,19 @@ var circuitModules = map[string]string{
 	"service":          "conn3x_service",
 	"user":             "conn3x_user",
 	"group":            "conn3x_group",
+
+	"windows_acl":            "conn3x_windows_acl",
+	"windows_directory":      "conn3x_windows_directory",
+	"windows_feature":        "conn3x_windows_feature",
+	"windows_file":           "conn3x_windows_file",
+	"windows_group":          "conn3x_windows_group",
+	"windows_firewall_rule":  "conn3x_windows_firewall_rule",
+	"windows_powershell":     "conn3x_windows_powershell",
+	"windows_reboot":         "conn3x_windows_reboot",
+	"windows_registry_value": "conn3x_windows_registry_value",
+	"windows_service":        "conn3x_windows_service",
+	"windows_user":           "conn3x_windows_user",
+	"windows_wait_for":       "conn3x_windows_wait_for",
 }
 
 // Conn3xStepModules maps each circuit step module to its resource type.

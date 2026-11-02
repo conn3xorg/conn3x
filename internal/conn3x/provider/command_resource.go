@@ -67,6 +67,12 @@ func validateCommand(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planCommand(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planGuarded(req, "command", commandRerun)
+}
+
+// planGuarded plans a step that runs something: again when any of rerun
+// changes, or when refresh found its guards no longer hold.
+func planGuarded(req providers.PlanResourceChangeRequest, kind string, rerunOn []string) providers.PlanResourceChangeResponse {
 	var resp providers.PlanResourceChangeResponse
 	if req.ProposedNewState.IsNull() {
 		resp.PlannedState = req.ProposedNewState
@@ -74,10 +80,10 @@ func planCommand(req providers.PlanResourceChangeRequest) providers.PlanResource
 	}
 	vals := req.ProposedNewState.AsValueMap()
 	host := req.ProposedNewState.GetAttr("ssh").GetAttr("host")
-	vals["id"] = planID(req, "command")
+	vals["id"] = planID(req, kind)
 	rerun := req.PriorState.IsNull()
 	if !rerun {
-		for _, a := range commandRerun {
+		for _, a := range rerunOn {
 			now := vals[a]
 			if !now.IsWhollyKnown() || !req.PriorState.GetAttr(a).RawEquals(now) {
 				resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath(a))

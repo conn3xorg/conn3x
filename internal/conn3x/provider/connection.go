@@ -94,6 +94,7 @@ type hostConn struct {
 	rootKey  string      // names the host in rootAgents
 
 	mu        sync.Mutex
+	elevated  bool // Windows, with become: the login's token was checked
 	agent     *agent.Client
 	tried     [2]bool // attach tried without and with upload
 	attachErr error   // why a required agent couldn't start

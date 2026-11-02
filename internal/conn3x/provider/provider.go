@@ -8,6 +8,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -68,6 +69,19 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_wait_for":         {waitForSchema, validateWaitFor, planWaitFor, readWaitFor, applyWaitFor, upgradeWith(waitForSchema)},
 	"conn3x_reboot":           {rebootSchema, validateReboot, planReboot, readReboot, applyReboot, upgradeWith(rebootSchema)},
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
+
+	"conn3x_windows_acl":            {winACLSchema, validateWinACL, planWinACL, readWinACL, applyWinACL, upgradeWith(winACLSchema)},
+	"conn3x_windows_directory":      {winDirectorySchema, validateWinDirectory, planWinDirectory, readWinDirectory, applyWinDirectory, upgradeWith(winDirectorySchema)},
+	"conn3x_windows_feature":        {winFeatureSchema, validateWinFeature, planWinFeature, readWinFeature, applyWinFeature, upgradeWith(winFeatureSchema)},
+	"conn3x_windows_file":           {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
+	"conn3x_windows_group":          {winGroupSchema, validateWinGroup, planWinGroup, readWinGroup, applyWinGroup, upgradeWith(winGroupSchema)},
+	"conn3x_windows_firewall_rule":  {winFirewallRuleSchema, validateWinFirewallRule, planWinFirewallRule, readWinFirewallRule, applyWinFirewallRule, upgradeWith(winFirewallRuleSchema)},
+	"conn3x_windows_powershell":     {winPowershellSchema, validateWinPowershell, planWinPowershell, readWinPowershell, applyWinPowershell, upgradeWith(winPowershellSchema)},
+	"conn3x_windows_registry_value": {winRegistrySchema, validateWinRegistry, planWinRegistry, readWinRegistry, applyWinRegistry, upgradeWith(winRegistrySchema)},
+	"conn3x_windows_reboot":         {winRebootSchema, validateReboot, planWinReboot, readWinReboot, applyWinReboot, upgradeWith(winRebootSchema)},
+	"conn3x_windows_service":        {winServiceSchema, validateWinService, planWinService, readWinService, applyWinService, upgradeWith(winServiceSchema)},
+	"conn3x_windows_user":           {winUserSchema, validateWinUser, planWinUser, readWinUser, applyWinUser, upgradeWith(winUserSchema)},
+	"conn3x_windows_wait_for":       {winWaitForSchema, validateWinWaitFor, planWinWaitFor, readWinWaitFor, applyWinWaitFor, upgradeWith(winWaitForSchema)},
 }
 
 // New returns the built-in conn3x provider.
@@ -109,6 +123,9 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 	if rt, ok := resourceTypes[req.TypeName]; ok {
 		diags := rt.validate(req.Config)
 		diags = diags.Append(validateSSH(req.Config))
+		if strings.HasPrefix(req.TypeName, windowsTypePrefix) {
+			diags = diags.Append(validateWindowsSSH(req.Config))
+		}
 		return providers.ValidateResourceConfigResponse{Diagnostics: diags}
 	}
 	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
@@ -118,7 +135,11 @@ func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.V
 	if req.TypeName != "conn3x_host" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data source " + req.TypeName)}
 	}
-	return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config)}
+	diags := validateSSH(req.Config)
+	if v := optional(req.Config, "allow_windows"); known(v) && v.True() {
+		diags = diags.Append(validateWindowsSSH(req.Config))
+	}
+	return providers.ValidateDataResourceConfigResponse{Diagnostics: diags}
 }
 
 func (p *Provider) ValidateEphemeralConfig(context.Context, providers.ValidateEphemeralConfigRequest) providers.ValidateEphemeralConfigResponse {

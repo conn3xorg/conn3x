@@ -145,6 +145,21 @@ func TestScriptText(t *testing.T) {
 		"[scriptblock]::Create": regexp.MustCompile(`(?i)\[scriptblock\]::create`),
 		"-Path":                 regexp.MustCompile(`(?i)\s-path\b`),
 	}
+	lib, err := filepath.Glob("lib/*.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range lib {
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for what, re := range banned {
+			if re.Match(b) {
+				t.Errorf("%s uses %s", name, what)
+			}
+		}
+	}
 	for _, name := range files {
 		if !strings.HasPrefix(name, "read_") && !strings.HasPrefix(name, "apply_") {
 			t.Errorf("%s is named neither read_* nor apply_*", name)
@@ -160,6 +175,24 @@ func TestScriptText(t *testing.T) {
 		}
 		if !strings.HasPrefix(string(b), "param($A)") {
 			t.Errorf("%s must start with param($A)", name)
+		}
+	}
+}
+
+// A library is only for scripts that change things: a read must not load it.
+func TestOnlyApplyScriptsIncludeTheLibrary(t *testing.T) {
+	files, _ := filepath.Glob("*.ps1")
+	for _, name := range files {
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		has := strings.Contains(string(b), "#include")
+		if has && !strings.HasPrefix(name, "apply_") {
+			t.Errorf("%s is not an apply script, but includes a library", name)
+		}
+		if body := script(name).Body; has && strings.Contains(body, "#include") {
+			t.Errorf("%s: the include wasn't expanded", name)
 		}
 	}
 }

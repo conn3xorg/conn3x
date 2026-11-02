@@ -38,7 +38,7 @@ jobs:
           bash scripts/dco-check_test.sh
           bash scripts/build-agent_test.sh
       - name: Real-host test helpers
-        run: go test ./test/droplet/...
+        run: go test ./test/droplet/... ./test/azure/...
 
   # A plan must change nothing on a Windows host, and a value must never become
   # code. The parser in pwsh checks that; the runner has pwsh preinstalled.
@@ -50,15 +50,33 @@ jobs:
           persist-credentials: false
       - name: Scripts follow the rules
         shell: bash
-        run: pwsh -NoProfile -File scripts/ps-rules.ps1 internal/conn3x/modules/windows/*.ps1
+        run: pwsh -NoProfile -File scripts/ps-rules.ps1 internal/conn3x/modules/windows/*.ps1 internal/conn3x/modules/windows/lib/*.ps1
       - name: Scripts that break a rule are caught
         shell: bash
         run: |
+          # Each fixture names the problem it must be caught for: any other
+          # failure, even a crash in the checker, would prove nothing.
           for f in internal/conn3x/modules/windows/testdata/bad/*.ps1; do
-            if pwsh -NoProfile -File scripts/ps-rules.ps1 "$f" >/dev/null; then
-              echo "$f passed, but it breaks a rule" >&2
+            want=$(sed -n 's/^# expect: //p' "$f")
+            if [ -z "$want" ]; then
+              echo "$f has no '# expect:' line" >&2
               exit 1
             fi
+            rc=0
+            out=$(pwsh -NoProfile -File scripts/ps-rules.ps1 "$f") || rc=$?
+            if [ "$rc" -ne 1 ]; then
+              echo "$f: exit $rc, want 1" >&2
+              echo "$out" >&2
+              exit 1
+            fi
+            case "$out" in
+              *"$want"*) ;;
+              *)
+                echo "$f wasn't caught for: $want" >&2
+                echo "$out" >&2
+                exit 1
+                ;;
+            esac
           done
 
   test:
