@@ -56,31 +56,9 @@ func preflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Cost Management throttles hard, and a 429 says nothing about the spend.
-	var out string
-	for try := 1; ; try++ {
-		out, err = az(ctx, "rest", "--method", "post",
-			"--url", "https://management.azure.com/subscriptions/"+sub+"/providers/Microsoft.CostManagement/query?api-version=2023-03-01",
-			"--body", `{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"c":{"name":"Cost","function":"Sum"}}}}`,
-			"--query", "properties.rows", "-o", "json")
-		if err == nil || try == 6 || !strings.Contains(err.Error(), "Too Many Requests") {
-			break
-		}
-		time.Sleep(time.Minute)
-	}
+	cost, err := monthCost(ctx, sub)
 	if err != nil {
 		t.Fatalf("can't read this month's cost, so not spending more: %v", err)
-	}
-	var rows [][]any
-	if err := json.Unmarshal([]byte(out), &rows); err != nil {
-		t.Fatalf("can't read this month's cost, so not spending more: %v", err)
-	}
-	var cost float64
-	if len(rows) > 0 {
-		var ok bool
-		if cost, ok = rows[0][0].(float64); !ok {
-			t.Fatalf("can't read this month's cost, so not spending more: %v", rows[0])
-		}
 	}
 	t.Logf("month to date: $%.2f", cost)
 	if cost >= maxMonthCost {
@@ -98,6 +76,55 @@ func preflight(t *testing.T) {
 			t.Fatalf("only %d of %d vCPUs free in westus2", limit-cur, limit)
 		}
 	}
+}
+
+// monthCost reads month-to-date spend. Cost Management throttles hard, and a
+// 429 says nothing about the spend, so it retries, then falls back to the
+// Consumption API. It errors rather than guess.
+func monthCost(ctx context.Context, sub string) (float64, error) {
+	var err error
+	for try := 1; try <= 3; try++ {
+		var out string
+		out, err = az(ctx, "rest", "--method", "post",
+			"--url", "https://management.azure.com/subscriptions/"+sub+"/providers/Microsoft.CostManagement/query?api-version=2023-03-01",
+			"--body", `{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"c":{"name":"Cost","function":"Sum"}}}}`,
+			"--query", "properties.rows", "-o", "json")
+		if err == nil {
+			var rows [][]any
+			if err := json.Unmarshal([]byte(out), &rows); err != nil {
+				return 0, err
+			}
+			if len(rows) == 0 {
+				return 0, nil
+			}
+			cost, ok := rows[0][0].(float64)
+			if !ok {
+				return 0, fmt.Errorf("unexpected cost row %v", rows[0])
+			}
+			return cost, nil
+		}
+		if !strings.Contains(err.Error(), "Too Many Requests") {
+			return 0, err
+		}
+		time.Sleep(time.Minute)
+	}
+	out, cerr := az(ctx, "rest", "--method", "get",
+		"--url", "https://management.azure.com/subscriptions/"+sub+"/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01",
+		"--query", "{next: nextLink, modern: sum(value[].properties.costInBillingCurrency), legacy: sum(value[].properties.cost)}", "-o", "json")
+	if cerr != nil {
+		return 0, fmt.Errorf("%v; then %v", err, cerr)
+	}
+	var u struct {
+		Next           *string
+		Modern, Legacy float64
+	}
+	if err := json.Unmarshal([]byte(out), &u); err != nil {
+		return 0, err
+	}
+	if u.Next != nil {
+		return 0, errors.New("usage runs past one page")
+	}
+	return max(u.Modern, u.Legacy), nil
 }
 
 func myIP(t *testing.T) string {
