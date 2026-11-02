@@ -133,14 +133,17 @@ func readWinWaitFor(ctx context.Context, req providers.ReadResourceRequest) prov
 	if req.PriorState.IsNull() {
 		return resp
 	}
+	w, err := winWaitForFrom(req.PriorState)
+	if err == nil {
+		err = w.Validate()
+	}
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(err)
+		return resp
+	}
 	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
-		return resp
-	}
-	w, err := winWaitForFrom(req.PriorState)
-	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
 	}
 	ok, err := w.Ready(ctx, h.client)
@@ -372,7 +375,7 @@ func winPowershellSchema() providers.Schema {
 			"args_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of args_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null without args_wo."},
 			"creates":   {Type: cty.String, Optional: true, Description: "Skip the script while this path exists."},
 			"removes":   {Type: cty.String, Optional: true, Description: "Skip the script while this path is missing."},
-			"unless":    {Type: cty.String, Optional: true, Description: "Skip the script while this PowerShell check holds: it holds unless it throws, its last output is $false, or a native program it ran last exited non-zero. It runs at every plan and gets the same args, so it must change nothing."},
+			"unless":    {Type: cty.String, Optional: true, Description: "Skip the script while this PowerShell check holds: it holds unless it throws, its last output is $false, or a native program it ran last exited non-zero. It runs at every plan, so it must change nothing. It gets args but never args_wo, which a plan doesn't have."},
 			"triggers":  {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the script runs again whenever it changes."},
 			"timeout":   {Type: cty.String, Optional: true, Description: "How long the script may run before it is stopped. Defaults to \"30m\"."},
 			"satisfied": {Type: cty.Bool, Computed: true, Description: "Whether the guards hold on the host."},
@@ -412,14 +415,15 @@ func validateWinPowershell(cfg cty.Value) tfdiags.Diagnostics {
 			}
 		}
 	}
+	// One unknown guard mustn't hide a mistake in the other. Apply checks whatever is unknown here.
 	for _, a := range []string{"creates", "removes"} {
-		if !cfg.GetAttr(a).IsKnown() {
-			return diags
+		v := cfg.GetAttr(a)
+		if !v.IsKnown() || v.IsNull() {
+			continue
 		}
-	}
-	guards := windows.Guards{Creates: stringOr(cfg.GetAttr("creates"), ""), Removes: stringOr(cfg.GetAttr("removes"), "")}
-	if err := guards.Validate(); err != nil {
-		diags = diags.Append(attrError("creates", err.Error()))
+		if _, err := windows.CleanLocalPath(a, v.AsString()); err != nil {
+			diags = diags.Append(attrError(a, err.Error()))
+		}
 	}
 	return diags
 }
@@ -508,12 +512,16 @@ func readWinPowershell(ctx context.Context, req providers.ReadResourceRequest) p
 	if req.PriorState.IsNull() || !winGuards(req.PriorState).Any() {
 		return resp
 	}
+	if err := winGuards(req.PriorState).Validate(); err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(err)
+		return resp
+	}
 	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	// args_wo is never in state, so a refresh has only args to give the check.
+	// args_wo is never in state, so the check gets only args, at refresh and apply alike.
 	args, _ := scriptArgs(req.PriorState.GetAttr("args"), cty.NullVal(cty.Map(cty.String)))
 	ok, err := windows.Satisfied(ctx, h.client, winGuards(req.PriorState), args)
 	if err != nil {
@@ -538,14 +546,20 @@ func applyWinPowershell(ctx context.Context, req providers.ApplyResourceChangeRe
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("timeout", err.Error()))
 		return resp
 	}
+	// A value unknown at plan arrives here, so this is its first check.
+	guards := winGuards(req.PlannedState)
+	if err := guards.Validate(); err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(err)
+		return resp
+	}
 	h, err := winHost(ctx, req.PlannedState.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	guards := winGuards(req.PlannedState)
 	wo := req.Config.GetAttr("args_wo")
 	args, secrets := scriptArgs(req.PlannedState.GetAttr("args"), wo)
+	checkArgs, _ := scriptArgs(req.PlannedState.GetAttr("args"), cty.NullVal(cty.Map(cty.String)))
 	vals := req.PlannedState.AsValueMap()
 	vals["args_wo"] = cty.NullVal(cty.Map(cty.String))
 	if !wo.IsNull() {
@@ -561,7 +575,7 @@ func applyWinPowershell(ctx context.Context, req providers.ApplyResourceChangeRe
 			return resp
 		}
 	}
-	done, err := windows.Satisfied(ctx, h.client, guards, args)
+	done, err := windows.Satisfied(ctx, h.client, guards, checkArgs)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(errors.New(windows.Scrub(err.Error(), secrets)))
 		return resp
@@ -578,7 +592,7 @@ func applyWinPowershell(ctx context.Context, req providers.ApplyResourceChangeRe
 		}
 		stdout, stderr = cty.StringVal(out.Stdout), cty.StringVal(out.Stderr)
 		if guards.Any() {
-			if ok, err := windows.Satisfied(ctx, h.client, guards, args); err != nil || !ok {
+			if ok, err := windows.Satisfied(ctx, h.client, guards, checkArgs); err != nil || !ok {
 				resp.Diagnostics = resp.Diagnostics.Append(errors.New("the script ran, but its guards still don't hold; check creates, removes and unless match what it does"))
 				return resp
 			}

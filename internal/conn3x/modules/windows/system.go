@@ -319,7 +319,9 @@ func (f Feature) Validate() error {
 
 // FeatureInSync reads a feature. pending means it's waiting for a reboot.
 func FeatureInSync(ctx context.Context, r ps.Runner, f Feature) (inSync, pending bool, err error) {
-	res, err := ps.Read(ctx, r, script("read_feature.ps1"), map[string]any{"name": f.Name})
+	res, err := ps.Read(ctx, r, script("read_feature.ps1"), map[string]any{
+		"name": f.Name, "sub_features": f.SubFeatures && !f.Absent, "management_tools": f.ManagementTools && !f.Absent,
+	})
 	if err != nil {
 		return false, false, err
 	}
@@ -327,6 +329,8 @@ func FeatureInSync(ctx context.Context, r ps.Runner, f Feature) (inSync, pending
 		Exists    bool   `json:"exists"`
 		State     string `json:"state"`
 		Installed bool   `json:"installed"`
+		// Missing lists the sub-features and tools asked for that aren't installed.
+		Missing []string `json:"missing"`
 	}
 	if err := json.Unmarshal(res.Value, &a); err != nil {
 		return false, false, fmt.Errorf("reading feature %s: %w", f.Name, err)
@@ -338,7 +342,7 @@ func FeatureInSync(ctx context.Context, r ps.Runner, f Feature) (inSync, pending
 	if f.Absent {
 		return a.State == "Available" || a.State == "Removed" || a.State == "UninstallPending", pending, nil
 	}
-	return a.Installed || a.State == "InstallPending", pending, nil
+	return (a.Installed || a.State == "InstallPending") && len(a.Missing) == 0, pending, nil
 }
 
 // ApplyFeature installs or removes a feature and reports whether Windows wants

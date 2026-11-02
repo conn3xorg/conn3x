@@ -9,6 +9,10 @@ on:
       - internal/conn3x/transport/ssh/**
       - internal/conn3x/provider/windows_*.go
       - internal/conn3x/provider/host_data_source.go
+      - internal/conn3x/provider/file_resource.go
+      - internal/conn3x/provider/schedule_resources.go
+      - internal/conn3x/provider/command_resource.go
+      - internal/configs/conn3x_circuit.go
       - test/windows/**
       - .github/workflows/windows.yml
   push:
@@ -18,6 +22,10 @@ on:
       - internal/conn3x/transport/ssh/**
       - internal/conn3x/provider/windows_*.go
       - internal/conn3x/provider/host_data_source.go
+      - internal/conn3x/provider/file_resource.go
+      - internal/conn3x/provider/schedule_resources.go
+      - internal/conn3x/provider/command_resource.go
+      - internal/configs/conn3x_circuit.go
       - test/windows/**
       - .github/workflows/windows.yml
 
@@ -64,6 +72,19 @@ jobs:
           Add-Content $env:GITHUB_ENV "CONN3X_WIN_USER=$env:USERNAME"
           Add-Content $env:GITHUB_ENV "CONN3X_WIN_KEY=$work\admin"
           Add-Content $env:GITHUB_ENV "CONN3X_WIN_HOST_KEY=$((Get-Content "$d\ssh_host_ed25519_key.pub" -Raw).Trim())"
+      - name: Build the binary the plan and apply test drives
+        shell: pwsh
+        run: |
+          go build -o "$env:RUNNER_TEMP\conn3x.exe" ./cmd/conn3x
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Add-Content $env:GITHUB_ENV "CONN3X_WIN_BIN=$env:RUNNER_TEMP\conn3x.exe"
       - name: Test against the runner
         shell: pwsh
-        run: go test -tags windowshost -count=1 -timeout 25m -v ./test/windows/
+        run: |
+          go test -tags windowshost -count=1 -timeout 25m -v ./test/windows/ 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\windows-test.log"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # A missing variable would only skip it, and a skip looks like a pass.
+          if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\windows-test.log" -SimpleMatch -Quiet -- '--- PASS: TestPlanAndApply')) {
+            Write-Error 'TestPlanAndApply did not run'
+            exit 1
+          }

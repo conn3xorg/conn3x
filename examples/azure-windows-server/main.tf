@@ -200,10 +200,11 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   type                 = "CustomScriptExtension"
   type_handler_version = "1.10"
 
-  # The key goes in an environment variable, not on PowerShell's command line,
-  # because PowerShell quotes that line in its errors and Azure repeats them.
+  # Extra settings stay encrypted beside the command, which an audit policy could
+  # record. Only bootstrap.ps1 opens them: the key is on no command line.
   protected_settings = jsonencode({
-    commandToExecute = "cmd.exe /c \"set CONN3X_HOST_KEY=${base64encode(tls_private_key.host.private_key_openssh)}&& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command Copy-Item C:\\AzureData\\CustomData.bin C:\\Windows\\Temp\\bootstrap.ps1 -Force; C:\\Windows\\Temp\\bootstrap.ps1\""
+    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command Copy-Item C:\\AzureData\\CustomData.bin C:\\Windows\\Temp\\bootstrap.ps1 -Force; C:\\Windows\\Temp\\bootstrap.ps1"
+    conn3xHostKey    = base64encode(tls_private_key.host.private_key_openssh)
   })
 }
 

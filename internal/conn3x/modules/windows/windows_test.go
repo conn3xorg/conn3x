@@ -57,12 +57,12 @@ func TestGather(t *testing.T) {
 }
 
 func TestValidatePath(t *testing.T) {
-	for _, ok := range []string{`C:\app`, `c:/app/x`, `\\server\share\x`, `C:\sp ace\[x]`} {
+	for _, ok := range []string{`C:\app`, `c:/app/x`, `C:\sp ace\[x]`} {
 		if err := ValidatePath("p", ok); err != nil {
 			t.Errorf("rejected %q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "app", `\app`, "/etc/passwd", `\\server`, "C:\\a\nb", "C:\\a\x00", `C:\a|b`, `C:\*`, `C:\a"b`} {
+	for _, bad := range []string{"", "app", `\app`, "/etc/passwd", `\\server`, `\\server\share\x`, `\\.\pipe\x`, `\\?\C:\x`, "C:\\a\nb", "C:\\a\x00", `C:\a|b`, `C:\*`, `C:\a"b`} {
 		if ValidatePath("p", bad) == nil {
 			t.Errorf("accepted %q", bad)
 		}
@@ -79,6 +79,65 @@ func TestWaitForValidate(t *testing.T) {
 		if bad.Validate() == nil {
 			t.Errorf("accepted %+v", bad)
 		}
+	}
+}
+
+// A guard or wait reads the path at plan: a share or device would have the host
+// contact something else just to answer.
+func TestGuardsAndWaitsStayOnLocalDrives(t *testing.T) {
+	for _, bad := range []string{`\\server\share\x`, `//server/share/x`, `\\.\pipe\x`, `\\?\C:\x`, `\\?\UNC\server\share`, `C:\a\CON`, `C:\a:stream`, `C:\a\..\b`} {
+		if (Guards{Creates: bad}).Validate() == nil {
+			t.Errorf("creates accepted %q", bad)
+		}
+		if (Guards{Creates: `C:\ok`, Removes: bad}).Validate() == nil {
+			t.Errorf("removes accepted %q", bad)
+		}
+		if (WaitFor{Path: bad}).Validate() == nil {
+			t.Errorf("wait accepted %q", bad)
+		}
+	}
+	if err := (Guards{Creates: `C:\app\ready`, Removes: `c:/app/old`}).Validate(); err != nil {
+		t.Error(err)
+	}
+	if err := (WaitFor{Path: `C:\app\ready`}).Validate(); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestScrub(t *testing.T) {
+	long := strings.Repeat("0123456789abcdef", 40)
+	pem := "-----BEGIN KEY-----\nAAAAbase64line1\nBBBBbase64line2\n-----END KEY-----\n"
+	wrapped := func(s string, width int, sep string) string {
+		var b strings.Builder
+		for len(s) > width {
+			b.WriteString(s[:width] + sep)
+			s = s[width:]
+		}
+		return b.String() + s
+	}
+	for name, tc := range map[string]struct{ text, secret, keep string }{
+		"plain":             {"said hunter2.", "hunter2", "said "},
+		"wrapped":           {"before " + wrapped(long, 80, "\r\n") + " after", long, "before "},
+		"list continuation": {"Token : " + wrapped(long, 100, "\r\n        ") + "\r\nNext  : 1", long, "Next"},
+		"pem with crlf":     {"x " + strings.ReplaceAll(pem, "\n", "\r\n") + "y", pem, "x "},
+		"pem without ends":  {"x " + strings.TrimSpace(pem) + " y", pem, " y"},
+		"crlf secret":       {"x " + pem, strings.ReplaceAll(pem, "\n", "\r\n"), "x "},
+		"twice":             {"hunter2 and hun\nter2", "hunter2", " and "},
+	} {
+		got := Scrub(tc.text, []string{tc.secret})
+		if !strings.Contains(got, "(sensitive value)") || !strings.Contains(got, tc.keep) {
+			t.Errorf("%s: got %q", name, got)
+		}
+		flat := strings.NewReplacer("\r", "", "\n", "", " ", "").Replace(got)
+		if strings.Contains(flat, strings.NewReplacer("\r", "", "\n", "", " ", "").Replace(tc.secret)) {
+			t.Errorf("%s: still there: %q", name, got)
+		}
+	}
+	if got := Scrub("a  b", []string{"   ", ""}); got != "a  b" {
+		t.Errorf("a secret of spaces changed the text: %q", got)
+	}
+	if got := Scrub("x   y", []string{"   "}); got != "x(sensitive value)y" {
+		t.Errorf("a secret of spaces wasn't blanked: %q", got)
 	}
 }
 
@@ -135,5 +194,39 @@ func TestRunScriptFailsOnNativeExit(t *testing.T) {
 func TestReadScriptsGoThroughRead(t *testing.T) {
 	if _, err := ps.Read(context.Background(), &fake{}, script("apply_reboot.ps1"), nil); err == nil {
 		t.Error("ps.Read ran an apply script")
+	}
+}
+
+func TestFeatureInSyncWantsWhatWasAsked(t *testing.T) {
+	ctx := context.Background()
+	answer := func(installed bool, missing ...string) *fake {
+		return &fake{answers: []map[string]any{{"ok": true, "value": map[string]any{"exists": true, "state": "Installed", "installed": installed, "missing": missing}}}}
+	}
+	for name, tc := range map[string]struct {
+		f    Feature
+		host *fake
+		want bool
+	}{
+		"plain, installed":    {Feature{Name: "Web-Server"}, answer(true), true},
+		"tools missing":       {Feature{Name: "Web-Server", ManagementTools: true}, answer(true, "Web-Mgmt-Console"), false},
+		"sub-feature missing": {Feature{Name: "Web-Server", SubFeatures: true}, answer(true, "Web-Ftp-Server"), false},
+		"all present":         {Feature{Name: "Web-Server", SubFeatures: true, ManagementTools: true}, answer(true), true},
+	} {
+		got, _, err := FeatureInSync(ctx, tc.host, tc.f)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: %v, %v", name, got, err)
+		}
+		sent := tc.host.sent[0]["args"].(map[string]any)
+		if sent["sub_features"] != tc.f.SubFeatures || sent["management_tools"] != tc.f.ManagementTools {
+			t.Errorf("%s: sent %v", name, sent)
+		}
+	}
+	// Removing asks nothing about its parts.
+	f := &fake{answers: []map[string]any{{"ok": true, "value": map[string]any{"exists": true, "state": "Available"}}}}
+	if got, _, err := FeatureInSync(ctx, f, Feature{Name: "X", Absent: true, SubFeatures: true}); err != nil || !got {
+		t.Errorf("absent: %v, %v", got, err)
+	}
+	if f.sent[0]["args"].(map[string]any)["sub_features"] != false {
+		t.Error("removal asked about sub-features")
 	}
 }

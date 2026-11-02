@@ -24,6 +24,9 @@ if ($out.kind -eq 'file' -and $A.hash) { $out.sha256 = (Get-FileHash -LiteralPat
 $acl = Get-Acl -LiteralPath $A.path
 $out.protected = [bool]$acl.AreAccessRulesProtected
 $out.owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+# The same accounts as $script:trusted in lib/safepath.ps1, which a read can't load.
+$out.owner_trusted = $out.owner -in @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464',
+  [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
 $out.entries = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {
   @{ sid = $_.IdentityReference.Value; mask = [int]$_.FileSystemRights; allow = ([string]$_.AccessControlType -eq 'Allow');
      flags = [int]$_.InheritanceFlags; only = [int]$_.PropagationFlags; inherited = [bool]$_.IsInherited }

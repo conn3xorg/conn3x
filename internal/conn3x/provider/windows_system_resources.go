@@ -181,6 +181,25 @@ func applyWinRegistry(ctx context.Context, req providers.ApplyResourceChangeRequ
 		return resp
 	}
 	planned := req.PlannedState
+	// A saved plan applied elsewhere must use the key it was made with, and a
+	// value under another key must not be overwritten and rehashed.
+	if !req.Config.GetAttr("data_wo").IsNull() {
+		key, err := hmacKey(true)
+		if err != nil {
+			return fail(err)
+		}
+		stored := []cty.Value{planned.GetAttr("data_hmac")}
+		if !req.PriorState.IsNull() {
+			stored = append(stored, req.PriorState.GetAttr("data_hmac"))
+		}
+		for _, v := range stored {
+			if known(v) {
+				if err := checkHMACKey(v.AsString(), key); err != nil {
+					return fail(err)
+				}
+			}
+		}
+	}
 	h, err := winHost(ctx, planned.GetAttr("ssh"))
 	if err != nil {
 		return fail(err)

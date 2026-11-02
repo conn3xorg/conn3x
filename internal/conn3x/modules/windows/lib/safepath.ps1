@@ -19,6 +19,10 @@ public static class Conn3xFs {
   public static extern bool GetFileInformationByHandle(SafeFileHandle h, out Info info);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
   public static extern bool MoveFileExW(string from, string to, uint flags);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  public static extern bool GetKernelObjectSecurity(SafeFileHandle h, uint info, byte[] sd, uint len, out uint need);
+  [DllImport("advapi32.dll")]
+  public static extern uint SetSecurityInfo(SafeFileHandle h, int type, uint info, byte[] owner, byte[] group, byte[] dacl, byte[] sacl);
 }
 '@
 
@@ -69,8 +73,26 @@ function Assert-NotLink([string]$p, $info) {
   if ($info.Attributes -band 0x400) { throw "$p is a link or junction, which Conn3x won't follow. Use the real path." }
 }
 
-function Assert-Folder([string]$p, [switch]$OwnerOnly) {
-  $sec = [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]'Access,Owner')
+# Read-Security reads an object's rules (4), owner (1) or both from a handle. A
+# name could mean something else by now: someone who can write in an empty folder
+# can turn it into a junction even while it's held, but a handle stays on the folder.
+function Read-Security($h, $type, [uint32]$info) {
+  $need = [uint32]0
+  [void][Conn3xFs]::GetKernelObjectSecurity($h, $info, $null, 0, [ref]$need)
+  $bytes = New-Object byte[] $need
+  if (-not [Conn3xFs]::GetKernelObjectSecurity($h, $info, $bytes, $need, [ref]$need)) { throw (New-Object ComponentModel.Win32Exception) }
+  $sec = New-Object $type
+  $sec.SetSecurityDescriptorBinaryForm($bytes)
+  $sec
+}
+
+# Assert-FullName refuses a name that isn't the path's real one, such as a short name.
+function Assert-FullName([string]$p) {
+  if ([IO.Path]::GetFullPath($p) -cne $p) { throw "$p is not a full, plain path" }
+}
+
+function Assert-Folder([string]$p, $h, [switch]$OwnerOnly) {
+  $sec = Read-Security $h ([Security.AccessControl.DirectorySecurity]) 5
   $owner = $sec.GetOwner([Security.Principal.SecurityIdentifier]).Value
   if ($owner -notin $script:trusted) { throw "$p belongs to $owner, who could replace what's inside it. Change its owner, or use another path." }
   if ($OwnerOnly) { return }
@@ -88,7 +110,7 @@ function Assert-Folder([string]$p, [switch]$OwnerOnly) {
 # makes missing ones and treats the last as the folder being managed: it may start
 # with $sec, and who else may write in it is that folder's own configuration.
 function Lock-Folders([string]$dir, [switch]$Create, [switch]$Strict, $sec) {
-  if ([IO.Path]::GetFullPath($dir) -cne $dir) { throw "$dir is not a full, plain path" }
+  Assert-FullName $dir
   $root = [IO.Path]::GetPathRoot($dir)
   $at = $root
   $parts = @($root) + @($dir.Substring($root.Length).Split('\', [StringSplitOptions]::RemoveEmptyEntries))
@@ -104,7 +126,7 @@ function Lock-Folders([string]$dir, [switch]$Create, [switch]$Strict, $sec) {
     Assert-NotLink $at $i
     if (-not ($i.Attributes -band 0x10)) { throw "$at is not a folder" }
     if ($Strict) {
-      if ($Create -and $n -eq $parts.Count - 1) { Assert-Folder $at -OwnerOnly } else { Assert-Folder $at }
+      if ($Create -and $n -eq $parts.Count - 1) { Assert-Folder $at $h -OwnerOnly } else { Assert-Folder $at $h }
     }
   }
 }
@@ -131,19 +153,35 @@ function New-Security($type, $entries) {
   $sec
 }
 
-# Set-Rules changes an existing path whose folders are locked.
+# Set-Rules changes an existing path whose folders are locked, through a handle
+# opened without following links, so the rules land on this object and no other.
 function Set-Rules([string]$p, [bool]$isDir, $entries, [bool]$exact, $inherit, $owner) {
-  $class = if ($isDir) { [IO.Directory] } else { [IO.File] }
-  $sec = $class::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Access)
+  # WRITE_DAC, and WRITE_OWNER when it's needed, on top of what a hold has.
+  $access = 0x20081 -bor 0x40000
+  if ($owner) { $access = $access -bor 0x80000 }
+  $h = Open-NoFollow $p $access 3
+  if (-not $h) { throw "$p doesn't exist" }
+  [void]$script:held.Add($h)
+  Assert-NotLink $p (Get-Info $h)
+  $type = if ($isDir) { [Security.AccessControl.DirectorySecurity] } else { [Security.AccessControl.FileSecurity] }
+  $sec = Read-Security $h $type 4
   if ($exact) {
     foreach ($r in $sec.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])) { [void]$sec.RemoveAccessRuleSpecific($r) }
   }
   if ($null -ne $inherit) { $sec.SetAccessRuleProtection((-not $inherit), (-not $exact)) }
   foreach ($e in $entries) { $sec.AddAccessRule((New-Rule $e)) }
-  $class::SetAccessControl($p, $sec)
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sec.GetSecurityDescriptorBinaryForm(), 0)
+  $dacl = New-Object byte[] $raw.DiscretionaryAcl.BinaryLength
+  $raw.DiscretionaryAcl.GetBinaryForm($dacl, 0)
+  # DACL, plus PROTECTED_DACL or UNPROTECTED_DACL. 1 is SE_FILE_OBJECT.
+  $info = if ($sec.AreAccessRulesProtected) { [uint32]2147483652 } else { [uint32]536870916 }
+  $code = [Conn3xFs]::SetSecurityInfo($h, 1, $info, $null, $null, $dacl, $null)
+  if ($code) { throw (New-Object ComponentModel.Win32Exception ([int]$code)) }
   if ($owner) {
-    $o = if ($isDir) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
-    $o.SetOwner((Get-Sid $owner))
-    $class::SetAccessControl($p, $o)
+    $sid = Get-Sid $owner
+    $bytes = New-Object byte[] $sid.BinaryLength
+    $sid.GetBinaryForm($bytes, 0)
+    $code = [Conn3xFs]::SetSecurityInfo($h, 1, 1, $bytes, $null, $null, $null)
+    if ($code) { throw (New-Object ComponentModel.Win32Exception ([int]$code)) }
   }
 }

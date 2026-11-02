@@ -12,11 +12,14 @@ import (
 
 func TestCleanLocalPath(t *testing.T) {
 	for in, want := range map[string]string{
-		`C:\app\x.txt`:      `C:\app\x.txt`,
-		`c:/app/x`:          `c:\app\x`,
-		`C:\app\`:           `C:\app`,
-		`C:\`:               `C:\`,
-		`D:\[odd] $(x) 'q'`: `D:\[odd] $(x) 'q'`,
+		`C:\app\x.txt`:              `C:\app\x.txt`,
+		`C:\console.txt`:            `C:\console.txt`,
+		`C:\app\a~b.txt`:            `C:\app\a~b.txt`,
+		`C:\app\long-name~1.config`: `C:\app\long-name~1.config`,
+		`c:/app/x`:                  `c:\app\x`,
+		`C:\app\`:                   `C:\app`,
+		`C:\`:                       `C:\`,
+		`D:\[odd] $(x) 'q'`:         `D:\[odd] $(x) 'q'`,
 	} {
 		got, err := CleanLocalPath("p", in)
 		if err != nil || got != want {
@@ -26,6 +29,8 @@ func TestCleanLocalPath(t *testing.T) {
 	for _, bad := range []string{
 		``, `app`, `\\server\share\x`, `\\.\C:\x`, `\\?\C:\x`, `C:\a\..\b`, `C:\.\b`, `C:\a:stream`, `C:\a.\b`, `C:\a \b`, `C:\CON`, `C:\x\nul.txt`, `C:\lpt1`,
 		`C:\a\\b`, "C:\\a\nb", `C:\*`, `C:\` + strings.Repeat("x", 260),
+		`C:\CONIN$`, `C:\conout$`, `C:\x\COM¹`, `C:\LPT²`, `C:\x\com³.txt`, `C:\CON .txt`, `C:\x\nul  .log`,
+		`C:\PROGRA~1\x`, `C:\app\SECRET~1.TXT`, `C:\app\SECRET~1`, `C:\app\AB12~2.tx`,
 	} {
 		if got, err := CleanLocalPath("p", bad); err == nil {
 			t.Errorf("accepted %q as %q", bad, got)
@@ -98,12 +103,17 @@ func TestMatches(t *testing.T) {
 		t.Error("an unknown principal gave no error")
 	}
 	// Exact needs everything explicit, and inheritance off.
-	protected := PathState{Kind: "file", Protected: true, SIDs: map[string]string{"S-1-5-18": "S-1-5-18", "S-1-5-32-544": admins}, Entries: []ACE{
+	protected := PathState{Kind: "file", Protected: true, OwnerTrusted: true, SIDs: map[string]string{"S-1-5-18": "S-1-5-18", "S-1-5-32-544": admins}, Entries: []ACE{
 		{SID: "S-1-5-18", Mask: 0x1f01ff, Allow: true}, {SID: admins, Mask: 0x1f01ff, Allow: true},
 	}}
 	if ok, err := Exact(protected, SecretEntries); err != nil || !ok {
 		t.Errorf("secret rules: %v, %v", ok, err)
 	}
+	protected.OwnerTrusted = false
+	if ok, _ := Exact(protected, SecretEntries); ok {
+		t.Error("a file whose owner can change its rules counted as exact")
+	}
+	protected.OwnerTrusted = true
 	protected.Protected = false
 	if ok, _ := Exact(protected, SecretEntries); ok {
 		t.Error("a file still inheriting counted as exact")

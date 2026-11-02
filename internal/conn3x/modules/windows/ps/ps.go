@@ -14,6 +14,10 @@
 // The outcome comes only from the stub's last line. The SSH exit status can't
 // carry it, because PowerShell as sshd's DefaultShell flattens every failure
 // to 1, and stderr may be serialized as CLIXML.
+//
+// The stub prints a script's objects 64 KiB wide: at the console's width a table
+// cuts a long value short, and only a whole value can be blanked afterwards.
+// Errors are the exception's message alone, as PowerShell's error view wraps too.
 package ps
 
 import (

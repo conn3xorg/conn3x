@@ -1,6 +1,7 @@
 param($A)
 #include safepath
 $path = $A.path
+Assert-FullName $path
 if ([IO.Path]::GetDirectoryName($path)) { Lock-Folders ([IO.Path]::GetDirectoryName($path)) -Strict }
 $h = Hold-Path $path
 if (-not $h) { throw "$path doesn't exist" }

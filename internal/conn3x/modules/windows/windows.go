@@ -13,6 +13,7 @@
 package windows
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -154,15 +155,16 @@ func ApplyReboot(ctx context.Context, r ps.Runner) error {
 }
 
 var (
-	windowsPath = regexp.MustCompile(`^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+\\[^\\/]+)`)
+	windowsPath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 	serviceName = regexp.MustCompile(`^[A-Za-z0-9_.$@ -]{1,256}$`)
 )
 
-// ValidatePath checks a path before anything reaches a host: an absolute
-// drive-letter or UNC path, with no control characters.
+// ValidatePath checks a path before anything reaches a host: an absolute path
+// on a local drive, with no control characters. A share or a device path would
+// have the host contact another machine, or a driver, just to read it.
 func ValidatePath(attr, p string) error {
 	if !windowsPath.MatchString(p) {
-		return fmt.Errorf(`%s %q must be an absolute path such as C:\app\ready or \\server\share\ready`, attr, p)
+		return fmt.Errorf(`%s %q must be an absolute path on a local drive, such as C:\app\ready`, attr, p)
 	}
 	if strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return fmt.Errorf("%s %q must not contain control characters", attr, p)
@@ -196,7 +198,8 @@ func (w WaitFor) Validate() error {
 	case set != 1:
 		return errors.New("set exactly one of path, service or port")
 	case w.Path != "":
-		return ValidatePath("path", w.Path)
+		_, err := CleanLocalPath("path", w.Path)
+		return err
 	case w.Service != "" && !serviceName.MatchString(w.Service):
 		return fmt.Errorf("service %q is not a service name", w.Service)
 	case w.Service == "" && (w.Port < 1 || w.Port > 65535):
@@ -234,12 +237,14 @@ func (g Guards) Any() bool { return g.Creates != "" || g.Removes != "" || g.Unle
 // Validate checks the guards before anything runs on a host.
 func (g Guards) Validate() error {
 	if g.Creates != "" {
-		if err := ValidatePath("creates", g.Creates); err != nil {
+		if _, err := CleanLocalPath("creates", g.Creates); err != nil {
 			return err
 		}
 	}
 	if g.Removes != "" {
-		return ValidatePath("removes", g.Removes)
+		if _, err := CleanLocalPath("removes", g.Removes); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -299,14 +304,54 @@ func RunScript(ctx context.Context, r ps.Runner, code string, args map[string]an
 	return out, nil
 }
 
-// Scrub blanks secrets from text bound for state or logs.
+const blanked = "(sensitive value)"
+
+// Scrub blanks secrets from text bound for state or logs. PowerShell may wrap a
+// long value, indent what follows or change its line endings, so line breaks
+// and spaces don't count when matching, in the text or in the secret. Blanking
+// a little too much is fine; missing the middle of a key isn't.
 func Scrub(s string, secrets []string) string {
 	for _, v := range secrets {
 		if v != "" {
-			s = strings.ReplaceAll(s, v, "(sensitive value)")
+			s = scrubSpaced(strings.ReplaceAll(s, v, blanked), v)
 		}
 	}
 	return s
+}
+
+func isSpacing(c byte) bool { return c == '\r' || c == '\n' || c == ' ' || c == '\t' }
+
+func scrubSpaced(s, secret string) string {
+	want := make([]byte, 0, len(secret))
+	for i := 0; i < len(secret); i++ {
+		if !isSpacing(secret[i]) {
+			want = append(want, secret[i])
+		}
+	}
+	if len(want) == 0 {
+		return s
+	}
+	// flat is s without spacing; at says where each of its bytes came from.
+	flat, at := make([]byte, 0, len(s)), make([]int, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if !isSpacing(s[i]) {
+			flat, at = append(flat, s[i]), append(at, i)
+		}
+	}
+	var out strings.Builder
+	last, pos := 0, 0
+	for {
+		i := bytes.Index(flat[pos:], want)
+		if i < 0 {
+			break
+		}
+		start, end := pos+i, pos+i+len(want)
+		out.WriteString(s[last:at[start]])
+		out.WriteString(blanked)
+		last, pos = at[end-1]+1, end
+	}
+	out.WriteString(s[last:])
+	return out.String()
 }
 
 func clip(s string) string {

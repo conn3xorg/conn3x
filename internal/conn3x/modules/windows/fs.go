@@ -23,8 +23,9 @@ const MaxContent = 2 << 20
 const fileApplyTimeout = 5 * time.Minute
 
 var (
-	localPath  = regexp.MustCompile(`^[A-Za-z]:\\`)
-	deviceName = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$`)
+	// Older Windows also reads "CON .txt" and the superscript digits as devices.
+	deviceName = regexp.MustCompile(`(?i)^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])( *\..*)?$`)
+	shortName  = regexp.MustCompile(`^[^.]{1,7}~[0-9]+(\.[^.]{1,3})?$`)
 	principal  = regexp.MustCompile(`^[^\x00-\x1f\x7f"/\[\]:;|=,+*?<>]{1,256}$`)
 )
 
@@ -36,9 +37,6 @@ func CleanLocalPath(attr, p string) (string, error) {
 	p = strings.ReplaceAll(p, "/", `\`)
 	if err := ValidatePath(attr, p); err != nil {
 		return "", err
-	}
-	if !localPath.MatchString(p) {
-		return "", fmt.Errorf(`%s %q must be on a local drive, such as C:\app\config`, attr, p)
 	}
 	if len(p) > 259 {
 		return "", fmt.Errorf("%s is longer than 259 characters", attr)
@@ -61,6 +59,8 @@ func CleanLocalPath(attr, p string) (string, error) {
 			return "", fmt.Errorf("%s %q has a name ending in a dot or space, which Windows would drop", attr, p)
 		case deviceName.MatchString(c):
 			return "", fmt.Errorf("%s %q uses a device name, %s", attr, p, c)
+		case shortName.MatchString(c):
+			return "", fmt.Errorf("%s %q looks like a short name, %s, which is another name for a different path. Use the long name", attr, p, c)
 		}
 	}
 	return p, nil
@@ -148,13 +148,15 @@ type ACE struct {
 
 // PathState is what a host reports about a path. It holds a hash, never content.
 type PathState struct {
-	Kind      string            `json:"kind"` // missing, file, directory or link
-	LinkOnWay string            `json:"link_on_way"`
-	SHA256    string            `json:"sha256"` // lower-case hex, once ReadPath returns it
-	Protected bool              `json:"protected"`
-	Owner     string            `json:"owner"`
-	Entries   []ACE             `json:"entries"`
-	SIDs      map[string]string `json:"sids"`
+	Kind      string `json:"kind"` // missing, file, directory or link
+	LinkOnWay string `json:"link_on_way"`
+	SHA256    string `json:"sha256"` // lower-case hex, once ReadPath returns it
+	Protected bool   `json:"protected"`
+	Owner     string `json:"owner"`
+	// OwnerTrusted is whether the owner is SYSTEM, Administrators, TrustedInstaller or this login.
+	OwnerTrusted bool              `json:"owner_trusted"`
+	Entries      []ACE             `json:"entries"`
+	SIDs         map[string]string `json:"sids"`
 }
 
 // ReadPath reports on a path and turns the given principals into SIDs. It reads
@@ -276,8 +278,12 @@ func (s PathState) Matches(entries []Entry, exact bool, inherit *bool, owner str
 	return true, nil
 }
 
-// Exact is true for a file or folder whose rules are the whole list.
+// Exact is true for a file or folder whose rules are the whole list. An owner
+// can always change the rules, so one nobody trusts means they aren't.
 func Exact(s PathState, entries []Entry) (bool, error) {
+	if !s.OwnerTrusted {
+		return false, nil
+	}
 	f := false
 	return s.Matches(entries, true, &f, "")
 }

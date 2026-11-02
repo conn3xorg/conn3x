@@ -126,6 +126,10 @@ func TestWinPowershellValidate(t *testing.T) {
 		"posix":   {"script": cty.StringVal("1"), "creates": cty.StringVal("/etc/x")},
 		"timeout": {"script": cty.StringVal("1"), "timeout": cty.StringVal("soon")},
 		"both":    {"script": cty.StringVal("1"), "args": both, "args_wo": both},
+		"share":   {"script": cty.StringVal("1"), "creates": cty.StringVal(`\\server\share\x`)},
+		"device":  {"script": cty.StringVal("1"), "removes": cty.StringVal(`\\.\pipe\x`)},
+		// One unknown guard doesn't hide a bad one.
+		"unknown beside a share": {"script": cty.StringVal("1"), "creates": cty.UnknownVal(cty.String), "removes": cty.StringVal(`\\server\share\x`)},
 	} {
 		if !r.validate(objFor(r.schema(), bad)).HasErrors() {
 			t.Errorf("%s: accepted %v", name, bad)
@@ -143,5 +147,33 @@ func TestWindowsResourcesDontUseTheShellRunner(t *testing.T) {
 		if strings.Contains(string(b), banned) {
 			t.Errorf("windows_resources.go uses %s", banned)
 		}
+	}
+}
+
+// A path unknown at plan is checked before anything connects, at apply and at
+// refresh, so the host is never asked to contact a server. The address here
+// accepts nothing, so reaching it would fail differently.
+func TestWinGuardsCheckedBeforeConnecting(t *testing.T) {
+	share := cty.StringVal(`\\\\server\\share\\x`)
+	p := resourceTypes["conn3x_windows_powershell"]
+	state := objFor(p.schema(), map[string]cty.Value{"script": cty.StringVal("1"), "creates": share, "satisfied": cty.UnknownVal(cty.Bool)})
+	apply := p.apply(context.Background(), providers.ApplyResourceChangeRequest{PriorState: cty.NullVal(state.Type()), PlannedState: state, Config: state})
+	if !apply.Diagnostics.HasErrors() || !strings.Contains(apply.Diagnostics.Err().Error(), "local drive") {
+		t.Errorf("apply: %v", apply.Diagnostics.Err())
+	}
+	state = objFor(p.schema(), map[string]cty.Value{"script": cty.StringVal("1"), "removes": share})
+	read := p.read(context.Background(), providers.ReadResourceRequest{PriorState: state})
+	if !read.Diagnostics.HasErrors() || !strings.Contains(read.Diagnostics.Err().Error(), "local drive") {
+		t.Errorf("refresh: %v", read.Diagnostics.Err())
+	}
+	w := resourceTypes["conn3x_windows_wait_for"]
+	state = objFor(w.schema(), map[string]cty.Value{"path": share})
+	read = w.read(context.Background(), providers.ReadResourceRequest{PriorState: state})
+	if !read.Diagnostics.HasErrors() || !strings.Contains(read.Diagnostics.Err().Error(), "local drive") {
+		t.Errorf("wait_for refresh: %v", read.Diagnostics.Err())
+	}
+	apply = w.apply(context.Background(), providers.ApplyResourceChangeRequest{PriorState: cty.NullVal(state.Type()), PlannedState: state, Config: state})
+	if !apply.Diagnostics.HasErrors() || !strings.Contains(apply.Diagnostics.Err().Error(), "local drive") {
+		t.Errorf("wait_for apply: %v", apply.Diagnostics.Err())
 	}
 }

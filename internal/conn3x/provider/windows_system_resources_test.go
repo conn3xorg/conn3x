@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -110,5 +111,21 @@ func TestWinFeaturePlanKeepsRebootFlag(t *testing.T) {
 	again := f.plan(providers.PlanResourceChangeRequest{PriorState: prior, ProposedNewState: prior, Config: c}).PlannedState
 	if !again.GetAttr("reboot_required").RawEquals(cty.True) {
 		t.Errorf("reboot_required = %#v", again.GetAttr("reboot_required"))
+	}
+}
+
+// A secret under another key stops before anything connects, let alone writes.
+func TestWinRegistryApplyChecksTheKey(t *testing.T) {
+	t.Setenv(hmacKeyEnv, strings.Repeat("k", 32))
+	r := resourceTypes["conn3x_windows_registry_value"]
+	c := objFor(r.schema(), map[string]cty.Value{"key": cty.StringVal(`HKLM\SOFTWARE\App`), "name": cty.StringVal("t"), "type": cty.StringVal("string"), "data_wo": cty.StringVal("s3ntinel")})
+	p := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(c.Type()), ProposedNewState: c, Config: c}).PlannedState
+	vals := p.AsValueMap()
+	vals["revision"], vals["in_sync"] = cty.StringVal("r"), cty.True
+	p = cty.ObjectVal(vals)
+	t.Setenv(hmacKeyEnv, strings.Repeat("o", 32))
+	resp := r.apply(context.Background(), providers.ApplyResourceChangeRequest{PriorState: cty.NullVal(c.Type()), PlannedState: p, Config: c})
+	if !resp.Diagnostics.HasErrors() || !strings.Contains(resp.Diagnostics.Err().Error(), "hashed with key") {
+		t.Errorf("got %v", resp.Diagnostics.Err())
 	}
 }
