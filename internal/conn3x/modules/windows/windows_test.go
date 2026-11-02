@@ -1,0 +1,139 @@
+// Copyright (c) The Conn3x Authors
+// SPDX-License-Identifier: MPL-2.0
+
+package windows
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/opentofu/opentofu/internal/conn3x/modules/windows/ps"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+)
+
+// fake answers runs in order and records what each sent.
+type fake struct {
+	answers []map[string]any
+	sent    []map[string]any
+	err     error
+}
+
+func (f *fake) RunRaw(_ context.Context, _ string, stdin []byte) (ssh.Result, error) {
+	raw, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(string(stdin)))
+	var in map[string]any
+	_ = json.Unmarshal(raw, &in)
+	f.sent = append(f.sent, in)
+	if f.err != nil {
+		return ssh.Result{}, f.err
+	}
+	a := f.answers[0]
+	f.answers = f.answers[1:]
+	b, _ := json.Marshal(a)
+	return ssh.Result{Stdout: []byte("conn3x-result:" + base64.StdEncoding.EncodeToString(b) + "\r\n")}, nil
+}
+
+func TestGather(t *testing.T) {
+	value := map[string]any{
+		"version": "10.0.26100", "build": "26100", "product_type": 3, "arch": "AMD64", "cpus": 2, "memory_kb": 8 * 1024 * 1024,
+		"ipv4": "10.0.0.4", "edition": "ServerDatacenter", "installation_type": "Server", "hostname": "web1", "domain": "WORKGROUP",
+		"domain_role": 2, "powershell": "5.1.26100.1", "elevated": true,
+	}
+	f, err := Gather(context.Background(), &fake{answers: []map[string]any{{"ok": true, "value": value}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Arch != "x86_64" || f.Release != "2025" || f.MemoryMB != 8192 || f.Version != "10.0.26100" || !f.Elevated {
+		t.Errorf("got %+v", f)
+	}
+	value["product_type"] = 1
+	if _, err := Gather(context.Background(), &fake{answers: []map[string]any{{"ok": true, "value": value}}}); err == nil || !strings.Contains(err.Error(), "client") {
+		t.Errorf("client Windows: err = %v", err)
+	}
+}
+
+func TestValidatePath(t *testing.T) {
+	for _, ok := range []string{`C:\app`, `c:/app/x`, `\\server\share\x`, `C:\sp ace\[x]`} {
+		if err := ValidatePath("p", ok); err != nil {
+			t.Errorf("rejected %q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "app", `\app`, "/etc/passwd", `\\server`, "C:\\a\nb", "C:\\a\x00", `C:\a|b`, `C:\*`, `C:\a"b`} {
+		if ValidatePath("p", bad) == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestWaitForValidate(t *testing.T) {
+	for _, ok := range []WaitFor{{Path: `C:\x`}, {Service: "W3SVC"}, {Port: 9389}} {
+		if err := ok.Validate(); err != nil {
+			t.Errorf("rejected %+v: %v", ok, err)
+		}
+	}
+	for _, bad := range []WaitFor{{}, {Path: `C:\x`, Port: 1}, {Service: "a';b"}, {Service: "$(x)'"}, {Port: 70000}, {Path: "/x"}} {
+		if bad.Validate() == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
+}
+
+func TestSatisfiedUnless(t *testing.T) {
+	ctx := context.Background()
+	g := Guards{Unless: "Test-Path x"}
+	for name, tc := range map[string]struct {
+		answer map[string]any
+		want   bool
+	}{
+		"true":          {map[string]any{"ok": true, "value": true}, true},
+		"no output":     {map[string]any{"ok": true}, true},
+		"false":         {map[string]any{"ok": true, "value": false}, false},
+		"threw":         {map[string]any{"ok": false, "error": "nope"}, false},
+		"native failed": {map[string]any{"ok": true, "rc": 2}, false},
+	} {
+		got, err := Satisfied(ctx, &fake{answers: []map[string]any{tc.answer}}, g, nil)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %v, %v", name, got, err)
+		}
+	}
+	// A connection failure is not the check saying no.
+	if _, err := Satisfied(ctx, &fake{err: errors.New("connection lost")}, g, nil); err == nil {
+		t.Error("a failed run counted as the guard not holding")
+	}
+}
+
+func TestSatisfiedChecksPathsBeforeUnless(t *testing.T) {
+	f := &fake{answers: []map[string]any{{"ok": true, "value": false}}}
+	ok, err := Satisfied(context.Background(), f, Guards{Creates: `C:\x`, Unless: "should not run"}, nil)
+	if err != nil || ok || len(f.sent) != 1 {
+		t.Fatalf("ok %v, err %v, runs %d", ok, err, len(f.sent))
+	}
+	if got := f.sent[0]["args"].(map[string]any)["creates"]; got != `C:\x` {
+		t.Errorf("creates = %v", got)
+	}
+}
+
+func TestRunScriptBlanksSecrets(t *testing.T) {
+	f := &fake{answers: []map[string]any{{"ok": false, "error": "bad hunter2", "text": "said hunter2"}}}
+	out, err := RunScript(context.Background(), f, "x", nil, []string{"hunter2"}, time.Minute)
+	if err == nil || strings.Contains(err.Error(), "hunter2") || strings.Contains(out.Stdout, "hunter2") {
+		t.Errorf("out %+v, err %v", out, err)
+	}
+}
+
+func TestRunScriptFailsOnNativeExit(t *testing.T) {
+	f := &fake{answers: []map[string]any{{"ok": true, "rc": 3010, "text": "output"}}}
+	if _, err := RunScript(context.Background(), f, "x", nil, nil, time.Minute); err == nil || !strings.Contains(err.Error(), "3010") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestReadScriptsGoThroughRead(t *testing.T) {
+	if _, err := ps.Read(context.Background(), &fake{}, script("apply_reboot.ps1"), nil); err == nil {
+		t.Error("ps.Read ran an apply script")
+	}
+}
