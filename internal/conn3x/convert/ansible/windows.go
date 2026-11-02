@@ -294,3 +294,52 @@ func winFeatureModule(in *input) ([]step, string) {
 	}
 	return []step{feature}, ""
 }
+
+func winUserModule(in *input) ([]step, string) {
+	if in.state("present", "present", "absent") == "absent" {
+		return nil, "removes a user; Conn3x deletes a windows_user with on_remove = \"delete\" when its step goes, so there's nothing to convert this to yet"
+	}
+	if in.has("groups") {
+		return nil, "sets groups; give each group a windows_group step with this user in its members"
+	}
+	attrs := []attr{s("name", in.str("name"))}
+	attrs = in.optional(attrs, "full_name", "fullname")
+	attrs = in.optional(attrs, "description", "description")
+	if in.has("account_disabled") {
+		attrs = append(attrs, attr{key: "disabled", val: cty.BoolVal(in.bool("account_disabled", false))})
+	}
+	// Never read, so a password can't end up in the output.
+	in.ignore("update_password")
+	var notes []string
+	if in.has("password") {
+		in.ignore("password")
+		notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here.")
+	}
+	return one("windows_user", attrs, notes...)
+}
+
+func winGroupModule(in *input) ([]step, string) {
+	if in.state("present", "present", "absent") == "absent" {
+		return nil, "removes a group; Conn3x deletes a windows_group with on_remove = \"delete\" when its step goes, so there's nothing to convert this to yet"
+	}
+	return one("windows_group", in.optional([]attr{s("name", in.str("name"))}, "description", "description"))
+}
+
+func winGroupMembershipModule(in *input) ([]step, string) {
+	st := in.state("present", "present", "pure", "absent")
+	if st == "absent" {
+		return nil, "takes members out of a group; windows_group adds them, or keeps the complete list with authoritative = true"
+	}
+	var vals []cty.Value
+	for _, m := range in.list("members") {
+		vals = append(vals, cty.StringVal(m))
+	}
+	if len(vals) == 0 {
+		return nil, "lists no members"
+	}
+	attrs := []attr{s("name", in.str("name")), {key: "members", val: cty.ListVal(vals)}}
+	if st == "pure" {
+		attrs = append(attrs, attr{key: "authoritative", val: cty.True})
+	}
+	return one("windows_group", attrs)
+}

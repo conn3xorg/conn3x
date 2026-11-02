@@ -30,6 +30,11 @@ func TestWindowsMappings(t *testing.T) {
 		`win_powershell: {script: 'Write-Output 1', creates: 'C:\x'}`:                           {"windows_powershell {", "Review:"},
 		`win_wait_for: {port: 8080, timeout: 60}`:                                               {"windows_wait_for {", "port    = 8080", `timeout = "60s"`},
 		`ansible.windows.win_wait_for: {path: 'C:\ready'}`:                                      {"windows_wait_for {"},
+		`win_user: {name: appsvc, fullname: App, description: Runs it, account_disabled: no}`:   {"windows_user {", `full_name   = "App"`, "disabled    = false"},
+		`win_group: {name: AppAdmins, description: Admins}`:                                     {"windows_group {", `description = "Admins"`},
+		`win_group_membership: {name: Administrators, members: [appsvc, 'LAB\ops'], state: pure}`: {
+			"windows_group {", `members       = ["appsvc", "LAB\\ops"]`, "authoritative = true",
+		},
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 1 || len(res.Review) != 0 {
@@ -67,6 +72,10 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"state \"restarted\"":    `win_service: {name: x, state: restarted}`,
 		"sets username":          `win_service: {name: x, state: started, username: u}`,
 		"several features":       `win_feature: {name: [a, b]}`,
+		"removes a user":         `win_user: {name: a, state: absent}`,
+		"sets groups":            `win_user: {name: a, groups: [Users]}`,
+		"removes a group":        `win_group: {name: a, state: absent}`,
+		"takes members out":      `win_group_membership: {name: a, members: [b], state: absent}`,
 		"win_updates module":     `win_updates: {category_names: [SecurityUpdates]}`,
 		"win_chocolatey module":  `win_chocolatey: {name: git}`,
 		"win_dsc module":         `win_dsc: {resource_name: x}`,
@@ -75,5 +84,14 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
 			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
 		}
+	}
+}
+
+// A password is never copied: the step gets a note to wire one in instead.
+func TestWinUserPasswordNotCopied(t *testing.T) {
+	const secret = "s3ntinel-convert-pw"
+	res := convertString(t, "- hosts: all\n  tasks:\n    - win_user: {name: appsvc, password: "+secret+", update_password: on_create}\n")
+	if res.Converted != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "password_wo") {
+		t.Errorf("converted %d, review %+v:\n%s", res.Converted, res.Review, res.HCL)
 	}
 }

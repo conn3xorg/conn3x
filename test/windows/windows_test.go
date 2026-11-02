@@ -173,6 +173,10 @@ var hostile = map[string]string{
 	"pipe":           `a | b & c ; d > e`,
 	"wildcards":      `C:\*[a-z]?`,
 	"64 KiB":         strings.Repeat("x", 64<<10),
+	// Valid as a Windows account name, and code anywhere it isn't a literal.
+	"account name": `$(md c3mark)'`,
+	"account list": `a'; Add-LocalGroupMember Administrators -Member Guest; '`,
+	"sid":          `S-1-5-32-544'; $(md c3mark)`,
 }
 
 // Every value comes back byte for byte through the only way in.
@@ -471,6 +475,7 @@ func TestPlanAndApply(t *testing.T) {
     }`
 	}
 	marker, secretFile := remote+`\marker.txt`, remote+`\secret.txt`
+	acct, grp := accountName(t, c, "c3p"), accountName(t, c, "c3q")
 	write := func(extraData string) {
 		t.Helper()
 		src := fmt.Sprintf(`
@@ -522,9 +527,24 @@ circuit "win" {
     windows_wait_for {
       port = 22
     }
+  }
+  step "app_user" {
+    windows_user {
+      name        = %[9]q
+      description = "Conn3x test"
+      password_wo = var.secret
+      on_remove   = "delete"
+    }
+  }
+  step "app_group" {
+    windows_group {
+      name      = %[10]q
+      members   = [%[9]q]
+      on_remove = "delete"
+    }
   }%[8]s
 }
-`, extraData, host, user, key, hostKey, marker, secretFile, reboot)
+`, extraData, host, user, key, hostKey, marker, secretFile, reboot, acct, grp)
 		if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -593,6 +613,12 @@ circuit "win" {
 	if !strings.Contains(string(state), "hmac-sha256:") {
 		t.Error("state has no HMAC of the secret")
 	}
+	if !passwordWorks(t, c, acct, "s3ntinel-p1-value") {
+		t.Error("windows_user didn't set the password")
+	}
+	if g, err := windows.ReadGroup(context.Background(), c, windows.Group{Name: grp, Members: []string{acct}}); err != nil || len(g.Members) != 1 {
+		t.Errorf("group %+v, %v", g, err)
+	}
 	fam := strings.TrimSpace(must("output", "-raw", "family"))
 	if fam != "windows" {
 		t.Errorf("os_family = %q", fam)
@@ -616,6 +642,16 @@ circuit "win" {
 		t.Errorf("reapply didn't bring it back: %s", got)
 	}
 
+	// A user changed by hand shows as drift, and apply puts it back.
+	run(t, c, `param($A) Set-LocalUser -Name $A.n -Description 'changed by hand'`, map[string]any{"n": acct})
+	if out, code := tool("plan", "-no-color", "-input=false", "-detailed-exitcode"); code != 2 || !strings.Contains(out, "app_user") {
+		t.Errorf("plan after changing the user: exit %d\n%s", code, out)
+	}
+	must("apply", "-no-color", "-input=false", "-auto-approve")
+	if out, code := tool("plan", "-no-color", "-input=false", "-detailed-exitcode"); code != 0 {
+		t.Errorf("plan after putting the user back: exit %d\n%s", code, out)
+	}
+
 	if os.Getenv("CONN3X_WIN_REBOOT") != "" {
 		// A reboot Windows wants, which a failed run would have missed.
 		run(t, c, `New-Item -Force -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired' | Out-Null`, nil)
@@ -636,6 +672,35 @@ circuit "win" {
 		if out, code := tool("plan", "-no-color", "-input=false", "-detailed-exitcode"); code != 0 {
 			t.Errorf("plan after the reboot: exit %d\n%s", code, out)
 		}
+	}
+
+	// A new password, with Tofu's most detailed logging on: the plan shows a
+	// change, the log never shows the password, and the host has it. It goes
+	// in through the environment: Tofu's trace log prints its command line.
+	const next = "s3ntinel-p3-trace"
+	t.Setenv("TF_VAR_secret", next)
+	t.Setenv("TF_LOG", "trace")
+	out, code = tool("plan", "-no-color", "-input=false", "-detailed-exitcode")
+	if code != 2 || !strings.Contains(out, "password_hmac") {
+		t.Errorf("plan with a new password: exit %d", code)
+	}
+	trace := out + must("apply", "-no-color", "-input=false", "-auto-approve")
+	t.Setenv("TF_LOG", "")
+	if !strings.Contains(trace, "[TRACE]") {
+		t.Error("no trace logging, so this proves nothing")
+	}
+	if strings.Contains(trace, next) || strings.Contains(trace, b64(next)) {
+		t.Error("the password is in Tofu's trace log")
+	}
+	if state, _ := os.ReadFile(filepath.Join(dir, "terraform.tfstate")); strings.Contains(string(state), next) {
+		t.Error("the new password is in state")
+	}
+	c = connect(t) // the host may have rebooted since
+	if !passwordWorks(t, c, acct, next) {
+		t.Error("the new password wasn't set")
+	}
+	if out, code := tool("plan", "-no-color", "-input=false", "-detailed-exitcode"); code != 0 {
+		t.Errorf("plan with the same password: exit %d\n%s", code, out)
 	}
 }
 
@@ -1319,6 +1384,12 @@ func TestSystemReadsChangeNothing(t *testing.T) {
 		}
 		v := windows.RegistryValue{Key: `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, Name: "CurrentBuild", Type: "string"}
 		if _, err := windows.ReadRegistry(ctx, c, v, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := windows.ReadUser(ctx, c, "Guest"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := windows.ReadGroup(ctx, c, windows.Group{Name: "Administrators", Members: []string{"Guest", "c3-nobody"}}); err != nil {
 			t.Fatal(err)
 		}
 		// A key that doesn't exist must stay that way.

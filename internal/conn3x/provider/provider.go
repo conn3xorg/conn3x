@@ -74,10 +74,12 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_directory":      {winDirectorySchema, validateWinDirectory, planWinDirectory, readWinDirectory, applyWinDirectory, upgradeWith(winDirectorySchema)},
 	"conn3x_windows_feature":        {winFeatureSchema, validateWinFeature, planWinFeature, readWinFeature, applyWinFeature, upgradeWith(winFeatureSchema)},
 	"conn3x_windows_file":           {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
+	"conn3x_windows_group":          {winGroupSchema, validateWinGroup, planWinGroup, readWinGroup, applyWinGroup, upgradeWith(winGroupSchema)},
 	"conn3x_windows_powershell":     {winPowershellSchema, validateWinPowershell, planWinPowershell, readWinPowershell, applyWinPowershell, upgradeWith(winPowershellSchema)},
 	"conn3x_windows_registry_value": {winRegistrySchema, validateWinRegistry, planWinRegistry, readWinRegistry, applyWinRegistry, upgradeWith(winRegistrySchema)},
 	"conn3x_windows_reboot":         {winRebootSchema, validateReboot, planWinReboot, readWinReboot, applyWinReboot, upgradeWith(winRebootSchema)},
 	"conn3x_windows_service":        {winServiceSchema, validateWinService, planWinService, readWinService, applyWinService, upgradeWith(winServiceSchema)},
+	"conn3x_windows_user":           {winUserSchema, validateWinUser, planWinUser, readWinUser, applyWinUser, upgradeWith(winUserSchema)},
 	"conn3x_windows_wait_for":       {winWaitForSchema, validateWinWaitFor, planWinWaitFor, readWinWaitFor, applyWinWaitFor, upgradeWith(winWaitForSchema)},
 }
 
