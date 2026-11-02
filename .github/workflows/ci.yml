@@ -40,6 +40,27 @@ jobs:
       - name: Real-host test helpers
         run: go test ./test/droplet/...
 
+  # A plan must change nothing on a Windows host, and a value must never become
+  # code. The parser in pwsh checks that; the runner has pwsh preinstalled.
+  windows-script-rules:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scripts follow the rules
+        shell: bash
+        run: pwsh -NoProfile -File scripts/ps-rules.ps1 internal/conn3x/modules/windows/*.ps1
+      - name: Scripts that break a rule are caught
+        shell: bash
+        run: |
+          for f in internal/conn3x/modules/windows/testdata/bad/*.ps1; do
+            if pwsh -NoProfile -File scripts/ps-rules.ps1 "$f" >/dev/null; then
+              echo "$f passed, but it breaks a rule" >&2
+              exit 1
+            fi
+          done
+
   test:
     runs-on: ubuntu-24.04
     steps:

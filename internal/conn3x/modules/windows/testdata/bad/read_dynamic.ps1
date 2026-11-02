@@ -1,0 +1,2 @@
+param($A)
+& $A.command
