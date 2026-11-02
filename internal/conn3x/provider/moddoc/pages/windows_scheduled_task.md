@@ -38,11 +38,11 @@ step "report_upload" {
 <!-- reference -->
 ## How it works
 
-**Who it runs as.** `SYSTEM`, `LOCAL SERVICE` and `NETWORK SERVICE` need no password. Another account runs with `password_wo` when the task needs the network, or without one as S4U, which runs unattended but can't reach other machines. Accounts are compared by SID, so `svc` and `LAB\svc` don't drift.
+**Who it runs as.** `SYSTEM`, `LOCAL SERVICE` and `NETWORK SERVICE` need no password. Another account runs with `password_wo` when the task needs the network, or without one as S4U, which runs unattended but can't reach other machines. Accounts are compared by SID, so `svc` and `LAB\svc` don't drift. Windows refuses an S4U task for any account but the login Conn3x uses, as its SSH session holds no password to vouch for one: give that account `password_wo`.
 
 **Passwords.** `password_wo` goes to the host on stdin, never on a command line, and reaches Task Scheduler through a COM method rather than a cmdlet, so a policy that records cmdlet parameters never sees it. State keeps a keyed hash. Windows stores the password where nobody can read it back, so a password changed on the host doesn't show as drift; Conn3x registers the task again whenever the value you give changes.
 
-**Programs that run with high rights.** For a task as `SYSTEM`, `LOCAL SERVICE` or `NETWORK SERVICE`, or with `run_level = "highest"`, Conn3x checks on the host that only administrators can change the program, its folder, or any folder on the way, and that nobody else can add files next to it, where a planted DLL would load. It refuses otherwise. It can't see into `arguments`, so a script a program runs, such as `powershell.exe -File C:\scripts\job.ps1`, isn't checked: keep it in a folder only administrators can change.
+**What it runs.** Whoever can change the program a task runs can act as the task's user, and that's true at any run level: the built-in Administrator and the service accounts have full rights without `highest`. So for every task, Conn3x checks on the host that only administrators can change the program, its folder or any folder on the way, and that nobody else can add files next to it, where a planted DLL would load. It does the same for the working folder and for every full path in `arguments` that exists, such as the `job.bat` in `/c C:\scripts\job.bat`. It refuses a share in `arguments`, a script or library named there without a full local path, and one that doesn't exist yet. `execute` and `working_directory` can't use `%NAME%`: Task Scheduler expands it, so the path checked wouldn't be the path run. Install the program before the step that schedules it.
 
 **Arguments.** `arguments` are stored in the task, readable by administrators, and in state. Never pass a secret there.
 

@@ -39,13 +39,12 @@ func TestTaskValidate(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	for user, want := range map[string]string{"SYSTEM": "service", `NT AUTHORITY\Network Service`: "service", `LAB\svc`: "s4u"} {
-		if got := (Task{User: user}).LogonType(); got != want {
-			t.Errorf("%s: %s", user, got)
+	for _, p := range []string{`%SystemRoot%\System32\cmd.exe`, `C:\%USERNAME%\x.exe`} {
+		tk := baseTask()
+		tk.Execute = p
+		if tk.Validate() == nil {
+			t.Errorf("accepted %s", p)
 		}
-	}
-	if (Task{User: `LAB\svc`, HasPassword: true}).LogonType() != "password" {
-		t.Error("password logon")
 	}
 }
 
@@ -74,6 +73,7 @@ func TestTaskMatches(t *testing.T) {
 		"other user":    func(a *ActualTask) { a.UserSID = "S-1-5-21-1-500" },
 		"elevated":      func(a *ActualTask) { a.RunLevel = "Highest" },
 		"logon":         func(a *ActualTask) { a.Logon = "Password" },
+		"not SYSTEM":    func(a *ActualTask) { a.WantSID, a.UserSID = "S-1-5-21-1-1001", "S-1-5-21-1-1001" },
 		"trigger time":  func(a *ActualTask) { a.Triggers[0].Start = "2026-01-01T04:00:00" },
 		"interval":      func(a *ActualTask) { a.Triggers[0].Days = 2 },
 		"extra trigger": func(a *ActualTask) {

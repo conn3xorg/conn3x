@@ -28,7 +28,7 @@ func winTaskSchema() providers.Schema {
 			"execute":           {Type: cty.String, Required: true, Description: "Absolute path of the program to run, such as C:\\Windows\\System32\\cmd.exe."},
 			"arguments":         {Type: cty.String, Optional: true, Description: "Its arguments. They're in the task, readable by administrators, and in state: never secrets."},
 			"working_directory": {Type: cty.String, Optional: true, Description: "Folder it starts in."},
-			"user":              {Type: cty.String, Required: true, Description: "Account it runs as: SYSTEM, LOCAL SERVICE or NETWORK SERVICE with no password; another account with password_wo, or without one to run unattended with no network access (S4U)."},
+			"user":              {Type: cty.String, Required: true, Description: "Account it runs as: SYSTEM, LOCAL SERVICE or NETWORK SERVICE with no password; another account with password_wo; or the login Conn3x uses, without one, to run unattended with no network access (S4U)."},
 			"password_wo": {
 				Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
 				Description: "The user's password, for a task that needs network access. Kept out of plan and state: state records only password_hmac. A password changed on the host isn't detected.",

@@ -60,10 +60,9 @@ for ($i = 0; $i -lt 60; $i++) { if ([IO.File]::Exists($A.file)) { return 'ran' }
 func TestTaskAsSystem(t *testing.T) {
 	c := connect(t)
 	ctx := context.Background()
-	out := `C:\Windows\Temp\c3task-` + randHex(4) + ".txt"
-	t.Cleanup(func() {
-		_, _ = ps.User(context.Background(), c, `param($A) [IO.File]::Delete($A.f)`, map[string]any{"f": out}, time.Minute)
-	})
+	// Somewhere only administrators can change: once the task has run, its
+	// output exists, and paths in arguments that exist are checked.
+	out := tempDir(t, c) + `\c3task-` + randHex(4) + ".txt"
 	tk := newTask(t, c)
 	desc := `'; $(md c3mark) %PATH%`
 	tk.Description = &desc
@@ -177,11 +176,61 @@ $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Sec
 			t.Errorf("%s: registered anyway", name)
 		}
 	}
-	// An ordinary account with ordinary rights may run what it likes.
+	// Paths in arguments are checked like the program.
+	run(t, c, `param($A) foreach ($f in 'job.bat', 'x.dll') { [IO.File]::WriteAllText((Join-Path $A.open $f), 'rem') }`, map[string]any{"open": open})
+	for name, tc := range map[string]struct{ args, want string }{
+		"script in an open folder":  {`/c ` + open + `\job.bat`, "S-1-5-11 can"},
+		"quoted, with an option":    {`/c call "` + open + `\job.bat" --x`, "S-1-5-11 can"},
+		"rundll32 entry point":      {open + `\x.dll,Entry`, "S-1-5-11 can"},
+		"script with no full path":  {`/c job.bat`, "without a full local path"},
+		"script on a share":         {`-File \\server\share\x.ps1`, "share"},
+		"script that isn't there":   {`-File ` + locked + `\none.ps1`, "doesn't exist"},
+		"redirect into open folder": {`/c whoami >` + open + `\job.bat`, "S-1-5-11 can"},
+	} {
+		tk := newTask(t, c)
+		tk.Arguments = tc.args
+		err := windows.ApplyTask(ctx, c, tk, "")
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// Every task is checked, at any run level and for any account: the
+	// login's own limited task from the open folder is refused too.
 	tk := newTask(t, c)
 	tk.Execute, tk.User = open+`\prog.exe`, env(t, "CONN3X_WIN_USER")
+	if err := windows.ApplyTask(ctx, c, tk, ""); err == nil {
+		t.Error("a limited task from an open folder was registered")
+	}
+	// Plain arguments and a new output file are fine.
+	tk = newTask(t, c)
+	tk.Arguments = `/c echo "a b" > ` + tempDir(t, c) + `\out.txt`
 	if err := windows.ApplyTask(ctx, c, tk, ""); err != nil {
-		t.Errorf("limited S4U task: %v", err)
+		t.Errorf("ordinary arguments: %v", err)
+	}
+}
+
+// A user given as a SID, and a service account spelled another way, match
+// what Windows stores, with no drift.
+func TestTaskUserForms(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	// S4U for another account is refused by Windows from a key session, so
+	// this is the login itself, by SID.
+	login := env(t, "CONN3X_WIN_USER")
+	u, err := windows.ReadUser(ctx, c, login)
+	if err != nil || u.SID == "" {
+		t.Fatalf("%+v, %v", u, err)
+	}
+	for _, user := range []string{u.SID, `NT AUTHORITY\SYSTEM`, "S-1-5-18"} {
+		tk := newTask(t, c)
+		tk.User = user
+		if err := windows.ApplyTask(ctx, c, tk, ""); err != nil {
+			t.Fatalf("%s: %v", user, err)
+		}
+		a, err := windows.ReadTask(ctx, c, tk)
+		if err != nil || !tk.Matches(a) {
+			t.Errorf("%s: %+v, %v", user, a, err)
+		}
 	}
 }
 

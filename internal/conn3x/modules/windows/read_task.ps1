@@ -17,5 +17,9 @@ $out.actions = @($t.Actions | Where-Object { $_ } | ForEach-Object { @{ execute 
 $out.triggers = @($t.Triggers | Where-Object { $_ } | ForEach-Object { @{ kind = [string]$_.CimClass.CimClassName; start = [string]$_.StartBoundary; days = [int]$_.DaysInterval; enabled = [bool]$_.Enabled } })
 $out.logon = [string]$t.Principal.LogonType
 $out.run_level = [string]$t.Principal.RunLevel
-try { $out.user_sid = ([Security.Principal.NTAccount][string]$t.Principal.UserId).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $out.user_sid = '' }
+$u = [string]$t.Principal.UserId
+try {
+  if ($u -match '^S-1-[0-9-]+$') { $out.user_sid = ([Security.Principal.SecurityIdentifier]$u).Value }
+  else { $out.user_sid = ([Security.Principal.NTAccount]$u).Translate([Security.Principal.SecurityIdentifier]).Value }
+} catch { $out.user_sid = '' }
 $out

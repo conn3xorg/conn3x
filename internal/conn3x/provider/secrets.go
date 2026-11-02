@@ -159,7 +159,7 @@ func contentHMAC(key []byte, path, content string) string {
 // checkHMACKey reports when state was hashed with a different key, which
 // would otherwise look like every secret had drifted.
 func checkHMACKey(stored string, key []byte) error {
-	parts := strings.SplitN(stored, ":", 3)
+	parts := strings.SplitN(strings.TrimPrefix(stored, passwordTag), ":", 3)
 	if len(parts) != 3 || parts[0] != "hmac-sha256" {
 		return fmt.Errorf("content_hmac %q is not in the form hmac-sha256:<key id>:<mac>", stored)
 	}

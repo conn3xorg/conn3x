@@ -70,7 +70,7 @@ func TestWinTaskPlanPassword(t *testing.T) {
 func TestPasswordHMACIsStretched(t *testing.T) {
 	key := []byte(strings.Repeat("k", 32))
 	a, b := passwordHMAC(key, "id", "hunter2"), passwordHMAC(key, "id", "hunter2")
-	if a != b || !strings.HasPrefix(a, "hmac-sha256:") {
+	if a != b || !strings.HasPrefix(a, "argon2id-hmac-sha256:") || checkHMACKey(a, key) != nil {
 		t.Fatalf("%q, %q", a, b)
 	}
 	if a == winWoHMAC(key, "id", digest("hunter2")) || a == passwordHMAC(key, "other", "hunter2") {

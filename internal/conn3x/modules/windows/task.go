@@ -23,8 +23,8 @@ var (
 	taskTime = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$`)
 )
 
-// serviceAccounts run without a password; a task as one of them is a
-// service-account logon.
+// serviceAccounts run without a password. The host decides from the SID; this
+// is only for refusing a password early.
 var serviceAccounts = map[string]string{
 	"system": "S-1-5-18", "nt authority\\system": "S-1-5-18", "s-1-5-18": "S-1-5-18",
 	"local service": "S-1-5-19", "nt authority\\local service": "S-1-5-19", "s-1-5-19": "S-1-5-19",
@@ -54,15 +54,16 @@ type Task struct {
 	Enabled          bool
 }
 
-// LogonType is how the task logs on: service, password or s4u.
-func (t Task) LogonType() string {
+// logonFor is the logon Windows shows for the task, given the SID the host
+// resolved its user to: the account decides, not how it's spelled.
+func (t Task) logonFor(sid string) string {
 	switch {
 	case t.HasPassword:
-		return "password"
-	case serviceAccounts[strings.ToLower(t.User)] != "":
-		return "service"
+		return "Password"
+	case sid == "S-1-5-18" || sid == "S-1-5-19" || sid == "S-1-5-20":
+		return "ServiceAccount"
 	}
-	return "s4u"
+	return "S4U"
 }
 
 // Validate checks a task before anything reaches a host.
@@ -73,12 +74,16 @@ func (t Task) Validate() error {
 	if !taskFolder.MatchString(t.Path) {
 		return fmt.Errorf(`path %q must be a task folder such as \ or \Conn3x\, with the same characters as a name`, t.Path)
 	}
-	if err := ValidatePath("execute", t.Execute); err != nil {
-		return err
-	}
-	if t.WorkingDirectory != "" {
-		if err := ValidatePath("working_directory", t.WorkingDirectory); err != nil {
+	for attr, p := range map[string]string{"execute": t.Execute, "working_directory": t.WorkingDirectory} {
+		if p == "" && attr == "working_directory" {
+			continue
+		}
+		if err := ValidatePath(attr, p); err != nil {
 			return err
+		}
+		// Task Scheduler expands %NAME%, so the path checked wouldn't be the one run.
+		if strings.Contains(p, "%") {
+			return fmt.Errorf("%s %q must not contain %%: Task Scheduler expands environment variables, so write the path out", attr, p)
 		}
 	}
 	for attr, v := range map[string]string{"arguments": t.Arguments, "user": t.User} {
@@ -149,8 +154,6 @@ func ReadTask(ctx context.Context, r ps.Runner, t Task) (ActualTask, error) {
 	return a, nil
 }
 
-var logonNames = map[string]string{"password": "Password", "service": "ServiceAccount", "s4u": "S4U"}
-
 // Matches reports whether the host has the task as configured.
 func (t Task) Matches(a ActualTask) bool {
 	if !a.Exists || len(a.Actions) != 1 || len(a.Triggers) != len(t.Triggers) || a.Enabled != t.Enabled {
@@ -174,7 +177,7 @@ func (t Task) Matches(a ActualTask) bool {
 		}
 	}
 	level := map[bool]string{true: "Highest", false: "Limited"}[t.Highest]
-	return a.WantSID != "" && strings.EqualFold(a.UserSID, a.WantSID) && a.Logon == logonNames[t.LogonType()] && a.RunLevel == level
+	return a.WantSID != "" && strings.EqualFold(a.UserSID, a.WantSID) && a.Logon == t.logonFor(a.WantSID) && a.RunLevel == level
 }
 
 // ApplyTask creates or replaces a task. password is for a password logon; it
@@ -197,7 +200,7 @@ func ApplyTask(ctx context.Context, r ps.Runner, t Task, password string) error 
 	}
 	args := map[string]any{
 		"path": t.Path, "name": t.Name, "description": t.Description, "execute": t.Execute, "arguments": t.Arguments,
-		"working_directory": t.WorkingDirectory, "triggers": triggers, "user": t.User, "logon": t.LogonType(),
+		"working_directory": t.WorkingDirectory, "triggers": triggers, "user": t.User, "has_password": t.HasPassword,
 		"highest": t.Highest, "enabled": t.Enabled,
 	}
 	var secrets []string
