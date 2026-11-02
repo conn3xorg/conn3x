@@ -40,7 +40,7 @@ func script(name string) ps.Script {
 	if err != nil {
 		panic(err)
 	}
-	body := strings.Replace(string(b), "#include safepath\n", string(lib), 1)
+	body := strings.Replace(string(b), "#include safepath", string(lib), 1)
 	return ps.Script{Name: name, Body: body}
 }
 
