@@ -119,9 +119,7 @@ func ArgumentPaths(args string) ([]string, error) {
 	var paths []string
 	var field func(f string) error
 	field = func(f string) error {
-		if argURL.MatchString(f) {
-			return nil
-		}
+		// Split before matching URLs: cmd runs what follows an & in one.
 		for _, sub := range strings.FieldsFunc(f, func(r rune) bool { return strings.ContainsRune(argPunct, r) }) {
 			switch {
 			case argURL.MatchString(sub):
@@ -251,13 +249,19 @@ func (t Task) Validate() error {
 	if t.Description != nil && strings.ContainsFunc(*t.Description, func(r rune) bool { return r == 0 }) {
 		return errors.New("description must not contain NUL")
 	}
-	if _, err := ArgumentPaths(t.Arguments); err != nil {
+	paths, err := ArgumentPaths(t.Arguments)
+	if err != nil {
 		return err
 	}
 	for _, p := range t.DataPaths {
 		n := strings.ReplaceAll(p, "/", `\`)
-		if !argDrivePath.MatchString(p) || strings.Contains(n[2:], ":") || strings.ContainsAny(n, "%^!") || !cleanSegments(n) {
-			return fmt.Errorf("data_paths entry %q must be a plain full path on a drive, such as C:\\logs\\job.log", p)
+		// ASCII only: Go's case folding matches names NTFS keeps apart.
+		if !argDrivePath.MatchString(p) || strings.Contains(n[2:], ":") || strings.ContainsAny(n, "%^!") || !cleanSegments(n) || strings.ContainsFunc(n, func(r rune) bool { return r > 0x7e }) {
+			return fmt.Errorf("data_paths entry %q must be a plain full path on a drive in ASCII, such as C:\\logs\\job.log", p)
+		}
+		// Exactly once, so a typo shows and one use can't vouch for another.
+		if uses := len(slices.DeleteFunc(slices.Clone(paths), func(a string) bool { return !strings.EqualFold(n, a) })); uses != 1 {
+			return fmt.Errorf("data_paths entry %q must appear exactly once in arguments, not %d times", p, uses)
 		}
 	}
 	if IsInterpreter(t.Execute) && !t.AllowInterpreter {

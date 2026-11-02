@@ -41,7 +41,7 @@ func winTaskSchema() providers.Schema {
 			},
 			"data_paths": {
 				Type: cty.Set(cty.String), Optional: true,
-				Description: "Full paths in arguments that the program only reads data from or writes output to, such as a log file. These must match an argument exactly and skip the admin-only check, so anyone who can write there can change them. Never list a file or folder the program loads code or settings from, or runs.",
+				Description: "Full paths in arguments that the program only reads data from or writes output to, such as a log file. Each must appear exactly once in arguments, and skips the admin-only check, so anyone who can write there can change them. Never list a file or folder the program loads code or settings from, or runs.",
 			},
 			"enabled":   {Type: cty.Bool, Optional: true, Description: "Whether the task can run. Defaults to true."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) deletes the task when the step is removed or replaced, \"forget\" leaves it."},

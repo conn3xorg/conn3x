@@ -134,6 +134,7 @@ func TestArgumentPaths(t *testing.T) {
 		`"http://a C:\Users\Public\x"`:                   {`C:\Users\Public\x`},
 		`https://host/p;C:\Users\Public\x.exe`:           {`C:\Users\Public\x.exe`},
 		`https://example.com/a,b`:                        nil,
+		`https://host/x&C:/Users/Public/evil.bat`:        {`C:\Users\Public\evil.bat`},
 		`/log:C:\Logs\job.log /p:Config`:                 {`C:\Logs\job.log`},
 	} {
 		got, err := ArgumentPaths(args)
@@ -207,11 +208,16 @@ func TestTaskSplitData(t *testing.T) {
 	if strings.Join(data, "|") != `C:\logs\JOB.log|C:\Data\in.csv` || strings.Join(check, "|") != `C:\Logs\job.log.dll|C:\Logs` {
 		t.Errorf("check %q, data %q", check, data)
 	}
-	if err := (Task{Name: "t", Path: `\`, Execute: `C:\App\app.exe`, User: "SYSTEM", Enabled: true, DataPaths: []string{`C:\Logs\job.log`}}).Validate(); err != nil {
+	task = Task{Name: "t", Path: `\`, Execute: `C:\App\app.exe`, User: "SYSTEM", Enabled: true,
+		Arguments: `--log C:\Logs\job.log --twice C:\Logs\twice.log --again C:\Logs\twice.log --key C:\Logs\key.log`}
+	task.DataPaths = []string{`C:\Logs\job.log`}
+	if err := task.Validate(); err != nil {
 		t.Errorf("plain data path refused: %v", err)
 	}
-	for _, bad := range []string{`D:job.log`, `\\server\share\x.log`, `C:\PROGRA~1\x.log`, `C:\logs\x.log:s`, `logs\x.log`, `C:\%TEMP%\x.log`} {
-		if err := (Task{Name: "t", Path: `\`, Execute: `C:\App\app.exe`, User: "SYSTEM", Enabled: true, DataPaths: []string{bad}}).Validate(); err == nil {
+	for _, bad := range []string{`D:job.log`, `\\server\share\x.log`, `C:\PROGRA~1\x.log`, `C:\logs\x.log:s`, `logs\x.log`, `C:\%TEMP%\x.log`,
+		"C:\\Logs\\\u212aey.log", `C:\Logs\unused.log`, `C:\Logs\twice.log`} {
+		task.DataPaths = []string{bad}
+		if err := task.Validate(); err == nil {
 			t.Errorf("data_paths %s accepted", bad)
 		}
 	}
