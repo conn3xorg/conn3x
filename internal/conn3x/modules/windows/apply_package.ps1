@@ -21,11 +21,22 @@ function Save-Download([string]$url, [string]$file, [long]$max, [bool]$allowHttp
     if ($uri.Scheme -ne 'https' -and -not ($allowHttp -and $uri.Scheme -eq 'http')) {
       throw "the download went to a $($uri.Scheme) address, $($uri.Host); only https is allowed, or http with allow_http"
     }
-    $req = [Net.WebRequest]::Create($uri)
-    $req.AllowAutoRedirect = $false
-    try { $res = $req.GetResponse() } catch [Net.WebException] {
-      $res = $_.Exception.Response
-      if (-not $res) { throw }
+    # A connection dropped before any answer is tried again, twice; an answer,
+    # even an error, is final.
+    $res = $null
+    for ($try = 1; -not $res; $try++) {
+      $req = [Net.WebRequest]::Create($uri)
+      $req.AllowAutoRedirect = $false
+      $req.KeepAlive = $false
+      try { $res = $req.GetResponse() } catch {
+        # PowerShell wraps a method's exception, so look inside for the
+        # WebException: its response carries the HTTP status.
+        $we = $_.Exception
+        while ($we -and $we -isnot [Net.WebException]) { $we = $we.InnerException }
+        if ($we -and $we.Response) { $res = $we.Response }
+        elseif ($try -ge 3) { throw }
+        else { Start-Sleep -Seconds 2 }
+      }
     }
     $code = [int]$res.StatusCode
     if ($code -ge 300 -and $code -lt 400) {

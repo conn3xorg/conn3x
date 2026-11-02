@@ -252,6 +252,11 @@ func TestPackageFromURL(t *testing.T) {
 	if _, err := windows.ApplyPackage(ctx, c, p, 10*time.Minute); err == nil {
 		t.Error("a mismatched download installed")
 	}
+	// A missing file says so, with its HTTP status.
+	missing := windows.Package{ProductCode: sevenZipCode, URL: sevenZipURL + ".missing", SHA256: sevenZipSum}
+	if _, err := windows.ApplyPackage(ctx, c, missing, 10*time.Minute); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("missing file: %v", err)
+	}
 	// The 1.9 MiB package is over a 1 MiB cap, and stops there.
 	p.SHA256, p.MaxSizeMB = sevenZipSum, 1
 	if _, err := windows.ApplyPackage(ctx, c, p, 10*time.Minute); err == nil || !strings.Contains(err.Error(), "max_size_mb") {

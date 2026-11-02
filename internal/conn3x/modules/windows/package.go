@@ -47,6 +47,9 @@ const DefaultMaxSizeMB = 2048
 var refusedProperties = map[string]bool{
 	"TRANSFORMS": true, "PATCH": true, "MSIPATCHREMOVE": true, "REBOOT": true, "REMOVE": true,
 	"ACTION": true, "REINSTALL": true, "REINSTALLMODE": true,
+	// These point Windows Installer at another folder for cabinets and later
+	// repairs, which run as SYSTEM from files sha256 never saw.
+	"SOURCEDIR": true, "SOURCELIST": true,
 }
 
 // Validate checks a package before anything reaches a host.

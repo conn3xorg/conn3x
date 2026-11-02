@@ -40,6 +40,8 @@ func TestPackageValidate(t *testing.T) {
 		"http":        {ProductCode: code, URL: "http://e/a.msi", SHA256: goodSum},
 		"transform":   {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"TRANSFORMS": `C:\t.mst`}},
 		"force boot":  {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"REBOOT": "Force"}},
+		"source dir":  {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"SOURCEDIR": `C:\Users\Public`}},
+		"source list": {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"SOURCELIST": `C:\Users\Public`}},
 		"negative":    {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, MaxSizeMB: -1},
 	} {
 		if p.Validate() == nil {
