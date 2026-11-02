@@ -1,0 +1,79 @@
+// Copyright (c) The Conn3x Authors
+// SPDX-License-Identifier: MPL-2.0
+
+package ansible
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestWindowsMappings(t *testing.T) {
+	for task, wants := range map[string][]string{
+		`ansible.windows.win_file: {path: 'C:\app', state: directory}`: {"windows_directory {", `path = "C:\\app"`},
+		`win_copy: {dest: 'C:\app\x.txt', content: hello}`:             {"windows_file {", `path    = "C:\\app\\x.txt"`, `content = "hello"`},
+		`win_acl: {path: 'C:\app', user: 'BUILTIN\Users', rights: 'Read,Write', type: allow, state: present, inherit: 'ContainerInherit, ObjectInherit', propagation: None}`: {
+			"windows_acl {", "entry {", `principal   = "BUILTIN\\Users"`, `rights      = ["Read", "Write"]`, `inheritance = "container,object"`,
+		},
+		`win_acl: {path: 'C:\x', user: Guests, rights: Write, type: deny}`:                      {`type      = "deny"`},
+		`win_acl_inheritance: {path: 'C:\app', state: present}`:                                 {"windows_acl {", "inherit = true"},
+		`win_acl_inheritance: {path: 'C:\app', state: absent, reorganize: true}`:                {"inherit = false"},
+		`win_regedit: {path: 'HKLM:\SOFTWARE\App', name: Port, data: 8080, type: dword}`:        {"windows_registry_value {", `key  = "HKLM\\SOFTWARE\\App"`, `type = "dword"`, `data = "8080"`},
+		`win_regedit: {path: 'HKLM:\SOFTWARE\App', name: L, type: multistring, data: [a, b]}`:   {`type = "multi_string"`, `data = "a\nb"`},
+		`win_regedit: {path: 'HKLM:\SOFTWARE\App', name: E, type: expandstring, data: '%X%\y'}`: {`type = "expand_string"`},
+		`win_service: {name: W3SVC, start_mode: auto, state: started}`:                          {"windows_service {", `start_mode = "auto"`, `state      = "running"`},
+		`win_feature: {name: Web-Server, include_management_tools: true}`:                       {"windows_feature {", "include_management_tools = true"},
+		`win_feature: {name: FS-SMB1, state: absent}`:                                           {`state = "absent"`},
+		`win_feature: {name: Web-Server, restart: true}`:                                        {"windows_feature {", "windows_reboot {", "only_if_pending = true"},
+		`win_shell: {cmd: 'Get-Date > C:\x', creates: 'C:\x'}`:                                  {"windows_powershell {", "Review:", `creates = "C:\\x"`},
+		`win_command: {cmd: 'msiexec /i x', removes: 'C:\y'}`:                                   {"windows_powershell {", "Review:"},
+		`win_powershell: {script: 'Write-Output 1', creates: 'C:\x'}`:                           {"windows_powershell {", "Review:"},
+		`win_wait_for: {port: 8080, timeout: 60}`:                                               {"windows_wait_for {", "port    = 8080", `timeout = "60s"`},
+		`ansible.windows.win_wait_for: {path: 'C:\ready'}`:                                      {"windows_wait_for {"},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+			continue
+		}
+		for _, w := range wants {
+			if !strings.Contains(string(res.HCL), w) {
+				t.Errorf("%s: output lacks %q:\n%s", task, w, res.HCL)
+			}
+		}
+	}
+}
+
+func TestWindowsLeftForAPerson(t *testing.T) {
+	for reason, task := range map[string]string{
+		"runs on every play":     `win_shell: Restart-Computer`,
+		"creates is a glob":      `win_command: {cmd: x, creates: 'C:\*.done'}`,
+		"sets executable":        `win_shell: {cmd: x, creates: 'C:\x', executable: cmd}`,
+		"reboots on every play":  `win_reboot: {}`,
+		"removes a path":         `win_file: {path: 'C:\x', state: absent}`,
+		"only checks or touches": `win_file: {path: 'C:\x', state: touch}`,
+		"into a folder":          `win_copy: {src: a, dest: 'C:\dir\'}`,
+		"remote_src":             `win_copy: {src: 'C:\a', dest: 'C:\b', remote_src: true}`,
+		"force: no":              `win_copy: {dest: 'C:\b', content: x, force: no}`,
+		"Jinja template":         `win_template: {src: a.j2, dest: 'C:\b'}`,
+		"the right":              `win_acl: {path: 'C:\x', user: u, rights: 'Synchronize', type: allow}`,
+		"sets propagation":       `win_acl: {path: 'C:\x', user: u, rights: Read, type: allow, propagation: InheritOnly}`,
+		"state \"absent\"":       `win_acl: {path: 'C:\x', user: u, rights: Read, type: allow, state: absent}`,
+		"removes inherited":      `win_acl_inheritance: {path: 'C:\x', state: absent}`,
+		"isn't under HKLM":       `win_regedit: {path: 'HKCU:\Software\x', name: a, data: b}`,
+		"binary data":            `win_regedit: {path: 'HKLM:\x', name: a, data: 'hex:00', type: binary}`,
+		"isn't a decimal":        `win_regedit: {path: 'HKLM:\x', name: a, data: 0xff, type: dword}`,
+		"needs data":             `win_regedit: {path: 'HKLM:\x'}`,
+		"state \"restarted\"":    `win_service: {name: x, state: restarted}`,
+		"sets username":          `win_service: {name: x, state: started, username: u}`,
+		"several features":       `win_feature: {name: [a, b]}`,
+		"win_updates module":     `win_updates: {category_names: [SecurityUpdates]}`,
+		"win_chocolatey module":  `win_chocolatey: {name: git}`,
+		"win_dsc module":         `win_dsc: {resource_name: x}`,
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}

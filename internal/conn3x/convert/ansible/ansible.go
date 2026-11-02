@@ -460,6 +460,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				mb.SetAttributeValue(a.key, a.val)
 			}
 		}
+		for _, b := range s.blocks {
+			inner := mb.AppendNewBlock(b.name, nil).Body()
+			for _, a := range b.attrs {
+				inner.SetAttributeValue(a.key, a.val)
+			}
+		}
 		if len(notify) > 0 && i == len(steps)-1 {
 			sb.SetAttributeRaw("notify", rawTokens("["+strings.Join(notify, ", ")+"]"))
 		}

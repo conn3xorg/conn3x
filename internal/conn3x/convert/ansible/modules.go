@@ -33,6 +33,13 @@ type step struct {
 	attrs  []attr
 	notes  []string
 	suffix string // tells apart several steps from one task
+	blocks []stepBlock
+}
+
+// stepBlock is a block inside a step's module, such as a rule's entry.
+type stepBlock struct {
+	name  string
+	attrs []attr
 }
 
 type attr struct {
@@ -255,6 +262,20 @@ var modules = map[string]func(*input) ([]step, string){
 	"apt_repository":  aptRepositoryModule,
 	"yum_repository":  yumRepositoryModule,
 	"locale_gen":      localeGenModule,
+
+	"win_acl":             winACLModule,
+	"win_acl_inheritance": winACLInheritanceModule,
+	"win_command":         winCommandModule,
+	"win_copy":            winCopyModule,
+	"win_feature":         winFeatureModule,
+	"win_file":            winFileModule,
+	"win_powershell":      winPowershellModule,
+	"win_reboot":          winRebootModule,
+	"win_regedit":         winRegeditModule,
+	"win_service":         winServiceModule,
+	"win_shell":           winShellModule,
+	"win_template":        winTemplateModule,
+	"win_wait_for":        winWaitForModule,
 }
 
 func copyModule(in *input) ([]step, string) {
