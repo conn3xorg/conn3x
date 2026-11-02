@@ -1,11 +1,26 @@
 param($A)
 #include safepath
 
+# Assert-PlainPath refuses what GetFullPath lets through unchanged, as seen on
+# Server 2025: a short name such as PROGRA~1, and a name that starts or ends
+# in a space or ends in a dot. And it needs a fixed NTFS drive: a FAT stick or
+# a network drive has no access rules to check, or someone else's.
+function Assert-PlainPath([string]$p) {
+  Assert-FullName $p
+  foreach ($seg in $p.Substring(3).Split('\')) {
+    if ($seg -and ($seg.EndsWith(' ') -or $seg.EndsWith('.') -or $seg.StartsWith(' ') -or $seg -match '^[^.]{1,7}~[0-9]+(\.[^.]{1,3})?$')) {
+      throw "$p has a short name, or a name that starts or ends in a space or ends in a dot; write the full, plain path"
+    }
+  }
+  $drive = New-Object IO.DriveInfo([IO.Path]::GetPathRoot($p))
+  if ($drive.DriveType -ne 'Fixed' -or $drive.DriveFormat -ne 'NTFS') { throw "$p isn't on a fixed NTFS drive, so Conn3x can't check who can change it" }
+}
+
 # A task runs whatever sits at its path as its user. So only administrators may
 # change that program or any folder on the way, and in its own folder nobody
 # else may even add a file: a DLL dropped next to a program loads into it.
 function Assert-AdminOnly([string]$p, [switch]$Folder) {
-  Assert-FullName $p
+  Assert-PlainPath $p
   $dir = if ($Folder) { $p.TrimEnd('\') } else { [IO.Path]::GetDirectoryName($p) }
   Lock-Folders $dir -Strict
   # FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY and GENERIC_WRITE, as well as swapping.
@@ -38,7 +53,7 @@ function Assert-AdminOnly([string]$p, [switch]$Folder) {
 # judged by the deepest folder on its way that does: whoever can add files
 # there can put something at that path later.
 function Assert-Path([string]$p) {
-  Assert-FullName $p
+  Assert-PlainPath $p
   if ([IO.Path]::GetPathRoot($p) -eq $p) { throw "the arguments name the drive $p itself" }
   if ([IO.File]::Exists($p)) { Assert-AdminOnly $p; return }
   if ([IO.Directory]::Exists($p)) { Assert-AdminOnly $p -Folder; return }
@@ -54,6 +69,15 @@ function Assert-Path([string]$p) {
 # run level: the built-in Administrator and service accounts get full rights
 # without one. So every task is checked.
 Assert-AdminOnly ([string]$A.execute)
+# A renamed copy of an interpreter still knows its own name.
+if (-not $A.allow_interpreter) {
+  $own = ([string](Get-Item -LiteralPath ([string]$A.execute)).VersionInfo.OriginalFilename).ToLowerInvariant()
+  # System32's own programs give it with .MUI on the end, as in Cmd.Exe.MUI.
+  $own = $own -replace '\.mui$', ''
+  if ($own -and ($own -in @($A.interpreters) -or ($own.StartsWith('python') -and $own.EndsWith('.exe')))) {
+    throw "$($A.execute) is $own, which runs code from its arguments: set allow_interpreter = true if every script it runs is admin-only"
+  }
+}
 if ($A.working_directory) { Assert-AdminOnly ([string]$A.working_directory) -Folder }
 # Every full path in the arguments, as Go found them; Go refused anything it
 # couldn't read as one.

@@ -192,8 +192,14 @@ $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Sec
 		"forward slashes":        {`/c ` + strings.ReplaceAll(open, `\`, "/") + `/job.bat`, "S-1-5-11 can"},
 		"environment variable":   {`/c %PUBLIC%\job`, "must not contain %"},
 		"caret":                  {`/c job.b^at`, "must not contain %"},
-		"relative from System32": {`/c ..\..\Users\Public\job`, "isn't a full local one"},
-		"public folder, missing": {`/c C:\Users\Public\c3-` + randHex(4), "can"},
+		"relative from System32": {`/c ..\..\Users\Public\job`, "isn't a switch"},
+		// The third review's cases.
+		"rooted forward slash":     {`/Users/Public/evil.dll,Entry`, "isn't a switch"},
+		"file URL":                 {`file:///C:/Users/Public/x.ps1`, "isn't a switch"},
+		"drive-relative":           {`D:evil.dll,Entry`, "isn't a switch"},
+		"second path in one quote": {`"C:\Windows\System32\cmd.exe /c \Users\Public\job.bat"`, "isn't a switch"},
+		"not a fixed NTFS drive":   {`--config Z:\c3\x.json`, "fixed NTFS"},
+		"public folder, missing":   {`/c C:\Users\Public\c3-` + randHex(4), "can"},
 	} {
 		tk := newTask(t, c)
 		tk.Arguments = tc.args
@@ -201,6 +207,18 @@ $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Sec
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	// A renamed interpreter is still one, by the name Windows records in it.
+	renamed := locked + `\tool.exe`
+	run(t, c, `param($A) [IO.File]::Copy('C:\Windows\System32\cmd.exe', $A.f)`, map[string]any{"f": renamed})
+	tkR := newTask(t, c)
+	tkR.Execute, tkR.AllowInterpreter = renamed, false
+	if err := windows.ApplyTask(ctx, c, tkR, ""); err == nil || !strings.Contains(err.Error(), "cmd.exe") {
+		t.Errorf("renamed cmd.exe: %v", err)
+	}
+	tkR.AllowInterpreter = true
+	if err := windows.ApplyTask(ctx, c, tkR, ""); err != nil {
+		t.Errorf("renamed cmd.exe with allow_interpreter: %v", err)
 	}
 	// A script that doesn't exist yet, in a folder only administrators can
 	// change, is fine: nobody else can put it there.
@@ -469,5 +487,29 @@ circuit "win" {
 	apply()
 	if a, _ := windows.ReadTask(ctx, c, tk); a.Exists {
 		t.Error("removing the step left the task")
+	}
+}
+
+// What GetFullPath does with a short name and with a folder name ending in a
+// space or a dot. On Server 2025 it leaves PROGRA~1 as it is and keeps the
+// space, trimming only the dot, so the host refuses both forms itself rather
+// than trusting a full-name comparison.
+func TestPathForms(t *testing.T) {
+	c := connect(t)
+	res := run(t, c, `$short = (New-Object -ComObject Scripting.FileSystemObject).GetFolder('C:\Program Files').ShortPath + '\x'
+"short=$short full=$([IO.Path]::GetFullPath($short))"
+"space=$([IO.Path]::GetFullPath('C:\Windows \System32\cmd.exe'))"
+"dot=$([IO.Path]::GetFullPath('C:\Windows.\System32\cmd.exe'))"`, nil)
+	t.Log("\n" + res.Text)
+	// Whatever GetFullPath does, these never reach a task.
+	for _, args := range []string{`"C:\Windows \System32\cmd.exe"`, `C:\Windows.\System32\cmd.exe`, `C:\PROGRA~1\x.exe`} {
+		if _, err := windows.ArgumentPaths(args); err == nil {
+			t.Errorf("accepted %s", args)
+		}
+	}
+	tk := newTask(t, c)
+	tk.Execute = `C:\PROGRA~1\Windows NT\Accessories\wordpad.exe`
+	if err := windows.ApplyTask(context.Background(), c, tk, ""); err == nil || !strings.Contains(err.Error(), "short name") {
+		t.Errorf("short-name program: %v", err)
 	}
 }

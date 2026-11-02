@@ -113,35 +113,56 @@ func TestApplyTaskPassword(t *testing.T) {
 	}
 }
 
-// Every way the review found past a check of the arguments, and a few
-// ordinary lines that must still pass.
+// Ordinary arguments pass, and give the paths for the host to check.
 func TestArgumentPaths(t *testing.T) {
 	for args, want := range map[string][]string{
-		`-Command "& C:\Users\Public\x.ps1; whoami"`: {`C:\Users\Public\x.ps1`},
-		`-Command "& 'C:\Users\Public\x.ps1'"`:       {`C:\Users\Public\x.ps1`},
-		`/c C:\Users\Public\job`:                     {`C:\Users\Public\job`},
-		`C:\Users\Public\evil,Entry`:                 {`C:\Users\Public\evil`},
-		`/c C:/Users/Public/job`:                     {`C:\Users\Public\job`},
-		`/c "C:\Program Files\App\run.bat" --fast`:   {`C:\Program Files\App\run.bat`},
-		`-File:C:\scripts\job.ps1`:                   {`C:\scripts\job.ps1`},
-		`/c whoami >C:\out\who.txt`:                  {`C:\out\who.txt`},
-		`/c echo hi`:                                 nil,
-		`--url https://example.com/a/b /p:Config`:    nil,
+		`--config C:\ProgramData\App\cfg.json`: {`C:\ProgramData\App\cfg.json`},
+		`-v`:                                   nil,
+		`/quiet`:                               nil,
+		`--port=8080`:                          nil,
+		`https://example.com/x`:                nil,
+		`--url=https://example.com/a?b=1 /p:Config`:      nil,
+		`--out=C:\out\x.log`:                             {`C:\out\x.log`},
+		`/c echo hi`:                                     nil,
+		`-Command "& C:\Users\Public\x.ps1; whoami"`:     {`C:\Users\Public\x.ps1`},
+		`-Command "& 'C:\Users\Public\x.ps1'"`:           {`C:\Users\Public\x.ps1`},
+		`/c C:\Users\Public\job`:                         {`C:\Users\Public\job`},
+		`C:\Users\Public\evil,Entry`:                     {`C:\Users\Public\evil`},
+		`/c C:/Users/Public/job`:                         {`C:\Users\Public\job`},
+		`/c "C:\Program Files (x86)\App\run.bat" --fast`: {`C:\Program Files (x86)\App\run.bat`},
+		`/c whoami >C:\out\who.txt`:                      {`C:\out\who.txt`},
+		`"http://a C:\Users\Public\x"`:                   {`C:\Users\Public\x`},
 	} {
 		got, err := ArgumentPaths(args)
 		if err != nil || strings.Join(got, "|") != strings.Join(want, "|") {
 			t.Errorf("%s: %q, %v", args, got, err)
 		}
 	}
+}
+
+// Every way past the check that reviews found: each is refused outright.
+func TestArgumentPathsRefused(t *testing.T) {
 	for name, args := range map[string]string{
-		"percent":        `/c %PUBLIC%\job`,
-		"caret":          `/c job.b^at`,
-		"bang":           `/c !x!`,
-		"relative":       `/c ..\..\Users\Public\job`,
-		"relative slash": `/c Public/job`,
-		"share":          `-File \\server\share\x.ps1`,
-		"forward share":  `-File //server/share/x.ps1`,
-		"device":         `\\?\C:\Users\Public\x.dll,Entry`,
+		"percent":                     `/c %PUBLIC%\job`,
+		"caret":                       `/c job.b^at`,
+		"bang":                        `/c !x!`,
+		"relative":                    `/c ..\..\Users\Public\job`,
+		"relative slash":              `/c Public/job`,
+		"rooted backslash":            `/c \Users\Public\job.bat`,
+		"rooted forward slash":        `/Users/Public/evil.dll,Entry`,
+		"share":                       `-File \\server\share\x.ps1`,
+		"forward share":               `-File //server/share/x.ps1`,
+		"device":                      `\\?\C:\Users\Public\x.dll,Entry`,
+		"file URL":                    `file:///C:/Users/Public/x.ps1`,
+		"other scheme":                `ftp://host/x.ps1`,
+		"drive-relative":              `D:evil.dll,Entry`,
+		"colon switch with a path":    `-File:C:\Users\Public\x.ps1`,
+		"second path in one quote":    `"C:\Windows\System32\cmd.exe /c \Users\Public\job.bat"`,
+		"shell metas in a quote":      `"C:\Windows\System32\x &\Users\Public\evil.bat"`,
+		"short name":                  `C:\PROGRA~1\App\x.exe`,
+		"folder ending in a dot":      `C:\Windows.\System32\x.dll`,
+		"quoted folder ending space":  `"C:\Windows \System32\x.dll"`,
+		"switch value that's a share": `--config=\\server\share\x`,
 	} {
 		if _, err := ArgumentPaths(args); err == nil {
 			t.Errorf("%s: accepted %s", name, args)
@@ -151,7 +172,8 @@ func TestArgumentPaths(t *testing.T) {
 
 func TestInterpretersNeedOptIn(t *testing.T) {
 	for _, exe := range []string{`C:\Windows\System32\cmd.exe`, `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, `C:\Windows\System32\RUNDLL32.EXE`,
-		`C:\Windows\System32\mshta.exe`, `C:\Python312\python.exe`, `C:\Python312\pythonw3.12.exe`} {
+		`C:\Windows\System32\mshta.exe`, `C:\Python312\python.exe`, `C:\Python312\pythonw3.12.exe`, `C:\Windows\explorer.exe`,
+		`C:\Windows\System32\pcalua.exe`, `C:\Windows\System32\msdt.exe`, `C:\Program Files\Git\cmd\git.exe`, `C:\Program Files\dotnet\dotnet.exe`} {
 		tk := baseTask()
 		tk.Execute, tk.AllowInterpreter = exe, false
 		if err := tk.Validate(); err == nil || !strings.Contains(err.Error(), "allow_interpreter") {
@@ -162,5 +184,9 @@ func TestInterpretersNeedOptIn(t *testing.T) {
 	tk.Execute, tk.AllowInterpreter, tk.Arguments = `C:\Program Files\App\app.exe`, false, "--quiet"
 	if err := tk.Validate(); err != nil {
 		t.Errorf("a plain program: %v", err)
+	}
+	tk.Execute = `C:\PROGRA~1\App\app.exe`
+	if tk.Validate() == nil {
+		t.Error("a short name in execute was accepted")
 	}
 }

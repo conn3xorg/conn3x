@@ -68,40 +68,96 @@ func (t Task) logonFor(sid string) string {
 }
 
 var (
-	argToken  = regexp.MustCompile(`"([^"]*)"|'([^']*)'|(\S+)`)
-	pathStart = regexp.MustCompile(`[A-Za-z]:[\\/]|\\\\|//`)
-	urlStart  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+	argToken = regexp.MustCompile(`"([^"]*)"|'([^']*)'|(\S+)`)
+	// The four kinds of field arguments may hold. Nothing else passes.
+	argSwitch    = regexp.MustCompile(`^--?[A-Za-z0-9?][A-Za-z0-9_.?-]*(?:=(.*))?$`)
+	argSlash     = regexp.MustCompile(`^/[A-Za-z0-9?][^/\\]*$`)
+	argURL       = regexp.MustCompile(`^https?://[^\s"'<>|^]+$`)
+	argDrivePath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+	// A quoted path taken whole, spaces and all, may hold none of the
+	// characters a shell acts on.
+	quotedPath = regexp.MustCompile(`^[A-Za-z]:\\[^;&|<>,"'%^!:/*?]*$`)
 )
 
-// ArgumentPaths finds every path in a task's arguments, for the host to check
-// like the program: whatever the task runs, it may run from there. It refuses
-// what it can't read as a full local path, rather than guess, and it never
-// trusts a file extension, since cmd.exe tries several and rundll32 needs none.
+// argPunct separates fields that sit together without spaces, such as
+// rundll32's x.dll,Entry or a redirection >C:\out.txt.
+const argPunct = ";&|<>,\"'()@"
+
+// cleanSegments reports whether a path's folders and file name are plain:
+// none empty mid-path, and none ending in a space or a dot, which Windows
+// drops, so the name checked wouldn't be the one used.
+func cleanSegments(p string) bool {
+	parts := strings.Split(p[3:], `\`)
+	for i, seg := range parts {
+		if seg == "" {
+			if i == len(parts)-1 {
+				continue
+			}
+			return false
+		}
+		if strings.HasSuffix(seg, " ") || strings.HasSuffix(seg, ".") || strings.HasPrefix(seg, " ") || shortName.MatchString(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// ArgumentPaths reads a task's arguments against an allowlist and returns
+// every path in them, for the host to check like the program. Each field
+// must be a switch (-x, --x, -x=value, /x), a plain word with no \, / or :,
+// an http or https URL, or a full path on a drive. Anything else is
+// refused rather than guessed at: Windows reads more forms as paths than
+// any scan for paths can list.
 func ArgumentPaths(args string) ([]string, error) {
 	// cmd.exe and Task Scheduler expand these after Conn3x has looked.
 	if strings.ContainsAny(args, "%^!") {
 		return nil, errors.New("arguments must not contain %, ^ or !: they're expanded after Conn3x checks, so write the value out")
 	}
 	var paths []string
-	for _, m := range argToken.FindAllStringSubmatch(args, -1) {
-		// A quoted string stays whole, so a quoted path with spaces is one path.
-		tok := m[1] + m[2] + m[3]
-		for _, piece := range strings.FieldsFunc(tok, func(r rune) bool { return strings.ContainsRune(";&()|,=@<>'\"", r) }) {
-			piece = strings.TrimSpace(piece)
-			if piece == "" || urlStart.MatchString(piece) {
-				continue
-			}
-			rest := piece
-			if at := pathStart.FindStringIndex(piece); at != nil {
-				p := strings.ReplaceAll(piece[at[0]:], "/", `\`)
-				if strings.HasPrefix(p, `\\`) {
-					return nil, fmt.Errorf("arguments name %s, a share or device path, which Conn3x can't check", p)
+	var field func(f string) error
+	field = func(f string) error {
+		if argURL.MatchString(f) {
+			return nil
+		}
+		for _, sub := range strings.FieldsFunc(f, func(r rune) bool { return strings.ContainsRune(argPunct, r) }) {
+			switch {
+			case argURL.MatchString(sub):
+			case argSwitch.MatchString(sub):
+				if m := argSwitch.FindStringSubmatch(sub); m[1] != "" {
+					if err := field(m[1]); err != nil {
+						return err
+					}
+				}
+			case argSlash.MatchString(sub):
+			case !strings.ContainsAny(sub, `\/:`):
+			case argDrivePath.MatchString(sub):
+				p := strings.ReplaceAll(sub, "/", `\`)
+				if strings.Contains(p[2:], ":") || !cleanSegments(p) {
+					return fmt.Errorf("arguments name %s, which isn't a plain full path: no short names, and no folder ending in a space or a dot", sub)
 				}
 				paths = append(paths, p)
-				rest = piece[:at[0]]
+			default:
+				return fmt.Errorf("arguments hold %s, which isn't a switch, a plain word, an http or https URL or a full path on a drive, such as C:\\scripts\\job.bat", sub)
 			}
-			if strings.Contains(rest, `\`) || strings.Index(rest, "/") > 0 {
-				return nil, fmt.Errorf("arguments name %s, a path that isn't a full local one; give the full path, such as C:\\scripts\\job.bat", piece)
+		}
+		return nil
+	}
+	for _, m := range argToken.FindAllStringSubmatch(args, -1) {
+		if m[3] != "" {
+			if err := field(m[3]); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		// A quoted string: one path with spaces in it, or else fields.
+		q := strings.TrimSpace(m[1] + m[2])
+		if quotedPath.MatchString(q) && cleanSegments(q) {
+			paths = append(paths, q)
+			continue
+		}
+		for _, f := range strings.Fields(q) {
+			if err := field(f); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -117,6 +173,19 @@ var interpreters = map[string]bool{
 	"node.exe": true, "java.exe": true, "javaw.exe": true, "msbuild.exe": true, "installutil.exe": true, "regasm.exe": true,
 	"regsvcs.exe": true, "msiexec.exe": true, "bash.exe": true, "sh.exe": true, "wsl.exe": true, "forfiles.exe": true,
 	"wmic.exe": true, "cmstp.exe": true, "msxsl.exe": true, "hh.exe": true, "conhost.exe": true, "schtasks.exe": true,
+	"explorer.exe": true, "pcalua.exe": true, "syncappvpublishingserver.exe": true, "scriptrunner.exe": true, "msdt.exe": true,
+	"ssh.exe": true, "php.exe": true, "rscript.exe": true, "dotnet.exe": true, "csc.exe": true, "vbc.exe": true,
+	"odbcconf.exe": true, "runas.exe": true, "git.exe": true,
+}
+
+// Interpreters is the list, for the host to match against a program's own
+// name for itself, which a renamed copy keeps.
+func Interpreters() []string {
+	out := make([]string, 0, len(interpreters))
+	for k := range interpreters {
+		out = append(out, k)
+	}
+	return out
 }
 
 // IsInterpreter reports whether a program runs code from its arguments.
@@ -139,6 +208,12 @@ func (t Task) Validate() error {
 		}
 		if err := ValidatePath(attr, p); err != nil {
 			return err
+		}
+		// A short name such as PROGRA~1 points wherever Windows decides now.
+		for _, seg := range strings.Split(p, `\`) {
+			if shortName.MatchString(seg) {
+				return fmt.Errorf("%s %q uses the short name %s; write the full name", attr, p, seg)
+			}
 		}
 		// Task Scheduler expands %NAME%, so the path checked wouldn't be the one run.
 		if strings.Contains(p, "%") {
@@ -265,7 +340,7 @@ func ApplyTask(ctx context.Context, r ps.Runner, t Task, password string) error 
 	}
 	paths, _ := ArgumentPaths(t.Arguments)
 	args := map[string]any{
-		"check_paths": paths,
+		"check_paths": paths, "allow_interpreter": t.AllowInterpreter, "interpreters": Interpreters(),
 		"path": t.Path, "name": t.Name, "description": t.Description, "execute": t.Execute, "arguments": t.Arguments,
 		"working_directory": t.WorkingDirectory, "triggers": triggers, "user": t.User, "has_password": t.HasPassword,
 		"highest": t.Highest, "enabled": t.Enabled,
