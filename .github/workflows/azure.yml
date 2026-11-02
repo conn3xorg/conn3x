@@ -40,5 +40,5 @@ jobs:
         run: go build -o conn3x ./cmd/conn3x
       - name: One plan for a Windows VM and its configuration
         env:
-          CONN3X_BIN: ./conn3x
+          CONN3X_BIN: ${{ github.workspace }}/conn3x
         run: go test -tags azure -count=1 -timeout 70m -v -run '^TestExample$' ./test/azure/
