@@ -36,7 +36,9 @@ func (me *LogRoundTripper) RoundTrip(request *http.Request) (response *http.Resp
 
 	var start = time.Now()
 
-	defer func() { me.log(inBytes, outBytes, errRet, start) }()
+	// CONN3X: this transport wraps the STS client, and an AssumeRole response
+	// body holds temporary credentials, so never write it to the debug log.
+	defer func() { me.log(inBytes, nil, errRet, start) }()
 
 	bodyReader, errRet := request.GetBody()
 	if errRet != nil {
