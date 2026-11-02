@@ -5,6 +5,7 @@ package ansible
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -342,4 +343,59 @@ func winGroupMembershipModule(in *input) ([]step, string) {
 		attrs = append(attrs, attr{key: "authoritative", val: cty.True})
 	}
 	return one("windows_group", attrs)
+}
+
+var firewallRuleID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,127}$`)
+
+func winFirewallRuleModule(in *input) ([]step, string) {
+	if in.state("present", "present", "absent") == "absent" {
+		return nil, "removes a rule; Conn3x deletes a windows_firewall_rule when its step goes, so there's nothing to convert this to yet"
+	}
+	// Ansible finds a rule by its display name, Conn3x by its ID.
+	name := in.str("name")
+	if !firewallRuleID.MatchString(name) {
+		return nil, "has a name with characters a windows_firewall_rule name can't take; it allows letters, digits, spaces and . _ ( ) -"
+	}
+	attrs := []attr{s("name", name)}
+	if in.has("direction") {
+		switch d := strings.ToLower(in.str("direction")); d {
+		case "in":
+		case "out":
+			attrs = append(attrs, s("direction", "outbound"))
+		default:
+			return nil, fmt.Sprintf("has the direction %q", d)
+		}
+	}
+	if in.has("action") {
+		attrs = append(attrs, s("action", strings.ToLower(in.str("action"))))
+	}
+	if p := strings.ToLower(in.str("protocol")); p != "" && p != "any" {
+		attrs = append(attrs, s("protocol", p))
+	}
+	if ports := in.list("localport"); len(ports) > 0 && !strings.EqualFold(ports[0], "any") {
+		attrs = append(attrs, attr{key: "local_ports", val: strList(ports)})
+	}
+	if ips := in.list("remoteip"); len(ips) > 0 && !strings.EqualFold(ips[0], "any") {
+		attrs = append(attrs, attr{key: "remote_addresses", val: strList(ips)})
+	}
+	if profiles := in.list("profiles"); len(profiles) > 0 && !strings.EqualFold(profiles[0], "any") {
+		var lower []string
+		for _, p := range profiles {
+			lower = append(lower, strings.ToLower(p))
+		}
+		attrs = append(attrs, attr{key: "profiles", val: strList(lower)})
+	}
+	if in.has("enabled") {
+		attrs = append(attrs, attr{key: "enabled", val: cty.BoolVal(in.bool("enabled", true))})
+	}
+	attrs = in.optional(attrs, "description", "description")
+	return one("windows_firewall_rule", attrs, "Conn3x finds this rule by its ID, which is name; Ansible found it by its display name. If the rule Ansible made has another ID, delete it, or the two overlap.")
+}
+
+func strList(list []string) cty.Value {
+	var v []cty.Value
+	for _, s := range list {
+		v = append(v, cty.StringVal(s))
+	}
+	return cty.ListVal(v)
 }
