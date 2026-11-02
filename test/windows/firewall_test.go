@@ -221,4 +221,86 @@ circuit "win" {
 	if a, err := windows.ReadFirewallRule(context.Background(), c, name); err != nil || a.Exists {
 		t.Errorf("after removing the step: %+v, %v", a, err)
 	}
+
+	// The host says which connection this is.
+	ctx := context.Background()
+	conn, err := windows.ReadSSHConn(ctx, c, 0)
+	if err != nil || !conn.Client.IsValid() || conn.Port == 0 {
+		t.Fatalf("SSH_CONNECTION: %+v, %v", conn, err)
+	}
+	t.Logf("connection as the host sees it: %s", conn)
+	fail := func(want string) {
+		t.Helper()
+		out, code := tool("apply", "-no-color", "-input=false", "-auto-approve")
+		if code == 0 || !strings.Contains(out, want) {
+			t.Fatalf("apply: exit %d, want an error with %q\n%s", code, want, out)
+		}
+	}
+
+	// A block that names only this client passes the plan-time check, and
+	// apply refuses it before the rule exists.
+	write(fmt.Sprintf(`step "block_me" {
+    windows_firewall_rule {
+      name             = %q
+      action           = "block"
+      protocol         = "tcp"
+      local_ports      = ["%d"]
+      remote_addresses = [%q]
+    }
+  }`, name, conn.Port, conn.Client.String()))
+	plan(2)
+	fail("the connection Conn3x is using")
+	if a, _ := windows.ReadFirewallRule(ctx, c, name); a.Exists {
+		t.Error("the blocking rule was made")
+	}
+
+	// The rule that lets SSH in can be adopted without renaming it, but not
+	// narrowed or deleted.
+	const ssh = "OpenSSH-Server-In-TCP"
+	orig, err := windows.ReadFirewallRule(ctx, c, ssh)
+	if err != nil || !orig.Exists || !orig.Rule().AllowsSSH(conn) {
+		t.Skipf("no %s rule letting this connection in here (%+v, %v)", ssh, orig, err)
+	}
+	adopt := func(extra string) string {
+		return fmt.Sprintf(`step "sshd" {
+    windows_firewall_rule {
+      name        = %q
+      protocol    = "tcp"
+      local_ports = %q
+      %s
+    }
+  }`, ssh, orig.LocalPorts, extra)
+	}
+	write(adopt(""))
+	apply()
+	plan(0)
+	if a, _ := windows.ReadFirewallRule(ctx, c, ssh); a.DisplayName != orig.DisplayName {
+		t.Errorf("adopting renamed it: %q to %q", orig.DisplayName, a.DisplayName)
+	}
+	for what, extra := range map[string]string{
+		"narrowed": `remote_addresses = ["192.0.2.0/24"]`,
+		"disabled": `enabled = false`,
+		"profile":  `profiles = ["domain"]`,
+	} {
+		write(adopt(extra))
+		out, code := tool("apply", "-no-color", "-input=false", "-auto-approve")
+		if code == 0 || !strings.Contains(out, "would stop it") {
+			t.Errorf("%s: exit %d\n%s", what, code, out)
+		}
+	}
+	write("")
+	fail("deleting it could cut Conn3x off")
+	if a, _ := windows.ReadFirewallRule(ctx, c, ssh); !a.Exists || !orig.Rule().AllowsSSH(conn) || !a.Rule().AllowsSSH(conn) {
+		t.Fatalf("the SSH rule changed: %+v", a)
+	}
+	write(adopt(`on_remove = "forget"`))
+	apply()
+	write("")
+	apply()
+	if a, _ := windows.ReadFirewallRule(ctx, c, ssh); !a.Exists {
+		t.Error("forget deleted the SSH rule")
+	}
+	if !connect(t).Alive() {
+		t.Error("the connection is gone")
+	}
 }

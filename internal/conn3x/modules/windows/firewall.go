@@ -27,7 +27,7 @@ var firewallProfiles = map[string]int{"domain": 1, "private": 2, "public": 4}
 // FirewallRule is a Windows Firewall rule. Empty lists mean any.
 type FirewallRule struct {
 	Name            string
-	DisplayName     string // the name when empty
+	DisplayName     string // left as it is when empty; the name for a new rule
 	Description     *string
 	Direction       string // inbound or outbound
 	Action          string // allow or block
@@ -40,9 +40,6 @@ type FirewallRule struct {
 
 // WithDefaults fills in what an unset setting means.
 func (f FirewallRule) WithDefaults() FirewallRule {
-	if f.DisplayName == "" {
-		f.DisplayName = f.Name
-	}
 	if f.Direction == "" {
 		f.Direction = "inbound"
 	}
@@ -165,21 +162,136 @@ func (f FirewallRule) Validate() error {
 	return nil
 }
 
-// Blocks reports whether an enabled rule would block inbound TCP on port from
-// anywhere, which for the SSH port locks Conn3x out.
-func (f FirewallRule) Blocks(port int) bool {
-	if !f.Enabled || f.Action != "block" || f.Direction != "inbound" || len(f.RemoteAddresses) > 0 || (f.Protocol != "tcp" && f.Protocol != "any") {
+// SSHConn is the connection Conn3x is on, as sshd saw it.
+type SSHConn struct {
+	Client netip.Addr // not valid when unknown: then any address counts as it
+	Port   int        // sshd's own port, which NAT or a load balancer can hide
+}
+
+func (c SSHConn) String() string {
+	if c.Client.IsValid() {
+		return fmt.Sprintf("%s to port %d", c.Client, c.Port)
+	}
+	return fmt.Sprintf("anywhere to port %d", c.Port)
+}
+
+// ReadSSHConn asks the host which connection this is, from SSH_CONNECTION.
+// Without it, the client is unknown and the port is port.
+func ReadSSHConn(ctx context.Context, r ps.Runner, port int) (SSHConn, error) {
+	res, err := ps.Read(ctx, r, script("read_ssh_connection.ps1"), nil)
+	if err != nil {
+		return SSHConn{}, err
+	}
+	var s string
+	_ = json.Unmarshal(res.Value, &s)
+	c := SSHConn{Port: port}
+	if f := strings.Fields(s); len(f) == 4 {
+		if ip, err := netip.ParseAddr(f[0]); err == nil {
+			c.Client = ip.Unmap()
+		}
+		if p, err := strconv.Atoi(f[3]); err == nil && p > 0 && p < 65536 {
+			c.Port = p
+		}
+	}
+	return c, nil
+}
+
+var (
+	allV4 = netip.AddrFrom4([4]byte{255, 255, 255, 255})
+	allV6 = netip.AddrFrom16([16]byte{0: 0xff, 1: 0xff, 2: 0xff, 3: 0xff, 4: 0xff, 5: 0xff, 6: 0xff, 7: 0xff, 8: 0xff, 9: 0xff, 10: 0xff, 11: 0xff, 12: 0xff, 13: 0xff, 14: 0xff, 15: 0xff})
+)
+
+// coversClient reports whether addresses take in client. Unknown forms and
+// LocalSubnet count, to be safe; with no client, only everything does.
+func coversClient(addresses []string, client netip.Addr) bool {
+	if len(addresses) == 0 {
+		return true
+	}
+	for _, a := range addresses {
+		c, err := canonicalAddress(a)
+		if strings.EqualFold(a, "Any") || err != nil || c == "LocalSubnet" {
+			return true
+		}
+		if lo, hi, ok := strings.Cut(c, "-"); ok {
+			l, h := netip.MustParseAddr(lo), netip.MustParseAddr(hi)
+			if !client.IsValid() {
+				if l.IsUnspecified() && (h == allV4 || h == allV6) {
+					return true
+				}
+			} else if l.Is4() == client.Is4() && !client.Less(l) && !h.Less(client) {
+				return true
+			}
+			continue
+		}
+		if p, err := netip.ParsePrefix(c); err == nil {
+			if (!client.IsValid() && p.Bits() == 0) || (client.IsValid() && p.Contains(client)) {
+				return true
+			}
+			continue
+		}
+		if client.IsValid() && netip.MustParseAddr(c) == client {
+			return true
+		}
+	}
+	return false
+}
+
+// reaches reports whether an enabled inbound rule applies to the connection.
+func (f FirewallRule) reaches(c SSHConn) bool {
+	if !f.Enabled || f.Direction != "inbound" || (f.Protocol != "tcp" && f.Protocol != "any") || !coversClient(f.RemoteAddresses, c.Client) {
 		return false
 	}
 	if len(f.LocalPorts) == 0 {
 		return true
 	}
 	for _, p := range f.LocalPorts {
-		if lo, hi, err := parsePort(p); err == nil && lo <= port && port <= hi {
+		if strings.EqualFold(p, "Any") {
+			return true
+		}
+		if lo, hi, err := parsePort(p); err == nil && lo <= c.Port && c.Port <= hi {
 			return true
 		}
 	}
 	return false
+}
+
+// BlocksSSH reports whether the rule would block the connection: block rules
+// beat allow rules in Windows Firewall.
+func (f FirewallRule) BlocksSSH(c SSHConn) bool { return f.Action == "block" && f.reaches(c) }
+
+// AllowsSSH reports whether the rule lets the connection in.
+func (f FirewallRule) AllowsSSH(c SSHConn) bool { return f.Action == "allow" && f.reaches(c) }
+
+// Rule is the host's rule in the form a configured one takes.
+func (a ActualFirewallRule) Rule() FirewallRule {
+	return FirewallRule{
+		Direction: strings.ToLower(a.Direction), Action: strings.ToLower(a.Action), Protocol: strings.ToLower(a.Protocol),
+		LocalPorts: a.LocalPorts, RemoteAddresses: a.RemoteAddresses, Enabled: a.Enabled,
+	}
+}
+
+// SSHGuard returns why setting want, or deleting the rule when want is nil,
+// could cut Conn3x off from the host. It only sees this rule: another rule
+// that also lets SSH in isn't counted, so it errs on the side of refusing.
+func SSHGuard(c SSHConn, have ActualFirewallRule, want *FirewallRule) error {
+	if want != nil && want.WithDefaults().BlocksSSH(c) {
+		return fmt.Errorf("this rule blocks inbound TCP from %s, the connection Conn3x is using; block rules beat allow rules, so it would cut Conn3x off", c)
+	}
+	if !have.Exists || !have.Rule().AllowsSSH(c) {
+		return nil
+	}
+	if want == nil {
+		return fmt.Errorf("this rule lets Conn3x's SSH connection in (%s), and deleting it could cut Conn3x off. Set on_remove = \"forget\" to keep it when the step goes", c)
+	}
+	w := want.WithDefaults()
+	old, mask := have.Profile, w.profileMask()
+	if old == 7 {
+		old = 0
+	}
+	if !w.AllowsSSH(c) || (mask != 0 && (old == 0 || mask&old != old)) {
+		return fmt.Errorf("this rule lets Conn3x's SSH connection in (%s), and this change would stop it, which could cut Conn3x off", c)
+	}
+	return nil
 }
 
 func (f FirewallRule) profileMask() int {
@@ -253,7 +365,7 @@ func (f FirewallRule) Matches(a ActualFirewallRule) bool {
 	if profile == 7 {
 		profile = 0
 	}
-	return a.Exists && a.DisplayName == f.DisplayName && (f.Description == nil || *f.Description == a.Description) &&
+	return a.Exists && (f.DisplayName == "" || a.DisplayName == f.DisplayName) && (f.Description == nil || *f.Description == a.Description) &&
 		strings.EqualFold(a.Direction, f.Direction) && strings.EqualFold(a.Action, f.Action) && a.Enabled == f.Enabled &&
 		profile == f.profileMask() && strings.EqualFold(a.Protocol, f.Protocol) &&
 		slices.Equal(set(a.LocalPorts, samePort), set(f.LocalPorts, samePort)) &&
@@ -277,8 +389,12 @@ func ApplyFirewallRule(ctx context.Context, r ps.Runner, f FirewallRule) error {
 		c, _ := canonicalAddress(a)
 		addresses = append(addresses, c)
 	}
+	var displayName any // null leaves it as it is
+	if f.DisplayName != "" {
+		displayName = f.DisplayName
+	}
 	_, err := ps.Apply(ctx, r, script("apply_firewall_rule.ps1"), map[string]any{
-		"name": f.Name, "display_name": f.DisplayName, "description": f.Description,
+		"name": f.Name, "display_name": displayName, "description": f.Description,
 		"direction": strings.ToUpper(f.Direction[:1]) + f.Direction[1:], "action": strings.ToUpper(f.Action[:1]) + f.Action[1:],
 		"protocol": protocolNames[f.Protocol], "local_ports": append([]string{}, f.LocalPorts...), "remote_addresses": addresses,
 		"profiles": profiles, "enabled": f.Enabled,

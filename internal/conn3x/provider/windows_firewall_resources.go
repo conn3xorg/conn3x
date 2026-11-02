@@ -22,7 +22,7 @@ func winFirewallRuleSchema() providers.Schema {
 			"id":               {Type: cty.String, Computed: true},
 			"revision":         revisionAttr(),
 			"name":             {Type: cty.String, Required: true, Description: "The rule's name, which is its ID: letters, digits, spaces and . _ ( ) -."},
-			"display_name":     {Type: cty.String, Optional: true, Description: "Name shown in Windows' tools. Defaults to name."},
+			"display_name":     {Type: cty.String, Optional: true, Description: "Name shown in Windows' tools. A new rule gets name; an existing one keeps its own when unset."},
 			"description":      {Type: cty.String, Optional: true, Description: "Description. Left as it is when unset."},
 			"direction":        {Type: cty.String, Optional: true, Description: "\"inbound\" (default) or \"outbound\"."},
 			"action":           {Type: cty.String, Optional: true, Description: "\"allow\" (default) or \"block\"."},
@@ -80,12 +80,28 @@ func sshPort(conn cty.Value) int {
 	return 22
 }
 
-// winFirewallLockout returns why a rule would cut Conn3x off, or nil.
+// winFirewallLockout is the early check, at plan: a rule that blocks the SSH
+// port from everywhere. Apply checks again against the connection the host
+// sees, which also catches a narrower block that still takes in Conn3x.
 func winFirewallLockout(v cty.Value, f windows.FirewallRule) error {
-	if p := sshPort(v.GetAttr("ssh")); f.Blocks(p) {
+	if p := sshPort(v.GetAttr("ssh")); f.BlocksSSH(windows.SSHConn{Port: p}) {
 		return fmt.Errorf("this rule blocks inbound TCP port %d from anywhere, which cuts Conn3x off from the host. Narrow it with remote_addresses or local_ports", p)
 	}
 	return nil
+}
+
+// winFirewallGuard checks a change, or a delete when f is nil, against the
+// connection Conn3x is on, as the host sees it.
+func winFirewallGuard(ctx context.Context, h *hostConn, conn cty.Value, name string, f *windows.FirewallRule) error {
+	c, err := windows.ReadSSHConn(ctx, h.client, sshPort(conn))
+	if err != nil {
+		return err
+	}
+	a, err := windows.ReadFirewallRule(ctx, h.client, name)
+	if err != nil {
+		return err
+	}
+	return windows.SSHGuard(c, a, f)
 }
 
 func validateWinFirewallRule(cfg cty.Value) tfdiags.Diagnostics {
@@ -112,7 +128,7 @@ func validateWinFirewallRule(cfg cty.Value) tfdiags.Diagnostics {
 var winFirewallSettings = []string{"display_name", "description", "direction", "action", "protocol", "local_ports", "remote_addresses", "profiles", "enabled"}
 
 func planWinFirewallRule(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(deleteByDefault(req), "windows_firewall_rule", []string{"name"}, winFirewallSettings)
+	return planSyncedFold(deleteByDefault(req), "windows_firewall_rule", []string{"name"}, winFirewallSettings)
 }
 
 func readWinFirewallRule(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -150,7 +166,11 @@ func applyWinFirewallRule(ctx context.Context, req providers.ApplyResourceChange
 		if err != nil {
 			return fail(err)
 		}
-		if err := windows.ApplyFirewallRuleRemove(ctx, h.client, stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
+		name := stringOr(req.PriorState.GetAttr("name"), "")
+		if err := winFirewallGuard(ctx, h, req.PriorState.GetAttr("ssh"), name, nil); err != nil {
+			return fail(fmt.Errorf("rule %s: %w", name, err))
+		}
+		if err := windows.ApplyFirewallRuleRemove(ctx, h.client, name); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -171,6 +191,9 @@ func applyWinFirewallRule(ctx context.Context, req providers.ApplyResourceChange
 		return fail(err)
 	}
 	if !f.Matches(a) {
+		if err := winFirewallGuard(ctx, h, req.PlannedState.GetAttr("ssh"), f.Name, &f); err != nil {
+			return fail(fmt.Errorf("rule %s: %w", f.Name, err))
+		}
 		if err := windows.ApplyFirewallRule(ctx, h.client, f); err != nil {
 			return fail(fmt.Errorf("rule %s: %w", f.Name, err))
 		}

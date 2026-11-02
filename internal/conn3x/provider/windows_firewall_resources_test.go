@@ -31,6 +31,9 @@ func TestWinFirewallRuleValidate(t *testing.T) {
 		"blocks ssh":      {"name": cty.StringVal("a"), "action": cty.StringVal("block")},
 		"blocks tcp 22":   {"name": cty.StringVal("a"), "action": cty.StringVal("block"), "protocol": cty.StringVal("tcp"), "local_ports": list("20-30")},
 		"bad on_remove":   {"name": cty.StringVal("a"), "on_remove": cty.StringVal("purge")},
+		"blocks every v4": {"name": cty.StringVal("a"), "action": cty.StringVal("block"), "remote_addresses": list("0.0.0.0/0", "::/0")},
+		"blocks a range":  {"name": cty.StringVal("a"), "action": cty.StringVal("block"), "remote_addresses": list("0.0.0.0-255.255.255.255")},
+		"blocks subnet":   {"name": cty.StringVal("a"), "action": cty.StringVal("block"), "remote_addresses": list("LocalSubnet")},
 	} {
 		if d := r.validate(objFor(r.schema(), a)); !d.HasErrors() {
 			t.Errorf("%s: accepted", name)
@@ -52,5 +55,19 @@ func TestWinFirewallRuleDeletesByDefault(t *testing.T) {
 	p := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(c.Type()), ProposedNewState: c, Config: c}).PlannedState
 	if p.GetAttr("on_remove").AsString() != "delete" {
 		t.Errorf("on_remove = %#v", p.GetAttr("on_remove"))
+	}
+}
+
+// A rule's name ignores case on Windows: a case change is no replacement.
+func TestWinFirewallRuleCaseIsNotReplace(t *testing.T) {
+	r := resourceTypes["conn3x_windows_firewall_rule"]
+	c := objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal("Web")})
+	p := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(c.Type()), ProposedNewState: c, Config: c}).PlannedState
+	vals := p.AsValueMap()
+	vals["revision"], vals["in_sync"] = cty.StringVal("r"), cty.True
+	prior := cty.ObjectVal(vals)
+	lower := objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal("web")})
+	if resp := r.plan(providers.PlanResourceChangeRequest{PriorState: prior, ProposedNewState: lower, Config: lower}); len(resp.RequiresReplace) != 0 {
+		t.Errorf("replaces: %v", resp.RequiresReplace)
 	}
 }
