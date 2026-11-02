@@ -18,6 +18,7 @@ func TestPackageValidate(t *testing.T) {
 		"url":    {ProductCode: code, URL: "https://example.com/a.msi", SHA256: goodSum},
 		"source": {ProductCode: code, Source: `C:\pkgs\a b.msi`, SHA256: strings.ToUpper(goodSum)},
 		"absent": {ProductCode: code, Absent: true},
+		"http":   {ProductCode: code, URL: "http://example.com/a.msi", SHA256: goodSum, AllowHTTP: true},
 	} {
 		if err := p.Validate(); err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -36,6 +37,10 @@ func TestPackageValidate(t *testing.T) {
 		"lower prop":  {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"installdir": "x"}},
 		"prop equals": {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"A=B": "x"}},
 		"newline":     {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"A": "x\ny"}},
+		"http":        {ProductCode: code, URL: "http://e/a.msi", SHA256: goodSum},
+		"transform":   {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"TRANSFORMS": `C:\t.mst`}},
+		"force boot":  {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"REBOOT": "Force"}},
+		"negative":    {ProductCode: code, URL: "https://e/a.msi", SHA256: goodSum, MaxSizeMB: -1},
 	} {
 		if p.Validate() == nil {
 			t.Errorf("%s: accepted", name)
@@ -74,10 +79,22 @@ func TestApplyPackageSends(t *testing.T) {
 		t.Fatalf("%v, %v", restart, err)
 	}
 	a := f.sent[0]["args"].(map[string]any)
-	if a["product_code"] != "{23170F69-40C1-2702-2409-000001000000}" || a["sha256"] != goodSum || a["properties"] != `X="1"` || a["present"] != true {
+	if a["product_code"] != "{23170F69-40C1-2702-2409-000001000000}" || a["sha256"] != goodSum || a["properties"] != `ALLUSERS="1" X="1"` || a["max_bytes"] != float64(2048<<20) || a["present"] != true {
 		t.Errorf("sent %v", a)
 	}
 	if _, err := ApplyPackage(context.Background(), &fake{}, Package{ProductCode: "x"}, time.Minute); err == nil {
 		t.Error("sent an invalid package")
+	}
+}
+
+// ALLUSERS defaults to per machine, and a value given wins.
+func TestApplyPackageAllUsers(t *testing.T) {
+	f := &fake{answers: []map[string]any{{"ok": true, "value": map[string]any{"restart": false}}}}
+	p := Package{ProductCode: "{23170F69-40C1-2702-2409-000001000000}", URL: "https://e/a.msi", SHA256: goodSum, Properties: map[string]string{"ALLUSERS": "2"}, MaxSizeMB: 10}
+	if _, err := ApplyPackage(context.Background(), f, p, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if a := f.sent[0]["args"].(map[string]any); a["properties"] != `ALLUSERS="2"` || a["max_bytes"] != float64(10<<20) {
+		t.Errorf("sent %v", a)
 	}
 }

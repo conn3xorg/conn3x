@@ -33,6 +33,20 @@ type Package struct {
 	URL         string
 	SHA256      string
 	Properties  map[string]string
+	AllowHTTP   bool // url may be, or redirect to, plain http
+	MaxSizeMB   int  // largest download; 0 is DefaultMaxSizeMB
+}
+
+// DefaultMaxSizeMB is the largest download unless max_size_mb says otherwise.
+const DefaultMaxSizeMB = 2048
+
+// refusedProperties change what msiexec does rather than what it installs: a
+// transform or patch isn't covered by sha256 and can add actions that run as
+// SYSTEM, REBOOT=Force overrides /norestart, and the rest turn an install
+// into something else.
+var refusedProperties = map[string]bool{
+	"TRANSFORMS": true, "PATCH": true, "MSIPATCHREMOVE": true, "REBOOT": true, "REMOVE": true,
+	"ACTION": true, "REINSTALL": true, "REINSTALLMODE": true,
 }
 
 // Validate checks a package before anything reaches a host.
@@ -53,9 +67,12 @@ func (p Package) Validate() error {
 	}
 	if p.URL != "" {
 		u, err := url.Parse(p.URL)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || strings.ContainsFunc(p.URL, func(r rune) bool { return r < 0x21 || r == 0x7f }) {
-			return fmt.Errorf("url %q must be an http or https address", p.URL)
+		if err != nil || (u.Scheme != "https" && (u.Scheme != "http" || !p.AllowHTTP)) || u.Host == "" || strings.ContainsFunc(p.URL, func(r rune) bool { return r < 0x21 || r == 0x7f }) {
+			return fmt.Errorf("url %q must be an https address, or http with allow_http = true", p.URL)
 		}
+	}
+	if p.MaxSizeMB < 0 {
+		return errors.New("max_size_mb must be positive")
 	}
 	if !sha256Hex.MatchString(strings.ToLower(p.SHA256)) {
 		return errors.New("sha256 must be the package's SHA-256, as 64 hex characters")
@@ -78,6 +95,9 @@ func msiProperties(props map[string]string) (string, error) {
 		v := props[k]
 		if !msiProperty.MatchString(k) {
 			return "", fmt.Errorf("property %q must be a public property name: upper-case letters, digits, _ and .", k)
+		}
+		if refusedProperties[k] {
+			return "", fmt.Errorf("property %s changes what msiexec does, not what it installs, and isn't allowed", k)
 		}
 		if strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 			return "", fmt.Errorf("property %s has a control character in its value", k)
@@ -111,10 +131,20 @@ func ApplyPackage(ctx context.Context, r ps.Runner, p Package, timeout time.Dura
 	if err := p.Validate(); err != nil {
 		return false, err
 	}
-	props, _ := msiProperties(p.Properties)
+	// Per machine unless asked otherwise: a per-user install lands in this
+	// login's profile, where the Uninstall keys Conn3x reads don't list it.
+	withAll := map[string]string{"ALLUSERS": "1"}
+	for k, v := range p.Properties {
+		withAll[k] = v
+	}
+	props, _ := msiProperties(withAll)
+	maxMB := p.MaxSizeMB
+	if maxMB == 0 {
+		maxMB = DefaultMaxSizeMB
+	}
 	res, err := ps.Apply(ctx, r, script("apply_package.ps1"), map[string]any{
 		"present": !p.Absent, "product_code": strings.ToUpper(p.ProductCode), "source": p.Source, "url": p.URL,
-		"sha256": strings.ToLower(p.SHA256), "properties": props,
+		"sha256": strings.ToLower(p.SHA256), "properties": props, "allow_http": p.AllowHTTP, "max_bytes": int64(maxMB) << 20,
 	}, timeout)
 	if err != nil {
 		return false, err

@@ -11,6 +11,48 @@ function Invoke-Msiexec([string]$line) {
   $p.ExitCode
 }
 
+# Save-Download downloads into $file, following up to five redirects itself so
+# none can drop from https to http unless that's allowed, and stops at $max
+# bytes. A partial file is left for the caller to delete.
+function Save-Download([string]$url, [string]$file, [long]$max, [bool]$allowHttp) {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  $uri = New-Object Uri($url)
+  for ($hop = 0; $hop -le 5; $hop++) {
+    if ($uri.Scheme -ne 'https' -and -not ($allowHttp -and $uri.Scheme -eq 'http')) {
+      throw "the download went to a $($uri.Scheme) address, $($uri.Host); only https is allowed, or http with allow_http"
+    }
+    $req = [Net.WebRequest]::Create($uri)
+    $req.AllowAutoRedirect = $false
+    try { $res = $req.GetResponse() } catch [Net.WebException] {
+      $res = $_.Exception.Response
+      if (-not $res) { throw }
+    }
+    $code = [int]$res.StatusCode
+    if ($code -ge 300 -and $code -lt 400) {
+      $next = $res.Headers['Location']
+      $res.Close()
+      if (-not $next) { throw "the download redirected (HTTP $code) without saying where" }
+      $uri = New-Object Uri($uri, $next)
+      continue
+    }
+    if ($code -ne 200) { $res.Close(); throw "the download failed with HTTP $code" }
+    if ($res.ContentLength -gt $max) { $res.Close(); throw "the download is $($res.ContentLength) bytes, more than max_size_mb allows" }
+    $in = $res.GetResponseStream()
+    $out = [IO.File]::Open($file, 'CreateNew', 'Write', 'None')
+    try {
+      $buf = New-Object byte[] 65536
+      $total = [long]0
+      while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+        $total += $n
+        if ($total -gt $max) { throw "the download is more than max_size_mb allows" }
+        $out.Write($buf, 0, $n)
+      }
+    } finally { $out.Dispose(); $in.Dispose(); $res.Close() }
+    return
+  }
+  throw 'the download redirected more than five times'
+}
+
 if (-not $A.present) {
   $code = Invoke-Msiexec ('/x ' + $A.product_code + ' /qn /norestart')
 } else {
@@ -24,11 +66,13 @@ if (-not $A.present) {
   $stage = Join-Path $dir 'packages'
   Lock-Folders $stage -Create -Strict $own
   Assert-Folder $stage (Hold-Path $stage)
+  # What a run that died left behind. A file another run still holds can't be
+  # deleted, and stays.
+  foreach ($f in [IO.Directory]::GetFiles($stage)) { try { [IO.File]::Delete($f) } catch { } }
   $file = Join-Path $stage ([guid]::NewGuid().ToString('N') + '.msi')
   try {
     if ($A.url) {
-      [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-      (New-Object Net.WebClient).DownloadFile([string]$A.url, $file)
+      Save-Download ([string]$A.url) $file ([long]$A.max_bytes) ([bool]$A.allow_http)
     } else {
       $in = [IO.File]::Open([string]$A.source, 'Open', 'Read', 'Read')
       try {
@@ -60,7 +104,12 @@ switch ($code) {
 if ($restart) {
   # Volatile: the key goes with the next boot. windows_reboot's check finds it,
   # so a run that stops before its reboot step plans that reboot next time.
-  $k = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey('SOFTWARE\Conn3x\RebootRequired', [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, [Microsoft.Win32.RegistryOptions]::Volatile)
-  $k.Close()
+  # The parent first, as an ordinary key: made in the same call, it would be
+  # volatile too, and take anything else Conn3x keeps there with it.
+  $parent = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey('SOFTWARE\Conn3x')
+  try {
+    $k = $parent.CreateSubKey('RebootRequired', [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, [Microsoft.Win32.RegistryOptions]::Volatile)
+    $k.Close()
+  } finally { $parent.Close() }
 }
 @{ restart = $restart }

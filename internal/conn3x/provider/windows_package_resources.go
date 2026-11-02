@@ -30,6 +30,8 @@ func winPackageSchema() providers.Schema {
 			"url":             {Type: cty.String, Optional: true, Description: "http or https address the host downloads the .msi from. Set this or source."},
 			"sha256":          {Type: cty.String, Optional: true, Description: "SHA-256 of the .msi. Required with source or url: nothing installs unless the file matches."},
 			"properties":      {Type: cty.Map(cty.String), Optional: true, Description: "Public MSI properties, such as INSTALLDIR. They're on msiexec's command line and in state: never secrets."},
+			"allow_http":      {Type: cty.Bool, Optional: true, Description: "Let url be, or redirect to, plain http. sha256 still has to match. Off by default."},
+			"max_size_mb":     {Type: cty.Number, Optional: true, Description: "Largest download, in MiB. Defaults to 2048."},
 			"timeout":         {Type: cty.String, Optional: true, Description: "How long to allow. Defaults to \"30m\"."},
 			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether msiexec asked for a reboot (3010 or 1641) at the last change."},
 			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether the package matched at the last refresh."},
@@ -46,6 +48,13 @@ func winPackageFrom(v cty.Value) windows.Package {
 	if props := v.GetAttr("properties"); known(props) {
 		p.Properties = stringMap(props)
 	}
+	if a := v.GetAttr("allow_http"); known(a) {
+		p.AllowHTTP = a.True()
+	}
+	if m := v.GetAttr("max_size_mb"); known(m) {
+		n, _ := m.AsBigFloat().Int64()
+		p.MaxSizeMB = int(n)
+	}
 	return p
 }
 
@@ -54,13 +63,13 @@ func validateWinPackage(cfg cty.Value) tfdiags.Diagnostics {
 	if cfg.IsNull() {
 		return diags
 	}
-	diags = diags.Append(validateState(cfg, "source", "url", "sha256", "properties"))
+	diags = diags.Append(validateState(cfg, "source", "url", "sha256", "properties", "allow_http", "max_size_mb"))
 	if t := cfg.GetAttr("timeout"); t.IsKnown() {
 		if _, err := durationOr(t, defaultPackageTimeout); err != nil {
 			diags = diags.Append(attrError("timeout", err.Error()))
 		}
 	}
-	for _, a := range []string{"product_code", "state", "source", "url", "sha256", "properties"} {
+	for _, a := range []string{"product_code", "state", "source", "url", "sha256", "properties", "allow_http", "max_size_mb"} {
 		if !cfg.GetAttr(a).IsWhollyKnown() {
 			return diags
 		}

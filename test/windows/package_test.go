@@ -176,6 +176,8 @@ func TestPackageWrongHash(t *testing.T) {
 	c := connect(t)
 	ctx := context.Background()
 	m := buildMSI(t, c, tempDir(t, c), false)
+	// What a run that died would leave in the staging folder goes too.
+	run(t, c, `$d = Join-Path $env:ProgramData 'Conn3x\packages'; [void][IO.Directory]::CreateDirectory($d); [IO.File]::WriteAllText((Join-Path $d 'stray.msi'), 'x')`, nil)
 	wrong := strings.Repeat("0", 64)
 	_, err := windows.ApplyPackage(ctx, c, windows.Package{ProductCode: m.Code, Source: m.Path, SHA256: wrong}, 10*time.Minute)
 	if err == nil || !strings.Contains(err.Error(), "nothing was installed") {
@@ -224,6 +226,11 @@ func TestPackageAsksForReboot(t *testing.T) {
 	if pending, err := windows.PendingReboot(ctx, c); err != nil || !pending {
 		t.Errorf("pending = %v, %v", pending, err)
 	}
+	// Only the marker is volatile: an ordinary key still fits beside it.
+	res := run(t, c, `try { $k = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey('SOFTWARE\Conn3x\c3stable'); $k.Close(); [Microsoft.Win32.Registry]::LocalMachine.DeleteSubKey('SOFTWARE\Conn3x\c3stable'); 'stable' } catch { $_.Exception.Message }`, nil)
+	if got := strings.TrimSpace(res.Text); got != "stable" {
+		t.Errorf("SOFTWARE\\Conn3x: %s", got)
+	}
 }
 
 func TestPackageFromURL(t *testing.T) {
@@ -244,6 +251,14 @@ func TestPackageFromURL(t *testing.T) {
 	p.SHA256 = "f" + sevenZipSum[1:]
 	if _, err := windows.ApplyPackage(ctx, c, p, 10*time.Minute); err == nil {
 		t.Error("a mismatched download installed")
+	}
+	// The 1.9 MiB package is over a 1 MiB cap, and stops there.
+	p.SHA256, p.MaxSizeMB = sevenZipSum, 1
+	if _, err := windows.ApplyPackage(ctx, c, p, 10*time.Minute); err == nil || !strings.Contains(err.Error(), "max_size_mb") {
+		t.Errorf("over the cap: %v", err)
+	}
+	if ok, _ := windows.PackageInstalled(ctx, c, sevenZipCode); ok {
+		t.Error("installed over the cap")
 	}
 }
 
