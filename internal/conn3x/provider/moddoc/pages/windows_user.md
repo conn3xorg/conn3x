@@ -32,7 +32,7 @@ Anything you leave unset is left as the host has it, so you can manage one setti
 
 **No blank passwords.** Conn3x won't make or enable an account with no password, since Windows lets a blank password log on at the console. Give `password_wo`, or set `disabled = true`.
 
-**The login.** Conn3x refuses to disable or delete the user it logs in as. Disabling that account ends key logins too. To stop a provisioning password being useful, change it with `password_wo` instead.
+**The login.** Conn3x refuses to disable or delete the user it logs in as, checked by SID on the host, so it holds when the login's name comes from an SSH config file. Disabling that account ends key logins too. To stop a provisioning password being useful, change it with `password_wo` instead.
 
 ## Removal
 

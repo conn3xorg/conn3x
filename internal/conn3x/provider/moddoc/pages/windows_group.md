@@ -26,7 +26,7 @@ step "rdp_only_ops" {
 <!-- reference -->
 ## How it works
 
-**Members.** By default, `members` are added and nobody else is taken out. With `authoritative = true` the list is complete: anyone else is removed on apply. Conn3x refuses to remove the user it logs in as, but it can't see every route to being an administrator, such as a domain group nested in `Administrators`. Check an authoritative list for `Administrators` before you apply it.
+**Members.** By default, `members` are added and nobody else is taken out. With `authoritative = true` the list is complete: anyone else is removed on apply. In a group the login Conn3x uses belongs to, such as `Administrators`, Conn3x refuses to remove the login or any group it gets its rights through, such as `Domain Admins`, so apply fails until the list keeps them.
 
 A member that doesn't exist yet, such as a user a later step makes, shows the group as out of sync rather than failing the plan. At apply, a name that still doesn't resolve is an error.
 
