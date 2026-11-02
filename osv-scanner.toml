@@ -1,0 +1,10 @@
+# Known vulnerabilities that do not reach Conn3x, with the reason for each.
+# osv-scanner and the OpenSSF Scorecard Vulnerabilities check read this file.
+# Re-check every entry when the package it names is upgraded.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = """golang.org/x/crypto/openpgp is unmaintained and has no fix. Conn3x \
+never imports it: `go list -deps ./... | grep x/crypto/openpgp` is empty. \
+The module is required only for other packages such as x/crypto/bcrypt; \
+OpenPGP signature checks use github.com/ProtonMail/go-crypto instead."""

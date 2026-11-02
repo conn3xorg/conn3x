@@ -3,7 +3,7 @@
 # Copyright (c) 2023 HashiCorp, Inc.
 # SPDX-License-Identifier: MPL-2.0
 
-FROM consul:1.15
+FROM consul:1.15@sha256:10084bbbed746968b0b9f8edab2f8552e44f117e35b88153a5e0a3ad1e15aa1a
 
 # install dependencies to install Go
 RUN apk add -q curl tar
