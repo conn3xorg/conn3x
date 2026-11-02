@@ -147,7 +147,7 @@ func planWinUser(req providers.PlanResourceChangeRequest) providers.PlanResource
 			host = conn.GetAttr("host")
 		}
 		if wo.IsKnown() && known(vals["name"]) && known(host) {
-			vals["password_hmac"] = cty.StringVal(winWoHMAC(key, winUserID(host.AsString(), vals["name"].AsString()), digest(wo.AsString())))
+			vals["password_hmac"] = cty.StringVal(passwordHMAC(key, winUserID(host.AsString(), vals["name"].AsString()), wo.AsString()))
 		}
 	}
 	req.ProposedNewState = cty.ObjectVal(vals)
@@ -229,7 +229,7 @@ func applyWinUser(ctx context.Context, req providers.ApplyResourceChangeRequest)
 				}
 			}
 		}
-		sum := cty.StringVal(winWoHMAC(key, winUserID(stringOr(planned.GetAttr("ssh").GetAttr("host"), ""), u.Name), digest(wo.AsString())))
+		sum := cty.StringVal(passwordHMAC(key, winUserID(stringOr(planned.GetAttr("ssh").GetAttr("host"), ""), u.Name), wo.AsString()))
 		vals["password_hmac"] = sum
 		// Set only when it's new to Conn3x: Windows can refuse to reuse a
 		// password, and resetting one on every run tells nobody anything.

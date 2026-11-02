@@ -64,3 +64,16 @@ func TestWinTaskPlanPassword(t *testing.T) {
 		t.Errorf("got %v", ap.Diagnostics.Err())
 	}
 }
+
+// A password's HMAC is stretched: the same password and key give the same
+// value, and nothing a fast hash of the password would.
+func TestPasswordHMACIsStretched(t *testing.T) {
+	key := []byte(strings.Repeat("k", 32))
+	a, b := passwordHMAC(key, "id", "hunter2"), passwordHMAC(key, "id", "hunter2")
+	if a != b || !strings.HasPrefix(a, "hmac-sha256:") {
+		t.Fatalf("%q, %q", a, b)
+	}
+	if a == winWoHMAC(key, "id", digest("hunter2")) || a == passwordHMAC(key, "other", "hunter2") {
+		t.Error("not stretched, or not bound to its id")
+	}
+}

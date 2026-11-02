@@ -142,7 +142,7 @@ func planWinTask(req providers.PlanResourceChangeRequest) providers.PlanResource
 			host = conn.GetAttr("host")
 		}
 		if wo.IsKnown() && known(host) && known(vals["name"]) && vals["path"].IsKnown() {
-			vals["password_hmac"] = cty.StringVal(winWoHMAC(key, winTaskID(host.AsString(), winTaskFrom(cty.ObjectVal(vals))), digest(wo.AsString())))
+			vals["password_hmac"] = cty.StringVal(passwordHMAC(key, winTaskID(host.AsString(), winTaskFrom(cty.ObjectVal(vals))), wo.AsString()))
 		}
 	}
 	req.ProposedNewState = cty.ObjectVal(vals)
@@ -219,7 +219,7 @@ func applyWinTask(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		}
 		password = wo.AsString()
 		t.HasPassword = true
-		vals["password_hmac"] = cty.StringVal(winWoHMAC(key, winTaskID(stringOr(planned.GetAttr("ssh").GetAttr("host"), ""), t), digest(password)))
+		vals["password_hmac"] = cty.StringVal(passwordHMAC(key, winTaskID(stringOr(planned.GetAttr("ssh").GetAttr("host"), ""), t), password))
 	}
 	if err := t.Validate(); err != nil {
 		return fail(err)
