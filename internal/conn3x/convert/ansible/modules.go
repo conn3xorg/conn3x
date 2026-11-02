@@ -269,6 +269,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_copy":             winCopyModule,
 	"win_feature":          winFeatureModule,
 	"win_file":             winFileModule,
+	"win_firewall_rule":    winFirewallRuleModule,
 	"win_group":            winGroupModule,
 	"win_group_membership": winGroupMembershipModule,
 	"win_powershell":       winPowershellModule,

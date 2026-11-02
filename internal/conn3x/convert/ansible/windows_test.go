@@ -35,6 +35,12 @@ func TestWindowsMappings(t *testing.T) {
 		`win_group_membership: {name: Administrators, members: [appsvc, 'LAB\ops'], state: pure}`: {
 			"windows_group {", `members       = ["appsvc", "LAB\\ops"]`, "authoritative = true",
 		},
+		`community.windows.win_firewall_rule: {name: HTTPS in, localport: 443, protocol: tcp, action: allow, direction: in, state: present, enabled: yes}`: {
+			"windows_firewall_rule {", `name        = "HTTPS in"`, `local_ports = ["443"]`, `protocol    = "tcp"`, "enabled     = true",
+		},
+		`win_firewall_rule: {name: SQL, localport: '1433,1434', remoteip: '10.0.0.0/8', protocol: tcp, profiles: [Domain, Private], direction: out, action: block}`: {
+			`local_ports      = ["1433", "1434"]`, `remote_addresses = ["10.0.0.0/8"]`, `profiles         = ["domain", "private"]`, `direction        = "outbound"`, `action           = "block"`,
+		},
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 1 || len(res.Review) != 0 {
@@ -76,6 +82,9 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"sets groups":            `win_user: {name: a, groups: [Users]}`,
 		"removes a group":        `win_group: {name: a, state: absent}`,
 		"takes members out":      `win_group_membership: {name: a, members: [b], state: absent}`,
+		"removes a rule":         `win_firewall_rule: {name: a, state: absent}`,
+		"can't take":             `win_firewall_rule: {name: 'a*b', localport: 80, protocol: tcp}`,
+		"sets program":           `win_firewall_rule: {name: a, program: 'C:\x.exe'}`,
 		"win_updates module":     `win_updates: {category_names: [SecurityUpdates]}`,
 		"win_chocolatey module":  `win_chocolatey: {name: git}`,
 		"win_dsc module":         `win_dsc: {resource_name: x}`,
