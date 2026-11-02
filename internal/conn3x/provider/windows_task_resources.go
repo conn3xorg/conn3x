@@ -35,6 +35,10 @@ func winTaskSchema() providers.Schema {
 			},
 			"password_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of password_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key."},
 			"run_level":     {Type: cty.String, Optional: true, Description: "\"limited\" (default) or \"highest\", which runs elevated."},
+			"allow_interpreter": {
+				Type: cty.Bool, Optional: true,
+				Description: "Let execute be a program that runs code from its arguments, such as cmd.exe, powershell.exe, wscript.exe, rundll32.exe or python.exe. Conn3x checks the paths it can see in arguments, but not code inside them, such as -Command text or -EncodedCommand.",
+			},
 			"enabled":       {Type: cty.Bool, Optional: true, Description: "Whether the task can run. Defaults to true."},
 			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) deletes the task when the step is removed or replaced, \"forget\" leaves it."},
 			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the task matched at the last refresh."},
@@ -69,6 +73,9 @@ func winTaskFrom(v cty.Value) windows.Task {
 	if e := v.GetAttr("enabled"); known(e) {
 		t.Enabled = e.True()
 	}
+	if a := v.GetAttr("allow_interpreter"); known(a) {
+		t.AllowInterpreter = a.True()
+	}
 	if trs := v.GetAttr("trigger"); known(trs) {
 		for it := trs.ElementIterator(); it.Next(); {
 			_, e := it.Element()
@@ -95,7 +102,7 @@ func validateWinTask(cfg cty.Value) tfdiags.Diagnostics {
 	if rl := cfg.GetAttr("run_level"); known(rl) && rl.AsString() != "limited" && rl.AsString() != "highest" {
 		diags = diags.Append(attrError("run_level", fmt.Sprintf(`run_level %q must be "limited" or "highest"`, rl.AsString())))
 	}
-	for _, a := range []string{"name", "path", "description", "execute", "arguments", "working_directory", "user", "trigger"} {
+	for _, a := range []string{"name", "path", "description", "execute", "arguments", "working_directory", "user", "trigger", "allow_interpreter"} {
 		if !cfg.GetAttr(a).IsWhollyKnown() {
 			return diags
 		}
@@ -113,7 +120,7 @@ func winTaskID(host string, t windows.Task) string {
 	return "windows_scheduled_task:" + strings.ToLower(host) + ":" + strings.ToLower(t.Path+t.Name)
 }
 
-var winTaskSettings = []string{"description", "execute", "arguments", "working_directory", "user", "password_hmac", "run_level", "enabled", "trigger"}
+var winTaskSettings = []string{"description", "execute", "arguments", "working_directory", "user", "password_hmac", "run_level", "enabled", "trigger", "allow_interpreter"}
 
 func planWinTask(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	if req.ProposedNewState.IsNull() {

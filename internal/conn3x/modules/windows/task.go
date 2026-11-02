@@ -50,6 +50,7 @@ type Task struct {
 	Triggers         []TaskTrigger
 	User             string
 	HasPassword      bool // a password logon; the password itself never sits here
+	AllowInterpreter bool // the program runs code from its arguments, as cmd.exe does
 	Highest          bool
 	Enabled          bool
 }
@@ -64,6 +65,64 @@ func (t Task) logonFor(sid string) string {
 		return "ServiceAccount"
 	}
 	return "S4U"
+}
+
+var (
+	argToken  = regexp.MustCompile(`"([^"]*)"|'([^']*)'|(\S+)`)
+	pathStart = regexp.MustCompile(`[A-Za-z]:[\\/]|\\\\|//`)
+	urlStart  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+)
+
+// ArgumentPaths finds every path in a task's arguments, for the host to check
+// like the program: whatever the task runs, it may run from there. It refuses
+// what it can't read as a full local path, rather than guess, and it never
+// trusts a file extension, since cmd.exe tries several and rundll32 needs none.
+func ArgumentPaths(args string) ([]string, error) {
+	// cmd.exe and Task Scheduler expand these after Conn3x has looked.
+	if strings.ContainsAny(args, "%^!") {
+		return nil, errors.New("arguments must not contain %, ^ or !: they're expanded after Conn3x checks, so write the value out")
+	}
+	var paths []string
+	for _, m := range argToken.FindAllStringSubmatch(args, -1) {
+		// A quoted string stays whole, so a quoted path with spaces is one path.
+		tok := m[1] + m[2] + m[3]
+		for _, piece := range strings.FieldsFunc(tok, func(r rune) bool { return strings.ContainsRune(";&()|,=@<>'\"", r) }) {
+			piece = strings.TrimSpace(piece)
+			if piece == "" || urlStart.MatchString(piece) {
+				continue
+			}
+			rest := piece
+			if at := pathStart.FindStringIndex(piece); at != nil {
+				p := strings.ReplaceAll(piece[at[0]:], "/", `\`)
+				if strings.HasPrefix(p, `\\`) {
+					return nil, fmt.Errorf("arguments name %s, a share or device path, which Conn3x can't check", p)
+				}
+				paths = append(paths, p)
+				rest = piece[:at[0]]
+			}
+			if strings.Contains(rest, `\`) || strings.Index(rest, "/") > 0 {
+				return nil, fmt.Errorf("arguments name %s, a path that isn't a full local one; give the full path, such as C:\\scripts\\job.bat", piece)
+			}
+		}
+	}
+	return paths, nil
+}
+
+// interpreters run code their arguments hold or name, which no scan of the
+// arguments can see into: -EncodedCommand, -Command text, script names a
+// shell resolves itself.
+var interpreters = map[string]bool{
+	"cmd.exe": true, "powershell.exe": true, "powershell_ise.exe": true, "pwsh.exe": true, "wscript.exe": true, "cscript.exe": true,
+	"mshta.exe": true, "rundll32.exe": true, "regsvr32.exe": true, "py.exe": true, "pyw.exe": true, "perl.exe": true, "ruby.exe": true,
+	"node.exe": true, "java.exe": true, "javaw.exe": true, "msbuild.exe": true, "installutil.exe": true, "regasm.exe": true,
+	"regsvcs.exe": true, "msiexec.exe": true, "bash.exe": true, "sh.exe": true, "wsl.exe": true, "forfiles.exe": true,
+	"wmic.exe": true, "cmstp.exe": true, "msxsl.exe": true, "hh.exe": true, "conhost.exe": true, "schtasks.exe": true,
+}
+
+// IsInterpreter reports whether a program runs code from its arguments.
+func IsInterpreter(execute string) bool {
+	base := strings.ToLower(execute[strings.LastIndexAny(execute, `\/`)+1:])
+	return interpreters[base] || ((strings.HasPrefix(base, "python") || strings.HasPrefix(base, "pythonw")) && strings.HasSuffix(base, ".exe"))
 }
 
 // Validate checks a task before anything reaches a host.
@@ -93,6 +152,12 @@ func (t Task) Validate() error {
 	}
 	if t.Description != nil && strings.ContainsFunc(*t.Description, func(r rune) bool { return r == 0 }) {
 		return errors.New("description must not contain NUL")
+	}
+	if _, err := ArgumentPaths(t.Arguments); err != nil {
+		return err
+	}
+	if IsInterpreter(t.Execute) && !t.AllowInterpreter {
+		return fmt.Errorf("%s runs code from its arguments, which Conn3x can't check: set allow_interpreter = true if every script it runs is admin-only, or run a program instead", t.Execute)
 	}
 	if strings.TrimSpace(t.User) == "" {
 		return errors.New("user must be set, such as SYSTEM or LAB\\svc")
@@ -198,7 +263,9 @@ func ApplyTask(ctx context.Context, r ps.Runner, t Task, password string) error 
 		}
 		triggers = append(triggers, map[string]any{"type": tr.Type, "at": tr.At, "days": days})
 	}
+	paths, _ := ArgumentPaths(t.Arguments)
 	args := map[string]any{
+		"check_paths": paths,
 		"path": t.Path, "name": t.Name, "description": t.Description, "execute": t.Execute, "arguments": t.Arguments,
 		"working_directory": t.WorkingDirectory, "triggers": triggers, "user": t.User, "has_password": t.HasPassword,
 		"highest": t.Highest, "enabled": t.Enabled,

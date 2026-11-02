@@ -12,6 +12,8 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
+
+	"github.com/opentofu/opentofu/internal/conn3x/modules/windows"
 )
 
 // reviewScript is on every windows_powershell step made from a task: a script
@@ -506,6 +508,10 @@ func winScheduledTaskModule(in *input) ([]step, string) {
 	if in.has("password") {
 		in.ignore("password", "update_password")
 		notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here.")
+	}
+	if windows.IsInterpreter(act["path"]) {
+		attrs = append(attrs, attr{key: "allow_interpreter", val: cty.True})
+		notes = append(notes, "TODO(convert): This task runs an interpreter. Conn3x checks paths it can see in arguments, not code inside them: make sure every script it runs is admin-only.")
 	}
 	return []step{{module: "windows_scheduled_task", attrs: attrs, blocks: blocks, notes: notes}}, ""
 }

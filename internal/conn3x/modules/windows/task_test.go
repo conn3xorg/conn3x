@@ -10,7 +10,7 @@ import (
 )
 
 func baseTask() Task {
-	return Task{Path: `\`, Name: "Nightly", Execute: `C:\Windows\System32\cmd.exe`, Arguments: "/c echo hi", User: "SYSTEM", Enabled: true,
+	return Task{Path: `\`, Name: "Nightly", Execute: `C:\Windows\System32\cmd.exe`, Arguments: "/c echo hi", User: "SYSTEM", Enabled: true, AllowInterpreter: true,
 		Triggers: []TaskTrigger{{Type: "daily", At: "2026-01-01T03:00:00"}, {Type: "boot"}}}
 }
 
@@ -110,5 +110,57 @@ func TestApplyTaskPassword(t *testing.T) {
 	}
 	if ApplyTask(context.Background(), &fake{}, baseTask(), secret) == nil {
 		t.Error("a password went with a service account")
+	}
+}
+
+// Every way the review found past a check of the arguments, and a few
+// ordinary lines that must still pass.
+func TestArgumentPaths(t *testing.T) {
+	for args, want := range map[string][]string{
+		`-Command "& C:\Users\Public\x.ps1; whoami"`: {`C:\Users\Public\x.ps1`},
+		`-Command "& 'C:\Users\Public\x.ps1'"`:       {`C:\Users\Public\x.ps1`},
+		`/c C:\Users\Public\job`:                     {`C:\Users\Public\job`},
+		`C:\Users\Public\evil,Entry`:                 {`C:\Users\Public\evil`},
+		`/c C:/Users/Public/job`:                     {`C:\Users\Public\job`},
+		`/c "C:\Program Files\App\run.bat" --fast`:   {`C:\Program Files\App\run.bat`},
+		`-File:C:\scripts\job.ps1`:                   {`C:\scripts\job.ps1`},
+		`/c whoami >C:\out\who.txt`:                  {`C:\out\who.txt`},
+		`/c echo hi`:                                 nil,
+		`--url https://example.com/a/b /p:Config`:    nil,
+	} {
+		got, err := ArgumentPaths(args)
+		if err != nil || strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("%s: %q, %v", args, got, err)
+		}
+	}
+	for name, args := range map[string]string{
+		"percent":        `/c %PUBLIC%\job`,
+		"caret":          `/c job.b^at`,
+		"bang":           `/c !x!`,
+		"relative":       `/c ..\..\Users\Public\job`,
+		"relative slash": `/c Public/job`,
+		"share":          `-File \\server\share\x.ps1`,
+		"forward share":  `-File //server/share/x.ps1`,
+		"device":         `\\?\C:\Users\Public\x.dll,Entry`,
+	} {
+		if _, err := ArgumentPaths(args); err == nil {
+			t.Errorf("%s: accepted %s", name, args)
+		}
+	}
+}
+
+func TestInterpretersNeedOptIn(t *testing.T) {
+	for _, exe := range []string{`C:\Windows\System32\cmd.exe`, `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, `C:\Windows\System32\RUNDLL32.EXE`,
+		`C:\Windows\System32\mshta.exe`, `C:\Python312\python.exe`, `C:\Python312\pythonw3.12.exe`} {
+		tk := baseTask()
+		tk.Execute, tk.AllowInterpreter = exe, false
+		if err := tk.Validate(); err == nil || !strings.Contains(err.Error(), "allow_interpreter") {
+			t.Errorf("%s: %v", exe, err)
+		}
+	}
+	tk := baseTask()
+	tk.Execute, tk.AllowInterpreter, tk.Arguments = `C:\Program Files\App\app.exe`, false, "--quiet"
+	if err := tk.Validate(); err != nil {
+		t.Errorf("a plain program: %v", err)
 	}
 }

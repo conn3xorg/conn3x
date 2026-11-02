@@ -34,7 +34,7 @@ func TestWindowsMappings(t *testing.T) {
 		`win_user: {name: appsvc, fullname: App, description: Runs it, account_disabled: no}`:   {"windows_user {", `full_name   = "App"`, "disabled    = false"},
 		`win_group: {name: AppAdmins, description: Admins}`:                                     {"windows_group {", `description = "Admins"`},
 		`community.windows.win_scheduled_task: {name: Nightly, username: SYSTEM, run_level: highest, actions: [{path: 'C:\Windows\System32\cmd.exe', arguments: '/c echo hi'}], triggers: [{type: daily, start_boundary: '2026-01-01T03:00:00', days_interval: 2}, {type: boot}]}`: {
-			"windows_scheduled_task {", `execute   = "C:\\Windows\\System32\\cmd.exe"`, `arguments = "/c echo hi"`, `user      = "SYSTEM"`, `run_level = "highest"`, "trigger {", `type          = "daily"`, `at            = "2026-01-01T03:00:00"`, "days_interval = 2", `type = "boot"`,
+			"windows_scheduled_task {", `execute           = "C:\\Windows\\System32\\cmd.exe"`, `arguments         = "/c echo hi"`, `user              = "SYSTEM"`, `run_level         = "highest"`, "allow_interpreter = true", "runs an interpreter", "trigger {", `type          = "daily"`, `at            = "2026-01-01T03:00:00"`, "days_interval = 2", `type = "boot"`,
 		},
 		`win_group_membership: {name: Administrators, members: [appsvc, 'LAB\ops'], state: pure}`: {
 			"windows_group {", `members       = ["appsvc", "LAB\\ops"]`, "authoritative = true",

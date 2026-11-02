@@ -14,7 +14,7 @@ import (
 )
 
 func taskCfg(r resourceType, extra map[string]cty.Value) cty.Value {
-	attrs := map[string]cty.Value{"name": cty.StringVal("Nightly"), "execute": cty.StringVal(`C:\Windows\System32\cmd.exe`), "user": cty.StringVal(`LAB\svc`)}
+	attrs := map[string]cty.Value{"name": cty.StringVal("Nightly"), "execute": cty.StringVal(`C:\Windows\System32\cmd.exe`), "user": cty.StringVal(`LAB\svc`), "allow_interpreter": cty.True}
 	for k, v := range extra {
 		attrs[k] = v
 	}
@@ -23,8 +23,14 @@ func taskCfg(r resourceType, extra map[string]cty.Value) cty.Value {
 
 func TestWinTaskValidate(t *testing.T) {
 	r := resourceTypes["conn3x_windows_scheduled_task"]
-	if d := r.validate(taskCfg(r, nil)); d.HasErrors() {
+	if d := r.validate(taskCfg(r, map[string]cty.Value{"allow_interpreter": cty.True})); d.HasErrors() {
 		t.Fatal(d.Err())
+	}
+	if d := r.validate(taskCfg(r, map[string]cty.Value{"allow_interpreter": cty.NullVal(cty.Bool)})); !d.HasErrors() {
+		t.Error("cmd.exe without allow_interpreter was accepted")
+	}
+	if d := r.validate(taskCfg(r, map[string]cty.Value{"allow_interpreter": cty.True, "arguments": cty.StringVal(`/c %PUBLIC%\job`)})); !d.HasErrors() {
+		t.Error("a % in arguments was accepted")
 	}
 	for name, a := range map[string]map[string]cty.Value{
 		"relative program":   {"execute": cty.StringVal("cmd.exe")},

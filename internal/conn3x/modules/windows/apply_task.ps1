@@ -34,37 +34,20 @@ function Assert-AdminOnly([string]$p, [switch]$Folder) {
   } finally { $h.Dispose() }
 }
 
-# Scripts and libraries an interpreter loads: a task naming one runs it.
-$script:loadable = '.bat', '.cmd', '.ps1', '.psm1', '.psd1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh', '.hta', '.sct',
-  '.dll', '.ocx', '.cpl', '.py', '.pyw', '.pl', '.rb', '.jar', '.msi', '.msp', '.exe', '.com', '.scr', '.inf', '.csproj', '.proj'
-
-# Assert-Arguments checks every path the arguments name the way the program is
-# checked: cmd.exe /c C:\Users\Public\job.bat runs job.bat as the task's user,
-# so job.bat must be as safe as cmd.exe. A share is refused, and so is a script
-# or library named without a full local path, which would be found somewhere
-# Conn3x can't check.
-function Assert-Arguments([string]$line) {
-  $tokens = foreach ($m in [regex]::Matches($line, '"([^"]*)"|(\S+)')) {
-    if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+# Assert-Path checks a path the arguments name. One that doesn't exist yet is
+# judged by the deepest folder on its way that does: whoever can add files
+# there can put something at that path later.
+function Assert-Path([string]$p) {
+  Assert-FullName $p
+  if ([IO.Path]::GetPathRoot($p) -eq $p) { throw "the arguments name the drive $p itself" }
+  if ([IO.File]::Exists($p)) { Assert-AdminOnly $p; return }
+  if ([IO.Directory]::Exists($p)) { Assert-AdminOnly $p -Folder; return }
+  $parent = [IO.Path]::GetDirectoryName($p)
+  while ($parent -and -not [IO.Directory]::Exists($parent)) { $parent = [IO.Path]::GetDirectoryName($parent) }
+  if (-not $parent -or [IO.Path]::GetPathRoot($parent) -eq $parent) {
+    throw "the arguments name $p, which doesn't exist, and anyone can make folders at the top of the drive; make its folder first, admin-only"
   }
-  # A path can also follow , as in rundll32 x.dll,Entry, or = or @, or > in
-  # a redirection.
-  foreach ($tok in @($tokens | ForEach-Object { $_ -split '[,=@<>|]' } | Where-Object { $_ })) {
-    $m = [regex]::Match($tok, '(?:[A-Za-z]:\\|\\\\|//).*')
-    if ($m.Success) {
-      $p = $m.Value
-      if ($p.StartsWith('\\') -or $p.StartsWith('//')) { throw "the arguments name $p, a share or device path; this task's program would load it from somewhere Conn3x can't check" }
-      Assert-FullName $p
-      if ([IO.File]::Exists($p)) { Assert-AdminOnly $p }
-      elseif ([IO.Directory]::Exists($p)) { Assert-AdminOnly $p -Folder }
-      elseif ([IO.Path]::GetExtension($p).ToLowerInvariant() -in $script:loadable) { throw "the arguments name $p, which doesn't exist, so Conn3x can't check who could put it there" }
-      continue
-    }
-    $bare = $tok.Trim("'", ';', '(', ')')
-    if ([IO.Path]::GetExtension($bare).ToLowerInvariant() -in $script:loadable) {
-      throw "the arguments name $bare without a full local path, so the program could load it from a folder Conn3x can't check. Give its full path."
-    }
-  }
+  Assert-AdminOnly $parent -Folder
 }
 
 # Whoever can change what a task runs can act as the task's user, whatever its
@@ -72,7 +55,9 @@ function Assert-Arguments([string]$line) {
 # without one. So every task is checked.
 Assert-AdminOnly ([string]$A.execute)
 if ($A.working_directory) { Assert-AdminOnly ([string]$A.working_directory) -Folder }
-if ($A.arguments) { Assert-Arguments ([string]$A.arguments) }
+# Every full path in the arguments, as Go found them; Go refused anything it
+# couldn't read as one.
+foreach ($p in @($A.check_paths)) { if ($p) { Assert-Path ([string]$p) } }
 
 # The logon follows from the account as Windows resolves it, not its spelling.
 $sid = (Get-Sid ([string]$A.user)).Value

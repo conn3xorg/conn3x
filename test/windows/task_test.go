@@ -34,7 +34,7 @@ func randHex(n int) string {
 // taskName is a fresh task in \Conn3xTest\, removed when the test ends.
 func newTask(t *testing.T, c *ssh.Client) windows.Task {
 	t.Helper()
-	tk := windows.Task{Path: `\Conn3xTest\`, Name: "c3t " + randHex(4), Execute: cmdExe, User: "SYSTEM", Enabled: true}
+	tk := windows.Task{Path: `\Conn3xTest\`, Name: "c3t " + randHex(4), Execute: cmdExe, User: "SYSTEM", Enabled: true, AllowInterpreter: true}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -182,10 +182,18 @@ $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Sec
 		"script in an open folder":  {`/c ` + open + `\job.bat`, "S-1-5-11 can"},
 		"quoted, with an option":    {`/c call "` + open + `\job.bat" --x`, "S-1-5-11 can"},
 		"rundll32 entry point":      {open + `\x.dll,Entry`, "S-1-5-11 can"},
-		"script with no full path":  {`/c job.bat`, "without a full local path"},
 		"script on a share":         {`-File \\server\share\x.ps1`, "share"},
-		"script that isn't there":   {`-File ` + locked + `\none.ps1`, "doesn't exist"},
 		"redirect into open folder": {`/c whoami >` + open + `\job.bat`, "S-1-5-11 can"},
+		// The bypasses a review found in the first version of this check.
+		"inside -Command text":   {`-Command "& ` + open + `\job.bat; whoami"`, "S-1-5-11 can"},
+		"single-quoted":          {`-Command "& '` + open + `\job.bat'"`, "S-1-5-11 can"},
+		"no extension":           {`/c ` + open + `\job`, "S-1-5-11 can"},
+		"rundll32 with no .dll":  {open + `\x,Entry`, "S-1-5-11 can"},
+		"forward slashes":        {`/c ` + strings.ReplaceAll(open, `\`, "/") + `/job.bat`, "S-1-5-11 can"},
+		"environment variable":   {`/c %PUBLIC%\job`, "must not contain %"},
+		"caret":                  {`/c job.b^at`, "must not contain %"},
+		"relative from System32": {`/c ..\..\Users\Public\job`, "isn't a full local one"},
+		"public folder, missing": {`/c C:\Users\Public\c3-` + randHex(4), "can"},
 	} {
 		tk := newTask(t, c)
 		tk.Arguments = tc.args
@@ -193,6 +201,19 @@ $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Sec
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	// A script that doesn't exist yet, in a folder only administrators can
+	// change, is fine: nobody else can put it there.
+	tk0 := newTask(t, c)
+	tk0.Arguments = `-File ` + locked + `\later.ps1`
+	if err := windows.ApplyTask(ctx, c, tk0, ""); err != nil {
+		t.Errorf("a script to come, in an admin-only folder: %v", err)
+	}
+	// An interpreter without the opt-in is refused before the host.
+	tk1 := newTask(t, c)
+	tk1.AllowInterpreter = false
+	if err := windows.ApplyTask(ctx, c, tk1, ""); err == nil || !strings.Contains(err.Error(), "allow_interpreter") {
+		t.Errorf("cmd.exe without allow_interpreter: %v", err)
 	}
 	// Every task is checked, at any run level and for any account: the
 	// login's own limited task from the open folder is refused too.
@@ -273,12 +294,11 @@ auditpol.exe /set /subcategory:'{0CCE922B-69AE-11D9-BED3-505054503030}' /success
 	t.Cleanup(restore)
 	since := strings.TrimSpace(run(t, c, `(Get-Date).ToUniversalTime().ToString('o')`, nil).Text)
 
-	out := `C:\Windows\Temp\c3pw-` + randHex(4) + ".txt"
-	t.Cleanup(func() {
-		_, _ = ps.User(context.Background(), c, `param($A) [IO.File]::Delete($A.f)`, map[string]any{"f": out}, time.Minute)
-	})
+	// Somewhere only administrators can change, as paths in arguments are
+	// checked; elevated, so this user's administrator rights can write there.
+	out := tempDir(t, c) + `\c3pw-` + randHex(4) + ".txt"
 	tk := newTask(t, c)
-	tk.User, tk.HasPassword = user, true
+	tk.User, tk.HasPassword, tk.Highest = user, true, true
 	tk.Arguments = "/c whoami > " + out
 	if err := windows.ApplyTask(ctx, c, tk, "wrong-"+sentinel); err == nil {
 		t.Error("Task Scheduler took a wrong password")
@@ -421,6 +441,7 @@ circuit "win" {
       path        = %q
       execute     = %q
       arguments   = "/c exit 0"
+      allow_interpreter = true
       user        = %q
       password_wo = var.pw
 
