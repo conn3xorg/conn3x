@@ -74,7 +74,11 @@ if (-not $A.allow_interpreter) {
   $own = ([string](Get-Item -LiteralPath ([string]$A.execute)).VersionInfo.OriginalFilename).ToLowerInvariant()
   # System32's own programs give it with .MUI on the end, as in Cmd.Exe.MUI.
   $own = $own -replace '\.mui$', ''
-  if ($own -and ($own -in @($A.interpreters) -or ($own.StartsWith('python') -and $own.EndsWith('.exe')))) {
+  # Compare names without the extension: .NET hosts such as pwsh give
+  # pwsh.dll. An empty name was already checked by its file name in Go.
+  $stem = [IO.Path]::GetFileNameWithoutExtension($own)
+  $stems = @($A.interpreters) | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension([string]$_) }
+  if ($stem -and ($stem -in $stems -or $stem.StartsWith('python'))) {
     throw "$($A.execute) is $own, which runs code from its arguments: set allow_interpreter = true if every script it runs is admin-only"
   }
 }
@@ -82,6 +86,9 @@ if ($A.working_directory) { Assert-AdminOnly ([string]$A.working_directory) -Fol
 # Every full path in the arguments, as Go found them; Go refused anything it
 # couldn't read as one.
 foreach ($p in @($A.check_paths)) { if ($p) { Assert-Path ([string]$p) } }
+# data_paths: only read or written as data, so anyone may change them, but
+# they must still be plain paths on a fixed NTFS drive.
+foreach ($p in @($A.data_paths)) { if ($p) { Assert-PlainPath ([string]$p) } }
 
 # The logon follows from the account as Windows resolves it, not its spelling.
 $sid = (Get-Sid ([string]$A.user)).Value

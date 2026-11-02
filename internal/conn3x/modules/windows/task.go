@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,8 +50,9 @@ type Task struct {
 	WorkingDirectory string
 	Triggers         []TaskTrigger
 	User             string
-	HasPassword      bool // a password logon; the password itself never sits here
-	AllowInterpreter bool // the program runs code from its arguments, as cmd.exe does
+	HasPassword      bool     // a password logon; the password itself never sits here
+	AllowInterpreter bool     // the program runs code from its arguments, as cmd.exe does
+	DataPaths        []string // argument paths only read or written as data, not admin-only
 	Highest          bool
 	Enabled          bool
 }
@@ -70,9 +72,10 @@ func (t Task) logonFor(sid string) string {
 var (
 	argToken = regexp.MustCompile(`"([^"]*)"|'([^']*)'|(\S+)`)
 	// The four kinds of field arguments may hold. Nothing else passes.
-	argSwitch    = regexp.MustCompile(`^--?[A-Za-z0-9?][A-Za-z0-9_.?-]*(?:=(.*))?$`)
-	argSlash     = regexp.MustCompile(`^/[A-Za-z0-9?][^/\\]*$`)
-	argURL       = regexp.MustCompile(`^https?://[^\s"'<>|^]+$`)
+	argSwitch = regexp.MustCompile(`^--?[A-Za-z0-9?][A-Za-z0-9_.?-]*(?:=(.*))?$`)
+	argSlash  = regexp.MustCompile(`^/[A-Za-z0-9?][^/\\:]*(?::(.*))?$`)
+	// No \ ; or , either, so a path can't ride inside a URL unchecked.
+	argURL       = regexp.MustCompile(`^https?://[^\s"'<>|^\\;,]+$`)
 	argDrivePath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 	// A quoted path taken whole, spaces and all, may hold none of the
 	// characters a shell acts on.
@@ -129,6 +132,12 @@ func ArgumentPaths(args string) ([]string, error) {
 					}
 				}
 			case argSlash.MatchString(sub):
+				// /x:value gets the same rules as -x=value.
+				if m := argSlash.FindStringSubmatch(sub); m[1] != "" {
+					if err := field(m[1]); err != nil {
+						return err
+					}
+				}
 			case !strings.ContainsAny(sub, `\/:`):
 			case argDrivePath.MatchString(sub):
 				p := strings.ReplaceAll(sub, "/", `\`)
@@ -162,6 +171,20 @@ func ArgumentPaths(args string) ([]string, error) {
 		}
 	}
 	return paths, nil
+}
+
+// splitData takes out the argument paths data_paths lists, matched exactly
+// but for case, so the host checks only that they're plain paths on a fixed
+// NTFS drive, not who can change them.
+func (t Task) splitData(paths []string) (check, data []string) {
+	for _, p := range paths {
+		if slices.ContainsFunc(t.DataPaths, func(d string) bool { return strings.EqualFold(strings.ReplaceAll(d, "/", `\`), p) }) {
+			data = append(data, p)
+		} else {
+			check = append(check, p)
+		}
+	}
+	return check, data
 }
 
 // interpreters run code their arguments hold or name, which no scan of the
@@ -230,6 +253,12 @@ func (t Task) Validate() error {
 	}
 	if _, err := ArgumentPaths(t.Arguments); err != nil {
 		return err
+	}
+	for _, p := range t.DataPaths {
+		n := strings.ReplaceAll(p, "/", `\`)
+		if !argDrivePath.MatchString(p) || strings.Contains(n[2:], ":") || strings.ContainsAny(n, "%^!") || !cleanSegments(n) {
+			return fmt.Errorf("data_paths entry %q must be a plain full path on a drive, such as C:\\logs\\job.log", p)
+		}
 	}
 	if IsInterpreter(t.Execute) && !t.AllowInterpreter {
 		return fmt.Errorf("%s runs code from its arguments, which Conn3x can't check: set allow_interpreter = true if every script it runs is admin-only, or run a program instead", t.Execute)
@@ -339,8 +368,9 @@ func ApplyTask(ctx context.Context, r ps.Runner, t Task, password string) error 
 		triggers = append(triggers, map[string]any{"type": tr.Type, "at": tr.At, "days": days})
 	}
 	paths, _ := ArgumentPaths(t.Arguments)
+	paths, data := t.splitData(paths)
 	args := map[string]any{
-		"check_paths": paths, "allow_interpreter": t.AllowInterpreter, "interpreters": Interpreters(),
+		"check_paths": paths, "data_paths": data, "allow_interpreter": t.AllowInterpreter, "interpreters": Interpreters(),
 		"path": t.Path, "name": t.Name, "description": t.Description, "execute": t.Execute, "arguments": t.Arguments,
 		"working_directory": t.WorkingDirectory, "triggers": triggers, "user": t.User, "has_password": t.HasPassword,
 		"highest": t.Highest, "enabled": t.Enabled,

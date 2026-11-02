@@ -39,9 +39,13 @@ func winTaskSchema() providers.Schema {
 				Type: cty.Bool, Optional: true,
 				Description: "Let execute be a program that runs code from its arguments, such as cmd.exe, powershell.exe, wscript.exe, rundll32.exe or python.exe. Conn3x checks the paths it can see in arguments, but not code inside them, such as -Command text or -EncodedCommand.",
 			},
-			"enabled":       {Type: cty.Bool, Optional: true, Description: "Whether the task can run. Defaults to true."},
-			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) deletes the task when the step is removed or replaced, \"forget\" leaves it."},
-			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the task matched at the last refresh."},
+			"data_paths": {
+				Type: cty.Set(cty.String), Optional: true,
+				Description: "Full paths in arguments that the program only reads data from or writes output to, such as a log file. These must match an argument exactly and skip the admin-only check, so anyone who can write there can change them. Never list a file or folder the program loads code or settings from, or runs.",
+			},
+			"enabled":   {Type: cty.Bool, Optional: true, Description: "Whether the task can run. Defaults to true."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) deletes the task when the step is removed or replaced, \"forget\" leaves it."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the task matched at the last refresh."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{
 			"ssh": connectionBlock(),
@@ -76,6 +80,12 @@ func winTaskFrom(v cty.Value) windows.Task {
 	if a := v.GetAttr("allow_interpreter"); known(a) {
 		t.AllowInterpreter = a.True()
 	}
+	if dp := v.GetAttr("data_paths"); known(dp) {
+		for it := dp.ElementIterator(); it.Next(); {
+			_, e := it.Element()
+			t.DataPaths = append(t.DataPaths, e.AsString())
+		}
+	}
 	if trs := v.GetAttr("trigger"); known(trs) {
 		for it := trs.ElementIterator(); it.Next(); {
 			_, e := it.Element()
@@ -102,7 +112,7 @@ func validateWinTask(cfg cty.Value) tfdiags.Diagnostics {
 	if rl := cfg.GetAttr("run_level"); known(rl) && rl.AsString() != "limited" && rl.AsString() != "highest" {
 		diags = diags.Append(attrError("run_level", fmt.Sprintf(`run_level %q must be "limited" or "highest"`, rl.AsString())))
 	}
-	for _, a := range []string{"name", "path", "description", "execute", "arguments", "working_directory", "user", "trigger", "allow_interpreter"} {
+	for _, a := range []string{"name", "path", "description", "execute", "arguments", "working_directory", "user", "trigger", "allow_interpreter", "data_paths"} {
 		if !cfg.GetAttr(a).IsWhollyKnown() {
 			return diags
 		}
@@ -120,7 +130,7 @@ func winTaskID(host string, t windows.Task) string {
 	return "windows_scheduled_task:" + strings.ToLower(host) + ":" + strings.ToLower(t.Path+t.Name)
 }
 
-var winTaskSettings = []string{"description", "execute", "arguments", "working_directory", "user", "password_hmac", "run_level", "enabled", "trigger", "allow_interpreter"}
+var winTaskSettings = []string{"description", "execute", "arguments", "working_directory", "user", "password_hmac", "run_level", "enabled", "trigger", "allow_interpreter", "data_paths"}
 
 func planWinTask(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	if req.ProposedNewState.IsNull() {

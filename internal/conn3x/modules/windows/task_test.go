@@ -132,6 +132,9 @@ func TestArgumentPaths(t *testing.T) {
 		`/c "C:\Program Files (x86)\App\run.bat" --fast`: {`C:\Program Files (x86)\App\run.bat`},
 		`/c whoami >C:\out\who.txt`:                      {`C:\out\who.txt`},
 		`"http://a C:\Users\Public\x"`:                   {`C:\Users\Public\x`},
+		`https://host/p;C:\Users\Public\x.exe`:           {`C:\Users\Public\x.exe`},
+		`https://example.com/a,b`:                        nil,
+		`/log:C:\Logs\job.log /p:Config`:                 {`C:\Logs\job.log`},
 	} {
 		got, err := ArgumentPaths(args)
 		if err != nil || strings.Join(got, "|") != strings.Join(want, "|") {
@@ -163,6 +166,11 @@ func TestArgumentPathsRefused(t *testing.T) {
 		"folder ending in a dot":      `C:\Windows.\System32\x.dll`,
 		"quoted folder ending space":  `"C:\Windows \System32\x.dll"`,
 		"switch value that's a share": `--config=\\server\share\x`,
+		"slash switch drive-relative": `/sw:D:evil.dll`,
+		"slash switch rooted":         `/sw:\Users\Public\evil.dll`,
+		"slash switch forward rooted": `/sw:/Users/Public/evil.dll`,
+		"path inside a URL":           `https://host/p;D:evil.dll`,
+		"backslash inside a URL":      `https://host\Users\Public\x`,
 	} {
 		if _, err := ArgumentPaths(args); err == nil {
 			t.Errorf("%s: accepted %s", name, args)
@@ -188,5 +196,23 @@ func TestInterpretersNeedOptIn(t *testing.T) {
 	tk.Execute = `C:\PROGRA~1\App\app.exe`
 	if tk.Validate() == nil {
 		t.Error("a short name in execute was accepted")
+	}
+}
+
+// data_paths skips the admin-only check only for an exact match.
+func TestTaskSplitData(t *testing.T) {
+	task := Task{DataPaths: []string{`C:\Logs\job.log`, `c:/data/in.csv`}}
+	paths, _ := ArgumentPaths(`--log C:\logs\JOB.log --in C:\Data\in.csv --plugin C:\Logs\job.log.dll --dir C:\Logs`)
+	check, data := task.splitData(paths)
+	if strings.Join(data, "|") != `C:\logs\JOB.log|C:\Data\in.csv` || strings.Join(check, "|") != `C:\Logs\job.log.dll|C:\Logs` {
+		t.Errorf("check %q, data %q", check, data)
+	}
+	if err := (Task{Name: "t", Path: `\`, Execute: `C:\App\app.exe`, User: "SYSTEM", Enabled: true, DataPaths: []string{`C:\Logs\job.log`}}).Validate(); err != nil {
+		t.Errorf("plain data path refused: %v", err)
+	}
+	for _, bad := range []string{`D:job.log`, `\\server\share\x.log`, `C:\PROGRA~1\x.log`, `C:\logs\x.log:s`, `logs\x.log`, `C:\%TEMP%\x.log`} {
+		if err := (Task{Name: "t", Path: `\`, Execute: `C:\App\app.exe`, User: "SYSTEM", Enabled: true, DataPaths: []string{bad}}).Validate(); err == nil {
+			t.Errorf("data_paths %s accepted", bad)
+		}
 	}
 }
