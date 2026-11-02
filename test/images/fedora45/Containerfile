@@ -1,9 +1,14 @@
 # Fedora 45 with systemd and sshd, used as a managed host in end-to-end tests.
 FROM registry.fedoraproject.org/fedora:45
 
+# In a privileged container udev gives eth0 a new MAC address during boot, per
+# this link file. A host that already reached the old one sends everything there
+# until its neighbour entry goes stale, so SSH can stay silent for a minute.
 RUN dnf -y install systemd openssh-server sudo procps-ng iproute policycoreutils \
  && dnf makecache \
  && ssh-keygen -A \
+ && mkdir -p /etc/systemd/network \
+ && ln -s /dev/null /etc/systemd/network/99-default.link \
  && systemctl enable sshd \
  && systemctl mask systemd-firstboot.service \
  && mkdir -p -m 700 /root/.ssh
