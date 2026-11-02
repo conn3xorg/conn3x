@@ -526,3 +526,70 @@ func TestStartHoldsSessionUntilClose(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// RunRaw sends the command as given: no /bin/sh wrapper, no locale.
+func TestRunRawAddsNothingAroundTheCommand(t *testing.T) {
+	srv := sshtest.New(t)
+	srv.Env = []string{"LC_ALL=kept"}
+	c := dial(t, testConfig(t, srv))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := c.RunRaw(ctx, `printf '%s' "$LC_ALL"; cat; exit 7`, []byte("in"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 7 || string(res.Stdout) != "keptin" {
+		t.Fatalf("exit %d, stdout %q", res.ExitCode, res.Stdout)
+	}
+}
+
+func TestRunRawRefusesAContextWithoutADeadline(t *testing.T) {
+	srv := sshtest.New(t)
+	c := dial(t, testConfig(t, srv))
+	if _, err := c.RunRaw(context.Background(), "true", nil); err == nil || !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A command that never ends stops at the deadline and the connection lives on.
+func TestRunRawStopsAtTheDeadline(t *testing.T) {
+	srv := sshtest.New(t)
+	c := dial(t, testConfig(t, srv))
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := c.RunRaw(ctx, "sleep 30", nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("took %s", took)
+	}
+	if !c.Alive() {
+		t.Fatal("the connection died with the command")
+	}
+}
+
+// What cmd.exe and PowerShell say when handed Run's wrapper, and what a Linux
+// host can say that must not be mistaken for it.
+func TestWindowsShellRefused(t *testing.T) {
+	for _, s := range []string{
+		"'LC_ALL' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n",
+		"\"LC_ALL\" ist entweder falsch geschrieben oder\r\n",
+		"LC_ALL=C : The term 'LC_ALL=C' is not recognized as the name of a cmdlet\r\n",
+		"#< CLIXML\r\n<Objs><S S=\"Error\">LC_ALL=C : The term_x000D__x000A_</S></Objs>",
+	} {
+		if !windowsShellRefused([]byte(s)) {
+			t.Errorf("missed %q", s)
+		}
+	}
+	for _, s := range []string{
+		"",
+		"sh: 1: false: not found\n",
+		"bash: warning: setlocale: LC_ALL: cannot change locale (C)\n",
+		"perl: warning: Setting locale failed.\nLC_ALL = \"C\"\n",
+	} {
+		if windowsShellRefused([]byte(s)) {
+			t.Errorf("mistook %q", s)
+		}
+	}
+}
