@@ -9,13 +9,15 @@
   <a href="https://github.com/conn3xorg/conn3x/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/conn3xorg/conn3x/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MPL-2.0" src="https://img.shields.io/badge/license-MPL--2.0-13233a"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/conn3xorg/conn3x"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/conn3xorg/conn3x?label=openssf%20scorecard&cacheSeconds=86400"></a>
+  <a href="https://www.bestpractices.dev/projects/16209"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/16209/badge"></a>
   <a href="https://github.com/conn3xorg/conn3x/discussions"><img alt="Discussions" src="https://img.shields.io/badge/discussions-join%20in-e85d0c"></a>
 </p>
 
 Provisioning a server and configuring it are one job, but it usually takes two tools:
 Terraform or OpenTofu to create the machine, then Ansible to set it up, plus the glue
 scripts, inventory files and second state that hold the two together. Conn3x does the
-whole job, from one binary, with one plan and one state.
+whole job, from one binary, with one plan and one state. That makes it an IaCC tool:
+infrastructure as code and configuration management in one plan.
 [Here's why that matters.](https://conn3x.org/blog/why-conn3x)
 
 <p align="center">
