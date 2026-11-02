@@ -9,6 +9,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -319,5 +321,79 @@ func TestUserWithoutPassword(t *testing.T) {
 	}
 	if a, _ = windows.ReadUser(ctx, c, u.Name); a.Enabled {
 		t.Error("it's enabled anyway")
+	}
+}
+
+// The host refuses to disable or delete the login, and to take the login's
+// own groups out of a group it gets rights from, whatever the provider saw.
+func TestLoginGuardsOnHost(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	login := env(t, "CONN3X_WIN_USER")
+	if i := strings.LastIndex(login, `\`); i >= 0 {
+		login = login[i+1:]
+	}
+	a, err := windows.ReadUser(ctx, c, login)
+	if err != nil || !a.Exists {
+		t.Fatalf("the login isn't a local user here: %+v, %v", a, err)
+	}
+	if err := windows.ApplyUser(ctx, c, windows.User{Name: login, Disabled: ptr(true)}, a, nil); err == nil || !strings.Contains(err.Error(), "logs in as") {
+		t.Fatalf("disabling the login: %v", err)
+	}
+	if err := windows.ApplyUserRemove(ctx, c, login); err == nil || !strings.Contains(err.Error(), "logs in as") {
+		t.Fatalf("deleting the login: %v", err)
+	}
+	// Users holds Authenticated Users and INTERACTIVE, which the login's token
+	// carries: an authoritative list without them is refused.
+	users := windows.Group{Name: "Users", Members: []string{login}, Authoritative: true}
+	before, err := windows.ReadGroup(ctx, c, users)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.ApplyGroup(ctx, c, users, before); err == nil || !strings.Contains(err.Error(), "gets its rights through it") {
+		t.Fatalf("emptying Users: %v", err)
+	}
+	if after, _ := windows.ReadGroup(ctx, c, users); len(after.Members) != len(before.Members) {
+		t.Errorf("Users changed: %v to %v", before.Members, after.Members)
+	}
+	if !connect(t).Alive() {
+		t.Error("the login no longer works")
+	}
+}
+
+// A member whose SID no longer resolves doesn't break reading the group.
+func TestGroupWithOrphanedMember(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	group := accountName(t, c, "c3o")
+	g := windows.Group{Name: group}
+	if err := windows.ApplyGroup(ctx, c, g, windows.ActualGroup{}); err != nil {
+		t.Fatal(err)
+	}
+	const orphan = "S-1-5-21-1111111111-2222222222-3333333333-4242"
+	run(t, c, `param($A) ([ADSI]('WinNT://./' + $A.g + ',group')).Add('WinNT://' + $A.s)`, map[string]any{"g": group, "s": orphan})
+	if out := run(t, c, `param($A) try { Get-LocalGroupMember -Group $A.g | Out-Null; 'read' } catch { 'threw' }`, map[string]any{"g": group}).Text; !strings.Contains(out, "threw") {
+		t.Logf("Get-LocalGroupMember didn't fail here (%s), so this shows only the ordinary path", strings.TrimSpace(out))
+	}
+	// read_group.ps1's fallback, run on its own: a workgroup host can't make
+	// Get-LocalGroupMember fail, as a deleted domain account would.
+	body, err := os.ReadFile("../../internal/conn3x/modules/windows/read_group.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := regexp.MustCompile(`(?s)catch \{.*?\n  (\(\[ADSI\].*?\n  \})`).FindSubmatch(body)
+	if fallback == nil {
+		t.Fatal("no ADSI fallback found in read_group.ps1")
+	}
+	res := run(t, c, "param($A)\n$g = Get-LocalGroup -Name $A.n\n"+string(fallback[1]), map[string]any{"n": group})
+	if got := strings.TrimSpace(res.Text); !strings.EqualFold(got, orphan) {
+		t.Errorf("ADSI fallback gave %q", got)
+	}
+	a, err := windows.ReadGroup(ctx, c, windows.Group{Name: group, Members: []string{orphan}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Members) != 1 || !strings.EqualFold(a.Members[0], orphan) {
+		t.Errorf("members %v", a.Members)
 	}
 }

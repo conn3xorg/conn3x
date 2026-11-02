@@ -652,6 +652,32 @@ circuit "win" {
 		t.Errorf("plan after putting the user back: exit %d\n%s", code, out)
 	}
 
+	// A user deleted by hand comes back with its password, not without one.
+	run(t, c, `param($A) Remove-LocalUser -Name $A.n`, map[string]any{"n": acct})
+	if out, code := tool("plan", "-no-color", "-input=false", "-detailed-exitcode"); code != 2 {
+		t.Errorf("plan after deleting the user: exit %d\n%s", code, out)
+	}
+	must("apply", "-no-color", "-input=false", "-auto-approve")
+	if !passwordWorks(t, c, acct, "s3ntinel-p1-value") {
+		t.Error("the user came back without its password")
+	}
+
+	// A name that changes only in case is the same account: updated, not
+	// deleted and made again with a new SID.
+	sidBefore, _ := windows.ReadUser(context.Background(), c, acct)
+	acct, grp = strings.ToUpper(acct), strings.ToUpper(grp)
+	write("allow_windows = true")
+	if out, code := tool("plan", "-no-color", "-input=false", "-detailed-exitcode"); code != 2 || strings.Contains(out, "must be replaced") || !strings.Contains(out, "0 to destroy") {
+		t.Errorf("plan after a case change: exit %d\n%s", code, out)
+	}
+	must("apply", "-no-color", "-input=false", "-auto-approve")
+	if after, _ := windows.ReadUser(context.Background(), c, acct); after.SID != sidBefore.SID || after.SID == "" {
+		t.Errorf("SID %s became %s", sidBefore.SID, after.SID)
+	}
+	if out, code := tool("plan", "-no-color", "-input=false", "-detailed-exitcode"); code != 0 {
+		t.Errorf("plan after the case change: exit %d\n%s", code, out)
+	}
+
 	if os.Getenv("CONN3X_WIN_REBOOT") != "" {
 		// A reboot Windows wants, which a failed run would have missed.
 		run(t, c, `New-Item -Force -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired' | Out-Null`, nil)

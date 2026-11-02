@@ -114,8 +114,11 @@ func validateWinUser(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
-// winUserID is what a password's HMAC is bound to.
-func winUserID(name string) string { return "windows_user:" + strings.ToLower(name) }
+// winUserID is what a password's HMAC is bound to: the host as well as the
+// name, so one password on many hosts doesn't give one HMAC in state.
+func winUserID(host, name string) string {
+	return "windows_user:" + strings.ToLower(host) + ":" + strings.ToLower(name)
+}
 
 func planWinUser(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	if req.ProposedNewState.IsNull() {
@@ -139,12 +142,16 @@ func planWinUser(req providers.PlanResourceChangeRequest) providers.PlanResource
 			return resp
 		}
 		warn = hmacKeyPermissionWarning()
-		if wo.IsKnown() && known(vals["name"]) {
-			vals["password_hmac"] = cty.StringVal(winWoHMAC(key, winUserID(vals["name"].AsString()), digest(wo.AsString())))
+		host := cty.NullVal(cty.String)
+		if conn := vals["ssh"]; !conn.IsNull() && conn.IsKnown() {
+			host = conn.GetAttr("host")
+		}
+		if wo.IsKnown() && known(vals["name"]) && known(host) {
+			vals["password_hmac"] = cty.StringVal(winWoHMAC(key, winUserID(host.AsString(), vals["name"].AsString()), digest(wo.AsString())))
 		}
 	}
 	req.ProposedNewState = cty.ObjectVal(vals)
-	resp = planSynced(req, "windows_user", []string{"name"}, []string{"full_name", "description", "disabled", "password_hmac"})
+	resp = planSyncedFold(req, "windows_user", []string{"name"}, []string{"full_name", "description", "disabled", "password_hmac"})
 	if warn != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(warn.Error()))
 	}
@@ -222,7 +229,7 @@ func applyWinUser(ctx context.Context, req providers.ApplyResourceChangeRequest)
 				}
 			}
 		}
-		sum := cty.StringVal(winWoHMAC(key, winUserID(u.Name), digest(wo.AsString())))
+		sum := cty.StringVal(winWoHMAC(key, winUserID(stringOr(planned.GetAttr("ssh").GetAttr("host"), ""), u.Name), digest(wo.AsString())))
 		vals["password_hmac"] = sum
 		// Set only when it's new to Conn3x: Windows can refuse to reuse a
 		// password, and resetting one on every run tells nobody anything.
@@ -238,6 +245,11 @@ func applyWinUser(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	a, err := windows.ReadUser(ctx, h.client, u.Name)
 	if err != nil {
 		return fail(err)
+	}
+	// A user deleted behind Conn3x's back is made again with its password.
+	if wo := req.Config.GetAttr("password_wo"); password == nil && !wo.IsNull() && !a.Exists {
+		s := wo.AsString()
+		password = &s
 	}
 	if password != nil || !u.Matches(a) {
 		if err := windows.ApplyUser(ctx, h.client, u, a, password); err != nil {
@@ -305,7 +317,7 @@ func validateWinGroup(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planWinGroup(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "windows_group", []string{"name"}, []string{"description", "members", "authoritative"})
+	return planSyncedFold(req, "windows_group", []string{"name"}, []string{"description", "members", "authoritative"})
 }
 
 func readWinGroup(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

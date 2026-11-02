@@ -86,3 +86,42 @@ func TestWinGroupValidate(t *testing.T) {
 		}
 	}
 }
+
+// A name that changes only in case is the same account: no replacement, so
+// its SID, and its on_remove, don't come into it.
+func TestWinAccountCaseIsNotReplace(t *testing.T) {
+	for _, kind := range []string{"conn3x_windows_user", "conn3x_windows_group"} {
+		r := resourceTypes[kind]
+		c := objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal("AppSvc")})
+		p := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(c.Type()), ProposedNewState: c, Config: c}).PlannedState
+		vals := p.AsValueMap()
+		vals["revision"], vals["in_sync"] = cty.StringVal("r"), cty.True
+		prior := cty.ObjectVal(vals)
+		lower := objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal("appsvc")})
+		resp := r.plan(providers.PlanResourceChangeRequest{PriorState: prior, ProposedNewState: lower, Config: lower})
+		if len(resp.RequiresReplace) != 0 {
+			t.Errorf("%s: case change replaces: %v", kind, resp.RequiresReplace)
+		}
+		other := objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal("other")})
+		if resp := r.plan(providers.PlanResourceChangeRequest{PriorState: prior, ProposedNewState: other, Config: other}); len(resp.RequiresReplace) == 0 {
+			t.Errorf("%s: a new name didn't replace", kind)
+		}
+	}
+}
+
+// One password on two hosts doesn't give one HMAC.
+func TestWinUserHMACBindsTheHost(t *testing.T) {
+	t.Setenv(hmacKeyEnv, strings.Repeat("k", 32))
+	r := resourceTypes["conn3x_windows_user"]
+	hmacOn := func(host string) string {
+		c := objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal("appsvc"), "password_wo": cty.StringVal("same")}).AsValueMap()
+		ssh := c["ssh"].AsValueMap()
+		ssh["host"] = cty.StringVal(host)
+		c["ssh"] = cty.ObjectVal(ssh)
+		cfg := cty.ObjectVal(c)
+		return r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(cfg.Type()), ProposedNewState: cfg, Config: cfg}).PlannedState.GetAttr("password_hmac").AsString()
+	}
+	if hmacOn("192.0.2.1") == hmacOn("192.0.2.2") {
+		t.Error("the same HMAC on two hosts")
+	}
+}

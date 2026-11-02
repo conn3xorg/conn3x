@@ -18,7 +18,7 @@ func TestAccountNames(t *testing.T) {
 			t.Errorf("user %q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "...", "  ", "a*", "a?", "[a]", `a\b`, "a/b", "a;b", "a@b", "a,b", "a\nb", "a\x00b", "twenty-one-characters"} {
+	for _, bad := range []string{"", "...", "  ", "a*", "a?", "[a]", `a\b`, "a/b", "a;b", "a@b", "a,b", "a\nb", "a\x00b", "twenty-one-characters", "alice ", " alice", "alice."} {
 		if (User{Name: bad}).Validate() == nil {
 			t.Errorf("accepted user %q", bad)
 		}
@@ -29,6 +29,9 @@ func TestAccountNames(t *testing.T) {
 	long := strings.Repeat("x", 49)
 	if (User{Name: "a", Description: &long}).Validate() == nil || (Group{Name: "a", Description: &long}).Validate() == nil {
 		t.Error("accepted a 49-character description")
+	}
+	if (Group{Name: "a", Members: []string{"alice", "ALICE"}}).Validate() == nil {
+		t.Error("accepted members that differ only in case")
 	}
 	if (Group{Name: "a", Members: []string{"a\nb"}}).Validate() == nil || (Group{Name: "a", Authoritative: true}).Validate() == nil {
 		t.Error("accepted bad members")

@@ -19,5 +19,9 @@ if ($A.create) {
 }
 # After the password, so an account is never enabled before it has one.
 if ($null -ne $A.disabled) {
-  if ($A.disabled) { Disable-LocalUser -InputObject $u } else { Enable-LocalUser -InputObject $u }
+  if ($A.disabled) {
+    # Checked here too, by SID: the provider can't always see the login's name.
+    if ($u.SID.Value -eq [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw "$($u.Name) is the user Conn3x logs in as; disabling it would lock Conn3x out of the host" }
+    Disable-LocalUser -InputObject $u
+  } else { Enable-LocalUser -InputObject $u }
 }

@@ -19,8 +19,10 @@ $readImports = 'CimCmdlets', 'Microsoft.PowerShell.LocalAccounts', 'NetTCPIP', '
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
 $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter::ToUInt32', 'BitConverter::ToUInt64', 'Convert::ToBase64String',
-  'IO.Path::GetDirectoryName', 'Security.Cryptography.SHA256::Create', 'Security.Principal.WindowsIdentity::GetCurrent', 'string::Join'
-$readInstance = 'Close', 'ComputeHash', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetValue', 'GetValueKind', 'IsInRole', 'OpenSubKey', 'Replace', 'ToLowerInvariant', 'ToString', 'Translate'
+  'IO.Path::GetDirectoryName', 'Security.Cryptography.SHA256::Create', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
+  'string::Join'
+$readInstance = 'Close', 'ComputeHash', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
+  'Replace', 'ToLowerInvariant', 'ToString', 'Translate'
 # Cmdlets that treat a positional argument as a -Path, with their usual aliases.
 $pathCommands = 'Add-Content', 'Clear-Content', 'Clear-Item', 'Copy-Item', 'Get-Acl', 'Get-ChildItem', 'Get-Content', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Invoke-Item',
   'Move-Item', 'Remove-Item', 'Rename-Item', 'Resolve-Path', 'Set-Acl', 'Set-Content', 'Set-Item', 'Set-ItemProperty', 'Set-Location', 'Test-Path',
@@ -100,6 +102,9 @@ foreach ($file in $Files) {
           elseif ($m -notin $readInstance) { Report $file $a "method $m isn't on the list for read scripts" }
           # FileInfo has a Replace, and a registry key opens for writing.
           elseif ($m -ieq 'Replace' -and $who -notmatch '^\(\[BitConverter\]::ToString\(') { Report $file $a 'a read script may use Replace only on the text from [BitConverter]::ToString' }
+          # ADSI runs any method by name: a read may only list members and read a SID.
+          elseif ($m -ieq 'Invoke' -and ($a.Arguments.Count -ne 1 -or $a.Arguments[0].Extent.Text -ine "'Members'")) { Report $file $a "a read script may use Invoke only as Invoke('Members')" }
+          elseif ($m -ieq 'InvokeMember' -and ($a.Arguments.Count -lt 2 -or $a.Arguments[0].Extent.Text -ine "'objectSid'" -or $a.Arguments[1].Extent.Text -ine "'GetProperty'")) { Report $file $a "a read script may use InvokeMember only to get objectSid" }
           elseif ($m -ieq 'OpenSubKey' -and ($a.Arguments.Count -ne 2 -or $a.Arguments[1].Extent.Text -ine '$false')) { Report $file $a 'OpenSubKey in a read script must say $false for writable' }
         }
       }

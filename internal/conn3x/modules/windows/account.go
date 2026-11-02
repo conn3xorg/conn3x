@@ -28,8 +28,9 @@ var (
 const maxDescription = 48
 
 func checkAccountName(kind, name string, re *regexp.Regexp) error {
-	if !re.MatchString(name) || strings.Trim(name, ". ") == "" {
-		return fmt.Errorf(`%s name %q isn't valid: Windows allows up to %d characters, not only dots or spaces, and none of " / \ [ ] : ; | = , + * ? < >`, kind, name, map[string]int{"user": 20, "group": 256}[kind])
+	// Windows drops a trailing dot or space, so "alice " would be alice.
+	if !re.MatchString(name) || strings.Trim(name, ". ") == "" || strings.TrimSpace(name) != name || strings.HasSuffix(name, ".") {
+		return fmt.Errorf(`%s name %q isn't valid: Windows allows up to %d characters, no space at either end or dot at the end, and none of " / \ [ ] : ; | = , + * ? < >`, kind, name, map[string]int{"user": 20, "group": 256}[kind])
 	}
 	return nil
 }
@@ -162,7 +163,13 @@ func (g Group) Validate() error {
 	if g.Authoritative && g.Members == nil {
 		return errors.New("authoritative needs members: the complete list")
 	}
+	seen := map[string]bool{}
 	for _, m := range g.Members {
+		// Windows names ignore case, and so does the host's answer.
+		if seen[strings.ToLower(m)] {
+			return fmt.Errorf("member %q is listed twice; names ignore case", m)
+		}
+		seen[strings.ToLower(m)] = true
 		if strings.TrimSpace(m) == "" || strings.ContainsFunc(m, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 			return fmt.Errorf("member %q isn't a name or a SID", m)
 		}
