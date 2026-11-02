@@ -186,23 +186,37 @@ func applyReboot(ctx context.Context, req providers.ApplyResourceChangeRequest) 
 	// Drop the pooled connection; the next dial makes a new one.
 	_ = h.client.Close()
 
+	now, err := waitForNewBoot(ctx, wait, before, func(ctx context.Context) (string, error) {
+		h, err := dialForApply(ctx, conn)
+		if err != nil {
+			return "", err
+		}
+		return lifecycle.BootID(ctx, h)
+	})
+	if err != nil {
+		return fail(err)
+	}
+	vals := req.PlannedState.AsValueMap()
+	vals["boot_id"] = cty.StringVal(now)
+	resp.NewState = cty.ObjectVal(vals)
+	return resp
+}
+
+// waitForNewBoot keeps asking for the boot ID until it differs from before.
+// Errors only mean the host isn't back yet.
+func waitForNewBoot(ctx context.Context, wait time.Duration, before string, bootID func(context.Context) (string, error)) (string, error) {
 	deadline := time.Now().Add(wait)
 	for {
 		select {
 		case <-ctx.Done():
-			return fail(ctx.Err())
+			return "", ctx.Err()
 		case <-time.After(5 * time.Second):
 		}
-		if h, err := dialForApply(ctx, conn); err == nil {
-			if now, err := lifecycle.BootID(ctx, h); err == nil && now != before {
-				vals := req.PlannedState.AsValueMap()
-				vals["boot_id"] = cty.StringVal(now)
-				resp.NewState = cty.ObjectVal(vals)
-				return resp
-			}
+		if now, err := bootID(ctx); err == nil && now != before {
+			return now, nil
 		}
 		if time.Now().After(deadline) {
-			return fail(fmt.Errorf("the host did not come back within %s", wait))
+			return "", fmt.Errorf("the host did not come back within %s", wait)
 		}
 	}
 }
