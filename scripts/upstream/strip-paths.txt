@@ -30,3 +30,4 @@ scripts/dco-check_test.sh
 scripts/upstream/
 internal/conn3x/
 cmd/conn3x/
+internal/backend/remote-state/consul/Dockerfile
