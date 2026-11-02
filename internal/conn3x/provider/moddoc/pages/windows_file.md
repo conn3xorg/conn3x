@@ -19,7 +19,7 @@ A secret stays out of the plan and state. Only SYSTEM and Administrators can rea
 step "api_key" {
   windows_file {
     path       = "C:\\app\\api.key"
-    content_wo = var.api_key
+    content_wo = "use an ephemeral variable here"
   }
 }
 ```
