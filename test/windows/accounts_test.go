@@ -205,8 +205,12 @@ func TestUserPasswordSentinel(t *testing.T) {
 	c := connect(t)
 	ctx := context.Background()
 	user := accountName(t, c, "c3s")
-	const sentinel = "s3ntinel-Pw-7Qx"
-	weak := "s3ntinelweak" // one character class: Windows refuses it
+	// Made at run time: a constant would sit in the test binary, which on a
+	// runner is built under %TEMP%, where the files are searched.
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	sentinel := "s3ntinel-Pw-" + hex.EncodeToString(b) + "Q"
+	weak := "s3ntinelweak" + hex.EncodeToString(b) // two character classes: Windows refuses it
 	run(t, c, `$b = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell'
 New-Item -Force -Path "$b\ModuleLogging\ModuleNames" | Out-Null
 New-Item -Force -Path "$b\ScriptBlockLogging" | Out-Null
