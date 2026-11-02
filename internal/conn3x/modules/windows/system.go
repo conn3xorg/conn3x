@@ -169,7 +169,7 @@ func ReadRegistry(ctx context.Context, r ps.Runner, v RegistryValue, hashOnly bo
 	switch a.Type {
 	case "dword":
 		// .NET reports stored bits as a signed number.
-		n, err := strconv.ParseInt(a.Data, 10, 64)
+		n, err := strconv.ParseInt(a.Data, 10, 32)
 		if err != nil {
 			return ActualRegistry{}, errors.New("reading a registry value: the host's answer wasn't valid")
 		}
