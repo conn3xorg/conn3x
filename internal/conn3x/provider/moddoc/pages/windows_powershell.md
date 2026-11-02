@@ -35,6 +35,8 @@ step "long_paths" {
 
 **Secrets.** `args_wo` stays out of the plan and state. State records only `args_hmac`, and the values are blanked from output and errors. A refresh doesn't have them, so an `unless` check that needs them sees them only during an apply.
 
+**Secrets and logging.** Where a policy turns on PowerShell's module logging, Windows records what's passed to any cmdlet. Conn3x keeps `args_wo` away from cmdlets on its way to your script, so don't pass a secret to one yourself: use a .NET method, as in `[IO.File]::WriteAllText($A.path, $A.secret)`.
+
 **Timeouts.** A script is stopped after `timeout`. Conn3x stops the whole process tree when it cancels a run, but if the connection itself drops, as when the machine running Conn3x crashes, the script carries on running on the host.
 
 **Connecting.** The `ssh` block works as it does on Linux, with its host key pinned or in `known_hosts`. Windows Server 2025 ships OpenSSH; Conn3x installs its own host key, as part of bootstrapping the host. `become` only checks that the login is elevated, since Windows has no sudo. `agent` and `become_password_file` are errors. Keep `user` as the bare name, such as `azadmin`, which still works after the host is promoted to a domain controller.

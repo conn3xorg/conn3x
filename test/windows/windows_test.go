@@ -18,6 +18,9 @@ package windowshost
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -633,5 +636,511 @@ circuit "win" {
 		if out, code := tool("plan", "-no-color", "-input=false", "-detailed-exitcode"); code != 0 {
 			t.Errorf("plan after the reboot: exit %d\n%s", code, out)
 		}
+	}
+}
+
+// fileText is a file's bytes on the host, as base64.
+func fileText(t *testing.T, c *ssh.Client, p string) string {
+	t.Helper()
+	return run(t, c, `param($A) [Convert]::ToBase64String([IO.File]::ReadAllBytes($A.p))`, map[string]any{"p": p}).Text
+}
+
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+func sddl(t *testing.T, c *ssh.Client, p string) string {
+	t.Helper()
+	return strings.TrimSpace(run(t, c, `param($A) (Get-Acl -LiteralPath $A.p).Sddl`, map[string]any{"p": p}).Text)
+}
+
+// noTemp fails if a write left anything behind.
+func noTemp(t *testing.T, c *ssh.Client, dir string) {
+	t.Helper()
+	if got := strings.TrimSpace(run(t, c, `param($A) @(Get-ChildItem -LiteralPath $A.d -Force -Filter '.conn3x-*').Count`, map[string]any{"d": dir}).Text); got != "0" {
+		t.Errorf("%s temp files left in %s", got, dir)
+	}
+}
+
+func TestFileBytesExactly(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := tempDir(t, c)
+	for name, content := range map[string]string{
+		"crlf":   "a\r\nb\nc\r",
+		"zero":   "a\x00b",
+		"quotes": `'; $(x) "` + "`",
+		"utf8":   "\u2018\U0001F680",
+		"empty":  "",
+		"2 MiB":  strings.Repeat("z", windows.MaxContent),
+	} {
+		p := dir + `\` + strings.ReplaceAll(name, " ", "_")
+		if err := windows.ApplyFile(ctx, c, p, []byte(content), nil, nil); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := strings.TrimSpace(fileText(t, c, p)); got != b64(content) {
+			t.Errorf("%s: bytes differ", name)
+		}
+		s, err := windows.ReadPath(ctx, c, p, nil, true)
+		if err != nil || s.Kind != "file" {
+			t.Fatalf("%s: %+v, %v", name, s, err)
+		}
+		sum := sha256.Sum256([]byte(content))
+		if s.SHA256 != hex.EncodeToString(sum[:]) {
+			t.Errorf("%s: sha256 %s", name, s.SHA256)
+		}
+	}
+	noTemp(t, c, dir)
+}
+
+func TestFileHostilePath(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := tempDir(t, c)
+	marker := dir + `\marker`
+	for _, name := range []string{
+		`[literal]`, `$(New-Item 'x')`, `it's`, "back`tick", `%PATH%`, `a;b&c`, "\u2018smart\u2019",
+	} {
+		p, err := windows.CleanLocalPath("path", dir+`\`+name)
+		if err != nil {
+			t.Fatalf("%q: %v", name, err)
+		}
+		if err := windows.ApplyFile(ctx, c, p, []byte("x"), nil, nil); err != nil {
+			t.Errorf("%q: %v", name, err)
+			continue
+		}
+		s, err := windows.ReadPath(ctx, c, p, nil, true)
+		if err != nil || s.Kind != "file" {
+			t.Errorf("%q read back: %+v, %v", name, s, err)
+		}
+		if err := windows.ApplyDirectory(ctx, c, p+"-dir", nil); err != nil {
+			t.Errorf("%q as a folder: %v", name, err)
+		}
+	}
+	got := run(t, c, `param($A) Test-Path -LiteralPath $A.m; @(Get-ChildItem -LiteralPath $A.d -Force).Count`, map[string]any{"m": marker, "d": dir}).Text
+	if strings.Contains(got, "True") {
+		t.Error("a hostile name ran")
+	}
+	if want := fmt.Sprint(7 * 2); !strings.Contains(got, want) {
+		t.Errorf("expected %s entries, one per name and kind: %s", want, got)
+	}
+}
+
+// mklinks makes a symlink, a junction and a hard link beside a protected target.
+func mklinks(t *testing.T, c *ssh.Client, dir string) (target, targetDir string) {
+	t.Helper()
+	target, targetDir = dir+`\target.txt`, dir+`\target-dir`
+	run(t, c, `param($A)
+[IO.File]::WriteAllText($A.target, 'original')
+[void][IO.Directory]::CreateDirectory($A.targetDir)
+[IO.File]::WriteAllText($A.targetDir + '\inside.txt', 'inside')
+$d = $A.dir
+& cmd.exe /c mklink "$d\sym.txt" "$($A.target)" | Out-Null
+if ($LASTEXITCODE) { throw 'mklink' }
+& cmd.exe /c mklink /J "$d\junction" "$($A.targetDir)" | Out-Null
+if ($LASTEXITCODE) { throw 'mklink /J' }
+& cmd.exe /c mklink /H "$d\hard.txt" "$($A.target)" | Out-Null
+if ($LASTEXITCODE) { throw 'mklink /H' }
+$global:LASTEXITCODE = 0`, map[string]any{"target": target, "targetDir": targetDir, "dir": dir})
+	return target, targetDir
+}
+
+// Nothing writes through a link: not at the path, not on the way to it.
+func TestWritesDontFollowLinks(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := tempDir(t, c)
+	target, targetDir := mklinks(t, c, dir)
+	wantText := fileText(t, c, target)
+	wantInside := fileText(t, c, targetDir+`\inside.txt`)
+	sddlTarget, sddlDir := sddl(t, c, target), sddl(t, c, targetDir)
+	users := []windows.Entry{{Principal: "S-1-5-32-545", Rights: []string{"Modify"}}}
+
+	for name, err := range map[string]error{
+		"file over a symlink":      windows.ApplyFile(ctx, c, dir+`\sym.txt`, []byte("evil"), nil, nil),
+		"file over a hard link":    windows.ApplyFile(ctx, c, dir+`\hard.txt`, []byte("evil"), nil, nil),
+		"file through a junction":  windows.ApplyFile(ctx, c, dir+`\junction\inside.txt`, []byte("evil"), nil, nil),
+		"new file via a junction":  windows.ApplyFile(ctx, c, dir+`\junction\new.txt`, []byte("evil"), nil, nil),
+		"folder over a junction":   windows.ApplyDirectory(ctx, c, dir+`\junction`, users),
+		"folder via a junction":    windows.ApplyDirectory(ctx, c, dir+`\junction\sub`, nil),
+		"rules on a symlink":       windows.ApplyACL(ctx, c, windows.ACL{Path: dir + `\sym.txt`, Entries: users}, false),
+		"rules on a hard link":     windows.ApplyACL(ctx, c, windows.ACL{Path: dir + `\hard.txt`, Entries: users}, false),
+		"rules on a junction":      windows.ApplyACL(ctx, c, windows.ACL{Path: dir + `\junction`, Entries: users}, true),
+		"rules through a junction": windows.ApplyACL(ctx, c, windows.ACL{Path: dir + `\junction\inside.txt`, Entries: users}, false),
+	} {
+		if err == nil {
+			t.Errorf("%s: wasn't refused", name)
+		} else {
+			t.Logf("%s: %v", name, err)
+		}
+	}
+	if fileText(t, c, target) != wantText || fileText(t, c, targetDir+`\inside.txt`) != wantInside {
+		t.Error("a target's content changed through a link")
+	}
+	if got := strings.TrimSpace(run(t, c, `param($A) Test-Path -LiteralPath $A.p`, map[string]any{"p": targetDir + `\new.txt`}).Text); got != "False" {
+		t.Error("a new file landed behind the junction")
+	}
+	if got := strings.TrimSpace(run(t, c, `param($A) Test-Path -LiteralPath $A.p`, map[string]any{"p": targetDir + `\sub`}).Text); got != "False" {
+		t.Error("a new folder landed behind the junction")
+	}
+	if sddl(t, c, target) != sddlTarget || sddl(t, c, targetDir) != sddlDir {
+		t.Error("a target's rules changed through a link")
+	}
+	// Reads tell the truth about what's there.
+	if s, err := windows.ReadPath(ctx, c, dir+`\sym.txt`, nil, true); err != nil || s.Kind != "link" || s.SHA256 != "" {
+		t.Errorf("symlink read: %+v, %v", s, err)
+	}
+	if s, err := windows.ReadPath(ctx, c, dir+`\junction\inside.txt`, nil, true); err != nil || s.LinkOnWay == "" {
+		t.Errorf("path through a junction read: %+v, %v", s, err)
+	}
+	noTemp(t, c, dir)
+	noTemp(t, c, targetDir)
+}
+
+// Rules set on a folder reach what's inside, but not what a junction inside points to.
+func TestRulesStopAtALinkInside(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	outer := tempDir(t, c)
+	dir := outer + `\managed`
+	outside := outer + `\outside`
+	run(t, c, `param($A)
+[void][IO.Directory]::CreateDirectory($A.d)
+[void][IO.Directory]::CreateDirectory($A.o)
+[IO.File]::WriteAllText($A.d + '\inside.txt', 'x')
+[IO.File]::WriteAllText($A.o + '\secret.txt', 'x')
+& cmd.exe /c mklink /J "$($A.d)\out" "$($A.o)" | Out-Null
+if ($LASTEXITCODE) { throw 'mklink /J' }
+$global:LASTEXITCODE = 0`, map[string]any{"d": dir, "o": outside})
+	before, beforeFile := sddl(t, c, outside), sddl(t, c, outside+`\secret.txt`)
+	entry := windows.Entry{Principal: "S-1-5-32-545", Rights: []string{"Read"}}
+	if err := windows.ApplyACL(ctx, c, windows.ACL{Path: dir, Entries: []windows.Entry{entry}}, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sddl(t, c, dir), "BU") {
+		t.Errorf("the rule isn't on the folder: %s", sddl(t, c, dir))
+	}
+	if sddl(t, c, outside) != before || sddl(t, c, outside+`\secret.txt`) != beforeFile {
+		t.Error("rules went through a junction inside the folder")
+	}
+}
+
+// Promised rules are refused in a folder another account can change. Plain
+// content isn't, and a folder locked down with its own rules is fine.
+func TestRefusesFoldersOthersCanChange(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	base := tempDir(t, c)
+	for name, ace := range map[string]string{
+		"modify":  "Modify",
+		"delete":  "Delete",
+		"subdel":  "DeleteSubdirectoriesAndFiles",
+		"dacl":    "ChangePermissions",
+		"takeown": "TakeOwnership",
+		"full":    "FullControl",
+	} {
+		dir := base + `\` + name
+		run(t, c, `param($A)
+[void][IO.Directory]::CreateDirectory($A.d)
+$s = Get-Acl -LiteralPath $A.d
+$s.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'), $A.r, 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+Set-Acl -LiteralPath $A.d -AclObject $s`, map[string]any{"d": dir, "r": ace})
+		if err := windows.ApplyFile(ctx, c, dir+`\x`, []byte("s"), windows.SecretEntries, nil); err == nil || !strings.Contains(err.Error(), "rename or replace") {
+			t.Errorf("%s: file in it: %v", name, err)
+		}
+		if err := windows.ApplyFile(ctx, c, dir+`\plain`, []byte("s"), nil, nil); err != nil {
+			t.Errorf("%s: plain content: %v", name, err)
+		}
+		if err := windows.ApplyDirectory(ctx, c, dir+`\sub`, windows.SecretEntries); err == nil {
+			t.Errorf("%s: folder with rules below it wasn't refused", name)
+		}
+		if err := windows.ApplyACL(ctx, c, windows.ACL{Path: dir + `\plain`, Entries: windows.SecretEntries}, false); err == nil {
+			t.Errorf("%s: rules below it weren't refused", name)
+		}
+		noTemp(t, c, dir)
+	}
+	// Adding new entries isn't enough to refuse, and it's the default under C:\.
+	dir := base + `\addonly`
+	run(t, c, `param($A)
+[void][IO.Directory]::CreateDirectory($A.d)
+$s = Get-Acl -LiteralPath $A.d
+$s.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'), 'CreateFiles,AppendData', 'None', 'None', 'Allow')))
+Set-Acl -LiteralPath $A.d -AclObject $s`, map[string]any{"d": dir})
+	if err := windows.ApplyFile(ctx, c, dir+`\x`, []byte("s"), windows.SecretEntries, nil); err != nil {
+		t.Errorf("add-only folder: %v", err)
+	}
+	drive := `C:\conn3x-test-` + strconv.FormatInt(time.Now().UnixNano(), 36)
+	t.Cleanup(func() {
+		_, _ = ps.User(context.Background(), c, `param($A) Remove-Item -LiteralPath $A.d -Recurse -Force`, map[string]any{"d": drive}, time.Minute)
+	})
+	if err := windows.ApplyDirectory(ctx, c, drive, windows.SecretEntries); err != nil {
+		t.Fatalf("a locked folder under the drive root: %v", err)
+	}
+	if err := windows.ApplyDirectory(ctx, c, drive+`\a\b`, nil); err != nil {
+		t.Fatalf("a folder below that: %v", err)
+	}
+	if err := windows.ApplyFile(ctx, c, drive+`\a\b\x`, []byte("s"), windows.SecretEntries, nil); err != nil {
+		t.Errorf("a secret in that: %v", err)
+	}
+}
+
+// A folder someone else already made isn't taken over by adding rules to it.
+func TestRefusesFolderOwnedByAnother(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	base := tempDir(t, c)
+	dir := base + `\theirs`
+	run(t, c, `param($A)
+[void][IO.Directory]::CreateDirectory($A.d)
+$s = New-Object Security.AccessControl.DirectorySecurity
+$s.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'))
+[IO.Directory]::SetAccessControl($A.d, $s)`, map[string]any{"d": dir})
+	if err := windows.ApplyDirectory(ctx, c, dir, windows.SecretEntries); err == nil || !strings.Contains(err.Error(), "belongs to") {
+		t.Errorf("folder: %v", err)
+	}
+	if err := windows.ApplyFile(ctx, c, dir+`\x`, []byte("s"), windows.SecretEntries, nil); err == nil || !strings.Contains(err.Error(), "belongs to") {
+		t.Errorf("secret inside: %v", err)
+	}
+}
+
+// libraryScript runs lib/safepath.ps1 with a body, to test what it holds.
+func libraryScript(t *testing.T, body string) string {
+	t.Helper()
+	lib, err := os.ReadFile("../../internal/conn3x/modules/windows/lib/safepath.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "param($A)\n" + string(lib) + "\n" + body
+}
+
+// While a write runs, nothing on the way can be renamed or deleted, and the
+// rename into place still works.
+func TestHeldFoldersCantBeSwapped(t *testing.T) {
+	c := connect(t)
+	dir := tempDir(t, c)
+	script := libraryScript(t, `
+$leaf = $A.dir + '\a\b'
+[void][IO.Directory]::CreateDirectory($leaf)
+Lock-Folders $leaf
+$out = @()
+foreach ($move in @(@($leaf, ($A.dir + '\a\moved')), @(($A.dir + '\a'), ($A.dir + '\moved')))) {
+  try { [IO.Directory]::Move($move[0], $move[1]); $out += 'moved' } catch { $out += 'refused' }
+}
+try { [IO.Directory]::Delete($leaf); $out += 'deleted' } catch { $out += 'refused' }
+[IO.File]::WriteAllText($leaf + '\t', 'x')
+if ([Conn3xFs]::MoveFileExW($leaf + '\t', $leaf + '\done', 9)) { $out += 'renamed inside' } else { $out += 'rename failed' }
+$out -join ','`)
+	got := strings.TrimSpace(run(t, c, script, map[string]any{"dir": dir}).Text)
+	if got != "refused,refused,refused,renamed inside" {
+		t.Errorf("got %s", got)
+	}
+}
+
+func TestSecretFileRules(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := tempDir(t, c)
+	p := dir + `\secret`
+	const secret = "s3ntinel-file-value"
+	// A file that's already there with loose rules loses them on write.
+	run(t, c, `param($A)
+[IO.File]::WriteAllText($A.p, 'old')
+$s = Get-Acl -LiteralPath $A.p
+$s.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0'), 'FullControl', 'Allow')))
+Set-Acl -LiteralPath $A.p -AclObject $s`, map[string]any{"p": p})
+	if err := windows.ApplyFile(ctx, c, p, []byte(secret), windows.SecretEntries, []string{secret}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(fileText(t, c, p)); got != b64(secret) {
+		t.Error("content differs")
+	}
+	s, err := windows.ReadPath(ctx, c, p, windows.Principals(windows.SecretEntries, ""), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := windows.Exact(s, windows.SecretEntries); err != nil || !ok {
+		t.Errorf("rules: %s: %v, %+v", sddl(t, c, p), err, s)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", s), secret) {
+		t.Error("the read holds the content")
+	}
+	// Failing partway leaves the old file and no temp file, and a thrown
+	// message that quotes the secret comes back blanked.
+	dirAsFile := dir + `\folder`
+	run(t, c, `param($A) [void][IO.Directory]::CreateDirectory($A.p)`, map[string]any{"p": dirAsFile})
+	if err := windows.ApplyFile(ctx, c, dirAsFile, []byte(secret), windows.SecretEntries, []string{secret}); err == nil || strings.Contains(err.Error(), secret) {
+		t.Errorf("err = %v", err)
+	}
+	noTemp(t, c, dir)
+}
+
+// A plain rewrite keeps whatever rules the file already has, unless someone
+// else made the file.
+func TestPlainRewriteKeepsRules(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := tempDir(t, c)
+	p := dir + `\x`
+	if err := windows.ApplyFile(ctx, c, p, []byte("one"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	entry := windows.Entry{Principal: "S-1-5-32-545", Rights: []string{"Modify"}}
+	if err := windows.ApplyACL(ctx, c, windows.ACL{Path: p, Entries: []windows.Entry{entry}}, false); err != nil {
+		t.Fatal(err)
+	}
+	before := sddl(t, c, p)
+	if err := windows.ApplyFile(ctx, c, p, []byte("two"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := sddl(t, c, p); got != before {
+		t.Errorf("rules changed from %s to %s", before, got)
+	}
+	// Planted by another account, with rules letting it back in.
+	run(t, c, `param($A)
+$s = Get-Acl -LiteralPath $A.p
+$s.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'))
+Set-Acl -LiteralPath $A.p -AclObject $s`, map[string]any{"p": p})
+	if err := windows.ApplyFile(ctx, c, p, []byte("three"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	s, err := windows.ReadPath(ctx, c, p, []string{"S-1-5-32-545"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.Matches([]windows.Entry{entry}, false, nil, ""); ok {
+		t.Error("a planted file's rules survived the write")
+	}
+	if s.Owner == "S-1-5-32-545" {
+		t.Error("the planted owner survived the write")
+	}
+}
+
+func TestAclModes(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	base := tempDir(t, c)
+	dir := base + `\d`
+	f := false
+	admins := windows.Entry{Principal: "S-1-5-32-544", Rights: []string{"FullControl"}}
+	users := windows.Entry{Principal: "S-1-5-32-545", Rights: []string{"ReadAndExecute"}}
+	if err := windows.ApplyDirectory(ctx, c, dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	check := func(a windows.ACL, want bool) {
+		t.Helper()
+		s, err := windows.ReadPath(ctx, c, dir, windows.Principals(a.Entries, a.Owner), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := s.Matches(a.Entries, a.Authoritative, a.Inherit, a.Owner); err != nil || ok != want {
+			t.Errorf("%+v: match = %v, %v; sddl %s", a, ok, err, sddl(t, c, dir))
+		}
+	}
+	add := windows.ACL{Path: dir, Entries: []windows.Entry{users}}
+	if err := windows.ApplyACL(ctx, c, add, true); err != nil {
+		t.Fatal(err)
+	}
+	check(add, true)
+	// Friendly names in any case match the same SIDs, once they resolve.
+	check(windows.ACL{Path: dir, Entries: []windows.Entry{{Principal: `builtin\USERS`, Rights: []string{"ReadAndExecute"}}}}, true)
+	// Authoritative with inheritance off leaves exactly the list.
+	auth := windows.ACL{Path: dir, Entries: []windows.Entry{admins, users}, Authoritative: true, Inherit: &f}
+	check(auth, false)
+	if err := windows.ApplyACL(ctx, c, auth, true); err != nil {
+		t.Fatal(err)
+	}
+	check(auth, true)
+	// Drift: another rule makes it out of sync again.
+	run(t, c, `param($A)
+$s = Get-Acl -LiteralPath $A.p
+$s.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0'), 'Read', 'Allow')))
+Set-Acl -LiteralPath $A.p -AclObject $s`, map[string]any{"p": dir})
+	check(auth, false)
+	if err := windows.ApplyACL(ctx, c, auth, true); err != nil {
+		t.Fatal(err)
+	}
+	check(auth, true)
+	// Owner, and a principal that isn't there.
+	own := windows.ACL{Path: dir, Owner: "S-1-5-32-544"}
+	if err := windows.ApplyACL(ctx, c, own, true); err != nil {
+		t.Fatal(err)
+	}
+	check(own, true)
+	if err := windows.ApplyACL(ctx, c, windows.ACL{Path: dir, Entries: []windows.Entry{{Principal: "no-such-account-x", Rights: []string{"Read"}}}}, true); err == nil {
+		t.Error("an unknown principal gave no error")
+	}
+	// Hostile principal stays data.
+	if s, err := windows.ReadPath(ctx, c, dir, []string{`'; New-Item C:\marker; '`}, false); err != nil || s.SIDs[`'; New-Item C:\marker; '`] != "" {
+		t.Errorf("%+v, %v", s, err)
+	}
+}
+
+func TestPathReadsChangeNothing(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := tempDir(t, c)
+	p := dir + `\x`
+	if err := windows.ApplyFile(ctx, c, p, []byte("x"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	before, beforeRules := snapshot(t, c, dir), sddl(t, c, p)
+	for range 3 {
+		if _, err := windows.ReadPath(ctx, c, p, []string{"S-1-5-32-544", `BUILTIN\Users`}, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := windows.ReadPath(ctx, c, dir+`\missing`, nil, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	compare(t, before, snapshot(t, c, dir))
+	if sddl(t, c, p) != beforeRules {
+		t.Error("a read changed rules")
+	}
+}
+
+// With PowerShell's module and script block logging both on, as a domain policy
+// might set them, a secret still reaches no event log, in any encoding we send.
+func TestSecretNotInEventLogs(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := tempDir(t, c)
+	const secret = "s3ntinel-eventlog-value"
+	set := `$b = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell'
+New-Item -Force -Path "$b\ModuleLogging\ModuleNames" | Out-Null
+New-Item -Force -Path "$b\ScriptBlockLogging" | Out-Null
+Set-ItemProperty -LiteralPath "$b\ModuleLogging" -Name EnableModuleLogging -Value 1
+Set-ItemProperty -LiteralPath "$b\ModuleLogging\ModuleNames" -Name '*' -Value '*'
+Set-ItemProperty -LiteralPath "$b\ScriptBlockLogging" -Name EnableScriptBlockLogging -Value 1`
+	run(t, c, set, nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, _ = ps.User(ctx, c, `Remove-Item -Recurse -Force -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell'`, nil, time.Minute)
+	})
+	since := strings.TrimSpace(run(t, c, `(Get-Date).ToUniversalTime().ToString('o')`, nil).Text)
+	if err := windows.ApplyFile(ctx, c, dir+`\secret`, []byte(secret), windows.SecretEntries, []string{secret}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := windows.ReadPath(ctx, c, dir+`\secret`, []string{"S-1-5-18"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := windows.RunScript(ctx, c, `param($A) [void]$A.pw`, map[string]any{"pw": secret}, []string{secret}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	res := run(t, c, `param($A)
+$from = [datetime]$A.since
+$n = 0; $hits = @()
+foreach ($log in 'Microsoft-Windows-PowerShell/Operational', 'Windows PowerShell') {
+  foreach ($e in @(Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $from } -ErrorAction SilentlyContinue)) {
+    $n++
+    foreach ($w in $A.needles) { if ($e.Message -like "*$w*") { $hits += "$log event $($e.Id)" } }
+  }
+}
+"events=$n hits=$($hits -join ',')"`, map[string]any{"since": since, "needles": []string{secret, b64(secret)}})
+	got := strings.TrimSpace(res.Text)
+	t.Log(got)
+	if strings.HasPrefix(got, "events=0") {
+		t.Error("logging didn't record anything, so this proves nothing")
+	}
+	if !strings.HasSuffix(got, "hits=") {
+		t.Errorf("a secret is in the event log: %s", got)
 	}
 }

@@ -25,17 +25,23 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/windows/ps"
 )
 
-//go:embed *.ps1
+//go:embed *.ps1 lib/*.ps1
 var scripts embed.FS
 
-// script returns an embedded script. A missing one is a bug in this package,
-// and a test reads every name passed here.
+// script returns an embedded script, with lib/safepath.ps1 in place of its
+// include line. A missing one is a bug in this package, and a test reads every
+// name passed here.
 func script(name string) ps.Script {
 	b, err := scripts.ReadFile(name)
 	if err != nil {
 		panic(err)
 	}
-	return ps.Script{Name: name, Body: string(b)}
+	lib, err := scripts.ReadFile("lib/safepath.ps1")
+	if err != nil {
+		panic(err)
+	}
+	body := strings.Replace(string(b), "#include safepath\n", string(lib), 1)
+	return ps.Script{Name: name, Body: body}
 }
 
 // readBool runs a read script whose output is a single boolean.

@@ -6,13 +6,16 @@ $utf=New-Object Text.UTF8Encoding($false)
 $r=@{ok=$false}
 $ended=$false
 try{
-$in=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((@($input)-join'').Trim()))|ConvertFrom-Json
+Add-Type -AssemblyName System.Web.Extensions
+$js=New-Object Web.Script.Serialization.JavaScriptSerializer
+$js.MaxJsonLength=[int]::MaxValue
+$in=$js.DeserializeObject([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((@($input)-join'').Trim())))
 $a=@{}
-foreach($p in $in.args.PSObject.Properties){$a[$p.Name]=$p.Value}
+foreach($k in $in['args'].Keys){$a[$k]=$in['args'][$k]}
 $global:LASTEXITCODE=0
-$o=& ([scriptblock]::Create($in.script)) $a
+$o=& ([scriptblock]::Create($in['script'])) $a
 $r.rc=$global:LASTEXITCODE
-if($in.text){$r.text=($o|Out-String);$l=$o|Select-Object -Last 1;if($l -is [bool]){$r.value=$l}}else{$r.value=$o}
+if($in['text']){$r.text=($o|Out-String);$l=$o|Select-Object -Last 1;if($l -is [bool]){$r.value=$l}}else{$r.value=$o}
 $r.ok=$true
 $ended=$true
 }catch{$r.error=($_|Out-String);$ended=$true}

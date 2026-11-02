@@ -50,7 +50,7 @@ jobs:
           persist-credentials: false
       - name: Scripts follow the rules
         shell: bash
-        run: pwsh -NoProfile -File scripts/ps-rules.ps1 internal/conn3x/modules/windows/*.ps1
+        run: pwsh -NoProfile -File scripts/ps-rules.ps1 internal/conn3x/modules/windows/*.ps1 internal/conn3x/modules/windows/lib/*.ps1
       - name: Scripts that break a rule are caught
         shell: bash
         run: |

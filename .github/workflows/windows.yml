@@ -7,7 +7,7 @@ on:
     paths:
       - internal/conn3x/modules/windows/**
       - internal/conn3x/transport/ssh/**
-      - internal/conn3x/provider/windows_resources.go
+      - internal/conn3x/provider/windows_*.go
       - internal/conn3x/provider/host_data_source.go
       - test/windows/**
       - .github/workflows/windows.yml
@@ -16,7 +16,7 @@ on:
     paths:
       - internal/conn3x/modules/windows/**
       - internal/conn3x/transport/ssh/**
-      - internal/conn3x/provider/windows_resources.go
+      - internal/conn3x/provider/windows_*.go
       - internal/conn3x/provider/host_data_source.go
       - test/windows/**
       - .github/workflows/windows.yml

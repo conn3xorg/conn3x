@@ -12,10 +12,10 @@
 # must change nothing on the host. Exits 1 if any rule is broken.
 param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Files)
 
-$readCommands = 'Get-CimInstance', 'Get-Item', 'Get-ItemProperty', 'Get-NetIPAddress', 'Get-NetRoute',
+$readCommands = 'Get-Acl', 'Get-CimInstance', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Get-NetIPAddress', 'Get-NetRoute', 'Get-WindowsFeature',
   'Get-NetTCPConnection', 'Get-Service', 'Import-Module', 'Select-Object', 'Sort-Object', 'Test-Path', 'Where-Object', 'ForEach-Object'
-$readImports = 'CimCmdlets', 'NetTCPIP'
-$readMethods = 'GetCurrent', 'IsInRole', 'ToString'
+$readImports = 'CimCmdlets', 'NetTCPIP', 'ServerManager'
+$readMethods = 'Close', 'ComputeHash', 'Create', 'GetAccessRules', 'GetBytes', 'Join', 'Replace', 'ToLowerInvariant', 'ToUInt32', 'ToUInt64', 'ToBase64String', 'GetCurrent', 'GetDirectoryName', 'GetOwner', 'GetValue', 'GetValueKind', 'IsInRole', 'OpenSubKey', 'ToString', 'Translate'
 $bannedText = 'Win32_Product'
 
 $failed = 0

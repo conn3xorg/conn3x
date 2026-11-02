@@ -6,7 +6,10 @@
 // Every run uses the same command line, whose only payload is a fixed stub.
 // The script and its arguments travel as one base64 line on stdin, so no value
 // is ever spliced into code or seen on a command line. The stub reads that
-// line with $input: reading raw stdin any other way can hang the connection.
+// line with $input: reading raw stdin any other way can hang the connection. It
+// parses that line with a .NET class, not a cmdlet: where a policy turns on
+// PowerShell's module logging, a cmdlet's parameters go to the event log, and
+// this line can hold a secret.
 //
 // The outcome comes only from the stub's last line. The SSH exit status can't
 // carry it, because PowerShell as sshd's DefaultShell flattens every failure
