@@ -230,3 +230,61 @@ func TestFirewallDisplayNameLeftAlone(t *testing.T) {
 		t.Errorf("display_name sent as %v", v)
 	}
 }
+
+// The three ways the guard used to fail open.
+func TestSSHGuardFailsClosed(t *testing.T) {
+	unknown := SSHConn{Port: 22}
+	allow := ActualFirewallRule{Exists: true, Direction: "Inbound", Action: "Allow", Enabled: true, Protocol: "TCP", LocalPorts: []string{"22"}, RemoteAddresses: []string{"10.0.0.0/255.0.0.0"}}
+	// No SSH_CONNECTION: a block on part of the address space, or any change
+	// or delete of a rule that lets the port in, is refused.
+	block := FirewallRule{Name: "b", Action: "block", Protocol: "tcp", LocalPorts: []string{"22"}, RemoteAddresses: []string{"10.0.0.0/8"}, Enabled: true}
+	if SSHGuard(unknown, ActualFirewallRule{}, &block) == nil {
+		t.Error("unknown client: a block on 10.0.0.0/8 passed")
+	}
+	if SSHGuard(unknown, allow, nil) == nil {
+		t.Error("unknown client: deleted an allow on 10.0.0.0/8")
+	}
+	off := FirewallRule{Name: "a", Protocol: "tcp", LocalPorts: []string{"22"}, RemoteAddresses: []string{"10.0.0.0/8"}}
+	if SSHGuard(unknown, allow, &off) == nil {
+		t.Error("unknown client: disabled an allow on 10.0.0.0/8")
+	}
+	web := FirewallRule{Name: "w", Protocol: "tcp", LocalPorts: []string{"443"}, Enabled: true}
+	if err := SSHGuard(unknown, ActualFirewallRule{}, &web); err != nil {
+		t.Errorf("unknown client: a rule for another port: %v", err)
+	}
+	// Plan's early check stays loose: only a block from everywhere.
+	if block.WithDefaults().BlocksSSH(unknown) {
+		t.Error("plan refused a block on 10.0.0.0/8")
+	}
+
+	// LocalSubnet counts against a block, never for the rule being kept.
+	me := SSHConn{Client: netip.MustParseAddr("198.51.100.7"), Port: 22}
+	open := ActualFirewallRule{Exists: true, Direction: "Inbound", Action: "Allow", Enabled: true, Protocol: "TCP", LocalPorts: []string{"22"}, RemoteAddresses: []string{"Any"}}
+	local := FirewallRule{Name: "OpenSSH-Server-In-TCP", Protocol: "tcp", LocalPorts: []string{"22"}, RemoteAddresses: []string{"LocalSubnet"}, Enabled: true}
+	if SSHGuard(me, open, &local) == nil {
+		t.Error("narrowed the SSH rule to LocalSubnet")
+	}
+	blockLocal := FirewallRule{Name: "b", Action: "block", Protocol: "tcp", LocalPorts: []string{"22"}, RemoteAddresses: []string{"LocalSubnet"}, Enabled: true}
+	if SSHGuard(me, ActualFirewallRule{}, &blockLocal) == nil {
+		t.Error("a block on LocalSubnet passed")
+	}
+	if SSHGuard(me, ActualFirewallRule{Exists: true, Direction: "Inbound", Action: "Allow", Enabled: true, Protocol: "TCP", LocalPorts: []string{"22"}, RemoteAddresses: []string{"LocalSubnet"}}, nil) == nil {
+		t.Error("deleted an allow on LocalSubnet")
+	}
+}
+
+// A link-local client keeps no zone, so it matches a rule's address.
+func TestSSHConnDropsZone(t *testing.T) {
+	c, err := ReadSSHConn(context.Background(), &fake{answers: []map[string]any{{"ok": true, "value": "fe80::1%4 50000 fe80::2%4 22"}}}, 22)
+	if err != nil || c.Client != netip.MustParseAddr("fe80::1") {
+		t.Fatalf("%+v, %v", c, err)
+	}
+	block := FirewallRule{Name: "b", Action: "block", Protocol: "tcp", LocalPorts: []string{"22"}, RemoteAddresses: []string{"fe80::/64"}, Enabled: true}
+	if SSHGuard(c, ActualFirewallRule{}, &block) == nil {
+		t.Error("a block on fe80::/64 passed for a link-local client")
+	}
+	have := ActualFirewallRule{Exists: true, Direction: "Inbound", Action: "Allow", Enabled: true, Protocol: "TCP", LocalPorts: []string{"22"}, RemoteAddresses: []string{"fe80::1"}}
+	if SSHGuard(c, have, nil) == nil {
+		t.Error("deleted the allow for a link-local client")
+	}
+}

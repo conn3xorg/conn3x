@@ -164,7 +164,7 @@ func (f FirewallRule) Validate() error {
 
 // SSHConn is the connection Conn3x is on, as sshd saw it.
 type SSHConn struct {
-	Client netip.Addr // not valid when unknown: then any address counts as it
+	Client netip.Addr // not valid when unknown: apply then refuses anything near the port
 	Port   int        // sshd's own port, which NAT or a load balancer can hide
 }
 
@@ -172,7 +172,7 @@ func (c SSHConn) String() string {
 	if c.Client.IsValid() {
 		return fmt.Sprintf("%s to port %d", c.Client, c.Port)
 	}
-	return fmt.Sprintf("anywhere to port %d", c.Port)
+	return fmt.Sprintf("an unknown address to port %d", c.Port)
 }
 
 // ReadSSHConn asks the host which connection this is, from SSH_CONNECTION.
@@ -187,7 +187,8 @@ func ReadSSHConn(ctx context.Context, r ps.Runner, port int) (SSHConn, error) {
 	c := SSHConn{Port: port}
 	if f := strings.Fields(s); len(f) == 4 {
 		if ip, err := netip.ParseAddr(f[0]); err == nil {
-			c.Client = ip.Unmap()
+			// A rule's address never has a zone, so a link-local client's must go.
+			c.Client = ip.Unmap().WithZone("")
 		}
 		if p, err := strconv.Atoi(f[3]); err == nil && p > 0 && p < 65536 {
 			c.Port = p
@@ -201,16 +202,25 @@ var (
 	allV6 = netip.AddrFrom16([16]byte{0: 0xff, 1: 0xff, 2: 0xff, 3: 0xff, 4: 0xff, 5: 0xff, 6: 0xff, 7: 0xff, 8: 0xff, 9: 0xff, 10: 0xff, 11: 0xff, 12: 0xff, 13: 0xff, 14: 0xff, 15: 0xff})
 )
 
-// coversClient reports whether addresses take in client. Unknown forms and
-// LocalSubnet count, to be safe; with no client, only everything does.
-func coversClient(addresses []string, client netip.Addr) bool {
+// coversClient reports whether addresses take in client. With no client,
+// only everything does. Loose, for a rule that might block or already lets
+// the client in, LocalSubnet and forms it can't read count; strict, for a
+// rule that must keep letting it in, they don't: Conn3x may come through a
+// VPN, NAT or a jump host from outside the host's subnet.
+func coversClient(addresses []string, client netip.Addr, strict bool) bool {
 	if len(addresses) == 0 {
 		return true
 	}
 	for _, a := range addresses {
-		c, err := canonicalAddress(a)
-		if strings.EqualFold(a, "Any") || err != nil || c == "LocalSubnet" {
+		if strings.EqualFold(a, "Any") {
 			return true
+		}
+		c, err := canonicalAddress(a)
+		if err != nil || c == "LocalSubnet" {
+			if !strict {
+				return true
+			}
+			continue
 		}
 		if lo, hi, ok := strings.Cut(c, "-"); ok {
 			l, h := netip.MustParseAddr(lo), netip.MustParseAddr(hi)
@@ -236,9 +246,10 @@ func coversClient(addresses []string, client netip.Addr) bool {
 	return false
 }
 
-// reaches reports whether an enabled inbound rule applies to the connection.
-func (f FirewallRule) reaches(c SSHConn) bool {
-	if !f.Enabled || f.Direction != "inbound" || (f.Protocol != "tcp" && f.Protocol != "any") || !coversClient(f.RemoteAddresses, c.Client) {
+// reachesPort reports whether an enabled inbound rule covers TCP to the port,
+// whatever the address.
+func (f FirewallRule) reachesPort(port int) bool {
+	if !f.Enabled || f.Direction != "inbound" || (f.Protocol != "tcp" && f.Protocol != "any") {
 		return false
 	}
 	if len(f.LocalPorts) == 0 {
@@ -248,7 +259,7 @@ func (f FirewallRule) reaches(c SSHConn) bool {
 		if strings.EqualFold(p, "Any") {
 			return true
 		}
-		if lo, hi, err := parsePort(p); err == nil && lo <= c.Port && c.Port <= hi {
+		if lo, hi, err := parsePort(p); err == nil && lo <= port && port <= hi {
 			return true
 		}
 	}
@@ -256,11 +267,21 @@ func (f FirewallRule) reaches(c SSHConn) bool {
 }
 
 // BlocksSSH reports whether the rule would block the connection: block rules
-// beat allow rules in Windows Firewall.
-func (f FirewallRule) BlocksSSH(c SSHConn) bool { return f.Action == "block" && f.reaches(c) }
+// beat allow rules in Windows Firewall. With no client known, only a block
+// from everywhere counts; that is the early check at plan.
+func (f FirewallRule) BlocksSSH(c SSHConn) bool {
+	return f.Action == "block" && f.reachesPort(c.Port) && coversClient(f.RemoteAddresses, c.Client, false)
+}
 
-// AllowsSSH reports whether the rule lets the connection in.
-func (f FirewallRule) AllowsSSH(c SSHConn) bool { return f.Action == "allow" && f.reaches(c) }
+// AllowsSSH reports whether the rule may be letting the connection in.
+func (f FirewallRule) AllowsSSH(c SSHConn) bool {
+	return f.Action == "allow" && f.reachesPort(c.Port) && coversClient(f.RemoteAddresses, c.Client, false)
+}
+
+// keepsSSH reports whether the rule surely lets the connection in.
+func (f FirewallRule) keepsSSH(c SSHConn) bool {
+	return f.Action == "allow" && f.reachesPort(c.Port) && coversClient(f.RemoteAddresses, c.Client, true)
+}
 
 // Rule is the host's rule in the form a configured one takes.
 func (a ActualFirewallRule) Rule() FirewallRule {
@@ -273,7 +294,19 @@ func (a ActualFirewallRule) Rule() FirewallRule {
 // SSHGuard returns why setting want, or deleting the rule when want is nil,
 // could cut Conn3x off from the host. It only sees this rule: another rule
 // that also lets SSH in isn't counted, so it errs on the side of refusing.
+// When the host doesn't say where Conn3x connects from, it refuses any block
+// on the SSH port and any change to a rule that lets that port in.
 func SSHGuard(c SSHConn, have ActualFirewallRule, want *FirewallRule) error {
+	if !c.Client.IsValid() {
+		const why = "sshd didn't report which address Conn3x connects from (SSH_CONNECTION), so"
+		if want != nil && want.WithDefaults().Action == "block" && want.WithDefaults().reachesPort(c.Port) {
+			return fmt.Errorf("%s a block on inbound TCP port %d could cut Conn3x off", why, c.Port)
+		}
+		if have.Exists && have.Rule().Action == "allow" && have.Rule().reachesPort(c.Port) {
+			return fmt.Errorf("%s changing a rule that lets inbound TCP port %d in could cut Conn3x off", why, c.Port)
+		}
+		return nil
+	}
 	if want != nil && want.WithDefaults().BlocksSSH(c) {
 		return fmt.Errorf("this rule blocks inbound TCP from %s, the connection Conn3x is using; block rules beat allow rules, so it would cut Conn3x off", c)
 	}
@@ -288,7 +321,7 @@ func SSHGuard(c SSHConn, have ActualFirewallRule, want *FirewallRule) error {
 	if old == 7 {
 		old = 0
 	}
-	if !w.AllowsSSH(c) || (mask != 0 && (old == 0 || mask&old != old)) {
+	if !w.keepsSSH(c) || (mask != 0 && (old == 0 || mask&old != old)) {
 		return fmt.Errorf("this rule lets Conn3x's SSH connection in (%s), and this change would stop it, which could cut Conn3x off", c)
 	}
 	return nil
