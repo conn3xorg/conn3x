@@ -276,6 +276,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_powershell":       winPowershellModule,
 	"win_reboot":           winRebootModule,
 	"win_regedit":          winRegeditModule,
+	"win_scheduled_task":   winScheduledTaskModule,
 	"win_service":          winServiceModule,
 	"win_shell":            winShellModule,
 	"win_template":         winTemplateModule,

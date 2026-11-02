@@ -1421,6 +1421,9 @@ func TestSystemReadsChangeNothing(t *testing.T) {
 		if _, err := windows.PackageInstalled(ctx, c, sevenZipCode); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := windows.ReadTask(ctx, c, windows.Task{Path: `\Microsoft\Windows\Defrag\`, Name: "ScheduledDefrag", User: "SYSTEM"}); err != nil {
+			t.Fatal(err)
+		}
 		// A key that doesn't exist must stay that way.
 		if _, err := windows.ReadRegistry(ctx, c, windows.RegistryValue{Key: `HKLM\SOFTWARE\Conn3xNeverMade`, Name: "x", Type: "string"}, false); err != nil {
 			t.Fatal(err)

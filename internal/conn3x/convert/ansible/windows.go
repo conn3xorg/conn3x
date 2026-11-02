@@ -6,6 +6,7 @@ package ansible
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -411,4 +412,100 @@ func winPackageModule(in *input) ([]step, string) {
 	}
 	// Ansible's task has no checksum, and Conn3x installs only what it can check.
 	return nil, "has no SHA-256 for the package; write a windows_package with product_code, source or url, and sha256"
+}
+
+var (
+	winTaskTriggers = map[string]string{"boot": "boot", "logon": "logon", "daily": "daily", "time": "once"}
+	winTaskTime     = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$`)
+	winAbsolute     = regexp.MustCompile(`^[A-Za-z]:\\`)
+)
+
+// winSubMap reads one entry of a list of maps, refusing any key not in keys,
+// so nothing a task sets is dropped without a person seeing it.
+func (in *input) winSubMap(list string, n *yaml.Node, keys ...string) (map[string]string, string) {
+	out := map[string]string{}
+	for k, v := range mapping(n) {
+		if !slices.Contains(keys, k) {
+			return nil, fmt.Sprintf("sets %s in %s, which windows_scheduled_task has no setting for", k, list)
+		}
+		out[k] = in.render(list, scalar(v))
+	}
+	return out, ""
+}
+
+func winScheduledTaskModule(in *input) ([]step, string) {
+	if in.state("present", "present", "absent") == "absent" {
+		return nil, "removes a task; Conn3x deletes a windows_scheduled_task when its step goes, so there's nothing to convert this to yet"
+	}
+	actions := seq(in.args["actions"])
+	in.used["actions"] = true
+	if len(actions) != 1 {
+		return nil, "has other than one action; windows_scheduled_task runs one program"
+	}
+	act, reason := in.winSubMap("actions", actions[0], "path", "arguments", "working_directory")
+	if reason != "" {
+		return nil, reason
+	}
+	if !winAbsolute.MatchString(act["path"]) {
+		return nil, "runs a program without its full path; windows_scheduled_task needs one, such as C:\\Windows\\System32\\cmd.exe"
+	}
+	user := in.str("username")
+	if user == "" {
+		return nil, "doesn't name the user it runs as; windows_scheduled_task needs user"
+	}
+	switch lt := in.str("logon_type"); lt {
+	case "", "service_account", "password", "s4u":
+	default:
+		return nil, fmt.Sprintf("has the logon_type %q, which windows_scheduled_task doesn't offer", lt)
+	}
+	attrs := []attr{s("name", in.str("name"))}
+	attrs = in.optional(attrs, "path", "path")
+	attrs = in.optional(attrs, "description", "description")
+	attrs = append(attrs, s("execute", act["path"]))
+	if v := act["arguments"]; v != "" {
+		attrs = append(attrs, s("arguments", v))
+	}
+	if v := act["working_directory"]; v != "" {
+		attrs = append(attrs, s("working_directory", v))
+	}
+	attrs = append(attrs, s("user", user))
+	if rl := in.str("run_level"); rl != "" {
+		attrs = append(attrs, s("run_level", rl))
+	}
+	if in.has("enabled") {
+		attrs = append(attrs, attr{key: "enabled", val: cty.BoolVal(in.bool("enabled", true))})
+	}
+	var blocks []stepBlock
+	in.used["triggers"] = true
+	for _, n := range seq(in.args["triggers"]) {
+		tr, reason := in.winSubMap("triggers", n, "type", "start_boundary", "days_interval")
+		if reason != "" {
+			return nil, reason
+		}
+		kind, ok := winTaskTriggers[tr["type"]]
+		if !ok {
+			return nil, fmt.Sprintf("has a %q trigger, which windows_scheduled_task doesn't offer", tr["type"])
+		}
+		b := []attr{s("type", kind)}
+		if at := tr["start_boundary"]; at != "" && kind != "boot" && kind != "logon" {
+			if !winTaskTime.MatchString(at) {
+				return nil, "has a start_boundary that isn't a plain local time such as 2026-01-01T03:00:00"
+			}
+			b = append(b, s("at", at))
+		}
+		if d := tr["days_interval"]; d != "" {
+			n, err := strconv.Atoi(d)
+			if err != nil {
+				return nil, "has a days_interval that isn't a number"
+			}
+			b = append(b, attr{key: "days_interval", val: cty.NumberIntVal(int64(n))})
+		}
+		blocks = append(blocks, stepBlock{name: "trigger", attrs: b})
+	}
+	var notes []string
+	if in.has("password") {
+		in.ignore("password", "update_password")
+		notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here.")
+	}
+	return []step{{module: "windows_scheduled_task", attrs: attrs, blocks: blocks, notes: notes}}, ""
 }

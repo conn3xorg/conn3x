@@ -33,6 +33,9 @@ func TestWindowsMappings(t *testing.T) {
 		`ansible.windows.win_wait_for: {path: 'C:\ready'}`:                                      {"windows_wait_for {"},
 		`win_user: {name: appsvc, fullname: App, description: Runs it, account_disabled: no}`:   {"windows_user {", `full_name   = "App"`, "disabled    = false"},
 		`win_group: {name: AppAdmins, description: Admins}`:                                     {"windows_group {", `description = "Admins"`},
+		`community.windows.win_scheduled_task: {name: Nightly, username: SYSTEM, run_level: highest, actions: [{path: 'C:\Windows\System32\cmd.exe', arguments: '/c echo hi'}], triggers: [{type: daily, start_boundary: '2026-01-01T03:00:00', days_interval: 2}, {type: boot}]}`: {
+			"windows_scheduled_task {", `execute   = "C:\\Windows\\System32\\cmd.exe"`, `arguments = "/c echo hi"`, `user      = "SYSTEM"`, `run_level = "highest"`, "trigger {", `type          = "daily"`, `at            = "2026-01-01T03:00:00"`, "days_interval = 2", `type = "boot"`,
+		},
 		`win_group_membership: {name: Administrators, members: [appsvc, 'LAB\ops'], state: pure}`: {
 			"windows_group {", `members       = ["appsvc", "LAB\\ops"]`, "authoritative = true",
 		},
@@ -91,6 +94,13 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"win_updates module":      `win_updates: {category_names: [SecurityUpdates]}`,
 		"win_chocolatey module":   `win_chocolatey: {name: git}`,
 		"win_dsc module":          `win_dsc: {resource_name: x}`,
+		"removes a task":          `win_scheduled_task: {name: a, state: absent}`,
+		"other than one action":   `win_scheduled_task: {name: a, username: SYSTEM, actions: [{path: 'C:\a.exe'}, {path: 'C:\b.exe'}]}`,
+		"without its full path":   `win_scheduled_task: {name: a, username: SYSTEM, actions: [{path: cmd.exe}]}`,
+		"doesn't name the user":   `win_scheduled_task: {name: a, actions: [{path: 'C:\a.exe'}]}`,
+		"which windows_scheduled_task has no setting": `win_scheduled_task: {name: a, username: SYSTEM, actions: [{path: 'C:\a.exe'}], triggers: [{type: boot, delay: PT1M}]}`,
+		"trigger, which":   `win_scheduled_task: {name: a, username: SYSTEM, actions: [{path: 'C:\a.exe'}], triggers: [{type: idle}]}`,
+		"plain local time": `win_scheduled_task: {name: a, username: SYSTEM, actions: [{path: 'C:\a.exe'}], triggers: [{type: daily, start_boundary: '2026-01-01T03:00:00+01:00'}]}`,
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
@@ -103,6 +113,15 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 func TestWinUserPasswordNotCopied(t *testing.T) {
 	const secret = "s3ntinel-convert-pw"
 	res := convertString(t, "- hosts: all\n  tasks:\n    - win_user: {name: appsvc, password: "+secret+", update_password: on_create}\n")
+	if res.Converted != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "password_wo") {
+		t.Errorf("converted %d, review %+v:\n%s", res.Converted, res.Review, res.HCL)
+	}
+}
+
+// A task's password is never copied: the step gets a note instead.
+func TestWinScheduledTaskPasswordNotCopied(t *testing.T) {
+	const secret = "s3ntinel-task-pw"
+	res := convertString(t, "- hosts: all\n  tasks:\n    - win_scheduled_task: {name: a, username: 'LAB\\svc', password: "+secret+", logon_type: password, actions: [{path: 'C:\\a.exe'}]}\n")
 	if res.Converted != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "password_wo") {
 		t.Errorf("converted %d, review %+v:\n%s", res.Converted, res.Review, res.HCL)
 	}

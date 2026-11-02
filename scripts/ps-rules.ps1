@@ -15,8 +15,8 @@ param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Files)
 
 $readCommands = 'Get-Acl', 'Get-CimInstance', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Get-NetIPAddress', 'Get-NetRoute', 'Get-WindowsFeature',
   'Get-LocalGroup', 'Get-LocalGroupMember', 'Get-LocalUser', 'Get-NetFirewallAddressFilter', 'Get-NetFirewallPortFilter', 'Get-NetFirewallRule',
-  'Get-NetTCPConnection', 'Get-Service', 'Import-Module', 'Select-Object', 'Sort-Object', 'Test-Path', 'Where-Object', 'ForEach-Object'
-$readImports = 'CimCmdlets', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity', 'NetTCPIP', 'ServerManager'
+  'Get-NetTCPConnection', 'Get-ScheduledTask', 'Get-Service', 'Import-Module', 'Select-Object', 'Sort-Object', 'Test-Path', 'Where-Object', 'ForEach-Object'
+$readImports = 'CimCmdlets', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity', 'NetTCPIP', 'ScheduledTasks', 'ServerManager'
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
 $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter::ToUInt32', 'BitConverter::ToUInt64', 'Convert::ToBase64String',
