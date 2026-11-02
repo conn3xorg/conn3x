@@ -64,6 +64,10 @@ var circuitModules = map[string]string{
 	"service":          "conn3x_service",
 	"user":             "conn3x_user",
 	"group":            "conn3x_group",
+
+	"windows_powershell": "conn3x_windows_powershell",
+	"windows_reboot":     "conn3x_windows_reboot",
+	"windows_wait_for":   "conn3x_windows_wait_for",
 }
 
 // Conn3xStepModules maps each circuit step module to its resource type.
