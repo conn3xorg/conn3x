@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -492,6 +493,35 @@ func authMethod(cfg Config) (gossh.AuthMethod, net.Conn, error) {
 // Run executes cmd with /bin/sh in the C locale, feeding it stdin. A non-zero
 // exit status is reported in Result, not as an error.
 func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, error) {
+	res, err := c.exec(ctx, "LC_ALL=C exec /bin/sh -c "+Quote("export LC_ALL=C; "+cmd), stdin)
+	if err == nil && res.ExitCode != 0 && windowsShellRefused(res.Stderr) {
+		return res, fmt.Errorf("ssh %s: %w", c.addr, ErrWindowsHost)
+	}
+	return res, err
+}
+
+// rawGrace is how long past its deadline RunRaw waits for a session to end
+// before giving up on the whole connection.
+const rawGrace = 10 * time.Second
+
+// RunRaw executes cmd exactly as given, with no shell or locale around it,
+// which is what a host without /bin/sh needs. ctx must carry a deadline, and
+// RunRaw refuses one without: on Windows a read of stdin can hang, and when it
+// does the connection may stop answering too, so even the kill sent at the
+// deadline can block. If that happens the connection is closed, and the pool
+// dials a new one for the next caller.
+func (c *Client) RunRaw(ctx context.Context, cmd string, stdin []byte) (Result, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return Result{}, fmt.Errorf("ssh %s: RunRaw needs a context with a deadline", c.addr)
+	}
+	stop := time.AfterFunc(time.Until(deadline)+rawGrace, func() { _ = c.Close() })
+	defer stop.Stop()
+	return c.exec(ctx, cmd, stdin)
+}
+
+// exec runs a command line as given in a new session, feeding it stdin.
+func (c *Client) exec(ctx context.Context, cmd string, stdin []byte) (Result, error) {
 	session, err := c.session(ctx)
 	if err != nil {
 		return Result{}, err
@@ -503,7 +533,7 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 	session.Stderr = &stderr
 	session.Stdin = bytes.NewReader(stdin)
 
-	if err := session.Start("LC_ALL=C exec /bin/sh -c " + Quote("export LC_ALL=C; "+cmd)); err != nil {
+	if err := session.Start(cmd); err != nil {
 		return Result{}, fmt.Errorf("ssh %s: starting command: %w", c.addr, err)
 	}
 	done := make(chan error, 1)
@@ -527,6 +557,25 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 			return res, fmt.Errorf("ssh %s: %w", c.addr, err)
 		}
 	}
+}
+
+// ErrWindowsHost is what Run reports when the host's shell is cmd.exe or
+// PowerShell, so nothing written for /bin/sh can run there.
+var ErrWindowsHost = errors.New("this is a Windows host, and this step's module only runs on Linux. Use a windows_* step instead")
+
+// windowsCommandNotFound matches how cmd.exe and PowerShell name the first
+// word of what Run sends when they can't find it. Message text is localised,
+// but the quoted word survives translation.
+var windowsCommandNotFound = regexp.MustCompile(`^(?:LC_ALL=C : |['"\x{201c}\x{201e}\x{ab}]LC_ALL['"\x{201d}\x{201c}\x{bb}] )`)
+
+// windowsShellRefused reports whether stderr is a Windows shell refusing the
+// wrapper around Run's command.
+func windowsShellRefused(stderr []byte) bool {
+	s := bytes.TrimSpace(stderr)
+	if bytes.HasPrefix(s, []byte("#< CLIXML")) { // PowerShell's serialized stderr
+		return bytes.Contains(s, []byte("LC_ALL=C"))
+	}
+	return windowsCommandNotFound.Match(s)
 }
 
 // Process is a command started with Start. Reading reads its stdout and
