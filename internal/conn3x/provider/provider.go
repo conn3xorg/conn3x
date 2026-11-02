@@ -70,12 +70,15 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_reboot":           {rebootSchema, validateReboot, planReboot, readReboot, applyReboot, upgradeWith(rebootSchema)},
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 
-	"conn3x_windows_acl":        {winACLSchema, validateWinACL, planWinACL, readWinACL, applyWinACL, upgradeWith(winACLSchema)},
-	"conn3x_windows_directory":  {winDirectorySchema, validateWinDirectory, planWinDirectory, readWinDirectory, applyWinDirectory, upgradeWith(winDirectorySchema)},
-	"conn3x_windows_file":       {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
-	"conn3x_windows_powershell": {winPowershellSchema, validateWinPowershell, planWinPowershell, readWinPowershell, applyWinPowershell, upgradeWith(winPowershellSchema)},
-	"conn3x_windows_reboot":     {winRebootSchema, validateReboot, planWinReboot, readWinReboot, applyWinReboot, upgradeWith(winRebootSchema)},
-	"conn3x_windows_wait_for":   {winWaitForSchema, validateWinWaitFor, planWinWaitFor, readWinWaitFor, applyWinWaitFor, upgradeWith(winWaitForSchema)},
+	"conn3x_windows_acl":            {winACLSchema, validateWinACL, planWinACL, readWinACL, applyWinACL, upgradeWith(winACLSchema)},
+	"conn3x_windows_directory":      {winDirectorySchema, validateWinDirectory, planWinDirectory, readWinDirectory, applyWinDirectory, upgradeWith(winDirectorySchema)},
+	"conn3x_windows_feature":        {winFeatureSchema, validateWinFeature, planWinFeature, readWinFeature, applyWinFeature, upgradeWith(winFeatureSchema)},
+	"conn3x_windows_file":           {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
+	"conn3x_windows_powershell":     {winPowershellSchema, validateWinPowershell, planWinPowershell, readWinPowershell, applyWinPowershell, upgradeWith(winPowershellSchema)},
+	"conn3x_windows_registry_value": {winRegistrySchema, validateWinRegistry, planWinRegistry, readWinRegistry, applyWinRegistry, upgradeWith(winRegistrySchema)},
+	"conn3x_windows_reboot":         {winRebootSchema, validateReboot, planWinReboot, readWinReboot, applyWinReboot, upgradeWith(winRebootSchema)},
+	"conn3x_windows_service":        {winServiceSchema, validateWinService, planWinService, readWinService, applyWinService, upgradeWith(winServiceSchema)},
+	"conn3x_windows_wait_for":       {winWaitForSchema, validateWinWaitFor, planWinWaitFor, readWinWaitFor, applyWinWaitFor, upgradeWith(winWaitForSchema)},
 }
 
 // New returns the built-in conn3x provider.

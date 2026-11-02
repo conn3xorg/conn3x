@@ -1144,3 +1144,190 @@ foreach ($log in 'Microsoft-Windows-PowerShell/Operational', 'Windows PowerShell
 		t.Errorf("a secret is in the event log: %s", got)
 	}
 }
+
+func regCleanup(t *testing.T, c *ssh.Client, sub string) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, _ = ps.User(ctx, c, `param($A) [Microsoft.Win32.Registry]::LocalMachine.DeleteSubKeyTree($A.k, $false)`, map[string]any{"k": sub}, time.Minute)
+	})
+}
+
+func TestRegistryValues(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	sub := `SOFTWARE\Conn3xTest\` + strconv.FormatInt(time.Now().UnixNano(), 36)
+	regCleanup(t, c, `SOFTWARE\Conn3xTest`)
+	key := `HKLM\` + sub
+	for name, v := range map[string]windows.RegistryValue{
+		"string":       {Name: "s", Type: "string", Data: "plain"},
+		"empty":        {Name: "e", Type: "string", Data: ""},
+		"expand":       {Name: "x", Type: "expand_string", Data: `%WINDIR%\app`},
+		"default":      {Name: "", Type: "string", Data: "the default value"},
+		"dword":        {Name: "d", Type: "dword", Data: "1"},
+		"dword top":    {Name: "dt", Type: "dword", Data: "4294967295"},
+		"qword top":    {Name: "qt", Type: "qword", Data: "18446744073709551615"},
+		"binary":       {Name: "b", Type: "binary", Data: "00ff10"},
+		"multi":        {Name: "m", Type: "multi_string", Data: "a\nb c\n$(x)"},
+		"single multi": {Name: "m1", Type: "multi_string", Data: "only"},
+		"hostile name": {Name: `'; New-Item C:\marker; '`, Type: "string", Data: `$(New-Item C:\marker)`},
+		"hostile data": {Name: "h", Type: "string", Data: "a\r\n'\"`$env:WINDIR %PATH% \U0001F680"},
+		"wildcard key": {Name: "w*[x]", Type: "string", Data: "x"},
+	} {
+		v.Key = key
+		if err := v.Validate(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if a, err := windows.ReadRegistry(ctx, c, v, false); err != nil || a.Exists {
+			t.Fatalf("%s before: %+v, %v", name, a, err)
+		}
+		if err := windows.ApplyRegistry(ctx, c, v); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		a, err := windows.ReadRegistry(ctx, c, v, false)
+		if err != nil {
+			t.Fatalf("%s read: %v", name, err)
+		}
+		if ok, err := v.Matches(a); err != nil || !ok {
+			t.Errorf("%s: read back %+v, %v", name, a, err)
+		}
+		// The hash the host gives for a secret is the hash Go works out.
+		canon, _ := v.Canonical()
+		sum := sha256.Sum256([]byte(canon))
+		h, err := windows.ReadRegistry(ctx, c, v, true)
+		if err != nil || h.SHA256 != hex.EncodeToString(sum[:]) || h.Data != "" || h.Type != v.Type {
+			t.Errorf("%s hash only: %+v, %v", name, h, err)
+		}
+	}
+	// A value left unexpanded stays in sync, whatever the variable holds.
+	x := windows.RegistryValue{Key: key, Name: "x", Type: "expand_string", Data: `%WINDIR%\app`}
+	if a, _ := windows.ReadRegistry(ctx, c, x, false); a.Data != x.Data {
+		t.Errorf("expanded: %+v", a)
+	}
+	// A different type or value is drift.
+	d := windows.RegistryValue{Key: key, Name: "d", Type: "string", Data: "1"}
+	a, err := windows.ReadRegistry(ctx, c, d, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := d.Matches(a); ok {
+		t.Error("a dword matched a string")
+	}
+	if err := windows.ApplyRegistryRemove(ctx, c, d); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := windows.ReadRegistry(ctx, c, d, false); a.Exists {
+		t.Error("remove left the value")
+	}
+	if err := windows.ApplyRegistryRemove(ctx, c, d); err != nil {
+		t.Errorf("removing it twice: %v", err)
+	}
+	if got := strings.TrimSpace(run(t, c, `Test-Path -LiteralPath 'C:\marker'`, nil).Text); got != "False" {
+		t.Error("a hostile value ran")
+	}
+}
+
+func TestServiceStates(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	// A service nothing else needs here, outside any load order group, which
+	// Windows wouldn't allow to start late.
+	const name = "W32Time"
+	restore := run(t, c, `param($A) $s = Get-Service -Name $A.n; "$($s.StartType) $($s.Status)"`, map[string]any{"n": name}).Text
+	t.Logf("before: %s", restore)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_ = windows.ApplyService(ctx, c, windows.Service{Name: name, StartMode: "auto", State: "running"})
+	})
+	for _, s := range []windows.Service{
+		{Name: name, StartMode: "manual", State: "stopped"},
+		{Name: name, StartMode: "delayed", State: "running"},
+		{Name: name, StartMode: "auto"},
+		{Name: name, State: "stopped"},
+		{Name: name, StartMode: "disabled"},
+		{Name: name, StartMode: "auto", State: "running"},
+	} {
+		if err := s.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if err := windows.ApplyService(ctx, c, s); err != nil {
+			t.Fatalf("%+v: %v", s, err)
+		}
+		exists, ok, err := windows.ServiceInSync(ctx, c, s)
+		if err != nil || !exists || !ok {
+			t.Errorf("%+v: exists %v, in sync %v, %v", s, exists, ok, err)
+		}
+	}
+	// What was just set doesn't match something else.
+	if _, ok, _ := windows.ServiceInSync(ctx, c, windows.Service{Name: name, State: "stopped"}); ok {
+		t.Error("a running service matched stopped")
+	}
+	if exists, _, err := windows.ServiceInSync(ctx, c, windows.Service{Name: "no-such-service", State: "running"}); err != nil || exists {
+		t.Errorf("missing service: %v, %v", exists, err)
+	}
+	for _, bad := range []string{`*`, `W32T?me`, `a';b`, `$(x)'`, `[a]`, "a\nb"} {
+		if (windows.Service{Name: bad, State: "running"}).Validate() == nil {
+			t.Errorf("accepted service name %q", bad)
+		}
+	}
+}
+
+func TestFeature(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	f := windows.Feature{Name: "Telnet-Client"}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		_, _ = windows.ApplyFeature(ctx, c, windows.Feature{Name: f.Name, Absent: true}, 10*time.Minute)
+	})
+	before := snapshot(t, c, "")
+	if ok, pending, err := windows.FeatureInSync(ctx, c, f); err != nil || ok || pending {
+		t.Fatalf("before: %v, %v, %v", ok, pending, err)
+	}
+	compare(t, before, snapshot(t, c, ""))
+	restart, err := windows.ApplyFeature(ctx, c, f, 15*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("restart needed: %v", restart)
+	if ok, _, err := windows.FeatureInSync(ctx, c, f); err != nil || !ok {
+		t.Errorf("after: %v, %v", ok, err)
+	}
+	if _, _, err := windows.FeatureInSync(ctx, c, windows.Feature{Name: "No-Such-Feature"}); err == nil {
+		t.Error("a missing feature gave no error")
+	}
+	for _, bad := range []string{`*`, `Web-*`, `a';b`, `$(x)`, "a b", "-x"} {
+		if (windows.Feature{Name: bad}).Validate() == nil {
+			t.Errorf("accepted feature name %q", bad)
+		}
+	}
+}
+
+func TestSystemReadsChangeNothing(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	before := snapshot(t, c, "")
+	for range 3 {
+		if _, _, err := windows.FeatureInSync(ctx, c, windows.Feature{Name: "Web-Server"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := windows.ServiceInSync(ctx, c, windows.Service{Name: "W32Time", State: "running"}); err != nil {
+			t.Fatal(err)
+		}
+		v := windows.RegistryValue{Key: `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, Name: "CurrentBuild", Type: "string"}
+		if _, err := windows.ReadRegistry(ctx, c, v, false); err != nil {
+			t.Fatal(err)
+		}
+		// A key that doesn't exist must stay that way.
+		if _, err := windows.ReadRegistry(ctx, c, windows.RegistryValue{Key: `HKLM\SOFTWARE\Conn3xNeverMade`, Name: "x", Type: "string"}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	compare(t, before, snapshot(t, c, ""))
+	if got := strings.TrimSpace(run(t, c, `Test-Path -LiteralPath 'HKLM:\SOFTWARE\Conn3xNeverMade'`, nil).Text); got != "False" {
+		t.Error("a read made a key")
+	}
+}
