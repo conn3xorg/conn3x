@@ -15,7 +15,8 @@
 Provisioning a server and configuring it are one job, but it usually takes two tools:
 Terraform or OpenTofu to create the machine, then Ansible to set it up, plus the glue
 scripts, inventory files and second state that hold the two together. Conn3x does the
-whole job, from one binary, with one plan and one state.
+whole job, from one binary, with one plan and one state. That makes it an IaCC tool:
+infrastructure as code and configuration management in one plan.
 [Here's why that matters.](https://conn3x.org/blog/why-conn3x)
 
 <p align="center">
