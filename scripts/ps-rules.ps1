@@ -20,7 +20,8 @@ $readImports = 'CimCmdlets', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity'
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
 $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter::ToUInt32', 'BitConverter::ToUInt64', 'Convert::ToBase64String',
-  'IO.Path::GetDirectoryName', 'Security.Cryptography.SHA256::Create', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
+  'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
+  'Security.Cryptography.SHA256::Create', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
   'string::Join'
 $readInstance = 'Close', 'ComputeHash', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
   'Replace', 'ToLowerInvariant', 'ToString', 'Translate'
@@ -99,6 +100,8 @@ foreach ($file in $Files) {
           if ($a.Static) {
             $type = if ($a.Expression -is [Management.Automation.Language.TypeExpressionAst]) { $a.Expression.TypeName.FullName } else { $who }
             if ("${type}::$m" -notin $readStatic) { Report $file $a "${type}::$m isn't on the list for read scripts" }
+            # Opened any other way, a ServerManager can commit changes to IIS.
+            elseif ("${type}::$m" -eq 'Microsoft.Web.Administration.ServerManager::new' -and ($a.Arguments.Count -ne 2 -or $a.Arguments[0].Extent.Text -ine '$true')) { Report $file $a 'ServerManager in a read script must be opened read-only, with $true first' }
           }
           elseif ($m -notin $readInstance) { Report $file $a "method $m isn't on the list for read scripts" }
           # FileInfo has a Replace, and a registry key opens for writing.

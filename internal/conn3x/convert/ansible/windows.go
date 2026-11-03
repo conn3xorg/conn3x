@@ -428,7 +428,7 @@ func (in *input) winSubMap(list string, n *yaml.Node, keys ...string) (map[strin
 	out := map[string]string{}
 	for k, v := range mapping(n) {
 		if !slices.Contains(keys, k) {
-			return nil, fmt.Sprintf("sets %s in %s, which windows_scheduled_task has no setting for", k, list)
+			return nil, fmt.Sprintf("sets %s in %s, which Conn3x has no setting for", k, list)
 		}
 		out[k] = in.render(list, scalar(v))
 	}
@@ -514,4 +514,126 @@ func winScheduledTaskModule(in *input) ([]step, string) {
 		notes = append(notes, "TODO(convert): This task runs an interpreter. Conn3x checks paths it can see in arguments, not code inside them: make sure every script it runs is admin-only.")
 	}
 	return []step{{module: "windows_scheduled_task", attrs: attrs, blocks: blocks, notes: notes}}, ""
+}
+
+// winIISPoolAttributes are the app pool attributes windows_iis_app_pool sets,
+// by their IIS names, which both Ansible collections use.
+var winIISPoolAttributes = map[string]string{
+	"managedRuntimeVersion": "managed_runtime_version", "managedPipelineMode": "pipeline_mode", "processModel.identityType": "identity",
+}
+
+// winIISState maps a pool or site state; restarted and absent have no step.
+func (in *input) winIISState(def string) (string, string) {
+	switch st := in.state(def, "present", "started", "stopped", "absent", "restarted"); st {
+	case "absent":
+		return "", "removes it; Conn3x deletes it when its step goes, so there's nothing to convert this to yet"
+	case "restarted":
+		return "", "restarts it on every run, which a step doesn't do"
+	case "stopped":
+		return "stopped", ""
+	}
+	return "", ""
+}
+
+// win_iis_webapppool, and microsoft.iis.web_app_pool, which replaces it.
+func winIISAppPoolModule(in *input) ([]step, string) {
+	state, reason := in.winIISState("present")
+	if reason != "" {
+		return nil, reason
+	}
+	attrs := []attr{s("name", in.str("name"))}
+	if state != "" {
+		attrs = append(attrs, s("state", state))
+	}
+	if n, ok := in.args["attributes"]; ok {
+		in.used["attributes"] = true
+		if n.Kind != yaml.MappingNode {
+			return nil, "gives attributes as text; write them as a map"
+		}
+		m := mapping(n)
+		for _, k := range sortedKeys(m) {
+			to, ok := winIISPoolAttributes[k]
+			if !ok {
+				return nil, fmt.Sprintf("sets the attribute %s, which windows_iis_app_pool has no setting for", k)
+			}
+			v := in.render("attributes", scalar(m[k]))
+			if to == "pipeline_mode" {
+				v = strings.ToLower(v)
+			}
+			attrs = append(attrs, s(to, v))
+		}
+	}
+	return one("windows_iis_app_pool", attrs)
+}
+
+// win_iis_website takes one binding as port, ip and hostname.
+func winIISWebsiteModule(in *input) ([]step, string) {
+	state, reason := in.winIISState("started")
+	if reason != "" {
+		return nil, reason
+	}
+	if !in.has("port") {
+		return nil, "has no port; a windows_iis_site needs at least one binding"
+	}
+	port, err := strconv.Atoi(in.str("port"))
+	if err != nil {
+		return nil, "has a port that isn't a number"
+	}
+	b := []attr{{key: "port", val: cty.NumberIntVal(int64(port))}}
+	if ip := in.str("ip"); ip != "" && ip != "*" {
+		b = append(b, s("ip", ip))
+	}
+	b = in.optional(b, "host_header", "hostname")
+	return in.winIISSite(state, []stepBlock{{name: "binding", attrs: b}})
+}
+
+// microsoft.iis.website takes its bindings as bindings.set.
+func winWebsiteModule(in *input) ([]step, string) {
+	state, reason := in.winIISState("started")
+	if reason != "" {
+		return nil, reason
+	}
+	in.used["bindings"] = true
+	m := mapping(in.args["bindings"])
+	if len(m) != 1 || m["set"] == nil {
+		return nil, "doesn't give its bindings as bindings.set; windows_iis_site needs the whole list"
+	}
+	var blocks []stepBlock
+	for _, n := range seq(m["set"]) {
+		bm, reason := in.winSubMap("bindings", n, "ip", "port", "hostname", "protocol")
+		if reason != "" {
+			return nil, reason
+		}
+		if p := bm["protocol"]; p != "" && p != "http" {
+			return nil, "has an https binding; windows_iis_site supports http only for now"
+		}
+		port, err := strconv.Atoi(bm["port"])
+		if err != nil {
+			return nil, "has a binding without a numeric port"
+		}
+		b := []attr{{key: "port", val: cty.NumberIntVal(int64(port))}}
+		if ip := bm["ip"]; ip != "" && ip != "*" {
+			b = append(b, s("ip", ip))
+		}
+		if h := bm["hostname"]; h != "" {
+			b = append(b, s("host_header", h))
+		}
+		blocks = append(blocks, stepBlock{name: "binding", attrs: b})
+	}
+	if len(blocks) == 0 {
+		return nil, "has no bindings; a windows_iis_site needs at least one"
+	}
+	return in.winIISSite(state, blocks)
+}
+
+func (in *input) winIISSite(state string, blocks []stepBlock) ([]step, string) {
+	if !in.has("physical_path") {
+		return nil, "has no physical_path; windows_iis_site needs one"
+	}
+	attrs := []attr{s("name", in.str("name")), s("physical_path", in.str("physical_path"))}
+	attrs = in.optional(attrs, "app_pool", "application_pool")
+	if state != "" {
+		attrs = append(attrs, s("state", state))
+	}
+	return []step{{module: "windows_iis_site", attrs: attrs, blocks: blocks}}, ""
 }

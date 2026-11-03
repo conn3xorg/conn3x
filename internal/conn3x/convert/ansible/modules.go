@@ -272,6 +272,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_firewall_rule":    winFirewallRuleModule,
 	"win_group":            winGroupModule,
 	"win_group_membership": winGroupMembershipModule,
+	"win_iis_webapppool":   winIISAppPoolModule,
+	"win_iis_website":      winIISWebsiteModule,
 	"win_package":          winPackageModule,
 	"win_powershell":       winPowershellModule,
 	"win_reboot":           winRebootModule,
@@ -282,6 +284,9 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_template":         winTemplateModule,
 	"win_user":             winUserModule,
 	"win_wait_for":         winWaitForModule,
+	// microsoft.iis, which replaces the community.windows IIS modules.
+	"web_app_pool": winIISAppPoolModule,
+	"website":      winWebsiteModule,
 }
 
 func copyModule(in *input) ([]step, string) {
