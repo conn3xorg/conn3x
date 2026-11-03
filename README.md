@@ -12,6 +12,7 @@
   <a href="https://www.bestpractices.dev/projects/16209"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/16209/badge"></a>
   <a href="https://github.com/conn3xorg/conn3x/discussions"><img alt="Discussions" src="https://img.shields.io/badge/discussions-join%20in-e85d0c"></a>
   <a href="https://www.codetriage.com/conn3xorg/conn3x"><img alt="Open Source Helpers" src="https://www.codetriage.com/conn3xorg/conn3x/badges/users.svg"></a>
+  <a href="https://www.youtube.com/@conn3xlabs"><img alt="YouTube" src="https://img.shields.io/badge/youtube-watch-e85d0c?logo=youtube&logoColor=white"></a>
 </p>
 
 Provisioning a server and configuring it are one job, but it usually takes two tools:
@@ -146,7 +147,8 @@ work makes provider compatibility possible.
 Ideas and feedback are most useful right now, in
 [Discussions](https://github.com/conn3xorg/conn3x/discussions). Releases and progress
 go out on X at [@conn3xone](https://x.com/conn3xone) and on the
-[blog](https://conn3x.org/blog). If you want to send code,
+[blog](https://conn3x.org/blog), and short explainers on
+[YouTube](https://www.youtube.com/@conn3xlabs). If you want to send code,
 read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every commit needs a DCO sign-off
 (`git commit -s`). There's no CLA, and there never will be. See [GOVERNANCE.md](GOVERNANCE.md).
 
