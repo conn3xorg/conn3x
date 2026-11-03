@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
@@ -76,7 +77,7 @@ func Read(ctx context.Context, r modules.Runner, name string) (Actual, error) {
 			return Actual{}, err
 		}
 	}
-	res, err := r.Run(ctx, "systemctl show -p LoadState,ActiveState,UnitFileState,NeedDaemonReload -- "+ssh.Quote(Unit(name)), nil)
+	res, err := systemctl(ctx, r, "systemctl show -p LoadState,ActiveState,UnitFileState,NeedDaemonReload -- "+ssh.Quote(Unit(name)))
 	if err != nil {
 		return Actual{}, err
 	}
@@ -183,8 +184,37 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 	return run(ctx, r, "systemctl "+verb+" -- "+ssh.Quote(Unit(name)))
 }
 
+// While systemd re-executes itself, which systemd's own package triggers
+// can do in the middle of an apply, systemctl can't reach it for a moment.
+// "Failed to connect to ... bus" means the request never got there. A reset
+// or a dropped connection can come after systemd took it, and every call
+// here is safe to repeat: show, start, stop, enable and daemon-reload end in
+// the same state however often they run. restart and reload could run twice,
+// which for a service is a second restart or reload, not a different result.
+var (
+	busError   = regexp.MustCompile(`Failed to connect to .*bus|Transport endpoint is not connected|Connection reset by peer`)
+	busRetries = 30
+	busWait    = time.Second
+)
+
+// systemctl runs cmd, a systemctl command, trying again while systemd can't
+// be reached. Any other failure is returned straight away.
+func systemctl(ctx context.Context, r modules.Runner, cmd string) (ssh.Result, error) {
+	for try := 0; ; try++ {
+		res, err := r.Run(ctx, cmd, nil)
+		if err != nil || res.ExitCode == 0 || try == busRetries || !busError.Match(res.Stderr) {
+			return res, err
+		}
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-time.After(busWait):
+		}
+	}
+}
+
 func run(ctx context.Context, r modules.Runner, cmd string) error {
-	res, err := r.Run(ctx, cmd, nil)
+	res, err := systemctl(ctx, r, cmd)
 	if err != nil {
 		return err
 	}
