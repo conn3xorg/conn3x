@@ -709,41 +709,66 @@ func warnOnConflictingEdits(steps hcl.Blocks) hcl.Diagnostics {
 
 // checkCircuitNames reports a circuit declared in more than one of a
 // module's files. decodeCircuitBlock catches a repeat within one file;
-// across files, the circuit is read from the resources it lowered to,
-// named <circuit>__<step>. The later file's resources for that circuit
-// are dropped, so they aren't also reported as duplicate resources.
-func checkCircuitNames(files []*File) hcl.Diagnostics {
+// across files, the circuit headers are read again from the parsed sources,
+// so a circuit with no steps still counts and the error points at the
+// repeated header. The later file's resources for that circuit are dropped,
+// so they aren't also reported as duplicate resources.
+func checkCircuitNames(sources map[string]*hcl.File, paths []string, files []*File) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	declaredIn := map[string]string{}
+	dropped := map[string]map[string]bool{} // filename => circuits to drop
+	for _, path := range paths {
+		src := sources[path]
+		if src == nil {
+			continue // unreadable; already reported
+		}
+		content, _, _ := src.Body.PartialContent(circuitHeaderSchema)
+		for _, block := range content.Blocks {
+			circuit := block.Labels[0]
+			if !validCircuitName(circuit) {
+				continue // already reported by decodeCircuitBlock
+			}
+			first, seen := declaredIn[circuit]
+			if !seen {
+				declaredIn[circuit] = path
+				continue
+			}
+			if first == path || dropped[path][circuit] {
+				continue // a repeat within one file is decodeCircuitBlock's to report
+			}
+			if dropped[path] == nil {
+				dropped[path] = map[string]bool{}
+			}
+			dropped[path][circuit] = true
+			rng := block.DefRange
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Duplicate circuit",
+				Detail:   fmt.Sprintf("A circuit named %q was already declared in %s. Circuit names must be unique within a module.", circuit, first),
+				Subject:  &rng,
+			})
+		}
+	}
+	if len(dropped) == 0 {
+		return diags
+	}
 	for _, file := range files {
-		reported := map[string]bool{}
 		kept := make([]*Resource, 0, len(file.ManagedResources))
 		for _, r := range file.ManagedResources {
 			circuit, _, lowered := strings.Cut(r.Name, "__")
-			if !lowered || !strings.HasPrefix(r.Type, "conn3x_") {
-				kept = append(kept, r)
+			if lowered && strings.HasPrefix(r.Type, "conn3x_") && dropped[r.DeclRange.Filename][circuit] {
 				continue
 			}
-			first, seen := declaredIn[circuit]
-			if !seen || first == r.DeclRange.Filename {
-				declaredIn[circuit] = r.DeclRange.Filename
-				kept = append(kept, r)
-				continue
-			}
-			if !reported[circuit] {
-				reported[circuit] = true
-				rng := r.DeclRange
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  "Duplicate circuit",
-					Detail:   fmt.Sprintf("A circuit named %q was already declared in %s. Circuit names must be unique within a module.", circuit, first),
-					Subject:  &rng,
-				})
-			}
+			kept = append(kept, r)
 		}
 		file.ManagedResources = kept
 	}
 	return diags
+}
+
+// circuitHeaderSchema picks out a file's circuit blocks and nothing else.
+var circuitHeaderSchema = &hcl.BodySchema{
+	Blocks: []hcl.BlockHeaderSchema{{Type: "circuit", LabelNames: []string{"name"}}},
 }
 
 func validCircuitName(name string) bool {

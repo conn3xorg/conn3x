@@ -140,7 +140,7 @@ func (p *Parser) loadFiles(paths []string, override bool) ([]*File, hcl.Diagnost
 			files = append(files, f)
 		}
 	}
-	diags = append(diags, checkCircuitNames(files)...) // CONN3X: a circuit name must be unique across files
+	diags = append(diags, checkCircuitNames(p.p.Files(), paths, files)...) // CONN3X: a circuit name must be unique across files
 
 	return files, diags
 }
