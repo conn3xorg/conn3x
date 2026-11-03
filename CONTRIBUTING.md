@@ -5,6 +5,71 @@ are bug reports, design feedback in
 [Discussions](https://github.com/conn3xorg/conn3x/discussions), and small,
 focused pull requests.
 
+## If you came to write
+
+You don't need to write Go, or build anything, to help with the docs.
+Everything below works from the browser.
+
+### Where the words live
+
+- The docs at [docs.conn3x.org](https://docs.conn3x.org) and the website at
+  [conn3x.org](https://conn3x.org) live in
+  [conn3xorg/web](https://github.com/conn3xorg/web). Each docs page is a
+  Markdown file under `apps/docs/src/content/docs/`.
+- The module pages, such as [file](https://docs.conn3x.org/modules/file), are
+  the exception. Their argument tables are generated from the code, and their
+  introductions, examples and notes come from
+  `internal/conn3x/provider/moddoc/pages/` in this repository. Change them
+  here: the copies in `conn3xorg/web` are overwritten each time the pages are
+  regenerated.
+- This file, the [README](README.md) and [SECURITY.md](SECURITY.md) live in
+  this repository.
+- The [style guide](https://docs.conn3x.org/style) records how we write:
+  sentence-case headings, contractions, backticks for commands and paths.
+
+### Make a small change from the browser
+
+1. On any docs page, click **Edit page** at the bottom. It opens the page's
+   Markdown on GitHub. The first time, GitHub makes a copy of the repository
+   (a fork) under your account for you.
+2. Make your change, and check it with **Preview**.
+3. Click **Commit changes**. Write a short message that says what was wrong,
+   such as `docs: the install page skipped a step`. In the extended
+   description, add your sign-off line at the end (see below).
+4. Click **Propose changes**, then **Create pull request**.
+
+### What a sign-off is, and why we ask for one
+
+A sign-off is a line at the end of a commit message:
+
+```
+Signed-off-by: Your Name <you@example.com>
+```
+
+With it, you certify that you wrote the change, or have the right to submit
+it, under the project's license. That's the
+[Developer Certificate of Origin](https://developercertificate.org/). It lets
+the project show where every change came from without asking you to sign an
+agreement or hand over your copyright. Your name stays on your commit.
+
+GitHub's editor doesn't add the line for you, so type it in yourself. The
+email has to match the one GitHub puts on the commit, or the DCO check on your
+pull request fails. If you keep your email private on GitHub, that's the
+`@users.noreply.github.com` address shown in
+[your email settings](https://github.com/settings/emails). From a terminal,
+`git commit -s` adds the line for you.
+
+### Where to start
+
+Issues for writers carry the
+[writers wanted](https://github.com/search?q=org%3Aconn3xorg+label%3A%22writers+wanted%22+state%3Aopen&type=issues)
+label. If you're unsure of a fact, ask on the issue: we check every claim
+before it goes out. To tell us what you'd like to write, post in
+[Discussions](https://github.com/conn3xorg/conn3x/discussions).
+[Get involved](https://docs.conn3x.org/contribute) lists other ways to help.
+
+The rest of this file is about the code.
+
 ## Before you start
 
 For anything bigger than a bug fix, open a discussion or an issue first.
