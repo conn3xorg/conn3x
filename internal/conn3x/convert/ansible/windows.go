@@ -639,5 +639,7 @@ func (in *input) winIISSite(state string, blocks []stepBlock) ([]step, string) {
 	if state != "" {
 		attrs = append(attrs, s("state", state))
 	}
-	return []step{{module: "windows_iis_site", attrs: attrs, blocks: blocks}}, ""
+	// Apply checks who can change the folder; a converted one usually fails that.
+	note := "TODO(convert): Apply refuses a physical_path anyone but administrators can change, which a new folder with only inherited rules is, under C:\\inetpub or at the top of C:. Give its windows_directory acl blocks: SYSTEM and Administrators full, IIS_IUSRS and IUSR read."
+	return []step{{module: "windows_iis_site", attrs: attrs, blocks: blocks, notes: []string{note}}}, ""
 }

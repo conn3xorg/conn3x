@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// A playbook shaped like a real IIS role converts what it can and leaves the
+// rest marked.
+func TestConvertWindowsGolden(t *testing.T) {
+	res := golden(t, "win")
+	var tasks []string
+	for _, r := range res.Review {
+		tasks = append(tasks, r.Task)
+	}
+	want := []string{"Install IIS", "Reboot if IIS asked for it", "App settings", "Service account", "7-Zip", "Telnet client on test boxes only"}
+	if res.Converted != 12 || strings.Join(tasks, "|") != strings.Join(want, "|") {
+		t.Fatalf("converted %d, review %v", res.Converted, tasks)
+	}
+}
+
 func TestWindowsMappings(t *testing.T) {
 	for task, wants := range map[string][]string{
 		`ansible.windows.win_file: {path: 'C:\app', state: directory}`: {"windows_directory {", `path = "C:\\app"`},
@@ -41,7 +55,7 @@ func TestWindowsMappings(t *testing.T) {
 		},
 		`microsoft.iis.web_app_pool: {name: shop, state: stopped}`: {"windows_iis_app_pool {", `state = "stopped"`},
 		`win_iis_website: {name: shop, physical_path: 'C:\sites\shop', application_pool: shop, port: 8080, ip: 10.0.0.4, hostname: shop.example.com}`: {
-			"windows_iis_site {", `physical_path = "C:\\sites\\shop"`, `app_pool      = "shop"`, "binding {", "port        = 8080", `ip          = "10.0.0.4"`, `host_header = "shop.example.com"`, "TODO(convert): Ansible used port, ip and hostname only when it made the site",
+			"windows_iis_site {", `physical_path = "C:\\sites\\shop"`, `app_pool      = "shop"`, "binding {", "port        = 8080", `ip          = "10.0.0.4"`, `host_header = "shop.example.com"`, "TODO(convert): Ansible used port, ip and hostname only when it made the site", "anyone but administrators can change",
 		},
 		`microsoft.iis.website: {name: shop, physical_path: 'C:\sites\shop', state: stopped, bindings: {set: [{port: 80, hostname: a.example.com}, {port: 81, protocol: http}]}}`: {
 			"windows_iis_site {", `state         = "stopped"`, `host_header = "a.example.com"`, "port = 81",

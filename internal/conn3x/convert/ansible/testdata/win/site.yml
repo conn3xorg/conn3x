@@ -1,0 +1,132 @@
+- name: Shop web servers
+  hosts: web
+  vars:
+    site_name: shop
+    site_root: 'C:\inetpub\shop'
+  tasks:
+    - name: Install IIS
+      ansible.windows.win_feature:
+        name: Web-Server
+        include_management_tools: true
+        state: present
+      register: iis
+
+    - name: Reboot if IIS asked for it
+      ansible.windows.win_reboot:
+      when: iis.reboot_required
+
+    - name: Site folder
+      ansible.windows.win_file:
+        path: 'C:\inetpub\shop'
+        state: directory
+
+    - name: Home page
+      ansible.windows.win_copy:
+        src: index.html
+        dest: 'C:\inetpub\shop\index.html'
+
+    - name: App settings
+      ansible.windows.win_template:
+        src: appsettings.json.j2
+        dest: 'C:\inetpub\shop\appsettings.json'
+
+    - name: App pool
+      microsoft.iis.web_app_pool:
+        name: shop
+        state: started
+        attributes:
+          managedRuntimeVersion: ''
+          processModel.identityType: NetworkService
+
+    - name: Site
+      microsoft.iis.website:
+        name: shop
+        physical_path: 'C:\inetpub\shop'
+        application_pool: shop
+        state: started
+        bindings:
+          set:
+            - port: 8080
+              hostname: shop.example.com
+
+    - name: Open 8080
+      community.windows.win_firewall_rule:
+        name: Shop HTTP
+        localport: 8080
+        protocol: tcp
+        direction: in
+        action: allow
+        state: present
+        enabled: true
+
+    - name: Service account
+      ansible.windows.win_user:
+        name: shopsvc
+        fullname: Shop service
+        password: '{{ shop_password }}'
+        password_never_expires: true
+        state: present
+
+    - name: Operators group
+      ansible.windows.win_group:
+        name: ShopOps
+        description: Shop operators
+        state: present
+
+    - name: Operators are members
+      ansible.windows.win_group_membership:
+        name: ShopOps
+        members:
+          - shopsvc
+        state: present
+
+    - name: World Wide Web Publishing Service
+      ansible.windows.win_service:
+        name: W3SVC
+        start_mode: auto
+        state: started
+
+    - name: 7-Zip
+      ansible.windows.win_package:
+        path: https://www.7-zip.org/a/7z2409-x64.msi
+        product_id: '{23170F69-40C1-2702-2409-000001000000}'
+        state: present
+
+    - name: Long paths on
+      ansible.windows.win_regedit:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
+        name: LongPathsEnabled
+        data: 1
+        type: dword
+
+    - name: Nightly recycle
+      community.windows.win_scheduled_task:
+        name: RecycleShop
+        path: '\Shop\'
+        description: Recycle the shop app pool
+        actions:
+          - path: 'C:\Windows\System32\inetsrv\appcmd.exe'
+            arguments: 'recycle apppool /apppool.name:shop'
+        triggers:
+          - type: daily
+            start_boundary: '2026-01-01T03:00:00'
+        username: SYSTEM
+        run_level: highest
+        state: present
+
+    - name: Warm the cache
+      ansible.windows.win_powershell:
+        script: |
+          Invoke-WebRequest -UseBasicParsing -Headers @{ Host = 'shop.example.com' } http://localhost:8080/ | Out-Null
+          Set-Content -Path C:\inetpub\shop\warmed.txt -Value done
+        creates: 'C:\inetpub\shop\warmed.txt'
+
+    - name: Telnet client on test boxes only
+      ansible.windows.win_feature:
+        name: Telnet-Client
+      when: env == 'test'
+
+    - name: Wait for the site
+      ansible.windows.win_wait_for:
+        port: 8080
+        timeout: 60

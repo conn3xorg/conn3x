@@ -18,11 +18,29 @@ import (
 var update = flag.Bool("update", false, "rewrite the golden files")
 
 func TestConvertGolden(t *testing.T) {
-	res, err := Convert(filepath.Join("testdata", "web", "site.yml"))
+	res := golden(t, "web")
+	if res.Converted != 11 || len(res.Review) != 1 {
+		t.Fatalf("converted %d, review %v", res.Converted, res.Review)
+	}
+	for _, want := range []string{"stat"} {
+		found := false
+		for _, r := range res.Review {
+			found = found || strings.Contains(r.Reason, want)
+		}
+		if !found {
+			t.Errorf("no review item mentions %q: %v", want, res.Review)
+		}
+	}
+}
+
+// golden converts testdata/<dir>/site.yml and compares it with site.tf.
+func golden(t *testing.T, dir string) Result {
+	t.Helper()
+	res, err := Convert(filepath.Join("testdata", dir, "site.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden := filepath.Join("testdata", "web", "site.tf")
+	golden := filepath.Join("testdata", dir, "site.tf")
 	if *update {
 		if err := os.WriteFile(golden, res.HCL, 0o644); err != nil {
 			t.Fatal(err)
@@ -38,18 +56,7 @@ func TestConvertGolden(t *testing.T) {
 	if _, diags := hclparse.NewParser().ParseHCL(res.HCL, "site.tf"); diags.HasErrors() {
 		t.Fatalf("output is not valid HCL: %s", diags)
 	}
-	if res.Converted != 11 || len(res.Review) != 1 {
-		t.Fatalf("converted %d, review %v", res.Converted, res.Review)
-	}
-	for _, want := range []string{"stat"} {
-		found := false
-		for _, r := range res.Review {
-			found = found || strings.Contains(r.Reason, want)
-		}
-		if !found {
-			t.Errorf("no review item mentions %q: %v", want, res.Review)
-		}
-	}
+	return res
 }
 
 func convertString(t *testing.T, playbook string) Result {
