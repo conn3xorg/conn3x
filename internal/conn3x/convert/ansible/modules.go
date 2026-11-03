@@ -305,8 +305,34 @@ func copyModule(in *input) ([]step, string) {
 	if !in.bool("force", true) {
 		return nil, "sets force: no, so Ansible writes the file only when it's missing; Conn3x would replace it on every apply"
 	}
+	if in.has("validate") {
+		v, reason := fileValidate(in.str("validate"))
+		if reason != "" {
+			return nil, reason
+		}
+		attrs = append(attrs, s("validate", v))
+	}
 	in.ignore("backup")
 	return one("file", in.owners(attrs))
+}
+
+// shellSyntax is what a shell reads differently from the plain argument
+// list Ansible runs validate as.
+var shellSyntax = regexp.MustCompile("[|&;<>$`\\\\(){}*?~#]")
+
+// fileValidate turns Ansible's validate into a file step's. Ansible splits
+// the command into arguments and runs it without a shell, while Conn3x runs
+// it through one with %s already quoted, so quotes around %s go and shell
+// syntax is left for a person.
+func fileValidate(cmd string) (string, string) {
+	if !strings.Contains(cmd, "%s") {
+		return "", "validate has no %s, the file to check"
+	}
+	cmd = strings.NewReplacer(`'%s'`, "%s", `"%s"`, "%s").Replace(cmd)
+	if shellSyntax.MatchString(cmd) {
+		return "", "validate uses shell syntax, which Ansible passes to the command as plain arguments and a Conn3x validate would run"
+	}
+	return cmd, ""
 }
 
 func fileModule(in *input) ([]step, string) {

@@ -93,6 +93,8 @@ func TestRefusesWhatItCantProve(t *testing.T) {
 		"removes is a glob":       "command: {cmd: make clean, removes: '/opt/build[0-9]'}",
 		"sets chdir inside":       "command: make chdir=/opt/src\n      args: {creates: /opt/src/out}",
 		"create_home: no":         "user: {name: bob, create_home: no}",
+		"validate has no %s":      "copy: {dest: /etc/a, content: x, validate: 'visudo -c'}",
+		"shell syntax":            "copy: {dest: /etc/a, content: x, validate: 'visudo -cf %s | grep ok'}",
 	} {
 		res := convertString(t, "- hosts: all\n  vars: {name: x}\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
@@ -860,5 +862,25 @@ func TestPipGoesToReviewWhenThePlayChangesTheUser(t *testing.T) {
 	res := convertString(t, "- hosts: all\n  become: true\n  become_user: app\n  tasks:\n    - pip: {name: six, virtualenv: /opt/v}\n")
 	if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "become_user") {
 		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}
+
+// Ansible's validate carries over to the file step. Ansible runs it without
+// a shell, so quotes people put around %s have to go: Conn3x already quotes
+// the path, and a shell would read '%s' as the literal "$tmp".
+func TestCopyValidateCarriesOver(t *testing.T) {
+	for in, want := range map[string]string{
+		`validate: 'visudo -cf %s'`:             `validate = "visudo -cf %s"`,
+		`validate: "visudo -cf '%s'"`:           `validate = "visudo -cf %s"`,
+		`validate: '/usr/sbin/sshd -t -f "%s"'`: `validate = "/usr/sbin/sshd -t -f %s"`,
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - copy: {dest: /etc/sudoers.d/deploy, content: x, mode: '0440', "+in+"}\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v", in, res.Converted, res.Review)
+			continue
+		}
+		if !strings.Contains(string(res.HCL), want) {
+			t.Errorf("%s: output lacks %q:\n%s", in, want, res.HCL)
+		}
 	}
 }

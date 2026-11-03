@@ -90,6 +90,6 @@ When you delete a `file` step, `on_remove` decides what happens on the host. The
 
 ## From Ansible
 
-`conn3x convert ansible` turns `copy` tasks with `content` or `src` into `file` steps, reading `src` from your playbook's `files/` directory. `copy` with `remote_src` stays a TODO, and so does `force: no`, since Ansible then writes the file only when it's missing.
+`conn3x convert ansible` turns `copy` tasks with `content` or `src` into `file` steps, reading `src` from your playbook's `files/` directory. `copy` with `remote_src` stays a TODO, and so does `force: no`, since Ansible then writes the file only when it's missing. A `validate` carries over, minus any quotes around `%s`. Ansible runs it without a shell, so a `validate` with pipes, redirects, `$` or other shell syntax stays a TODO, because Conn3x would run those through `sh`.
 
 A play that sets `become_user`, or `remote_user` without `become`, sends these tasks to review with the reason, because who runs them decides who owns what they create. A circuit runs as root under `become` and otherwise as its login user.
