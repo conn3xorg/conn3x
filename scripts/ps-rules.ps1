@@ -42,7 +42,9 @@ foreach ($file in $Files) {
   foreach ($e in $errors) { Write-Output "$($file): parse error: $($e.Message)"; $failed++ }
   $isRead = (Split-Path -Leaf $file) -like 'read_*'
   # Both load a DLL as the script is parsed, before any rule below could matter.
-  if ($isRead -and $tree.ScriptRequirements -and @($tree.ScriptRequirements.RequiredAssemblies).Count) { Report $file $tree 'a read script may not load an assembly with #Requires -Assemblies' }
+  # pwsh 7 no longer parses #Requires -Assemblies, which 5.1 on the host still
+  # honours, so it's matched as text.
+  if ($isRead -and (Get-Content -LiteralPath $file -Raw) -imatch '(?m)^\s*#requires\b.*\s-a') { Report $file $tree 'a read script may not load an assembly with #Requires -Assemblies' }
   $all = $tree.FindAll({ $true }, $true)
   # A read may fill in a table it made itself, and set nothing else's properties.
   $tables = @{}
