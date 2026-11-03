@@ -41,7 +41,7 @@ func TestWindowsMappings(t *testing.T) {
 		},
 		`microsoft.iis.web_app_pool: {name: shop, state: stopped}`: {"windows_iis_app_pool {", `state = "stopped"`},
 		`win_iis_website: {name: shop, physical_path: 'C:\sites\shop', application_pool: shop, port: 8080, ip: 10.0.0.4, hostname: shop.example.com}`: {
-			"windows_iis_site {", `physical_path = "C:\\sites\\shop"`, `app_pool      = "shop"`, "binding {", "port        = 8080", `ip          = "10.0.0.4"`, `host_header = "shop.example.com"`,
+			"windows_iis_site {", `physical_path = "C:\\sites\\shop"`, `app_pool      = "shop"`, "binding {", "port        = 8080", `ip          = "10.0.0.4"`, `host_header = "shop.example.com"`, "TODO(convert): Ansible used port, ip and hostname only when it made the site",
 		},
 		`microsoft.iis.website: {name: shop, physical_path: 'C:\sites\shop', state: stopped, bindings: {set: [{port: 80, hostname: a.example.com}, {port: 81, protocol: http}]}}`: {
 			"windows_iis_site {", `state         = "stopped"`, `host_header = "a.example.com"`, "port = 81",

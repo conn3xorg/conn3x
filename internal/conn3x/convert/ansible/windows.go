@@ -584,7 +584,11 @@ func winIISWebsiteModule(in *input) ([]step, string) {
 		b = append(b, s("ip", ip))
 	}
 	b = in.optional(b, "host_header", "hostname")
-	return in.winIISSite(state, []stepBlock{{name: "binding", attrs: b}})
+	steps, reason := in.winIISSite(state, []stepBlock{{name: "binding", attrs: b}})
+	if reason == "" {
+		steps[0].notes = append(steps[0].notes, "TODO(convert): Ansible used port, ip and hostname only when it made the site. Here they're all of its bindings, so apply removes any other, such as one win_iis_webbinding added. Add a binding block for each one the site needs.")
+	}
+	return steps, reason
 }
 
 // microsoft.iis.website takes its bindings as bindings.set.
