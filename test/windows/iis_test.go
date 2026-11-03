@@ -292,9 +292,17 @@ circuit "win" {
 			t.Fatalf("apply: exit %d\n%s", code, out)
 		}
 	}
+	// Web-Server includes static content on a fresh install, but an image
+	// with IIS already on, like the runner's, may not: then IIS answers 200
+	// with an empty body.
 	steps := fmt.Sprintf(`step "iis" {
     windows_feature {
       name = "Web-Server"
+    }
+  }
+  step "static" {
+    windows_feature {
+      name = "Web-Static-Content"
     }
   }
   step "pool" {
