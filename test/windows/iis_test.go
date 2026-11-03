@@ -194,7 +194,7 @@ func TestIIS(t *testing.T) {
 	for what, path := range map[string]string{"open": siteFolder(t, c, true), "missing": `C:\c3iis-missing-` + randHex(4)} {
 		bad := s
 		bad.PhysicalPath = path
-		if err := windows.ApplySite(ctx, c, bad); err == nil || !strings.Contains(err.Error(), map[string]string{"open": "S-1-5-11 can add or replace files", "missing": "doesn't exist"}[what]) {
+		if err := windows.ApplySite(ctx, c, bad); err == nil || !strings.Contains(err.Error(), map[string]string{"open": "S-1-5-11 can", "missing": "doesn't exist"}[what]) {
 			t.Errorf("%s folder: %v", what, err)
 		}
 	}
@@ -210,7 +210,7 @@ func TestIIS(t *testing.T) {
 	run(t, c, `param($A) Import-Module WebAdministration; New-Website -Name $A.s -PhysicalPath $A.d -Port 8095 -IPAddress 127.0.0.1 -ApplicationPool $A.p | Out-Null`, map[string]any{"s": hand, "d": open, "p": poolName})
 	sys := p
 	sys.Identity = "LocalSystem"
-	if err := windows.ApplyAppPool(ctx, c, sys); err == nil || !strings.Contains(err.Error(), "this pool, as LocalSystem, would run") {
+	if err := windows.ApplyAppPool(ctx, c, sys); err == nil || !strings.Contains(err.Error(), "S-1-5-11 can") || !strings.Contains(err.Error(), open) {
 		t.Errorf("identity switch over an open folder: %v", err)
 	}
 	if a, _ = windows.ReadAppPool(ctx, c, poolName); a.Identity != p.Identity {
