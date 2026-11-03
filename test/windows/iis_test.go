@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -336,9 +337,9 @@ circuit "win" {
 			return 0, err.Error()
 		}
 		defer resp.Body.Close()
-		b := make([]byte, 200)
-		n, _ := resp.Body.Read(b)
-		return resp.StatusCode, string(b[:n])
+		// One Read can come back short, empty even, on loopback.
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return resp.StatusCode, string(b)
 	}
 	// Installing IIS opens port 80 with its own rule; turned off, the page
 	// can only come through the step's.
