@@ -333,18 +333,22 @@ func TestUnsupportedStepBlockPointsAtItsType(t *testing.T) {
 
 func TestDuplicateCircuitAcrossFiles(t *testing.T) {
 	web := func(step string) string {
-		return `circuit "web" {
+		src := `circuit "web" {
   hosts = { h = "1.2.3.4" }
   ssh {
     user = "root"
   }
-  step "` + step + `" {
+`
+		if step != "" {
+			src += `  step "` + step + `" {
     file {
       path    = "/etc/` + step + `"
       content = "x"
     }
   }
-}`
+`
+		}
+		return src + "}"
 	}
 	for name, tc := range map[string]struct {
 		files         map[string]string
@@ -353,6 +357,8 @@ func TestDuplicateCircuitAcrossFiles(t *testing.T) {
 		"different steps": {map[string]string{"a.circuit.hcl": web("motd"), "b.circuit.hcl": web("issue")}, "a.circuit.hcl", "b.circuit.hcl"},
 		"same steps":      {map[string]string{"a.circuit.hcl": web("motd"), "b.circuit.hcl": web("motd")}, "a.circuit.hcl", "b.circuit.hcl"},
 		"tf and circuit":  {map[string]string{"main.tf": web("motd"), "web.circuit.hcl": web("issue")}, "main.tf", "web.circuit.hcl"},
+		"second empty":    {map[string]string{"a.circuit.hcl": web("motd"), "b.circuit.hcl": web("")}, "a.circuit.hcl", "b.circuit.hcl"},
+		"first empty":     {map[string]string{"a.circuit.hcl": web(""), "b.circuit.hcl": web("motd")}, "a.circuit.hcl", "b.circuit.hcl"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, diags := loadCircuitModule(t, tc.files)
@@ -366,8 +372,8 @@ func TestDuplicateCircuitAcrossFiles(t *testing.T) {
 			if !strings.Contains(d.Detail, "already declared in mod/"+tc.first) {
 				t.Fatalf("detail %q does not name %s", d.Detail, tc.first)
 			}
-			if d.Subject == nil || d.Subject.Filename != "mod/"+tc.second || d.Subject.Start.Line != 6 {
-				t.Fatalf("subject %v should be the step in %s", d.Subject, tc.second)
+			if d.Subject == nil || d.Subject.Filename != "mod/"+tc.second || d.Subject.Start.Line != 1 || d.Subject.Start.Column != 1 {
+				t.Fatalf("subject %v should be the circuit header in %s", d.Subject, tc.second)
 			}
 		})
 	}
