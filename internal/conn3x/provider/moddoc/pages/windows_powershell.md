@@ -39,7 +39,7 @@ step "long_paths" {
 
 **Timeouts.** A script is stopped after `timeout`. Conn3x stops the whole process tree when it cancels a run, but if the connection itself drops, as when the machine running Conn3x crashes, the script carries on running on the host.
 
-**Connecting.** The `ssh` block works as it does on Linux, with its host key pinned or in `known_hosts`. Windows Server 2025 ships OpenSSH; Conn3x installs its own host key, as part of bootstrapping the host. `become` only checks that the login is elevated, since Windows has no sudo. `agent` and `become_password_file` are errors. Keep `user` as the bare name, such as `azadmin`, which still works after the host is promoted to a domain controller.
+**Connecting.** The `ssh` block works as it does on Linux, with its host key pinned or in `known_hosts`. Windows Server 2025 ships OpenSSH. Server 2022 doesn't, so bootstrapping adds it first, as the Azure example's script does. Either way, Conn3x installs its own host key as part of bootstrapping the host. `become` only checks that the login is elevated, since Windows has no sudo. `agent` and `become_password_file` are errors. Keep `user` as the bare name, such as `azadmin`, which still works after the host is promoted to a domain controller.
 
 ## Removal
 

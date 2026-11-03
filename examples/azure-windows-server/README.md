@@ -30,5 +30,6 @@ conn3x destroy
 
 - **State holds secrets of Azure's making.** `azurerm` keeps the first admin password and the extension's settings in state, including the host's private key. That's why this example encrypts state. The last step replaces the password, so the copy in state stops being useful. The host key stays useful, so treat state as a secret.
 - **SSH is the only way in,** from `admin_cidrs` only. RDP stays closed, and password login is off.
+- **Server 2022 works too.** Set the image `sku` to `2022-datacenter-g2`. The bootstrap adds OpenSSH before anything else.
 - **Destroying removes the VM and everything in its resource group.**
 - **Removing a step doesn't undo it on the host.** Destroy the VM for that.

@@ -55,6 +55,10 @@ New-LockedFile $admins ([Text.Encoding]::ASCII.GetBytes("__ADMIN_PUB__`n"))
 
 # Keys only, from here on.
 $config = "$d\sshd_config"
+# On Server 2022, sshd writes this from its default at first start, which hasn't happened yet.
+if (-not [IO.File]::Exists($config)) {
+  Copy-Item "$env:WINDIR\System32\OpenSSH\sshd_config_default" $config
+}
 $text = [IO.File]::ReadAllText($config) -replace '(?m)^#?PasswordAuthentication .*$', 'PasswordAuthentication no'
 [IO.File]::WriteAllText($config, $text)
 
