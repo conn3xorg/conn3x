@@ -317,8 +317,9 @@ func copyModule(in *input) ([]step, string) {
 }
 
 // shellSyntax is what a shell reads differently from the plain argument
-// list Ansible runs validate as.
-var shellSyntax = regexp.MustCompile("[|&;<>$`\\\\(){}*?~#]")
+// list Ansible runs validate as. A newline is whitespace to Ansible's
+// shlex, but sh runs the next line as a command of its own.
+var shellSyntax = regexp.MustCompile("[|&;<>$`\\\\(){}\\[\\]*?~#\\n\\r]")
 
 // fileValidate turns Ansible's validate into a file step's. Ansible splits
 // the command into arguments and runs it without a shell, while Conn3x runs

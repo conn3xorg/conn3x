@@ -95,6 +95,9 @@ func TestRefusesWhatItCantProve(t *testing.T) {
 		"create_home: no":         "user: {name: bob, create_home: no}",
 		"validate has no %s":      "copy: {dest: /etc/a, content: x, validate: 'visudo -c'}",
 		"shell syntax":            "copy: {dest: /etc/a, content: x, validate: 'visudo -cf %s | grep ok'}",
+		"uses shell syntax":       "copy: {dest: /etc/a, content: x, validate: \"visudo -cf %s\\nrm -f /etc/a\"}",
+		"syntax, which Ansible":   "copy: {dest: /etc/a, content: x, validate: 'check -f %s [ab]'}",
+		"syntax, which Ansible p": "copy: {dest: /etc/a, content: x, validate: \"visudo -cf %s\\r\"}",
 	} {
 		res := convertString(t, "- hosts: all\n  vars: {name: x}\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
