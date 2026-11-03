@@ -40,6 +40,25 @@ func iisNames(t *testing.T, c *ssh.Client) (pool, site string) {
 	return pool, site
 }
 
+// siteFolder makes a folder under C:\ and removes it afterwards. Admin-only,
+// with read for the pools and anonymous visitors; open, Authenticated Users
+// may also change it, as a new folder under C:\ allows on the Azure image.
+func siteFolder(t *testing.T, c *ssh.Client, open bool) string {
+	t.Helper()
+	d := `C:\c3iis-` + randHex(4)
+	run(t, c, `param($A)
+$sec = New-Object Security.AccessControl.DirectorySecurity
+$sec.SetAccessRuleProtection($true, $false)
+foreach ($s in 'S-1-5-18', 'S-1-5-32-544') { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Security.Principal.SecurityIdentifier]$s), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
+foreach ($s in 'S-1-5-32-568', 'S-1-5-17') { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Security.Principal.SecurityIdentifier]$s), 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
+if ($A.open) { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Security.Principal.SecurityIdentifier]'S-1-5-11'), 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
+[void][IO.Directory]::CreateDirectory($A.d, $sec)`, map[string]any{"d": d, "open": open})
+	t.Cleanup(func() {
+		_, _ = ps.User(context.Background(), c, `param($A) if ([IO.Directory]::Exists($A.d)) { [IO.Directory]::Delete($A.d, $true) }`, map[string]any{"d": d}, time.Minute)
+	})
+	return d
+}
+
 // iisConfig is a hash of IIS's configuration, so a read that wrote it shows.
 func iisConfig(t *testing.T, c *ssh.Client) string {
 	t.Helper()
@@ -79,7 +98,7 @@ func TestIIS(t *testing.T) {
 	ctx := context.Background()
 	installIIS(t, c)
 	poolName, siteName := iisNames(t, c)
-	dir := tempDir(t, c)
+	dir := siteFolder(t, c, false)
 
 	p := windows.AppPool{Name: poolName, Started: true, RuntimeVersion: "", PipelineMode: "classic", Identity: "NetworkService"}
 	if a, err := windows.ReadAppPool(ctx, c, poolName); err != nil || !a.Installed || a.Exists {
@@ -127,7 +146,7 @@ func TestIIS(t *testing.T) {
 	for what, change := range map[string]string{
 		"site stopped":  `Stop-Website -Name $A.s`,
 		"extra binding": `New-WebBinding -Name $A.s -Protocol http -Port 8093`,
-		"path":          `Set-ItemProperty -LiteralPath ('IIS:\Sites\' + $A.s) -Name physicalPath -Value 'C:\inetpub\wwwroot'`,
+		"path":          `Set-ItemProperty -LiteralPath ('IIS:\Sites\' + $A.s) -Name physicalPath -Value 'C:\Windows\Temp'`,
 		"pool":          `Set-ItemProperty -LiteralPath ('IIS:\Sites\' + $A.s) -Name applicationPool -Value DefaultAppPool`,
 	} {
 		run(t, c, "param($A) Import-Module WebAdministration; "+change, map[string]any{"s": siteName})
@@ -169,8 +188,40 @@ func TestIIS(t *testing.T) {
 		t.Errorf("clashing binding: %v", err)
 	}
 
-	// A missing pool is refused before anything is written.
+	// A folder others can change is refused, whoever the pool runs as, and
+	// so is one that isn't there.
 	before := iisConfig(t, c)
+	for what, path := range map[string]string{"open": siteFolder(t, c, true), "missing": `C:\c3iis-missing-` + randHex(4)} {
+		bad := s
+		bad.PhysicalPath = path
+		if err := windows.ApplySite(ctx, c, bad); err == nil || !strings.Contains(err.Error(), map[string]string{"open": "S-1-5-11 can add or replace files", "missing": "doesn't exist"}[what]) {
+			t.Errorf("%s folder: %v", what, err)
+		}
+	}
+	if after := iisConfig(t, c); after != before {
+		t.Error("a refused folder still wrote the configuration")
+	}
+
+	// Changing a pool's identity checks every folder its sites serve, made
+	// by Conn3x or not.
+	hand := siteName + "h"
+	open := siteFolder(t, c, true)
+	t.Cleanup(func() { _ = windows.ApplySiteRemove(context.Background(), c, hand) })
+	run(t, c, `param($A) Import-Module WebAdministration; New-Website -Name $A.s -PhysicalPath $A.d -Port 8095 -IPAddress 127.0.0.1 -ApplicationPool $A.p | Out-Null`, map[string]any{"s": hand, "d": open, "p": poolName})
+	sys := p
+	sys.Identity = "LocalSystem"
+	if err := windows.ApplyAppPool(ctx, c, sys); err == nil || !strings.Contains(err.Error(), "this pool, as LocalSystem, would run") {
+		t.Errorf("identity switch over an open folder: %v", err)
+	}
+	if a, _ = windows.ReadAppPool(ctx, c, poolName); a.Identity != p.Identity {
+		t.Errorf("the identity changed anyway: %+v", a)
+	}
+	if err := windows.ApplySiteRemove(ctx, c, hand); err != nil {
+		t.Fatal(err)
+	}
+
+	// A missing pool is refused before anything is written.
+	before = iisConfig(t, c)
 	missing := s
 	missing.AppPool = "c3 no such pool"
 	if err := windows.ApplySite(ctx, c, missing); err == nil || !strings.Contains(err.Error(), "doesn't exist") {
@@ -235,11 +286,10 @@ func TestIISFlow(t *testing.T) {
 	c := connect(t)
 	ctx := context.Background()
 	poolName, siteName := iisNames(t, c)
-	// Under C:\inetpub, whose rules let IIS read it; a profile's TEMP doesn't.
+	// Made by the circuit, as the site page shows: admin-only from the start.
 	page := `C:\inetpub\` + strings.ReplaceAll(siteName, " ", "-")
-	run(t, c, `param($A) [void][IO.Directory]::CreateDirectory($A.d); [IO.File]::WriteAllText($A.d + '\index.html', 'hello from conn3x')`, map[string]any{"d": page})
 	t.Cleanup(func() {
-		_, _ = ps.User(context.Background(), c, `param($A) Remove-Item -LiteralPath $A.d -Recurse -Force`, map[string]any{"d": page}, time.Minute)
+		_, _ = ps.User(context.Background(), c, `param($A) if ([IO.Directory]::Exists($A.d)) { [IO.Directory]::Delete($A.d, $true) }`, map[string]any{"d": page}, time.Minute)
 	})
 	rule := ruleName(t, c)
 	dir := t.TempDir()
@@ -305,6 +355,33 @@ circuit "win" {
       name = "Web-Static-Content"
     }
   }
+  step "site_folder" {
+    windows_directory {
+      path = %[3]q
+      acl {
+        principal = "S-1-5-32-544"
+        rights    = ["FullControl"]
+      }
+      acl {
+        principal = "S-1-5-18"
+        rights    = ["FullControl"]
+      }
+      acl {
+        principal = "S-1-5-32-568"
+        rights    = ["ReadAndExecute"]
+      }
+      acl {
+        principal = "S-1-5-17"
+        rights    = ["ReadAndExecute"]
+      }
+    }
+  }
+  step "page" {
+    windows_file {
+      path    = %[5]q
+      content = "hello from conn3x"
+    }
+  }
   step "pool" {
     windows_iis_app_pool {
       name                    = %[1]q
@@ -328,7 +405,7 @@ circuit "win" {
       protocol    = "tcp"
       local_ports = ["80"]
     }
-  }`, poolName, siteName, page, rule)
+  }`, poolName, siteName, page, rule, page+`\index.html`)
 	write(steps)
 	if out, code := tool("init", "-no-color"); code != 0 {
 		t.Fatal(out)

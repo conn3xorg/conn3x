@@ -5,6 +5,7 @@ package windows
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -190,5 +191,20 @@ func TestApplyAppPoolSends(t *testing.T) {
 	}
 	if err := ApplyAppPoolRemove(context.Background(), &fake{}, "a*"); err == nil {
 		t.Error("removed a wildcard name")
+	}
+}
+
+// Both apply scripts carry the admin-only folder check from the library, and
+// call it; the host tests prove what it refuses.
+func TestIISAppliesCheckFolders(t *testing.T) {
+	for name, call := range map[string]string{
+		"apply_iis_site.ps1":     `Assert-AdminOnly $path -Folder -Runner "the site's app pool"`,
+		"apply_iis_app_pool.ps1": `Assert-AdminOnly $vp -Folder -Runner`,
+		"apply_task.ps1":         `Assert-AdminOnly ([string]$A.execute)`,
+	} {
+		body := script(name).Body
+		if !strings.Contains(body, "function Assert-AdminOnly(") || !strings.Contains(body, call) {
+			t.Errorf("%s doesn't check its folders", name)
+		}
 	}
 }

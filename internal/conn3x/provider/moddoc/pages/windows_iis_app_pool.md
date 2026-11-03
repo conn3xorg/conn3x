@@ -25,7 +25,7 @@ Every setting you leave out takes IIS's own default for a new pool, so a pool ch
 
 Conn3x reads pools through `Microsoft.Web.Administration`, opened read-only, and never through the `IIS:` drive. On a host without IIS, a pool reads as missing rather than failing, so a plan made before the `windows_feature` step runs still works.
 
-**Identity.** `LocalSystem` runs every site in the pool with full rights over the host, and `NetworkService` and `LocalService` share an account with other services. Anyone who can change a site's files can then run code as that account. Keep `ApplicationPoolIdentity` unless the application needs another, and keep the site's folder writable by administrators only. A pool running as a named account with a password isn't supported yet.
+**Identity.** Every site in a pool runs as its identity. `LocalSystem` has full rights over the host, and `ApplicationPoolIdentity`, `NetworkService` and `LocalService` can impersonate their way to SYSTEM, so a folder anyone else can write to is a way in, whichever you pick. `windows_iis_site` refuses such a folder. When this step changes an existing pool's identity, it checks the folders of every site and application already in the pool the same way, including ones Conn3x doesn't manage, and refuses the change if any of them isn't admin-only. A pool running as a named account with a password isn't supported yet.
 
 ## Removal
 

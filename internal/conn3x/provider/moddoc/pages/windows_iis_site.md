@@ -1,14 +1,39 @@
 **Experimental.** Windows support is new, and this module may change between releases.
 
-Use `windows_iis_site` to serve a folder from IIS on the ports and host names you choose. It needs IIS installed and, if you name one, its application pool in place first.
+Use `windows_iis_site` to serve a folder from IIS on the ports and host names you choose. It needs IIS installed, the folder made admin-only, and, if you name one, its application pool in place first.
 
 ## Example usage
 
 ```hcl
+# Admin-only from the moment it exists. IIS_IUSRS (the pools) and IUSR
+# (anonymous visitors) may only read.
+step "site_folder" {
+  windows_directory {
+    path = "C:\\inetpub\\shop"
+
+    acl {
+      principal = "S-1-5-32-544"
+      rights    = ["FullControl"]
+    }
+    acl {
+      principal = "S-1-5-18"
+      rights    = ["FullControl"]
+    }
+    acl {
+      principal = "S-1-5-32-568"
+      rights    = ["ReadAndExecute"]
+    }
+    acl {
+      principal = "S-1-5-17"
+      rights    = ["ReadAndExecute"]
+    }
+  }
+}
+
 step "site" {
   windows_iis_site {
     name          = "shop"
-    physical_path = "C:\\sites\\shop"
+    physical_path = "C:\\inetpub\\shop"
     app_pool      = "shop"
 
     binding {
@@ -33,7 +58,9 @@ The `binding` blocks are all of the site's bindings: one added by hand, https in
 
 `state` defaults to `started` and also sets whether the site starts with IIS. If the site can't start, apply says why, which is most often a binding another site already has.
 
-`physical_path` must be a folder on a local drive. Conn3x doesn't make it or check who can write to it: anyone who can change the files there can change what the site serves, and runs code as the pool's identity when the site runs code. With `app_pool` unset, a new site gets IIS's default pool and an existing site keeps its own.
+`physical_path` must be a folder on a local drive that already exists, and only administrators may change it or any folder on the way to it. Apply refuses it otherwise, whatever the pool's identity: whoever can drop a page or a `web.config` there runs code as the pool, and every built-in pool identity can impersonate its way to SYSTEM. The check covers the folder's own access rules, not files or subfolders inside it that carry their own. With `app_pool` unset, a new site gets IIS's default pool and an existing site keeps its own.
+
+Serving files needs IIS's static content role service, `Web-Static-Content`. A plain `Web-Server` install includes it; without it, IIS answers 200 with an empty page. A `windows_feature` step for it makes sure.
 
 On a host without IIS, a site reads as missing rather than failing.
 
