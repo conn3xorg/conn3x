@@ -11,6 +11,7 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/conn3xorg/conn3x"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/conn3xorg/conn3x?label=openssf%20scorecard&cacheSeconds=86400"></a>
   <a href="https://www.bestpractices.dev/projects/16209"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/16209/badge"></a>
   <a href="https://github.com/conn3xorg/conn3x/discussions"><img alt="Discussions" src="https://img.shields.io/badge/discussions-join%20in-e85d0c"></a>
+  <a href="https://www.codetriage.com/conn3xorg/conn3x"><img alt="Open Source Helpers" src="https://www.codetriage.com/conn3xorg/conn3x/badges/users.svg"></a>
 </p>
 
 Provisioning a server and configuring it are one job, but it usually takes two tools:
