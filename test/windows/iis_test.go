@@ -41,9 +41,11 @@ func iisNames(t *testing.T, c *ssh.Client) (pool, site string) {
 }
 
 // siteFolder makes a folder under C:\ and removes it afterwards. Admin-only,
-// with read for the pools and anonymous visitors; open, Authenticated Users
+// with read for the pools and anonymous visitors. "open": Authenticated Users
 // may also change it, as a new folder under C:\ allows on the Azure image.
-func siteFolder(t *testing.T, c *ssh.Client, open bool) string {
+// "files": Users may change what's inside, through a rule that skips the
+// folder itself.
+func siteFolder(t *testing.T, c *ssh.Client, mode string) string {
 	t.Helper()
 	d := `C:\c3iis-` + randHex(4)
 	run(t, c, `param($A)
@@ -51,8 +53,9 @@ $sec = New-Object Security.AccessControl.DirectorySecurity
 $sec.SetAccessRuleProtection($true, $false)
 foreach ($s in 'S-1-5-18', 'S-1-5-32-544') { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Security.Principal.SecurityIdentifier]$s), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
 foreach ($s in 'S-1-5-32-568', 'S-1-5-17') { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Security.Principal.SecurityIdentifier]$s), 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
-if ($A.open) { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Security.Principal.SecurityIdentifier]'S-1-5-11'), 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
-[void][IO.Directory]::CreateDirectory($A.d, $sec)`, map[string]any{"d": d, "open": open})
+if ($A.mode -eq 'files') { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Security.Principal.SecurityIdentifier]'S-1-5-32-545'), 'Modify', 'ContainerInherit,ObjectInherit', 'InheritOnly', 'Allow'))) }
+if ($A.mode -eq 'open') { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(([Security.Principal.SecurityIdentifier]'S-1-5-11'), 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
+[void][IO.Directory]::CreateDirectory($A.d, $sec)`, map[string]any{"d": d, "mode": mode})
 	t.Cleanup(func() {
 		_, _ = ps.User(context.Background(), c, `param($A) if ([IO.Directory]::Exists($A.d)) { [IO.Directory]::Delete($A.d, $true) }`, map[string]any{"d": d}, time.Minute)
 	})
@@ -98,7 +101,7 @@ func TestIIS(t *testing.T) {
 	ctx := context.Background()
 	installIIS(t, c)
 	poolName, siteName := iisNames(t, c)
-	dir := siteFolder(t, c, false)
+	dir := siteFolder(t, c, "")
 
 	p := windows.AppPool{Name: poolName, Started: true, RuntimeVersion: "", PipelineMode: "classic", Identity: "NetworkService"}
 	if a, err := windows.ReadAppPool(ctx, c, poolName); err != nil || !a.Installed || a.Exists {
@@ -191,10 +194,10 @@ func TestIIS(t *testing.T) {
 	// A folder others can change is refused, whoever the pool runs as, and
 	// so is one that isn't there.
 	before := iisConfig(t, c)
-	for what, path := range map[string]string{"open": siteFolder(t, c, true), "missing": `C:\c3iis-missing-` + randHex(4)} {
+	for what, path := range map[string]string{"open": siteFolder(t, c, "open"), "files": siteFolder(t, c, "files"), "missing": `C:\c3iis-missing-` + randHex(4)} {
 		bad := s
 		bad.PhysicalPath = path
-		if err := windows.ApplySite(ctx, c, bad); err == nil || !strings.Contains(err.Error(), map[string]string{"open": "S-1-5-11 can", "missing": "doesn't exist"}[what]) {
+		if err := windows.ApplySite(ctx, c, bad); err == nil || !strings.Contains(err.Error(), map[string]string{"open": "S-1-5-11 can", "files": "S-1-5-32-545 can add or replace files", "missing": "doesn't exist"}[what]) {
 			t.Errorf("%s folder: %v", what, err)
 		}
 	}
@@ -205,12 +208,12 @@ func TestIIS(t *testing.T) {
 	// Changing a pool's identity checks every folder its sites serve, made
 	// by Conn3x or not.
 	hand := siteName + "h"
-	open := siteFolder(t, c, true)
+	open := siteFolder(t, c, "files")
 	t.Cleanup(func() { _ = windows.ApplySiteRemove(context.Background(), c, hand) })
 	run(t, c, `param($A) Import-Module WebAdministration; New-Website -Name $A.s -PhysicalPath $A.d -Port 8095 -IPAddress 127.0.0.1 -ApplicationPool $A.p | Out-Null`, map[string]any{"s": hand, "d": open, "p": poolName})
 	sys := p
 	sys.Identity = "LocalSystem"
-	if err := windows.ApplyAppPool(ctx, c, sys); err == nil || !strings.Contains(err.Error(), "S-1-5-11 can") || !strings.Contains(err.Error(), open) {
+	if err := windows.ApplyAppPool(ctx, c, sys); err == nil || !strings.Contains(err.Error(), "S-1-5-32-545 can") || !strings.Contains(err.Error(), open) {
 		t.Errorf("identity switch over an open folder: %v", err)
 	}
 	if a, _ = windows.ReadAppPool(ctx, c, poolName); a.Identity != p.Identity {

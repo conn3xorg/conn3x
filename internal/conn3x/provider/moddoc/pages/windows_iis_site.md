@@ -58,7 +58,7 @@ The `binding` blocks are all of the site's bindings: one added by hand, https in
 
 `state` defaults to `started` and also sets whether the site starts with IIS. If the site can't start, apply says why, which is most often a binding another site already has.
 
-`physical_path` must be a folder on a local drive that already exists, and only administrators may change it or any folder on the way to it. Apply refuses it otherwise, whatever the pool's identity: whoever can drop a page or a `web.config` there runs code as the pool, and every built-in pool identity can impersonate its way to SYSTEM. The check covers the folder's own access rules, not files or subfolders inside it that carry their own. With `app_pool` unset, a new site gets IIS's default pool and an existing site keeps its own.
+`physical_path` must be a folder on a local drive that already exists, and only administrators may change it or any folder on the way to it. Apply refuses it otherwise, whatever the pool's identity: whoever can drop a page or a `web.config` there runs code as the pool, and every built-in pool identity can impersonate its way to SYSTEM. The check covers the folder's own access rules, including what it hands down to everything inside, but not files or subfolders inside it that carry rules of their own. Before this module leaves experimental, it will also scan for `web.config` files and subfolders with their own rules. With `app_pool` unset, a new site gets IIS's default pool and an existing site keeps its own.
 
 Serving files needs IIS's static content role service, `Web-Static-Content`. A plain `Web-Server` install includes it; without it, IIS answers 200 with an empty page. A `windows_feature` step for it makes sure.
 

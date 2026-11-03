@@ -15,7 +15,7 @@ elseif ([string]$p.ProcessModel.IdentityType -ne [string]$A.identity) {
       foreach ($v in $app.VirtualDirectories) {
         $vp = [Environment]::ExpandEnvironmentVariables([string]$v.PhysicalPath)
         if (-not [IO.Directory]::Exists($vp)) { throw "site $($s.Name) serves $vp from this pool, which doesn't exist, so Conn3x can't check who can change it" }
-        Assert-AdminOnly $vp -Folder -Runner "this pool, as $($A.identity),"
+        Assert-AdminOnly $vp -Folder -Inherited -Runner "this pool, as $($A.identity),"
       }
     }
   }

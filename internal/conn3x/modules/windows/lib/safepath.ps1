@@ -204,7 +204,7 @@ function Assert-PlainPath([string]$p) {
 # A task, or a site's app pool, runs whatever sits at its path as its user. So only administrators may
 # change that program or any folder on the way, and in its own folder nobody
 # else may even add a file: a DLL dropped next to a program loads into it.
-function Assert-AdminOnly([string]$p, [switch]$Folder, [string]$Runner = 'this task') {
+function Assert-AdminOnly([string]$p, [switch]$Folder, [switch]$Inherited, [string]$Runner = 'this task') {
   Assert-PlainPath $p
   $dir = if ($Folder) { $p.TrimEnd('\') } else { [IO.Path]::GetDirectoryName($p) }
   Lock-Folders $dir -Strict
@@ -212,7 +212,10 @@ function Assert-AdminOnly([string]$p, [switch]$Folder, [string]$Runner = 'this t
   $write = $script:swapRights -bor 0x2 -bor 0x4 -bor 0x40000000
   $sec = Read-Security (Hold-Path $dir) ([Security.AccessControl.DirectorySecurity]) 4
   foreach ($r in $sec.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-    if ($r.AccessControlType -eq 'Allow' -and -not ($r.PropagationFlags -band 'InheritOnly') -and ([int]$r.FileSystemRights -band $write) -and $r.IdentityReference.Value -notin $script:trusted) {
+    # -Inherited: a site's files and subfolders inherit what the folder hands
+    # down, so a rule that skips the folder itself still lets others write them.
+    $applies = -not ($r.PropagationFlags -band 'InheritOnly') -or ($Inherited -and [int]$r.InheritanceFlags)
+    if ($r.AccessControlType -eq 'Allow' -and $applies -and ([int]$r.FileSystemRights -band $write) -and $r.IdentityReference.Value -notin $script:trusted) {
       throw "$($r.IdentityReference.Value) can add or replace files in $dir, and $Runner would run what's there as its user. Use a folder only administrators can change."
     }
   }

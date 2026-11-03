@@ -198,8 +198,8 @@ func TestApplyAppPoolSends(t *testing.T) {
 // call it; the host tests prove what it refuses.
 func TestIISAppliesCheckFolders(t *testing.T) {
 	for name, call := range map[string]string{
-		"apply_iis_site.ps1":     `Assert-AdminOnly $path -Folder -Runner "the site's app pool"`,
-		"apply_iis_app_pool.ps1": `Assert-AdminOnly $vp -Folder -Runner`,
+		"apply_iis_site.ps1":     `Assert-AdminOnly $path -Folder -Inherited -Runner "the site's app pool"`,
+		"apply_iis_app_pool.ps1": `Assert-AdminOnly $vp -Folder -Inherited -Runner`,
 		"apply_task.ps1":         `Assert-AdminOnly ([string]$A.execute)`,
 	} {
 		body := script(name).Body

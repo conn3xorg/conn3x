@@ -7,7 +7,7 @@ $path = [string]$A.physical_path
 # The pool runs what's in the folder, and any pool identity can get to SYSTEM
 # through its impersonation right, so only administrators may change it.
 if (-not [IO.Directory]::Exists($path)) { throw "physical_path $path doesn't exist. Make it first, writable by administrators only, so Conn3x can check who can change it." }
-Assert-AdminOnly $path -Folder -Runner "the site's app pool"
+Assert-AdminOnly $path -Folder -Inherited -Runner "the site's app pool"
 $sm = [Microsoft.Web.Administration.ServerManager]::new()
 $bindings = @($A.bindings)
 $s = $sm.Sites[$A.name]
