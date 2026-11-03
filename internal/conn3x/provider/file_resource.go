@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/zclconf/go-cty/cty"
@@ -48,6 +49,10 @@ func fileSchema() providers.Schema {
 				"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded."},
 				"state":        {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which removes the file and keeps it gone."},
 				"in_sync":      {Type: cty.Bool, Computed: true, Description: "With state \"absent\", whether the file is already gone. Null otherwise."},
+				"validate": {
+					Type: cty.String, Optional: true, WriteOnly: true,
+					Description: "A command that checks new content before it replaces the file, such as \"visudo -cf %s\". %s stands for the temporary file. Runs only when the content changes, and is kept out of state.",
+				},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{
 				"ssh": connectionBlock(),
@@ -62,7 +67,13 @@ func validateFile(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	diags = diags.Append(validateState(cfg, "content", "content_wo", "mode", "owner", "group"))
+	diags = diags.Append(validateState(cfg, "content", "content_wo", "mode", "owner", "group", "validate"))
+	if v := cfg.GetAttr("validate"); v.IsKnown() && !v.IsNull() {
+		d := file.Desired{Path: "/", Mode: defaultMode, ValidateCommand: v.AsString()}
+		if err := d.Validate(); err != nil {
+			diags = diags.Append(attrError("validate", err.Error()))
+		}
+	}
 	if state := cfg.GetAttr("state"); state.IsKnown() && (state.IsNull() || state.AsString() == statePresent) &&
 		cfg.GetAttr("content").IsNull() == cfg.GetAttr("content_wo").IsNull() {
 		diags = diags.Append(attrError("content", "set exactly one of content and content_wo"))
@@ -90,6 +101,7 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 		return resp
 	}
 	vals := req.ProposedNewState.AsValueMap()
+	vals["validate"] = cty.NullVal(cty.String) // write-only, so adding it never shows a diff
 	if vals["on_remove"].IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 	}
@@ -323,7 +335,15 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		Owner:   stringOr(planned.GetAttr("owner"), ""),
 		Group:   stringOr(planned.GetAttr("group"), ""),
 	}
+	if contentChanging(req.PriorState, planned) {
+		desired.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")
+	}
 	if err := file.Apply(ctx, client, desired); err != nil {
+		var rejected *file.ValidateError
+		if key != nil && errors.As(err, &rejected) {
+			// The command may have printed the secret it was checking.
+			err = errors.New("validate rejected the new content; the file was left as it was. Its output is hidden because the content is write-only")
+		}
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("writing %s: %w", desired.Path, err))
 		return resp
 	}
@@ -338,6 +358,21 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	}
 	resp.NewState = stateFrom(planned, actual, key)
 	return resp
+}
+
+// contentChanging reports whether apply writes new content, rather than only
+// fixing mode or ownership. Only then does validate run.
+func contentChanging(prior, planned cty.Value) bool {
+	if prior.IsNull() || isAbsent(prior) {
+		return true
+	}
+	for _, attr := range []string{"sha256", "content_hmac"} {
+		was, will := prior.GetAttr(attr), planned.GetAttr(attr)
+		if !was.IsKnown() || !will.IsKnown() || !was.RawEquals(will) {
+			return true
+		}
+	}
+	return false
 }
 
 // stateFrom records what is actually on the host. Owner and group are only

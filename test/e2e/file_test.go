@@ -184,3 +184,35 @@ echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl resta
 		t.Fatalf("apply with a wrong sudo password: exit %d\n%s", code, out)
 	}
 }
+
+func TestFileValidate(t *testing.T) {
+	h := startHost(t, "rocky10")
+	w := newWorkdir(t, "file_validate")
+	good := "deploy ALL=(ALL) NOPASSWD: ALL\n"
+	w.write(fileVars{Content: `deploy ALL=(ALL) NOPASSWD: ALL\n`, Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts})
+	w.mustConn3x("init", "-no-color")
+
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := h.exec("", "cat", "/etc/sudoers.d/deploy"); got != good {
+		t.Fatalf("/etc/sudoers.d/deploy = %q", got)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("second plan is not empty:\n%s", out)
+	}
+
+	// A typo that would break sudo is refused, and the good file stays.
+	w.write(fileVars{Content: `deploy ALL=(ALL NOPASSWD: ALL\n`, Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts})
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color")
+	if code == 0 || !strings.Contains(out, "validate rejected the new content") {
+		t.Fatalf("apply of a broken sudoers file exited %d:\n%s", code, out)
+	}
+	if got := h.exec("", "cat", "/etc/sudoers.d/deploy"); got != good {
+		t.Fatalf("the good file was replaced: %q", got)
+	}
+	if got := h.exec("", "sh", "-c", "ls -A /etc/sudoers.d | grep -c conn3x || true"); got != "0\n" {
+		t.Fatalf("temporary file left in /etc/sudoers.d: %s", got)
+	}
+	if got := h.exec("", "sh", "-c", "visudo -c >/dev/null && echo ok"); got != "ok\n" {
+		t.Fatalf("sudoers no longer parses: %s", got)
+	}
+}

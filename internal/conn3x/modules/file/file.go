@@ -24,6 +24,9 @@ type Desired struct {
 	Mode    string // octal, like "0644"
 	Owner   string
 	Group   string
+	// ValidateCommand, when set, checks the new content before it replaces
+	// the file. %s stands for the temporary file's path.
+	ValidateCommand string
 }
 
 // Actual is the file as it is.
@@ -45,7 +48,23 @@ func (d Desired) Validate() error {
 	if !modePattern.MatchString(d.Mode) {
 		return fmt.Errorf("mode %q must be four octal digits, like \"0644\"", d.Mode)
 	}
+	if d.ValidateCommand != "" && !strings.Contains(d.ValidateCommand, "%s") {
+		return fmt.Errorf("validate %q must contain %%s, which stands for the file to check", d.ValidateCommand)
+	}
 	return nil
+}
+
+// ValidateError is a validate command that rejected the new content. The
+// file was left as it was.
+type ValidateError struct {
+	Output string // what the command printed, stdout and stderr together
+}
+
+func (e *ValidateError) Error() string {
+	if e.Output == "" {
+		return "validate rejected the new content; the file was left as it was"
+	}
+	return "validate rejected the new content; the file was left as it was:\n" + e.Output
 }
 
 // NormalizeMode returns mode as four octal digits.
@@ -59,6 +78,10 @@ const notRegular = 3
 // unreadable is the exit code for a file the login user can't read. Without
 // it, base64's failure is lost in the pipe and the file reads as empty.
 const unreadable = 4
+
+// validateFailed is the exit code for a validate command that rejected the
+// new content.
+const validateFailed = 5
 
 // Read reports the file's current state. A missing file is not an error.
 // A runner that is a modules.FileReader answers natively when it can.
@@ -153,10 +176,10 @@ func NeedsChange(d Desired, a Actual) bool {
 }
 
 // Apply writes the file atomically: a temporary file in the same directory
-// gets the content, mode and ownership, then replaces the target in one
-// rename. The content is flushed to disk before the rename and the directory
-// after it, so a power cut leaves the old file or the new one, never an
-// empty one. On SELinux hosts the result is relabelled for its final path.
+// gets the content, mode and ownership, passes the validate command if there
+// is one, then replaces the target in one rename. The content is flushed to
+// disk before the rename and the directory after it, so a power cut leaves
+// the old file or the new one, never an empty one. On SELinux hosts the result is relabelled for its final path.
 func Apply(ctx context.Context, r modules.Runner, d Desired) error {
 	if err := d.Validate(); err != nil {
 		return err
@@ -168,14 +191,32 @@ tmp=$(mktemp "$(dirname -- "$p")/.conn3x.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
 cat > "$tmp"
 chmod %s "$tmp"
-%s`+SyncFile+`
+%s%s`+SyncFile+`
 `+Replace+`
 trap - EXIT
 `+SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
-		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group))
-	_, err := run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group}, modules.Parent(d.Path)), []byte(d.Content))
+		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group), validateScript(d.ValidateCommand))
+	res, err := run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group}, modules.Parent(d.Path)), []byte(d.Content))
+	if err != nil && res.ExitCode == validateFailed {
+		return &ValidateError{Output: strings.TrimSpace(string(res.Stderr))}
+	}
 	return err
+}
+
+// validateScript runs the validate command on "$tmp" once it has its final
+// mode and owner, and stops before the rename if the command fails. The
+// command sits on lines of its own, so a trailing comment can't swallow the
+// rest of the script. Its output goes to stderr only when it fails.
+func validateScript(cmd string) string {
+	if cmd == "" {
+		return ""
+	}
+	return fmt.Sprintf(`validate_out=$( {
+%s
+} 2>&1 ) && validate_rc=0 || validate_rc=$?
+[ "$validate_rc" -eq 0 ] || { printf '%%s\n' "$validate_out" >&2; exit %d; }
+`, strings.ReplaceAll(cmd, "%s", `"$tmp"`), validateFailed)
 }
 
 // Ownership is the script that gives "$tmp" its owner and group before it

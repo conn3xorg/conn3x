@@ -337,3 +337,55 @@ func TestReadFallsBackOnlyWhenUnsupported(t *testing.T) {
 		t.Fatalf("got %v after running %q; want the agent's error and no shell", err, r.scripts)
 	}
 }
+
+func TestApplyValidatePasses(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "with space")
+	path := filepath.Join(dir, "sudoers")
+	d := Desired{Path: path, Content: "ok\n", Mode: "0440", ValidateCommand: "grep -qx ok %s"}
+	if err := Apply(ctx, localRunner{}, d); err != nil {
+		t.Fatalf("Apply with a passing validate: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "ok\n" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+func TestApplyValidateSeesFinalMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f")
+	d := Desired{Path: path, Content: "x", Mode: "0440", ValidateCommand: `[ "$(stat -c %a %s)" = 440 ]`}
+	if err := Apply(ctx, localRunner{}, d); err != nil {
+		t.Fatalf("validate didn't see the final mode on the temporary file: %v", err)
+	}
+}
+
+func TestApplyValidateFailsKeepsOriginal(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sudoers")
+	if err := os.WriteFile(path, []byte("old\n"), 0o440); err != nil {
+		t.Fatal(err)
+	}
+	d := Desired{Path: path, Content: "bad\n", Mode: "0440", ValidateCommand: "echo 'syntax error near line 1' >&2; grep -qx ok %s"}
+	err := Apply(ctx, localRunner{}, d)
+	var verr *ValidateError
+	if !errors.As(err, &verr) {
+		t.Fatalf("want a ValidateError, got %v", err)
+	}
+	if !strings.Contains(verr.Output, "syntax error near line 1") {
+		t.Fatalf("output %q should carry what the command printed", verr.Output)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "old\n" {
+		t.Fatalf("original replaced: %q", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("temporary file left behind: %v", entries)
+	}
+}
+
+func TestValidateCommandNeedsPlaceholder(t *testing.T) {
+	d := Desired{Path: "/etc/sudoers.d/x", Mode: "0440", ValidateCommand: "visudo -c"}
+	if err := d.Validate(); err == nil || !strings.Contains(err.Error(), "%s") {
+		t.Fatalf("want an error naming %%s, got %v", err)
+	}
+}

@@ -40,6 +40,19 @@ step "db_password" {
 
 In a real configuration, set `content_wo` from a variable with `ephemeral = true`, as [Secrets in files](/concepts#secrets-in-files) shows. To read the content from a file next to your configuration, use `content = file("${path.module}/files/app.conf")`.
 
+Check a sudoers drop-in with `visudo` before it goes live, so a typo can't lock you out of `sudo`:
+
+```hcl
+step "sudoers" {
+  file {
+    path     = "/etc/sudoers.d/deploy"
+    content  = "deploy ALL=(ALL) NOPASSWD: ALL\n"
+    mode     = "0440"
+    validate = "visudo -cf %s"
+  }
+}
+```
+
 Make sure a file is gone, and stays gone:
 
 ```hcl
@@ -58,6 +71,8 @@ step "old_config" {
 The login user has to be able to read the file. If it can't, the plan stops with an error that names the user, such as `/etc/app.conf exists but can't be read by deploy`. Set `become = true` in the circuit's [`ssh` block](/reference/circuits/ssh#become) so Conn3x reads it through `sudo`, or give the file a mode the login user can read.
 
 **Writing.** If the parent directory doesn't exist, Conn3x creates it first. Conn3x writes the content to a temporary file in the same directory, sets its mode and ownership, flushes it to disk, and renames it over the old file. The directory is flushed afterwards too, so a power cut leaves the old file or the new one, never an empty one. On SELinux hosts the file is relabelled for its path with `restorecon`.
+
+**Validating.** With `validate`, Conn3x runs the command on the temporary file once it has its final mode and owner, with `%s` replaced by the temporary file's path. The path is already quoted, so write `%s` bare, not `'%s'`. If the command exits 0, the file is moved into place. If it doesn't, the original file is left untouched, the temporary file is removed, and apply fails with the command's output. With `content_wo` the output is hidden, since the command may print the secret it was checking. `validate` runs only when the content is changing, not when only the mode or ownership is. It's write-only, so adding it to an existing step doesn't show a change in the plan.
 
 **Ownership.** `owner` and `group` are only checked and set when you give them. Leave them out and Conn3x keeps whatever the file has.
 
