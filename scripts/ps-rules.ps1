@@ -100,6 +100,8 @@ foreach ($file in $Files) {
           if ($a.Static) {
             $type = if ($a.Expression -is [Management.Automation.Language.TypeExpressionAst]) { $a.Expression.TypeName.FullName } else { $who }
             if ("${type}::$m" -notin $readStatic) { Report $file $a "${type}::$m isn't on the list for read scripts" }
+            # Loading an assembly runs its initialisers: only the IIS one, by its full name.
+            elseif ("${type}::$m" -eq 'Reflection.Assembly::Load' -and ($a.Arguments.Count -ne 1 -or $a.Arguments[0].Extent.Text -cne "'Microsoft.Web.Administration, Version=7.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'")) { Report $file $a 'a read script may load only Microsoft.Web.Administration, by its full name' }
             # Opened any other way, a ServerManager can commit changes to IIS.
             elseif ("${type}::$m" -eq 'Microsoft.Web.Administration.ServerManager::new' -and ($a.Arguments.Count -ne 2 -or $a.Arguments[0].Extent.Text -ine '$true')) { Report $file $a 'ServerManager in a read script must be opened read-only, with $true first' }
           }
