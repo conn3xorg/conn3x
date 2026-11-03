@@ -41,6 +41,8 @@ foreach ($file in $Files) {
   $tree = [Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $file), [ref]$null, [ref]$errors)
   foreach ($e in $errors) { Write-Output "$($file): parse error: $($e.Message)"; $failed++ }
   $isRead = (Split-Path -Leaf $file) -like 'read_*'
+  # Both load a DLL as the script is parsed, before any rule below could matter.
+  if ($isRead -and $tree.ScriptRequirements -and @($tree.ScriptRequirements.RequiredAssemblies).Count) { Report $file $tree 'a read script may not load an assembly with #Requires -Assemblies' }
   $all = $tree.FindAll({ $true }, $true)
   # A read may fill in a table it made itself, and set nothing else's properties.
   $tables = @{}
@@ -122,6 +124,9 @@ foreach ($file in $Files) {
       }
       'FileRedirectionAst' {
         if ($isRead -and $a.Location.Extent.Text -notin '$null') { Report $file $a 'a read script may not write to a file' }
+      }
+      'UsingStatementAst' {
+        if ($isRead -and $a.UsingStatementKind -eq 'Assembly') { Report $file $a 'a read script may not load an assembly with using assembly' }
       }
       'StringConstantExpressionAst' {
         if ($isRead -and $a.Value -imatch $bannedText) { Report $file $a "$bannedText can trigger an MSI repair" }
