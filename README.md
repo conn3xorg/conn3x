@@ -40,7 +40,7 @@ brew install conn3xorg/tap/conn3x
 Or download a release:
 
 ```sh
-VERSION=0.6.12 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.7.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
@@ -132,7 +132,8 @@ container, in about five.
 
 It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu today,
 and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian 13.
-Windows comes next, with tested Azure examples, then network devices.
+Windows Server 2022 and 2025 are in preview, with a tested Azure example.
+Active Directory comes next, then network devices.
 See the [roadmap](ROADMAP.md).
 
 ## Built on OpenTofu
