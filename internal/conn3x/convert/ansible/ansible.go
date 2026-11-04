@@ -499,10 +499,33 @@ func (c *converter) issue(body *hclwrite.Body, name string, node *yaml.Node, rea
 		comment(body, "  Its contents are left out of this file because a debug message can hold a secret; see the playbook.")
 		return
 	}
-	out, _ := yaml.Marshal([]*yaml.Node{node})
+	out, _ := yaml.Marshal([]*yaml.Node{redacted(node)})
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		comment(body, "  "+line)
 	}
+}
+
+// secretKey names arguments whose values are secrets, such as a password.
+var secretKey = regexp.MustCompile(`(?i)^(password|.*_password|.*_credential|.*_secret|.*_token)$`)
+
+const secretLeftOut = "(secret left out; see the playbook)"
+
+// redacted copies a task for echoing, with every secret-named value, at any
+// depth, replaced by secretLeftOut.
+func redacted(n *yaml.Node) *yaml.Node {
+	if n == nil {
+		return nil
+	}
+	c := *n
+	c.Content = make([]*yaml.Node, len(n.Content))
+	for i, e := range n.Content {
+		if n.Kind == yaml.MappingNode && i%2 == 1 && secretKey.MatchString(n.Content[i-1].Value) {
+			c.Content[i] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: secretLeftOut, Line: e.Line}
+			continue
+		}
+		c.Content[i] = redacted(e)
+	}
+	return &c
 }
 
 // noLogReason is why a task under no_log stays behind. Ansible keeps these
@@ -633,6 +656,11 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 		// A bare name too common to trust from any collection.
 		if exact[k] {
 			mod = k
+		}
+		for _, prefix := range fullNameOnly {
+			if strings.HasPrefix(k, prefix) {
+				mod = k // unlisted ones go to review as unknown modules
+			}
 		}
 		args := map[string]*yaml.Node{}
 		switch v := t[k]; v.Kind {

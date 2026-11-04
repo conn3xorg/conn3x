@@ -131,7 +131,7 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"sets program":                `win_firewall_rule: {name: a, program: 'C:\x.exe'}`,
 		"without DNS":                 `microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: x, install_dns: false}`,
 		"sets forest_mode":            `microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: x, forest_mode: WinThreshold}`,
-		"or all of them":              `win_dns_client: {adapter_names: '*', dns_servers: [10.0.0.4]}`,
+		"all of them":                 `win_dns_client: {adapter_names: '*', dns_servers: [10.0.0.4]}`,
 		"resets DNS to DHCP":          `win_dns_client: {adapter_names: Ethernet, dns_servers: []}`,
 		"the domain module":           `community.example.domain: {dns_domain_name: lab.test}`,
 		"uses the domain module":      `domain: {dns_domain_name: lab.test}`,
@@ -168,5 +168,39 @@ func TestWinScheduledTaskPasswordNotCopied(t *testing.T) {
 	res := convertString(t, "- hosts: all\n  tasks:\n    - win_scheduled_task: {name: a, username: 'LAB\\svc', password: "+secret+", logon_type: password, actions: [{path: 'C:\\a.exe'}]}\n")
 	if res.Converted != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "password_wo") {
 		t.Errorf("converted %d, review %+v:\n%s", res.Converted, res.Review, res.HCL)
+	}
+}
+
+// A task left for a person is echoed into the file, so its secrets are left
+// out of the echo, wherever they sit.
+func TestRefusedTasksDontEchoSecrets(t *testing.T) {
+	const secret = "s3ntinel-Dsrm-9Q"
+	for _, task := range []string{
+		`microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: ` + secret + `, install_dns: false}`,
+		`microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: ` + secret + `, forest_mode: WinThreshold}`,
+		`microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: ` + secret + `, reboot: true, reboot_timeout: soon}`,
+		`microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: ` + secret + `, reboot: true, reboot_timeout: 0}`,
+		`microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: ` + secret + `, some_new_option: x}`,
+		`win_domain: {dns_domain_name: lab.test, safe_mode_password: ` + secret + `, install_dns: no}`,
+		`microsoft.ad.domain: {dns_domain_name: lab.test, dns_delegation_credential: {username: a, password: ` + secret + `}}`,
+		`microsoft.ad.user: {name: alice, password: ` + secret + `}`,
+		`community.windows.win_domain_user: {name: alice, Password: ` + secret + `, api_token: ` + secret + `x}`,
+		"microsoft.ad.domain:\n        dns_domain_name: lab.test\n        install_dns: false\n      args:\n        safe_mode_password: " + secret,
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if len(res.Review) != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "secret left out") {
+			t.Errorf("%s: review %+v\n%s", task, res.Review, res.HCL)
+		}
+	}
+}
+
+// Only the microsoft.ad modules listed by full name convert; the rest aren't
+// the Linux modules that share their last name.
+func TestMicrosoftADOnlyByFullName(t *testing.T) {
+	for _, task := range []string{`microsoft.ad.user: {name: alice}`, `microsoft.ad.group: {name: admins, scope: global}`} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "microsoft.ad.") {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+		}
 	}
 }

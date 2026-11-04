@@ -93,7 +93,7 @@ circuit "shop_web_servers" {
   #     ansible.windows.win_user:
   #       name: shopsvc
   #       fullname: Shop service
-  #       password: '{{ shop_password }}'
+  #       password: (secret left out; see the playbook)
   #       password_never_expires: true
   #       state: present
 

@@ -672,8 +672,8 @@ func winDomainModule(in *input) ([]step, string) {
 	reboot := []attr{{key: "only_if_pending", val: cty.True}}
 	if in.has("reboot_timeout") {
 		secs, err := strconv.Atoi(in.str("reboot_timeout"))
-		if err != nil {
-			return nil, "has a reboot_timeout that isn't a number of seconds"
+		if err != nil || secs <= 0 {
+			return nil, "has a reboot_timeout that isn't a positive number of seconds"
 		}
 		reboot = append(reboot, s("timeout", fmt.Sprintf("%ds", secs)))
 	}
@@ -683,8 +683,8 @@ func winDomainModule(in *input) ([]step, string) {
 
 func winDNSClientModule(in *input) ([]step, string) {
 	adapters := in.list("adapter_names")
-	if len(adapters) != 1 || strings.ContainsAny(adapters[0], "*?") {
-		return nil, "names several adapters, or all of them; give each a windows_dns_client step, or leave interface unset for the one with the default route"
+	if len(adapters) != 1 || strings.ContainsAny(adapters[0], "*?[]`") {
+		return nil, "names several adapters, all of them, or one with wildcard characters; give each a windows_dns_client step with its exact name, or leave interface unset for the one with the default route"
 	}
 	servers := in.list("dns_servers")
 	if len(servers) == 0 {

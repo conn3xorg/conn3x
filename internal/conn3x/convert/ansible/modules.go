@@ -297,6 +297,10 @@ var modules = map[string]func(*input) ([]step, string){
 // exact lists the modules matched by their full name only.
 var exact = map[string]bool{"microsoft.ad.domain": true}
 
+// fullNameOnly lists collections whose modules are matched only by their full
+// name, as listed in exact: microsoft.ad.user is no Linux user.
+var fullNameOnly = []string{"microsoft.ad."}
+
 func copyModule(in *input) ([]step, string) {
 	attrs := []attr{s("path", in.str("dest"))}
 	switch {
