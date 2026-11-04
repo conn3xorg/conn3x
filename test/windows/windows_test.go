@@ -1424,6 +1424,13 @@ func TestSystemReadsChangeNothing(t *testing.T) {
 		if _, err := windows.ReadTask(ctx, c, windows.Task{Path: `\Microsoft\Windows\Defrag\`, Name: "ScheduledDefrag", User: "SYSTEM"}); err != nil {
 			t.Fatal(err)
 		}
+		// Not a DC, with or without AD DS: the forest reads as missing.
+		if a, err := windows.ReadForest(ctx, c); err != nil || a.Forest != "" {
+			t.Fatalf("forest: %+v, %v", a, err)
+		}
+		if _, err := windows.ReadDNSClient(ctx, c, windows.DNSClient{}); err != nil {
+			t.Fatal(err)
+		}
 		// A key that doesn't exist must stay that way.
 		if _, err := windows.ReadRegistry(ctx, c, windows.RegistryValue{Key: `HKLM\SOFTWARE\Conn3xNeverMade`, Name: "x", Type: "string"}, false); err != nil {
 			t.Fatal(err)

@@ -87,27 +87,6 @@ func TestDNSClient(t *testing.T) {
 	}
 }
 
-// On a host that isn't a domain controller, the forest reads as missing,
-// whether or not AD DS is installed, and reads change nothing.
-func TestADForestReadsChangeNothing(t *testing.T) {
-	c := connect(t)
-	ctx := context.Background()
-	before := snapshot(t, c, "")
-	for range 3 {
-		a, err := windows.ReadForest(ctx, c)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if a.Forest != "" {
-			t.Errorf("not a DC, but read %+v", a)
-		}
-		if _, err := windows.ReadDNSClient(ctx, c, windows.DNSClient{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	compare(t, before, snapshot(t, c, ""))
-}
-
 // TestADForestFlow makes a forest through the binary, as the module page
 // shows: feature, forest, reboot, AD ready, then DNS on the DC itself. It
 // reboots the host and leaves it a domain controller, so it runs only on a VM
