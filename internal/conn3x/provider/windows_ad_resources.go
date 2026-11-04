@@ -137,7 +137,7 @@ func winForestSchema() providers.Schema {
 				Description: "Directory Services Restore Mode password, kept out of plan and state. Needed to make the forest, and used only then: changing it later changes nothing on the host.",
 			},
 			"timeout":         {Type: cty.String, Optional: true, Description: "How long promotion may take. Defaults to \"30m\"."},
-			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether the host was promoted and is waiting for its reboot."},
+			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether Windows reported wanting a reboot after the last change. Promotion always does."},
 			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether the host was a domain controller in this forest at the last refresh."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
