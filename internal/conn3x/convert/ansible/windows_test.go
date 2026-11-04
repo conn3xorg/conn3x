@@ -133,6 +133,8 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"sets forest_mode":            `microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: x, forest_mode: WinThreshold}`,
 		"or all of them":              `win_dns_client: {adapter_names: '*', dns_servers: [10.0.0.4]}`,
 		"resets DNS to DHCP":          `win_dns_client: {adapter_names: Ethernet, dns_servers: []}`,
+		"the domain module":           `community.example.domain: {dns_domain_name: lab.test}`,
+		"uses the domain module":      `domain: {dns_domain_name: lab.test}`,
 		"win_updates module":          `win_updates: {category_names: [SecurityUpdates]}`,
 		"win_chocolatey module":       `win_chocolatey: {name: git}`,
 		"win_dsc module":              `win_dsc: {resource_name: x}`,

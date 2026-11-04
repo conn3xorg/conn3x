@@ -630,6 +630,10 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 			continue
 		}
 		mod := k[strings.LastIndex(k, ".")+1:]
+		// A bare name too common to trust from any collection.
+		if exact[k] {
+			mod = k
+		}
 		args := map[string]*yaml.Node{}
 		switch v := t[k]; v.Kind {
 		case yaml.MappingNode:

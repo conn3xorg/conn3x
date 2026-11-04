@@ -27,6 +27,12 @@ func TestDNSClientValidate(t *testing.T) {
 		"mapped":    {Servers: []string{"::ffff:10.0.0.4"}},
 		"twice":     {Servers: []string{"10.0.0.4", "10.0.0.4"}},
 		"wildcard":  {Interface: "Ether*", Servers: []string{"10.0.0.4"}},
+		"backtick":  {Interface: "Ether`*", Servers: []string{"10.0.0.4"}},
+		"any4":      {Servers: []string{"0.0.0.0"}},
+		"any6":      {Servers: []string{"::"}},
+		"broadcast": {Servers: []string{"255.255.255.255"}},
+		"multicast": {Servers: []string{"224.0.0.251"}},
+		"mcast6":    {Servers: []string{"ff02::fb"}},
 		"bracket":   {Interface: "[x]", Servers: []string{"10.0.0.4"}},
 		"space end": {Interface: "Ethernet ", Servers: []string{"10.0.0.4"}},
 		"newline":   {Interface: "a\nb", Servers: []string{"10.0.0.4"}},
@@ -61,6 +67,15 @@ func TestForestValidate(t *testing.T) {
 	if err := (Forest{DomainName: "lab.example.com", NetBIOSName: "LAB", DatabasePath: `F:\NTDS`, SysvolPath: "F:/SYSVOL"}).Validate(); err != nil {
 		t.Fatal(err)
 	}
+	for want, f := range map[string]Forest{
+		"domain_name":  {DomainName: "lab"},
+		"netbios_name": {DomainName: "lab.test", NetBIOSName: "A.B"},
+		"sysvol_path":  {DomainName: "lab.test", SysvolPath: `\\s\x`},
+	} {
+		if attr, err := f.Check(); attr != want || err == nil {
+			t.Errorf("%+v: %s, %v", f, attr, err)
+		}
+	}
 	for name, f := range map[string]Forest{
 		"single label": {DomainName: "lab"},
 		"numeric tld":  {DomainName: "lab.123"},
@@ -77,9 +92,6 @@ func TestForestValidate(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if n := (Forest{DomainName: "averyverylongfirstlabel.test"}).NetBIOS(); n != "AVERYVERYLONGFI" {
-		t.Errorf("NetBIOS() = %q", n)
-	}
 }
 
 func TestReadForest(t *testing.T) {
@@ -89,8 +101,10 @@ func TestReadForest(t *testing.T) {
 	}{
 		{map[string]any{"role": 2, "domain": "WORKGROUP", "root_dn": ""}, ActualForest{}},
 		{map[string]any{"role": 3, "domain": "lab.test", "root_dn": ""}, ActualForest{Member: "lab.test"}},
-		// Promoted, before its reboot: the role hasn't changed yet.
-		{map[string]any{"role": 2, "domain": "WORKGROUP", "root_dn": "DC=lab,DC=Example,DC=com"}, ActualForest{Forest: "lab.Example.com", Pending: true}},
+		// Promoted, before its reboot: the role hasn't changed yet (3 was seen), and the marker is there.
+		{map[string]any{"role": 3, "domain": "WORKGROUP", "root_dn": "DC=lab,DC=Example,DC=com", "marker": true}, ActualForest{Forest: "lab.Example.com", Pending: true}},
+		// A root domain left behind, with no marker: not a forest.
+		{map[string]any{"role": 2, "domain": "WORKGROUP", "root_dn": "DC=lab,DC=example,DC=com"}, ActualForest{}},
 		{map[string]any{"role": 5, "domain": "lab.example.com", "root_dn": "DC=lab,DC=example,DC=com"}, ActualForest{Forest: "lab.example.com"}},
 	} {
 		got, err := ReadForest(context.Background(), &fake{answers: []map[string]any{{"ok": true, "value": c.value}}})

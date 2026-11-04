@@ -8,4 +8,6 @@ $cs = Get-CimInstance Win32_ComputerSystem
 $ntds = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' -ErrorAction SilentlyContinue
 $root = ''
 if ($ntds -and $ntds.'Root Domain') { $root = [string]$ntds.'Root Domain' }
-@{ role = [int]$cs.DomainRole; domain = [string]$cs.Domain; root_dn = $root }
+# Left by apply_ad_forest.ps1 (and windows_package), volatile, so gone after a reboot.
+$marker = Test-Path -LiteralPath 'HKLM:\SOFTWARE\Conn3x\RebootRequired'
+@{ role = [int]$cs.DomainRole; domain = [string]$cs.Domain; root_dn = $root; marker = $marker }

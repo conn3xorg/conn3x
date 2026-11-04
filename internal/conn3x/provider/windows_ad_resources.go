@@ -52,8 +52,8 @@ func validateWinDNSClient(cfg cty.Value) tfdiags.Diagnostics {
 			return diags
 		}
 	}
-	if err := winDNSClientFrom(cfg).Validate(); err != nil {
-		diags = diags.Append(attrError("servers", err.Error()))
+	if attr, err := winDNSClientFrom(cfg).Check(); err != nil {
+		diags = diags.Append(attrError(attr, err.Error()))
 	}
 	return diags
 }
@@ -153,7 +153,9 @@ func winForestFrom(v cty.Value) windows.Forest {
 
 // forestLockout returns why promoting would lock Conn3x out, or "". A DC has
 // no local accounts, so a login named HOST\user stops working; the bare name,
-// or the new domain's, keeps working (S3 in the Windows plan's ledger).
+// or the new domain's, keeps working (S3 in the Windows plan's ledger). The
+// NetBIOS name Windows would pick isn't known for sure before promotion, so a
+// login written with it needs netbios_name set.
 func forestLockout(v cty.Value, f windows.Forest) string {
 	conn := v.GetAttr("ssh")
 	if conn.IsNull() || !conn.IsKnown() {
@@ -164,10 +166,27 @@ func forestLockout(v cty.Value, f windows.Forest) string {
 		return ""
 	}
 	prefix, _, ok := strings.Cut(u.AsString(), `\`)
-	if !ok || strings.EqualFold(prefix, f.NetBIOS()) || strings.EqualFold(prefix, f.DomainName) {
+	switch {
+	case !ok || strings.EqualFold(prefix, f.DomainName) || (f.NetBIOSName != "" && strings.EqualFold(prefix, f.NetBIOSName)):
 		return ""
+	case f.NetBIOSName == "":
+		return fmt.Sprintf(`ssh user %q names a domain, and a domain controller has no local accounts. Set netbios_name, so Conn3x can check it's this domain's, or use the bare name`, u.AsString())
 	}
-	return fmt.Sprintf(`ssh user %q names a local account, and a domain controller has none: after promotion that login fails. Use the bare name, or %s\name`, u.AsString(), f.NetBIOS())
+	return fmt.Sprintf(`ssh user %q names a local account, and a domain controller has none: after promotion that login fails. Use the bare name, or %s\name`, u.AsString(), f.NetBIOSName)
+}
+
+// forestAction decides what apply does with what the host is now: nothing,
+// promote it, or refuse.
+func forestAction(f windows.Forest, a windows.ActualForest) (promote bool, err error) {
+	switch {
+	case f.Matches(a):
+		return false, nil
+	case a.Forest != "":
+		return false, fmt.Errorf("this host is already a domain controller in %s; Conn3x never demotes one, so it can't make %s here", a.Forest, f.DomainName)
+	case a.Member != "":
+		return false, fmt.Errorf("this host is a member of %s; a new forest needs a server that isn't in a domain", a.Member)
+	}
+	return true, nil
 }
 
 func validateWinForest(cfg cty.Value) tfdiags.Diagnostics {
@@ -189,8 +208,8 @@ func validateWinForest(cfg cty.Value) tfdiags.Diagnostics {
 		}
 	}
 	f := winForestFrom(cfg)
-	if err := f.Validate(); err != nil {
-		return diags.Append(attrError("domain_name", err.Error()))
+	if attr, err := f.Check(); err != nil {
+		return diags.Append(attrError(attr, err.Error()))
 	}
 	if why := forestLockout(cfg, f); why != "" {
 		diags = diags.Append(attrError("ssh", why))
@@ -265,13 +284,11 @@ func applyWinForest(ctx context.Context, req providers.ApplyResourceChangeReques
 		return fail(err)
 	}
 	restart := a.Pending
-	switch {
-	case f.Matches(a):
-	case a.Forest != "":
-		return fail(fmt.Errorf("this host is already a domain controller in %s; Conn3x never demotes one, so it can't make %s here", a.Forest, f.DomainName))
-	case a.Member != "":
-		return fail(fmt.Errorf("this host is a member of %s; a new forest needs a server that isn't in a domain", a.Member))
-	default:
+	promote, err := forestAction(f, a)
+	if err != nil {
+		return fail(err)
+	}
+	if promote {
 		pw := req.Config.GetAttr("safe_mode_password_wo")
 		if !known(pw) {
 			return fail(fmt.Errorf("safe_mode_password_wo is needed to make forest %s", f.DomainName))

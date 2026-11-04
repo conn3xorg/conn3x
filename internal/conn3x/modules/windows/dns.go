@@ -17,8 +17,9 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/windows/ps"
 )
 
-// Windows expands * ? and [ ] in -InterfaceAlias, so a name can't hold them.
-var interfaceAlias = regexp.MustCompile(`^[^*?\[\]\x00-\x1f\x7f]{1,256}$`)
+// Windows expands * ? and [ ] in -InterfaceAlias, and a backtick escapes them,
+// so a name can't hold any of them.
+var interfaceAlias = regexp.MustCompile("^[^*?\\[\\]`\\x00-\\x1f\\x7f]{1,256}$")
 
 // DNSClient is the list of DNS servers one network interface asks, in order.
 type DNSClient struct {
@@ -28,24 +29,33 @@ type DNSClient struct {
 
 // Validate checks a DNSClient before anything reaches a host.
 func (d DNSClient) Validate() error {
+	_, err := d.Check()
+	return err
+}
+
+// Check is Validate, also naming the attribute at fault.
+func (d DNSClient) Check() (attr string, err error) {
 	if d.Interface != "" && (!interfaceAlias.MatchString(d.Interface) || strings.TrimSpace(d.Interface) != d.Interface) {
-		return fmt.Errorf("interface %q isn't an interface name: no * ? [ ], control characters or spaces at either end", d.Interface)
+		return "interface", fmt.Errorf("interface %q isn't an interface name: no * ? [ ] `, control characters or spaces at either end", d.Interface)
 	}
 	if len(d.Servers) == 0 {
-		return errors.New("list at least one server")
+		return "servers", errors.New("list at least one server")
 	}
 	seen := map[netip.Addr]bool{}
 	for _, s := range d.Servers {
 		a, err := netip.ParseAddr(s)
 		if err != nil || a.Zone() != "" || a.Is4In6() {
-			return fmt.Errorf("server %q must be a plain IPv4 or IPv6 address, such as 10.0.0.4", s)
+			return "servers", fmt.Errorf("server %q must be a plain IPv4 or IPv6 address, such as 10.0.0.4", s)
+		}
+		if a.IsUnspecified() || a.IsMulticast() || a == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
+			return "servers", fmt.Errorf("server %s can't be a DNS server: it's unspecified, broadcast or multicast", s)
 		}
 		if seen[a] {
-			return fmt.Errorf("server %s is listed twice", s)
+			return "servers", fmt.Errorf("server %s is listed twice", s)
 		}
 		seen[a] = true
 	}
-	return nil
+	return "", nil
 }
 
 // families splits the servers into IPv4 and IPv6, each in order.

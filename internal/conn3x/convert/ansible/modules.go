@@ -289,9 +289,13 @@ var modules = map[string]func(*input) ([]step, string){
 	// microsoft.iis, which replaces the community.windows IIS modules.
 	"web_app_pool": winIISAppPoolModule,
 	"website":      winWebsiteModule,
-	// microsoft.ad, which replaces win_domain and its kin.
-	"domain": winDomainModule,
+	// microsoft.ad, which replaces win_domain and its kin. By its full name,
+	// as plenty of collections have a module called domain.
+	"microsoft.ad.domain": winDomainModule,
 }
+
+// exact lists the modules matched by their full name only.
+var exact = map[string]bool{"microsoft.ad.domain": true}
 
 func copyModule(in *input) ([]step, string) {
 	attrs := []attr{s("path", in.str("dest"))}

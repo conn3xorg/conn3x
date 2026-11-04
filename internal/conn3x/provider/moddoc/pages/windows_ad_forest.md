@@ -62,13 +62,15 @@ step "ad_answers" {
 
 **Reboots.** `reboot_required` is true after promotion. Promotion also leaves the same marker `windows_package` uses, so `windows_reboot` with `only_if_pending` reboots after it, and a run that stopped before the reboot plans it next time.
 
-**Reads change nothing.** A refresh reads the host's domain role and the root domain from the registry. It doesn't load the AD tools, so a host without AD DS reads as having no forest rather than failing.
+**Reads change nothing.** A refresh reads the host's domain role and the root domain from the registry. Before its reboot, a promoted host counts as this forest only while the reboot marker promotion left is there. It doesn't load the AD tools, so a host without AD DS reads as having no forest rather than failing.
 
 **The safe mode password.** `safe_mode_password_wo` goes to the host on stdin and becomes a `SecureString` through .NET before `Install-ADDSForest` sees it, so a logging policy that records cmdlet parameters records only the type name. It's never in plan or state, and it's blanked from errors. It's used once, when the forest is made: changing it later does nothing. To change the Directory Services Restore Mode password, use `ntdsutil` on the host.
 
+**Folders.** On a new data volume, any user can make a folder at the top and own it, or make a junction to a folder they own. AD keeps its database and every domain controller's logon scripts in `database_path`, `log_path` and `sysvol_path`, so before promoting, Conn3x checks each one. A folder that exists must be owned by an administrator, not be a link, and give nobody else write access, including through rules it hands down. Each folder above it must be held the same way. A folder that doesn't exist yet is made with SYSTEM and Administrators only. Unset, the folders are Windows' defaults under `C:\Windows`, where only administrators can write. The top of the volume counts too: one formatted on Azure belonged to NETWORK SERVICE, so give it to Administrators first, as with `icacls F:\ /setowner *S-1-5-32-544` in the step that formats it.
+
 **Settings used once.** `netbios_name`, `database_path`, `log_path` and `sysvol_path` apply only when the forest is made. Changing `domain_name` plans a new forest, which fails: Conn3x won't demote the host to make another.
 
-**Logging in afterwards.** A domain controller has no local accounts. The admin you logged in as becomes the domain's account of the same name, and on Azure, where that admin is the built-in Administrator, it's in Domain Admins. Keep `ssh.user` as the bare name, such as `azadmin`, or the domain form, such as `LAB\azadmin`. A login named after the host, such as `win1\azadmin`, stops working, so Conn3x refuses to promote with one.
+**Logging in afterwards.** A domain controller has no local accounts. The admin you logged in as becomes the domain's account of the same name, and on Azure, where that admin is the built-in Administrator, it's in Domain Admins. Keep `ssh.user` as the bare name, such as `azadmin`, or the domain form, such as `LAB\azadmin`. A login named after the host, such as `win1\azadmin`, stops working, so Conn3x refuses to promote with one. Windows can pick a different NetBIOS name from the one you'd expect, so to use the `LAB\azadmin` form, set `netbios_name`.
 
 **What it refuses.** A host already in a domain, as a member or as a domain controller in another forest.
 

@@ -48,32 +48,26 @@ func ValidateDomainName(attr, name string) error {
 
 // Validate checks a Forest before anything reaches a host.
 func (f Forest) Validate() error {
+	_, err := f.Check()
+	return err
+}
+
+// Check is Validate, also naming the attribute at fault.
+func (f Forest) Check() (attr string, err error) {
 	if err := ValidateDomainName("domain_name", f.DomainName); err != nil {
-		return err
+		return "domain_name", err
 	}
 	if f.NetBIOSName != "" && !netbiosName.MatchString(f.NetBIOSName) {
-		return fmt.Errorf("netbios_name %q must be up to 15 letters, digits and hyphens, such as LAB", f.NetBIOSName)
+		return "netbios_name", fmt.Errorf("netbios_name %q must be up to 15 letters, digits and hyphens, such as LAB", f.NetBIOSName)
 	}
 	for _, p := range []struct{ attr, v string }{{"database_path", f.DatabasePath}, {"log_path", f.LogPath}, {"sysvol_path", f.SysvolPath}} {
 		if p.v != "" {
 			if _, err := CleanLocalPath(p.attr, p.v); err != nil {
-				return err
+				return p.attr, err
 			}
 		}
 	}
-	return nil
-}
-
-// NetBIOS is the domain's NetBIOS name, as Windows derives it when it isn't set.
-func (f Forest) NetBIOS() string {
-	if f.NetBIOSName != "" {
-		return strings.ToUpper(f.NetBIOSName)
-	}
-	first, _, _ := strings.Cut(f.DomainName, ".")
-	if len(first) > 15 {
-		first = first[:15]
-	}
-	return strings.ToUpper(first)
+	return "", nil
 }
 
 // ActualForest is what the host is now.
@@ -81,7 +75,7 @@ type ActualForest struct {
 	// Forest is the forest root domain this host is a domain controller in,
 	// once promoted, and before the reboot that finishes it too.
 	Forest string
-	// Pending means promoted, and waiting for the reboot.
+	// Pending means promoted by Conn3x, and waiting for the reboot.
 	Pending bool
 	// Member is the domain this host has joined as a member, if it has.
 	Member string
@@ -105,16 +99,22 @@ func ReadForest(ctx context.Context, r ps.Runner) (ActualForest, error) {
 		Role   int    `json:"role"`
 		Domain string `json:"domain"`
 		RootDN string `json:"root_dn"`
+		Marker bool   `json:"marker"`
 	}
 	if err := json.Unmarshal(res.Value, &a); err != nil {
 		return ActualForest{}, errors.New("reading the forest: the host's answer wasn't valid")
 	}
 	var f ActualForest
 	switch {
-	case a.RootDN != "":
-		f.Forest, f.Pending = dnToName(a.RootDN), a.Role < roleBackupDC
+	case a.Role >= roleBackupDC && a.RootDN != "":
+		f.Forest = dnToName(a.RootDN)
 	case a.Role >= roleBackupDC:
 		f.Forest = a.Domain
+	// Promoted, before the reboot: the role changes only with it. The root
+	// domain alone could be left over from a promotion rolled back by hand,
+	// so it counts only with the reboot marker promotion leaves.
+	case a.RootDN != "" && a.Marker:
+		f.Forest, f.Pending = dnToName(a.RootDN), true
 	case a.Role == roleMemberWorkstation || a.Role == roleMemberServer:
 		f.Member = a.Domain
 	}

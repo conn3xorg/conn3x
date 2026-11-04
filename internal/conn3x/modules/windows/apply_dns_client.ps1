@@ -6,7 +6,7 @@ if ($A.interface) {
   if (-not $i) { throw "no network interface named $($A.interface)" }
   $index = $i.InterfaceIndex
 } else {
-  $route = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object -Property RouteMetric | Select-Object -First 1
+  $route = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object -Property @{ Expression = { [int]$_.RouteMetric + [int]$_.InterfaceMetric } }, InterfaceIndex | Select-Object -First 1
   if (-not $route) { throw 'no interface has an IPv4 default route; name one with interface' }
   $index = $route.InterfaceIndex
 }
