@@ -106,7 +106,7 @@ func TestADForestRefusesOpenFolders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		_, _ = ps.User(ctx, c, `param($A) Get-Item -LiteralPath ($A.b + '-link') -ErrorAction SilentlyContinue | ForEach-Object { $_.Delete() }
-foreach ($d in 'owned', 'open', 'admin') { if ([IO.Directory]::Exists($A.b + '-' + $d)) { [IO.Directory]::Delete($A.b + '-' + $d, $true) } }`, map[string]any{"b": base}, time.Minute)
+foreach ($d in 'owned', 'open', 'admin', 'addfile', 'inherit', 'full') { if ([IO.Directory]::Exists($A.b + '-' + $d)) { [IO.Directory]::Delete($A.b + '-' + $d, $true) } }`, map[string]any{"b": base}, time.Minute)
 	})
 	run(t, c, `param($A)
 $owned = $A.b + '-owned'; $open = $A.b + '-open'; $admin = $A.b + '-admin'
@@ -118,13 +118,29 @@ if ($LASTEXITCODE) { throw 'setowner' }
 if ($LASTEXITCODE) { throw 'mklink' }
 [void][IO.Directory]::CreateDirectory($open)
 & icacls.exe $open /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
-$sec = New-Object Security.AccessControl.DirectorySecurity
-$sec.SetAccessRuleProtection($true, $false)
-foreach ($s in 'S-1-5-18', 'S-1-5-32-544') {
-  $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule([Security.Principal.SecurityIdentifier]$s, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+# Admin-only, plus one more rule for Users when asked.
+function New-AdminFolder($p, $rights, $propagation) {
+  $sec = New-Object Security.AccessControl.DirectorySecurity
+  $sec.SetAccessRuleProtection($true, $false)
+  foreach ($s in 'S-1-5-18', 'S-1-5-32-544') {
+    $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule([Security.Principal.SecurityIdentifier]$s, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+  }
+  if ($rights) { $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule([Security.Principal.SecurityIdentifier]'S-1-5-32-545', $rights, 'ContainerInherit,ObjectInherit', $propagation, 'Allow'))) }
+  [void][IO.Directory]::CreateDirectory($p, $sec)
 }
-[void][IO.Directory]::CreateDirectory($admin, $sec)`, map[string]any{"b": base, "u": user})
-	for attr, want := range map[string]string{"owned": "belongs to", "link": "link or junction", "open": "can rename or replace"} {
+New-AdminFolder $admin
+# Users may add files and folders here, but not delete or rename: only the
+# admin-only check sees that, not the folder chain's.
+New-AdminFolder ($A.b + '-addfile') 'CreateFiles, AppendData'
+# Users get Modify on what's inside only.
+New-AdminFolder ($A.b + '-inherit') 'Modify' 'InheritOnly'
+# Admin-only, but with something already in it.
+New-AdminFolder ($A.b + '-full')
+[IO.File]::WriteAllText($A.b + '-full\ntds.dit', 'not empty')`, map[string]any{"b": base, "u": user})
+	for attr, want := range map[string]string{
+		"owned": "belongs to", "link": "link or junction", "open": "can rename or replace",
+		"addfile": "can add or replace files", "inherit": "can add or replace files", "full": "isn't empty",
+	} {
 		for _, f := range []windows.Forest{
 			{DomainName: "lab.conn3x.test", DatabasePath: base + "-" + attr},
 			{DomainName: "lab.conn3x.test", DatabasePath: base + "-admin", SysvolPath: base + "-" + attr},

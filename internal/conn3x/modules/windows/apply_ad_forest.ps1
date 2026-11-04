@@ -9,7 +9,12 @@ $missing = @()
 foreach ($p in @(@($A.database_path, $A.log_path, $A.sysvol_path) | Where-Object { $_ } | Select-Object -Unique)) {
   Assert-PlainPath $p
   Lock-Folders ([IO.Path]::GetDirectoryName($p)) -Strict
-  if (Stat-Path $p) { Assert-AdminOnly $p -Folder -Inherited -Runner 'Active Directory' } else { $missing += $p }
+  if (Stat-Path $p) {
+    Assert-AdminOnly $p -Folder -Inherited -Runner 'Active Directory'
+    # Held and admin-only now, so nothing new can appear; what's already
+    # inside could belong to anyone, with rules of its own.
+    if ([IO.Directory]::EnumerateFileSystemEntries($p).GetEnumerator().MoveNext()) { throw "$p isn't empty. Give Active Directory an empty folder, or one that doesn't exist yet." }
+  } else { $missing += $p }
 }
 if (-not (Get-Module -ListAvailable -Name ADDSDeployment)) {
   throw 'AD DS is not installed. Add a windows_feature step for AD-Domain-Services with include_management_tools = true'

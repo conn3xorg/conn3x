@@ -62,8 +62,12 @@ func (f Forest) Check() (attr string, err error) {
 	}
 	for _, p := range []struct{ attr, v string }{{"database_path", f.DatabasePath}, {"log_path", f.LogPath}, {"sysvol_path", f.SysvolPath}} {
 		if p.v != "" {
-			if _, err := CleanLocalPath(p.attr, p.v); err != nil {
+			c, err := CleanLocalPath(p.attr, p.v)
+			if err != nil {
 				return p.attr, err
+			}
+			if len(c) == 3 {
+				return p.attr, fmt.Errorf("%s %q is the top of a drive; give a folder on it, such as %sNTDS", p.attr, p.v, c)
 			}
 		}
 	}

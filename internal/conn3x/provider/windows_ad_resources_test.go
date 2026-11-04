@@ -62,10 +62,25 @@ func TestWinForestValidate(t *testing.T) {
 			t.Errorf("%s: %v", c.user, d.Err())
 		}
 	}
-	// Windows may not take the first label as the NetBIOS name, so a login
-	// written with one needs netbios_name to check against.
-	if d := r.validate(forestCfg(r, `LAB\azadmin`, ok)); !d.HasErrors() || !strings.Contains(d.Err().Error(), "Set netbios_name") {
-		t.Errorf("LAB\\azadmin without netbios_name: %v", d.Err())
+	// .\user is local, whatever the domain.
+	if d := r.validate(forestCfg(r, `.\azadmin`, ok)); !d.HasErrors() || !strings.Contains(d.Err().Error(), "local account") {
+		t.Errorf(".\\azadmin: %v", d.Err())
+	}
+	// Without netbios_name, LAB\ may be the host or the domain: apply, which
+	// knows the host's name, decides.
+	if d := r.validate(forestCfg(r, `LAB\azadmin`, ok)); d.HasErrors() {
+		t.Errorf("LAB\\azadmin at validate: %v", d.Err())
+	}
+	f := windows.Forest{DomainName: "lab.example.com"}
+	c := forestCfg(r, `WIN1\azadmin`, ok)
+	if why := forestLockout(c, f, "win1"); !strings.Contains(why, "local account") {
+		t.Errorf("host-named login: %q", why)
+	}
+	if why := forestLockout(c, f, "verylonghostname1"); !strings.Contains(why, "Set netbios_name") {
+		t.Errorf("unknown prefix at apply: %q", why)
+	}
+	if why := forestLockout(forestCfg(r, `VERYLONGHOSTNAM\azadmin`, ok), f, "verylonghostname1"); !strings.Contains(why, "local account") {
+		t.Errorf("15-character host prefix: %q", why)
 	}
 	// Adopting a forest that's there needs no password; making one fails at apply without it.
 	if d := r.validate(forestCfg(r, "azadmin", map[string]cty.Value{"domain_name": cty.StringVal("lab.example.com")})); d.HasErrors() {

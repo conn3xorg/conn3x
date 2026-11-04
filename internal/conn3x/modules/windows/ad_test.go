@@ -20,22 +20,23 @@ func TestDNSClientValidate(t *testing.T) {
 		}
 	}
 	for name, d := range map[string]DNSClient{
-		"none":      {},
-		"name":      {Servers: []string{"dc1.lab.test"}},
-		"cidr":      {Servers: []string{"10.0.0.0/24"}},
-		"zone":      {Servers: []string{"fe80::1%4"}},
-		"mapped":    {Servers: []string{"::ffff:10.0.0.4"}},
-		"twice":     {Servers: []string{"10.0.0.4", "10.0.0.4"}},
-		"wildcard":  {Interface: "Ether*", Servers: []string{"10.0.0.4"}},
-		"backtick":  {Interface: "Ether`*", Servers: []string{"10.0.0.4"}},
-		"any4":      {Servers: []string{"0.0.0.0"}},
-		"any6":      {Servers: []string{"::"}},
-		"broadcast": {Servers: []string{"255.255.255.255"}},
-		"multicast": {Servers: []string{"224.0.0.251"}},
-		"mcast6":    {Servers: []string{"ff02::fb"}},
-		"bracket":   {Interface: "[x]", Servers: []string{"10.0.0.4"}},
-		"space end": {Interface: "Ethernet ", Servers: []string{"10.0.0.4"}},
-		"newline":   {Interface: "a\nb", Servers: []string{"10.0.0.4"}},
+		"none":           {},
+		"name":           {Servers: []string{"dc1.lab.test"}},
+		"cidr":           {Servers: []string{"10.0.0.0/24"}},
+		"zone":           {Servers: []string{"fe80::1%4"}},
+		"mapped":         {Servers: []string{"::ffff:10.0.0.4"}},
+		"twice":          {Servers: []string{"10.0.0.4", "10.0.0.4"}},
+		"wildcard":       {Interface: "Ether*", Servers: []string{"10.0.0.4"}},
+		"backtick":       {Interface: "Ether`*", Servers: []string{"10.0.0.4"}},
+		"backtick alone": {Interface: "Ether`", Servers: []string{"10.0.0.4"}},
+		"any4":           {Servers: []string{"0.0.0.0"}},
+		"any6":           {Servers: []string{"::"}},
+		"broadcast":      {Servers: []string{"255.255.255.255"}},
+		"multicast":      {Servers: []string{"224.0.0.251"}},
+		"mcast6":         {Servers: []string{"ff02::fb"}},
+		"bracket":        {Interface: "[x]", Servers: []string{"10.0.0.4"}},
+		"space end":      {Interface: "Ethernet ", Servers: []string{"10.0.0.4"}},
+		"newline":        {Interface: "a\nb", Servers: []string{"10.0.0.4"}},
 	} {
 		if d.Validate() == nil {
 			t.Errorf("%s: accepted", name)
@@ -87,6 +88,7 @@ func TestForestValidate(t *testing.T) {
 		"netbios dot":  {DomainName: "lab.test", NetBIOSName: "LAB.X"},
 		"unc":          {DomainName: "lab.test", DatabasePath: `\\srv\share`},
 		"relative":     {DomainName: "lab.test", LogPath: `F:\a\..\b`},
+		"drive root":   {DomainName: "lab.test", SysvolPath: `F:\`},
 	} {
 		if f.Validate() == nil {
 			t.Errorf("%s: accepted", name)
