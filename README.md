@@ -110,6 +110,13 @@ container, in about five.
   downloads, archives, git checkouts, reboots, waits and guarded commands, plus facts
   about each host to plan with. [Every module](https://docs.conn3x.org/modules/file)
   is in the docs.
+- **Checks a file before it lands.** Give `file` a `validate` command, such as
+  `visudo -cf %s`, and a broken `sudoers` or `sshd_config` never replaces the one that
+  works. `conn3x convert ansible` carries it over from `copy` tasks.
+- **Reaches Windows Server too, in preview.** Files, access rules, the registry,
+  services, users and groups, firewall rules, MSI packages, scheduled tasks and IIS on
+  Windows Server 2022 and 2025, over OpenSSH. The
+  [module pages](https://docs.conn3x.org/modules/windows_file) say what may still change.
 - **Tells you what changed by hand.** `conn3x drift` reports drift across both layers
   and exits 2 when it finds some, so a scheduled job can alert on it.
 - **Brings your playbooks.** `conn3x convert ansible -i inventory site.yml` turns a
