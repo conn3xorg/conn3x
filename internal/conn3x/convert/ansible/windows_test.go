@@ -186,11 +186,25 @@ func TestRefusedTasksDontEchoSecrets(t *testing.T) {
 		`microsoft.ad.user: {name: alice, password: ` + secret + `}`,
 		`community.windows.win_domain_user: {name: alice, Password: ` + secret + `, api_token: ` + secret + `x}`,
 		"microsoft.ad.domain:\n        dns_domain_name: lab.test\n        install_dns: false\n      args:\n        safe_mode_password: " + secret,
+		`microsoft.ad.domain: dns_domain_name=lab.test safe_mode_password=` + secret + ` install_dns=false`,
+		`win_user: name=bob password="` + secret + ` with spaces" groups=x unknown_opt=1`,
+		`win_user: name=bob password='` + secret + `' groups=x`,
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if len(res.Review) != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "secret left out") {
 			t.Errorf("%s: review %+v\n%s", task, res.Review, res.HCL)
 		}
+	}
+}
+
+// An anchor could carry a secret's value to the place it's defined, which the
+// redaction doesn't see, so a task with any is echoed not at all.
+func TestRefusedTasksWithAnchorsAreNotEchoed(t *testing.T) {
+	const secret = "s3ntinel-Anchor-9Q"
+	task := `microsoft.ad.domain: {dns_domain_name: lab.test, x: &p ` + secret + `, safe_mode_password: *p, install_dns: false}`
+	res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+	if len(res.Review) != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "anchors or aliases") {
+		t.Errorf("review %+v\n%s", res.Review, res.HCL)
 	}
 }
 

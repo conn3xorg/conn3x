@@ -499,6 +499,10 @@ func (c *converter) issue(body *hclwrite.Body, name string, node *yaml.Node, rea
 		comment(body, "  Its contents are left out of this file because a debug message can hold a secret; see the playbook.")
 		return
 	}
+	if hasAnchors(node) {
+		comment(body, "  Its contents are left out of this file because it uses YAML anchors or aliases, which could carry a secret past the redaction; see the playbook.")
+		return
+	}
 	out, _ := yaml.Marshal([]*yaml.Node{redacted(node)})
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		comment(body, "  "+line)
@@ -510,6 +514,25 @@ var secretKey = regexp.MustCompile(`(?i)^(password|.*_password|.*_credential|.*_
 
 const secretLeftOut = "(secret left out; see the playbook)"
 
+// secretArg is a key=value token whose key is a secret's, in free-form text.
+var secretArg = regexp.MustCompile(`(?i)(\b(?:password|\w*_password|\w*_credential|\w*_secret|\w*_token)=)("[^"]*"|'[^']*'|\S*)`)
+
+// hasAnchors reports whether a task uses YAML anchors or aliases anywhere.
+func hasAnchors(n *yaml.Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.Anchor != "" || n.Kind == yaml.AliasNode {
+		return true
+	}
+	for _, e := range n.Content {
+		if hasAnchors(e) {
+			return true
+		}
+	}
+	return false
+}
+
 // redacted copies a task for echoing, with every secret-named value, at any
 // depth, replaced by secretLeftOut.
 func redacted(n *yaml.Node) *yaml.Node {
@@ -517,6 +540,10 @@ func redacted(n *yaml.Node) *yaml.Node {
 		return nil
 	}
 	c := *n
+	if n.Kind == yaml.ScalarNode {
+		// Free-form arguments: password=x, password="a b", --db_password=x.
+		c.Value = secretArg.ReplaceAllString(n.Value, "${1}"+secretLeftOut)
+	}
 	c.Content = make([]*yaml.Node, len(n.Content))
 	for i, e := range n.Content {
 		if n.Kind == yaml.MappingNode && i%2 == 1 && secretKey.MatchString(n.Content[i-1].Value) {
