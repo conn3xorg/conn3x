@@ -87,6 +87,67 @@ func TestDNSClient(t *testing.T) {
 	}
 }
 
+// The folders AD would keep its database and SYSVOL in must be admin-only, owned
+// by an admin and no link, so nobody else could read ntds.dit or plant a logon
+// script. The top of a new volume, like C:\ here, lets any user make a folder
+// and own it. CONN3X_WIN_AD_ROOT names another, such as F:\. Apply checks the
+// folders before it needs AD DS, so this runs anywhere.
+func TestADForestRefusesOpenFolders(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	root := os.Getenv("CONN3X_WIN_AD_ROOT")
+	if root == "" {
+		root = `C:\`
+	}
+	user := accountName(t, c, "c3f")
+	run(t, c, `param($A) New-LocalUser -Name $A.u -Password ([Net.NetworkCredential]::new('', $A.p).SecurePassword) | Out-Null`, map[string]any{"u": user, "p": "Aa1!" + randHex(12)})
+	base := root + "c3f-" + randHex(4)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, _ = ps.User(ctx, c, `param($A) Get-Item -LiteralPath ($A.b + '-link') -ErrorAction SilentlyContinue | ForEach-Object { $_.Delete() }
+foreach ($d in 'owned', 'open', 'admin') { if ([IO.Directory]::Exists($A.b + '-' + $d)) { [IO.Directory]::Delete($A.b + '-' + $d, $true) } }`, map[string]any{"b": base}, time.Minute)
+	})
+	run(t, c, `param($A)
+$owned = $A.b + '-owned'; $open = $A.b + '-open'; $admin = $A.b + '-admin'
+[void][IO.Directory]::CreateDirectory($owned)
+# As if the user had made it: icacls enables the restore right to hand it over.
+& icacls.exe $owned /setowner $A.u | Out-Null
+if ($LASTEXITCODE) { throw 'setowner' }
+& cmd.exe /c mklink /J ($A.b + '-link') $env:PUBLIC | Out-Null
+if ($LASTEXITCODE) { throw 'mklink' }
+[void][IO.Directory]::CreateDirectory($open)
+& icacls.exe $open /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
+$sec = New-Object Security.AccessControl.DirectorySecurity
+$sec.SetAccessRuleProtection($true, $false)
+foreach ($s in 'S-1-5-18', 'S-1-5-32-544') {
+  $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule([Security.Principal.SecurityIdentifier]$s, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+}
+[void][IO.Directory]::CreateDirectory($admin, $sec)`, map[string]any{"b": base, "u": user})
+	for attr, want := range map[string]string{"owned": "belongs to", "link": "link or junction", "open": "can rename or replace"} {
+		for _, f := range []windows.Forest{
+			{DomainName: "lab.conn3x.test", DatabasePath: base + "-" + attr},
+			{DomainName: "lab.conn3x.test", DatabasePath: base + "-admin", SysvolPath: base + "-" + attr},
+		} {
+			_, err := windows.ApplyForest(ctx, c, f, "Xx9!unused", 5*time.Minute)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: %v", attr, err)
+			}
+		}
+	}
+	// An admin-only folder passes the check and gets as far as AD DS, or
+	// further on a host that has it, which this test mustn't promote.
+	if a, _ := windows.ReadForest(ctx, c); a.Forest == "" {
+		has := strings.TrimSpace(run(t, c, `[bool](Get-Module -ListAvailable -Name ADDSDeployment)`, nil).Text)
+		if has == "False" {
+			_, err := windows.ApplyForest(ctx, c, windows.Forest{DomainName: "lab.conn3x.test", DatabasePath: base + "-admin"}, "Xx9!unused", 5*time.Minute)
+			if err == nil || !strings.Contains(err.Error(), "AD DS is not installed") {
+				t.Errorf("admin-only folder: %v", err)
+			}
+		}
+	}
+}
+
 // TestADForestFlow makes a forest through the binary, as the module page
 // shows: feature, forest, reboot, AD ready, then DNS on the DC itself. It
 // reboots the host and leaves it a domain controller, so it runs only on a VM
