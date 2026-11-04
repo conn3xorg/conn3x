@@ -119,7 +119,7 @@ if ($LASTEXITCODE) { throw 'mklink' }
 [void][IO.Directory]::CreateDirectory($open)
 & icacls.exe $open /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
 # Admin-only, plus one more rule for Users when asked.
-function New-AdminFolder($p, $rights, $propagation) {
+function New-AdminFolder($p, $rights, $propagation = 'None') {
   $sec = New-Object Security.AccessControl.DirectorySecurity
   $sec.SetAccessRuleProtection($true, $false)
   foreach ($s in 'S-1-5-18', 'S-1-5-32-544') {
