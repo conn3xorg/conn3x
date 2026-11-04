@@ -643,3 +643,59 @@ func (in *input) winIISSite(state string, blocks []stepBlock) ([]step, string) {
 	note := "TODO(convert): Apply refuses a physical_path anyone but administrators can change, which a new folder with only inherited rules is, under C:\\inetpub or at the top of C:. Give its windows_directory acl blocks: SYSTEM and Administrators full, IIS_IUSRS and IUSR read."
 	return []step{{module: "windows_iis_site", attrs: attrs, blocks: blocks, notes: []string{note}}}, ""
 }
+
+// winDomainModule converts microsoft.ad.domain and ansible.windows.win_domain,
+// which both make a new forest.
+func winDomainModule(in *input) ([]step, string) {
+	if in.has("install_dns") && !in.bool("install_dns", true) {
+		return nil, "makes a forest without DNS; windows_ad_forest always installs it"
+	}
+	for _, k := range []string{"domain_mode", "forest_mode", "create_dns_delegation", "dns_delegation_credential"} {
+		if in.has(k) {
+			return nil, "sets " + k + ", which windows_ad_forest doesn't offer yet; promote with Windows' defaults or by hand"
+		}
+	}
+	attrs := []attr{s("domain_name", in.str("dns_domain_name"))}
+	attrs = in.optional(attrs, "netbios_name", "domain_netbios_name")
+	attrs = in.optional(attrs, "database_path", "database_path")
+	attrs = in.optional(attrs, "log_path", "log_path")
+	attrs = in.optional(attrs, "sysvol_path", "sysvol_path")
+	// Never read, so a password can't end up in the output.
+	in.ignore("safe_mode_password", "install_dns")
+	forest := step{module: "windows_ad_forest", attrs: attrs, suffix: "forest",
+		notes: []string{"TODO(convert): Set safe_mode_password_wo from an ephemeral variable. The task's password isn't copied here."}}
+	if !in.bool("reboot", false) {
+		in.ignore("reboot_timeout")
+		return []step{forest}, ""
+	}
+	// Conn3x modules never reboot, and sshd answers before AD does.
+	reboot := []attr{{key: "only_if_pending", val: cty.True}}
+	if in.has("reboot_timeout") {
+		secs, err := strconv.Atoi(in.str("reboot_timeout"))
+		if err != nil {
+			return nil, "has a reboot_timeout that isn't a number of seconds"
+		}
+		reboot = append(reboot, s("timeout", fmt.Sprintf("%ds", secs)))
+	}
+	return []step{forest, {module: "windows_reboot", suffix: "reboot", attrs: reboot},
+		{module: "windows_wait_for", suffix: "adws", attrs: []attr{{key: "port", val: cty.NumberIntVal(9389)}}}}, ""
+}
+
+func winDNSClientModule(in *input) ([]step, string) {
+	adapters := in.list("adapter_names")
+	if len(adapters) != 1 || strings.ContainsAny(adapters[0], "*?") {
+		return nil, "names several adapters, or all of them; give each a windows_dns_client step, or leave interface unset for the one with the default route"
+	}
+	servers := in.list("dns_servers")
+	if len(servers) == 0 {
+		servers = in.list("ipv4_addresses")
+	}
+	if len(servers) == 0 {
+		return nil, "resets DNS to DHCP, which windows_dns_client doesn't do"
+	}
+	vals := make([]cty.Value, len(servers))
+	for i, v := range servers {
+		vals[i] = cty.StringVal(v)
+	}
+	return one("windows_dns_client", []attr{s("interface", adapters[0]), {key: "servers", val: cty.ListVal(vals)}})
+}

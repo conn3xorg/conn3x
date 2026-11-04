@@ -71,7 +71,9 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 
 	"conn3x_windows_acl":            {winACLSchema, validateWinACL, planWinACL, readWinACL, applyWinACL, upgradeWith(winACLSchema)},
+	"conn3x_windows_ad_forest":      {winForestSchema, validateWinForest, planWinForest, readWinForest, applyWinForest, upgradeWith(winForestSchema)},
 	"conn3x_windows_directory":      {winDirectorySchema, validateWinDirectory, planWinDirectory, readWinDirectory, applyWinDirectory, upgradeWith(winDirectorySchema)},
+	"conn3x_windows_dns_client":     {winDNSClientSchema, validateWinDNSClient, planWinDNSClient, readWinDNSClient, applyWinDNSClient, upgradeWith(winDNSClientSchema)},
 	"conn3x_windows_feature":        {winFeatureSchema, validateWinFeature, planWinFeature, readWinFeature, applyWinFeature, upgradeWith(winFeatureSchema)},
 	"conn3x_windows_file":           {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
 	"conn3x_windows_group":          {winGroupSchema, validateWinGroup, planWinGroup, readWinGroup, applyWinGroup, upgradeWith(winGroupSchema)},

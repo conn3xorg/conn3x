@@ -66,6 +66,12 @@ func TestWindowsMappings(t *testing.T) {
 		`community.windows.win_firewall_rule: {name: HTTPS in, localport: 443, protocol: tcp, action: allow, direction: in, state: present, enabled: yes}`: {
 			"windows_firewall_rule {", `name        = "HTTPS in"`, `local_ports = ["443"]`, `protocol    = "tcp"`, "enabled     = true",
 		},
+		`microsoft.ad.domain: {dns_domain_name: lab.example.com, domain_netbios_name: LAB, safe_mode_password: '{{ dsrm }}', database_path: 'F:\NTDS', reboot: true, reboot_timeout: 900}`: {
+			"windows_ad_forest {", `domain_name   = "lab.example.com"`, `netbios_name  = "LAB"`, `database_path = "F:\\NTDS"`, "TODO(convert): Set safe_mode_password_wo",
+			"windows_reboot {", `timeout         = "900s"`, "windows_wait_for {", "port = 9389",
+		},
+		`ansible.windows.win_domain: {dns_domain_name: lab.example.com, safe_mode_password: x}`: {"windows_ad_forest {"},
+		`win_dns_client: {adapter_names: Ethernet, dns_servers: [10.0.0.4, 10.0.0.5]}`:          {"windows_dns_client {", `interface = "Ethernet"`, `servers   = ["10.0.0.4", "10.0.0.5"]`},
 		`win_firewall_rule: {name: SQL, localport: '1433,1434', remoteip: '10.0.0.0/8', protocol: tcp, profiles: [Domain, Private], direction: out, action: block}`: {
 			`local_ports      = ["1433", "1434"]`, `remote_addresses = ["10.0.0.0/8"]`, `profiles         = ["domain", "private"]`, `direction        = "outbound"`, `action           = "block"`,
 		},
@@ -123,6 +129,10 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"bindings.set":                `website: {name: a, physical_path: 'C:\x', bindings: {add: [{port: 80}]}}`,
 		"can't take":                  `win_firewall_rule: {name: 'a*b', localport: 80, protocol: tcp}`,
 		"sets program":                `win_firewall_rule: {name: a, program: 'C:\x.exe'}`,
+		"without DNS":                 `microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: x, install_dns: false}`,
+		"sets forest_mode":            `microsoft.ad.domain: {dns_domain_name: lab.test, safe_mode_password: x, forest_mode: WinThreshold}`,
+		"or all of them":              `win_dns_client: {adapter_names: '*', dns_servers: [10.0.0.4]}`,
+		"resets DNS to DHCP":          `win_dns_client: {adapter_names: Ethernet, dns_servers: []}`,
 		"win_updates module":          `win_updates: {category_names: [SecurityUpdates]}`,
 		"win_chocolatey module":       `win_chocolatey: {name: git}`,
 		"win_dsc module":              `win_dsc: {resource_name: x}`,

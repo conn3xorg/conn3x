@@ -267,6 +267,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_acl_inheritance":  winACLInheritanceModule,
 	"win_command":          winCommandModule,
 	"win_copy":             winCopyModule,
+	"win_dns_client":       winDNSClientModule,
+	"win_domain":           winDomainModule,
 	"win_feature":          winFeatureModule,
 	"win_file":             winFileModule,
 	"win_firewall_rule":    winFirewallRuleModule,
@@ -287,6 +289,8 @@ var modules = map[string]func(*input) ([]step, string){
 	// microsoft.iis, which replaces the community.windows IIS modules.
 	"web_app_pool": winIISAppPoolModule,
 	"website":      winWebsiteModule,
+	// microsoft.ad, which replaces win_domain and its kin.
+	"domain": winDomainModule,
 }
 
 func copyModule(in *input) ([]step, string) {

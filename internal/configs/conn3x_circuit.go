@@ -66,7 +66,9 @@ var circuitModules = map[string]string{
 	"group":            "conn3x_group",
 
 	"windows_acl":            "conn3x_windows_acl",
+	"windows_ad_forest":      "conn3x_windows_ad_forest",
 	"windows_directory":      "conn3x_windows_directory",
+	"windows_dns_client":     "conn3x_windows_dns_client",
 	"windows_feature":        "conn3x_windows_feature",
 	"windows_file":           "conn3x_windows_file",
 	"windows_group":          "conn3x_windows_group",
