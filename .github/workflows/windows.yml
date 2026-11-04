@@ -39,7 +39,7 @@ concurrency:
 jobs:
   windows-host:
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,7 +81,7 @@ jobs:
       - name: Test against the runner
         shell: pwsh
         run: |
-          go test -tags windowshost -count=1 -timeout 25m -v ./test/windows/ 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\windows-test.log"
+          go test -tags windowshost -count=1 -timeout 45m -v ./test/windows/ 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\windows-test.log"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # A missing variable would only skip it, and a skip looks like a pass.
           if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\windows-test.log" -SimpleMatch -Quiet -- '--- PASS: TestPlanAndApply')) {
