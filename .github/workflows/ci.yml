@@ -37,6 +37,7 @@ jobs:
           bash scripts/upstream/hook-budget_test.sh
           bash scripts/dco-check_test.sh
           bash scripts/build-agent_test.sh
+          python3 scripts/dashboards_test.py
       - name: Real-host test helpers
         run: go test ./test/droplet/... ./test/azure/...
 
