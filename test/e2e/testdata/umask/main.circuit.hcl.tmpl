@@ -1,0 +1,47 @@
+circuit "umask" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tools" {
+    package {
+      name = "curl"
+    }
+  }
+
+  step "key" {
+    download {
+      url    = "https://nginx.org/keys/nginx_signing.key"
+      dest   = "/opt/umask/dl/nginx.key"
+      sha256 = "{{.SHA256}}"
+    }
+  }
+
+  step "secret" {
+    file {
+      path    = "/opt/umask/conf/secret"
+      content = "s3cret\n"
+      mode    = "0600"
+    }
+  }
+
+  step "tarball" {
+    command {
+      command = "tar -czf /tmp/conn3x-src.tgz -C /etc passwd"
+      creates = "/tmp/conn3x-src.tgz"
+    }
+  }
+
+  step "unpack" {
+    archive {
+      src     = "/tmp/conn3x-src.tgz"
+      dest    = "/opt/umask/unpacked/deep"
+      creates = "/opt/umask/unpacked/deep/passwd"
+    }
+  }
+}

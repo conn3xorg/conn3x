@@ -51,7 +51,7 @@ step "old_cache" {
 
 **Reading.** Every plan reads the directory on the host: whether it exists, its mode, and its owner and group. If something other than a directory is at the path, such as a file or a symbolic link, Conn3x stops with an error and doesn't replace it.
 
-**Applying.** Conn3x runs `mkdir -p`, then sets the mode, owner and group. On SELinux hosts the directory is relabelled for its path with `restorecon`. Only the directory itself is changed. Missing parents are created by `mkdir -p` and aren't managed, and the directory's contents are left alone.
+**Applying.** Conn3x runs `mkdir -p`, then sets the mode, owner and group. On SELinux hosts the directory is relabelled for its path with `restorecon`. Only the directory itself is changed. Missing parents are created by `mkdir -p` with mode 0755, whatever the login umask, and aren't managed; the directory's contents are left alone.
 
 **Ownership.** `owner` and `group` are only checked and set when you give them. Leave them out and Conn3x keeps whatever the directory has.
 

@@ -36,7 +36,7 @@ func (b *Become) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 		return Result{}, err
 	}
 
-	inner := "/bin/sh -c " + Quote("export LC_ALL=C; "+cmd)
+	inner := "/bin/sh -c " + Quote(Prelude+cmd)
 	var res Result
 	var err error
 	if b.needsPass {

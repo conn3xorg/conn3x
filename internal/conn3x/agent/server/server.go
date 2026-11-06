@@ -176,7 +176,8 @@ func (s *server) handle(ctx context.Context, e *agentpb.Envelope) {
 func (s *server) exec(ctx context.Context, id uint64, req *agentpb.ExecRequest) {
 	runCtx, kill := context.WithCancel(ctx)
 	defer kill()
-	c := exec.CommandContext(runCtx, "/bin/sh", "-c", "export LC_ALL=C; "+req.Cmd)
+	// The same prelude as ssh.Prelude, so the login umask doesn't shape what a command creates.
+	c := exec.CommandContext(runCtx, "/bin/sh", "-c", "export LC_ALL=C; umask 022; "+req.Cmd)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
 	c.WaitDelay = waitDelay

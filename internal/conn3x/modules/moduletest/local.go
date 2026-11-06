@@ -15,11 +15,11 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
-// Local runs commands with /bin/sh in the C locale, as a host does.
+// Local runs commands with /bin/sh in the C locale under umask 022, as a host does.
 type Local struct{}
 
 func (Local) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
-	c := exec.CommandContext(ctx, "/bin/sh", "-c", "export LC_ALL=C; "+cmd)
+	c := exec.CommandContext(ctx, "/bin/sh", "-c", ssh.Prelude+cmd)
 	c.Stdin = bytes.NewReader(stdin)
 	var out, errb bytes.Buffer
 	c.Stdout, c.Stderr = &out, &errb

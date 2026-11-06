@@ -490,10 +490,19 @@ func authMethod(cfg Config) (gossh.AuthMethod, net.Conn, error) {
 	return gossh.PublicKeysCallback(agent.NewClient(conn).Signers), conn, nil
 }
 
-// Run executes cmd with /bin/sh in the C locale, feeding it stdin. A non-zero
-// exit status is reported in Result, not as an error.
+// Prelude starts every command Run and Become.Run hand to /bin/sh. The C
+// locale keeps output parseable. umask 022 keeps the login umask out of
+// what conn3x creates: pam_umask applies a hardened UMASK 027 from
+// /etc/login.defs to every session, root's included, and sudo keeps it,
+// so the parents "mkdir -p" made came out 0750 root:root and other users
+// couldn't reach what was below them. An explicit mode still wins, and
+// mktemp makes its files 0600 whatever the umask.
+const Prelude = "export LC_ALL=C; umask 022; "
+
+// Run executes cmd with /bin/sh in the C locale under umask 022, feeding it
+// stdin. A non-zero exit status is reported in Result, not as an error.
 func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, error) {
-	res, err := c.exec(ctx, "LC_ALL=C exec /bin/sh -c "+Quote("export LC_ALL=C; "+cmd), stdin)
+	res, err := c.exec(ctx, "LC_ALL=C exec /bin/sh -c "+Quote(Prelude+cmd), stdin)
 	if err == nil && res.ExitCode != 0 && windowsShellRefused(res.Stderr) {
 		return res, fmt.Errorf("ssh %s: %w", c.addr, ErrWindowsHost)
 	}

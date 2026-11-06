@@ -39,6 +39,7 @@ func RunnerConformance(t *testing.T, newRunner func(t *testing.T) modules.Runner
 		{"8 MiB in and out", "cat", in},
 		{"32 MiB out", "head -c 33554432 /dev/zero", nil},
 		{"C locale", `printf %s "$LC_ALL"`, nil},
+		{"umask 022", "umask", nil},
 		{"empty command", "", nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {

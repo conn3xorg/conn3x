@@ -22,7 +22,7 @@ import (
 type localRunner struct{}
 
 func (localRunner) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
-	c := exec.CommandContext(ctx, "sh", "-c", "export LC_ALL=C; "+cmd)
+	c := exec.CommandContext(ctx, "sh", "-c", ssh.Prelude+cmd)
 	c.Stdin = bytes.NewReader(stdin)
 	var out, errb bytes.Buffer
 	c.Stdout, c.Stderr = &out, &errb
