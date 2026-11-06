@@ -26,7 +26,7 @@ invited to become a maintainer. Once there are at least two maintainers:
 - pull requests need an approving review from a maintainer other than the author
 - decisions are made by consensus, falling back to a majority vote of maintainers
 
-The list of maintainers will live in this file.
+The current list is in [MAINTAINERS.md](MAINTAINERS.md).
 
 ## Where this is headed
 
