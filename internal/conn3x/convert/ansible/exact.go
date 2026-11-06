@@ -414,6 +414,22 @@ func debugModule(in *input) ([]step, string) {
 	return []step{{notes: []string{"debug only prints, so it changes nothing on hosts and is left out. " + note}}}, ""
 }
 
+// factsModule drops setup, service_facts and package_facts, which only read
+// from the host to gather facts for later tasks. The converter doesn't carry
+// facts over: a later task that reads them is left for review, because it uses
+// when or a Jinja expression the converter can't translate. The note says when
+// the play has one. args are the module's options, which only shape what's read.
+func factsModule(name string, args ...string) func(*input) ([]step, string) {
+	return func(in *input) ([]step, string) {
+		in.ignore(args...)
+		note := name + " only gathers facts and changes nothing on hosts, so it's left out."
+		if in.factsLater {
+			note += " A later task in this play reads those facts, and it's left for review: a step can't read Ansible's facts, so check what it did with them."
+		}
+		return []step{{notes: []string{note}}}, ""
+	}
+}
+
 // pingModule drops ping, which only proves Ansible can reach the host: Conn3x
 // connects to every host before it does anything. data: crash fails the task
 // on purpose to stop the play, so that, and a data template that could turn

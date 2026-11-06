@@ -69,6 +69,9 @@ type converter struct {
 	playNoLog bool   // the current play sets no_log to anything but false
 	runAs     string // who the current play's tasks run as, as an expression; empty when it's open
 	otherUser string // what in the current play makes Ansible run as someone a circuit wouldn't
+	// factsAfter marks the current play's tasks that a later task or handler
+	// reads facts after.
+	factsAfter map[*yaml.Node]bool
 }
 
 func (c *converter) run(plays *yaml.Node) Result {
@@ -226,6 +229,16 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 	for _, key := range []string{"pre_tasks", "tasks", "post_tasks"} {
 		tasks = append(tasks, seq(p[key])...)
 	}
+	// Handlers run after every task, so they count as later for all of them.
+	c.factsAfter = map[*yaml.Node]bool{}
+	later := false
+	for _, h := range seq(p["handlers"]) {
+		later = later || readsFacts(h)
+	}
+	for i := len(tasks) - 1; i >= 0; i-- {
+		c.factsAfter[tasks[i]] = later
+		later = later || readsFacts(tasks[i])
+	}
 	for _, t := range tasks {
 		c.task(cb, t, become, vars, handlers, used)
 	}
@@ -315,7 +328,7 @@ func sameForAnyUser(mod string, args map[string]*yaml.Node) bool {
 	switch mod {
 	case "package", "dnf", "yum", "apt", "service", "systemd", "systemd_service",
 		"user", "group", "authorized_key", "known_hosts", "sysctl", "hostname", "timezone",
-		"firewalld", "ufw", "seboolean", "sefcontext", "mount", "debug", "ping",
+		"firewalld", "ufw", "seboolean", "sefcontext", "mount", "debug", "ping", "setup", "service_facts", "package_facts",
 		"apt_repository", "yum_repository":
 		return true
 	case "cron":
@@ -397,7 +410,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, "uses the "+mod+" module, which has no Conn3x equivalent yet")
 		return
 	}
-	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil, runAs: c.runAs}
+	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil, runAs: c.runAs, factsLater: c.factsAfter[node]}
 	steps, reason := m(in)
 	if reason == "" && items != nil {
 		reason = loopSteps(steps, in.itemUsed)
@@ -613,6 +626,56 @@ func noLogInside(n *yaml.Node, seen map[*yaml.Node]bool) bool {
 		}
 	}
 	return false
+}
+
+// ansibleName finds names in Ansible's ansible_ namespace.
+var ansibleName = regexp.MustCompile(`\bansible_[A-Za-z0-9_]+`)
+
+// notFacts are ansible_ names that come from the connection, the inventory or
+// Ansible itself rather than from gathering facts. One ending in _ is a prefix;
+// the rest match whole, since ansible_user_dir and ansible_hostname are facts.
+var notFacts = []string{
+	"ansible_user", "ansible_port", "ansible_host", "ansible_connection", "ansible_password",
+	"ansible_ssh_", "ansible_become", "ansible_become_", "ansible_python_interpreter", "ansible_shell_",
+	"ansible_private_key_file", "ansible_check_mode", "ansible_diff_mode", "ansible_play_",
+	"ansible_run_tags", "ansible_skip_tags", "ansible_version", "ansible_config_file",
+	"ansible_limit", "ansible_loop", "ansible_loop_", "ansible_index_var", "ansible_parent_role_", "ansible_role_",
+	"ansible_search_path", "ansible_verbosity", "ansible_inventory_sources", "ansible_collection_name",
+	"ansible_forks", "ansible_dependent_role_names", "ansible_failed_",
+}
+
+// readsFacts reports whether a task, through aliases, mentions ansible_facts
+// or one of the ansible_ variables that gathering facts sets.
+func readsFacts(n *yaml.Node) bool {
+	found := false
+	var walk func(*yaml.Node, map[*yaml.Node]bool)
+	walk = func(n *yaml.Node, seen map[*yaml.Node]bool) {
+		n = deref(n)
+		if n == nil || seen[n] || found {
+			return
+		}
+		seen[n] = true
+		if n.Kind == yaml.ScalarNode {
+			for _, name := range ansibleName.FindAllString(n.Value, -1) {
+				fact := true
+				for _, p := range notFacts {
+					if name == p || (strings.HasSuffix(p, "_") && strings.HasPrefix(name, p)) {
+						fact = false
+						break
+					}
+				}
+				if fact {
+					found = true
+					return
+				}
+			}
+		}
+		for _, c := range n.Content {
+			walk(c, seen)
+		}
+	}
+	walk(n, map[*yaml.Node]bool{})
+	return found
 }
 
 // printsInside walks n, through aliases, for a debug task, in any form that

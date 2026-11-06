@@ -702,6 +702,66 @@ func TestPingIsDroppedInAPlayAsAnotherUser(t *testing.T) {
 	}
 }
 
+func TestFactTasksAreDropped(t *testing.T) {
+	for _, mod := range []string{"setup", "service_facts", "package_facts"} {
+		for _, task := range []string{mod + ":", "ansible.builtin." + mod + ":"} {
+			res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+			if res.Converted != 1 || len(res.Review) != 0 {
+				t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+			}
+			out := string(res.HCL)
+			if !strings.Contains(out, mod+" only gathers facts") || strings.Contains(out, "step ") || strings.Contains(out, "later task") {
+				t.Errorf("%q: output lacks the note, has a step, or claims a later task:\n%s", task, out)
+			}
+			if _, diags := hclparse.NewParser().ParseHCL(res.HCL, "x.tf"); diags.HasErrors() {
+				t.Errorf("%q: %s", task, diags)
+			}
+		}
+	}
+}
+
+// The facts aren't carried over, so a later task that reads them goes to
+// review, and the dropped task's note says one does.
+func TestFactTaskNotesALaterTaskThatReadsFacts(t *testing.T) {
+	for later, reads := range map[string]bool{
+		"copy: {dest: /etc/a, content: \"{{ ansible_facts.os_family }}\"}":          true,
+		"package: {name: nginx}\n      when: \"'nginx' in ansible_facts.packages\"": true,
+		"copy: {dest: /etc/a, content: \"{{ ansible_os_family }}\"}":                true,
+		"copy: {dest: /etc/a, content: \"{{ ansible_user_dir }}\"}":                 true,
+		"copy: {dest: /etc/a, content: \"{{ ansible_user }}\"}":                     false,
+		"package: {name: vim}": false,
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - setup:\n    - "+later+"\n")
+		out := string(res.HCL)
+		if !strings.Contains(out, "setup only gathers facts") || strings.Contains(out, "later task in this play reads") != reads {
+			t.Errorf("%q: want a later-task note %v:\n%s", later, reads, out)
+		}
+		if reads && len(res.Review) != 1 {
+			t.Errorf("%q: the later task should be in review: %+v", later, res.Review)
+		}
+	}
+	// A task before the facts are gathered doesn't count, and a handler does.
+	res := convertString(t, "- hosts: all\n  tasks:\n    - copy: {dest: /etc/a, content: \"{{ ansible_facts.os_family }}\"}\n    - setup:\n")
+	if strings.Contains(string(res.HCL), "later task in this play reads") {
+		t.Errorf("an earlier task counted as later:\n%s", res.HCL)
+	}
+	res = convertString(t, "- hosts: all\n  tasks:\n    - setup:\n  handlers:\n    - name: r\n      service: {name: \"{{ ansible_facts.svc }}\", state: restarted}\n")
+	if !strings.Contains(string(res.HCL), "later task in this play reads") {
+		t.Errorf("a handler didn't count as later:\n%s", res.HCL)
+	}
+}
+
+func TestFactTaskOptions(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  tasks:\n    - setup: {gather_subset: ['!all', network], filter: 'ansible_eth*'}\n")
+	if res.Converted != 1 || len(res.Review) != 0 {
+		t.Errorf("setup options: converted %d, review %+v", res.Converted, res.Review)
+	}
+	res = convertString(t, "- hosts: all\n  tasks:\n    - service_facts: {manager: rpm}\n")
+	if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "sets manager") {
+		t.Errorf("service_facts with manager: converted %d, review %+v", res.Converted, res.Review)
+	}
+}
+
 func TestDebugIsDroppedWithoutItsMessage(t *testing.T) {
 	const secret = "hunter2"
 	for task, want := range map[string]string{

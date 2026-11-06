@@ -59,6 +59,8 @@ type input struct {
 	loop     bool   // the task loops, so {{ item }} means the current item
 	runAs    string // an expression for the user Ansible runs a task as; empty when the play leaves it open
 	itemUsed bool
+	// factsLater is set when a later task or handler in the play reads facts.
+	factsLater bool
 }
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
@@ -244,6 +246,9 @@ var modules = map[string]func(*input) ([]step, string){
 	"pam_limits":      pamLimitsModule,
 	"debug":           debugModule,
 	"ping":            pingModule,
+	"setup":           factsModule("setup", "gather_subset", "gather_timeout", "filter", "fact_path"),
+	"service_facts":   factsModule("service_facts"),
+	"package_facts":   factsModule("package_facts", "manager", "strategy"),
 	"cron":            cronModule,
 	"sysctl":          sysctlModule,
 	"hostname":        nameOnly("hostname"),
