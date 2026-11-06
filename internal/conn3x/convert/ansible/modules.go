@@ -243,6 +243,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"known_hosts":     knownHostsModule,
 	"pam_limits":      pamLimitsModule,
 	"debug":           debugModule,
+	"ping":            pingModule,
 	"cron":            cronModule,
 	"sysctl":          sysctlModule,
 	"hostname":        nameOnly("hostname"),

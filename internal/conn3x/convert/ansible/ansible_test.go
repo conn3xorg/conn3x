@@ -105,6 +105,8 @@ func TestRefusesWhatItCantProve(t *testing.T) {
 		"uses shell syntax":       "copy: {dest: /etc/a, content: x, validate: \"visudo -cf %s\\nrm -f /etc/a\"}",
 		"syntax, which Ansible":   "copy: {dest: /etc/a, content: x, validate: 'check -f %s [ab]'}",
 		"syntax, which Ansible p": "copy: {dest: /etc/a, content: x, validate: \"visudo -cf %s\\r\"}",
+		"data: crash":             "ping: {data: crash}",
+		"data from a template":    "ping: {data: '{{ ping_data }}'}",
 	} {
 		res := convertString(t, "- hosts: all\n  vars: {name: x}\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
@@ -668,6 +670,35 @@ func TestRefusesPamLimitsItCantProve(t *testing.T) {
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
 			t.Errorf("%q: converted %d, review %+v, want %q", task, res.Converted, res.Review, reason)
 		}
+	}
+}
+
+func TestPingIsDropped(t *testing.T) {
+	for _, task := range []string{
+		"ping:",
+		"ansible.builtin.ping:",
+		"ping: {data: pong}",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+		out := string(res.HCL)
+		if !strings.Contains(out, "ping only checks") || strings.Contains(out, "step ") {
+			t.Errorf("%q: output lacks the note or has a step:\n%s", task, out)
+		}
+		if _, diags := hclparse.NewParser().ParseHCL(res.HCL, "x.tf"); diags.HasErrors() {
+			t.Errorf("%q: %s", task, diags)
+		}
+	}
+}
+
+// A ping means the same whoever sends it, so a play that runs as another
+// user still drops it rather than sending it to review.
+func TestPingIsDroppedInAPlayAsAnotherUser(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  become: true\n  become_user: deploy\n  tasks:\n    - ping:\n")
+	if res.Converted != 1 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
 

@@ -414,6 +414,23 @@ func debugModule(in *input) ([]step, string) {
 	return []step{{notes: []string{"debug only prints, so it changes nothing on hosts and is left out. " + note}}}, ""
 }
 
+// pingModule drops ping, which only proves Ansible can reach the host: Conn3x
+// connects to every host before it does anything. data: crash fails the task
+// on purpose to stop the play, so that, and a data template that could turn
+// out to be crash, goes to review.
+func pingModule(in *input) ([]step, string) {
+	if d := in.args["data"]; d != nil {
+		switch v := scalar(d); {
+		case v == "crash":
+			return nil, "sets data: crash, which fails the task on purpose so the play stops there; Conn3x has no step that fails like that"
+		case d.Kind != yaml.ScalarNode, strings.Contains(v, "{"):
+			return nil, "sets data from a template, which fails the task when it comes out as crash"
+		}
+	}
+	in.ignore("data")
+	return []step{{notes: []string{"ping only checks that Ansible can reach the host, and Conn3x connects to every host before it does anything, so it's left out."}}}, ""
+}
+
 // pipModule converts what's plainly a named package in a named venv, run by
 // the same user. Everything else pip can do goes to review: a requirements
 // file is on the host, where the converter can't read it, extra_args and
