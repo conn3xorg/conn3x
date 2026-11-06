@@ -20,6 +20,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -29,9 +31,26 @@ CORE_TEAM = {"jamesconwaydev"}
 MAINTAINER_ROLES = {"OWNER", "MEMBER", "COLLABORATOR"}
 # First label that matches decides the section, so an issue shows up once.
 KINDS = [
-    ("writers wanted", "✍️ Writers wanted"),
     ("good first issue", "🌱 Good first issues"),
+    ("writers wanted", "✍️ Writers wanted"),
     ("help wanted", "🤝 Help wanted"),
+]
+# Issues opened from the same per-circuit template collapse into one line of
+# repo links: a table row per circuit is a wall nobody reads, and repo links
+# add no "mentioned this" entry to each issue's timeline.
+TEMPLATES = [
+    ("writers wanted", re.compile(r"Writers wanted: make the (circuit-[\w-]+) README clearer for someone new"),
+     "✍️ Make a circuit README clearer",
+     "Read a circuit's README the way someone deciding whether to use it would, and fix what "
+     "loses you. No code needed, and you can edit it in the browser."),
+    ("help wanted", re.compile(r"Help wanted: try to break (circuit-[\w-]+) and review its code"),
+     "🔨 Try to break a circuit",
+     "Run a circuit on a throwaway container or VM, try what its README doesn't mention, and "
+     "read its code like a teammate's pull request. Finding a problem counts as much as fixing one."),
+    ("help wanted", re.compile(r"Help raise (circuit-[\w-]+)'s grade \(now [A-F]\)"),
+     "📈 Help raise a circuit's grade",
+     "Each issue lists the checks a circuit is missing. Every one is a CI change you can make "
+     "in one pull request, so pick one and say which in a comment."),
 ]
 CONTRIBUTING = "https://github.com/conn3xorg/.github/blob/main/CONTRIBUTING.md"
 BODY_LIMIT = 65000  # GitHub rejects issue bodies over 65536 characters.
@@ -48,12 +67,17 @@ calls = 0
 
 def gh(*args, payload=None):
     global calls
-    calls += 1
-    out = subprocess.run(
-        ["gh", "api", *args],
-        input=None if payload is None else json.dumps(payload),
-        capture_output=True, text=True, check=False,
-    )
+    for attempt in range(3):
+        calls += 1
+        out = subprocess.run(
+            ["gh", "api", *args],
+            input=None if payload is None else json.dumps(payload),
+            capture_output=True, text=True, check=False,
+        )
+        # Big GraphQL searches sometimes get a 502; a second try usually works.
+        if out.returncode == 0 or "HTTP 5" not in out.stderr or attempt == 2:
+            break
+        time.sleep(10)
     if out.returncode != 0:
         sys.exit(f"gh api {' '.join(args[:3])} failed: {out.stderr.strip()}")
     return json.loads(out.stdout) if out.stdout.strip() else None
@@ -140,7 +164,7 @@ def header(title, marker, now, intro):
 
 
 def search_url(q):
-    return "https://github.com/search?type=issues&q=" + urllib.request.quote(q)
+    return "https://github.com/search?type=issues&q=" + urllib.parse.quote(q)
 
 
 # ---- Help wanted ----------------------------------------------------------
@@ -173,7 +197,16 @@ def kind(issue):
     return next((label for label, _ in KINDS if label in names), None)
 
 
-def help_board(issues, now):
+def template(issue):
+    """Return (template index, circuit) for a templated issue, else None."""
+    for n, (_, pattern, _, _) in enumerate(TEMPLATES):
+        m = pattern.fullmatch(" ".join(issue["title"].split()))
+        if m and m.group(1) == issue["repository"]["name"]:
+            return n, m.group(1)
+    return None
+
+
+def help_board(issues, grades, now):
     intro = f"""
 Every open issue across Conn3x where we'd love a hand, in one place. Find one
 marked **free**, say on the issue that you're taking it, and it's yours. A
@@ -187,14 +220,30 @@ at all: if a README confused you, you're exactly who we want fixing it.
 pull request linked. If one has gone quiet for a few weeks, ask on the issue.
 """
     groups = {label: [] for label, _ in KINDS}
+    templated = [[] for _ in TEMPLATES]  # free circuits per template
+    taken = [0] * len(TEMPLATES)
+    free = total = 0
     for i in sorted(issues, key=lambda i: i["createdAt"]):
-        if kind(i):
+        t = template(i)
+        if t:
+            n, circuit = t
+            # A grade issue is done once the live badge says A, whatever its title says.
+            if "grade" in TEMPLATES[n][1].pattern and grades.get(circuit) == "A":
+                continue
+            total += 1
+            if claim(i):
+                taken[n] += 1
+            else:
+                free += 1
+                templated[n].append(circuit)
+        elif kind(i):
+            total += 1
+            free += not claim(i)
             groups[kind(i)].append(i)
-    free = sum(1 for i in issues if kind(i) and not claim(i))
 
     def render(cap):
         out = [header("🙋 Help wanted across Conn3x", "help-wanted", now, intro)]
-        out.append(f"\n{free} of {sum(map(len, groups.values()))} are free right now.\n")
+        out.append(f"\n{free} of {total} are free right now.\n")
         for label, title in KINDS:
             rows = [[
                 f"[{esc(i['title'])}]({i['url']})",
@@ -205,6 +254,14 @@ pull request linked. If one has gone quiet for a few weeks, ask on the issue.
             rows, more = capped(rows, cap, search_url(f'org:{ORG} is:issue is:open label:"{label}"'))
             out.append(f"\n## {title} ({len(groups[label])})\n\n")
             out.append(table(["Issue", "Repo", "Age", "Status"], rows) + more)
+        out.append("\n## One per circuit\n\nThe same job, open on lots of circuits. "
+                   "Each link goes to that circuit's open issues.\n")
+        for n, (label, _, title, blurb) in enumerate(TEMPLATES):
+            q = urllib.parse.quote_plus(f'is:open label:"{label}"')
+            links = [f"[{c}](https://github.com/{ORG}/{c}/issues?q={q})" for c in templated[n]]
+            note = f" {taken[n]} more already taken." if taken[n] else ""
+            out.append(f"\n### {title} ({len(links)} free)\n\n{blurb}{note}\n\n")
+            out.append((", ".join(links) or "None free right now.") + "\n")
         return "".join(out)
 
     return fit(render)
@@ -412,7 +469,7 @@ def main():
     issues, prs, expiring = (list(filter(listed, x)) for x in (issues, prs, expiring))
 
     boards = {
-        "help-wanted": ("🙋 Help wanted across Conn3x", help_board(issues, now)),
+        "help-wanted": ("🙋 Help wanted across Conn3x", help_board(issues, grades, now)),
         "pr-triage": ("🔀 Community pull requests", pr_board(prs, now)),
         "circuit-health": ("🩺 Circuit health", health_board(repos, grades, prs, expiring, now)),
     }

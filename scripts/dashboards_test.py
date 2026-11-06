@@ -86,14 +86,47 @@ class Claims(unittest.TestCase):
         self.assertEqual(d.claim(self.issue(prs=1)), "taken (PR open)")
 
 
+def issue(title, repo="circuit-x", labels=("help wanted",), assignees=()):
+    return {"title": title, "url": f"https://github.com/conn3xorg/{repo}/issues/1",
+            "createdAt": "2026-11-01T00:00:00Z", "repository": {"name": repo},
+            "labels": {"nodes": [{"name": l} for l in labels]},
+            "assignees": {"nodes": [{"login": a} for a in assignees]}, "comments": {"nodes": []},
+            "closedByPullRequestsReferences": {"totalCount": 0}}
+
+
+NOW = datetime(2026, 11, 6, tzinfo=timezone.utc)
+
+
+class Templates(unittest.TestCase):
+    def test_template_match(self):
+        self.assertEqual(d.template(issue("Help raise circuit-x's grade (now C)")), (2, "circuit-x"))
+        self.assertEqual(d.template(issue("Help wanted: try to break circuit-x and review its code")), (1, "circuit-x"))
+        self.assertEqual(d.template(issue("Writers wanted: make the circuit-x README clearer for someone new",
+                                          labels=("writers wanted", "good first issue"))), (0, "circuit-x"))
+        # The circuit in the title must be the repo the issue lives in.
+        self.assertIsNone(d.template(issue("Help raise circuit-y's grade (now C)")))
+        self.assertIsNone(d.template(issue("Check each sudoers drop-in with visudo")))
+
+    def test_board_groups_templates_as_repo_links(self):
+        body = d.help_board([
+            issue("Writers wanted: make the circuit-a README clearer for someone new", "circuit-a", ("writers wanted", "good first issue")),
+            issue("Writers wanted: make the circuit-b README clearer for someone new", "circuit-b", ("writers wanted",), ["dev"]),
+            issue("Help raise circuit-a's grade (now C)", "circuit-a"),
+            issue("Help raise circuit-c's grade (now C)", "circuit-c"),
+            issue("Support state = absent", "conn3x", ("good first issue",)),
+        ], {"circuit-a": "B", "circuit-c": "A"}, NOW)
+        self.assertEqual(body.count("/issues/1)"), 1, "only the one-off issue gets an issue link")
+        self.assertIn("[circuit-a](https://github.com/conn3xorg/circuit-a/issues?q=is%3Aopen+label%3A%22writers+wanted%22)", body)
+        self.assertIn("README clearer (1 free)", body)
+        self.assertIn("1 more already taken.", body)
+        self.assertNotIn("circuit-c", body, "grade is already A, so that issue is done")
+        self.assertIn("3 of 4 are free right now.", body)
+        self.assertLess(body.index("Good first issues"), body.index("One per circuit"))
+
+
 class Fitting(unittest.TestCase):
     def test_body_shrinks_under_limit(self):
-        now = datetime(2026, 11, 6, tzinfo=timezone.utc)
-        issues = [{"title": "x" * 400, "url": "https://example.com", "createdAt": "2026-11-01T00:00:00Z",
-                   "repository": {"name": "circuit-x"}, "labels": {"nodes": [{"name": "help wanted"}]},
-                   "assignees": {"nodes": []}, "comments": {"nodes": []},
-                   "closedByPullRequestsReferences": {"totalCount": 0}}] * 400
-        body = d.help_board(issues, now)
+        body = d.help_board([issue("x" * 400)] * 400, {}, NOW)
         self.assertLess(len(body), d.BODY_LIMIT)
         self.assertIn("more. [See them all]", body)
 
