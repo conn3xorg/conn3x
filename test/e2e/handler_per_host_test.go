@@ -72,8 +72,13 @@ func TestHandlerPerHostSkipsFailedHost(t *testing.T) {
 		Key:   a.keyFile, KnownHosts: knownFile, Fail: "b",
 	})
 	w.mustConn3x("init", "-no-color")
-	if out, code := w.conn3x("apply", "-auto-approve", "-no-color"); code == 0 {
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color")
+	if code == 0 {
 		t.Fatalf("apply passed although the last step failed on b:\n%s", out)
+	}
+	// The error says which step and host failed, not just that one did.
+	if !strings.Contains(out, `with conn3x_command.fleet__last["b"]`) || strings.Contains(out, "exit status 1: \n") {
+		t.Errorf("the error doesn't name the failed step and host:\n%s", out)
 	}
 	if n := len(starts(t, a)); n != 2 {
 		t.Errorf("a started the service %d times, want 2: its handler should still run", n)

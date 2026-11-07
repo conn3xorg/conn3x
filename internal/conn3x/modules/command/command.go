@@ -84,9 +84,24 @@ func Run(ctx context.Context, r modules.Runner, cmd string) (Output, error) {
 		if msg == "" {
 			msg = strings.TrimSpace(out.Stdout)
 		}
-		return out, fmt.Errorf("command failed with exit status %d: %s", res.ExitCode, msg)
+		if msg == "" {
+			return out, fmt.Errorf("command failed with exit status %d", res.ExitCode)
+		}
+		return out, fmt.Errorf("command failed with exit status %d:\n%s", res.ExitCode, lastLines(msg, failLines))
 	}
 	return out, nil
+}
+
+// failLines is how much of a failed command's output its error shows: the
+// end, where the reason usually is.
+const failLines = 10
+
+func lastLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return fmt.Sprintf("... (%d earlier lines)\n%s", len(lines)-n, strings.Join(lines[len(lines)-n:], "\n"))
 }
 
 func clip(s string) string {

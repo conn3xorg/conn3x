@@ -12,6 +12,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
@@ -243,9 +244,37 @@ func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyR
 		defer lockForReboot(req.TypeName, priorSSH(req.PlannedState))()
 		resp := rt.apply(ctx, req)
 		resp.NewState = applyRevision(req.PlannedState, resp.NewState)
+		resp.Diagnostics = locateApplyErrors(rt.schema().Block, resp.Diagnostics)
 		return resp
 	}
 	return providers.ApplyResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
+}
+
+// locateApplyErrors points each apply error that has no place in the
+// configuration at the argument that names the object, such as a command
+// step's command. OpenTofu then prints which step and host failed, as in
+// "with conn3x_command.web__migrate["web2"]", instead of a bare message
+// that, with per_host, isn't even where the run stopped.
+func locateApplyErrors(block *configschema.Block, diags tfdiags.Diagnostics) tfdiags.Diagnostics {
+	attr := ""
+	for _, name := range []string{"command", "path", "name", "target", "user", "key"} {
+		if a := block.Attributes[name]; a != nil && a.Required {
+			attr = name
+			break
+		}
+	}
+	if attr == "" {
+		return diags
+	}
+	out := make(tfdiags.Diagnostics, 0, len(diags))
+	for _, d := range diags {
+		if d.Severity() == tfdiags.Error && d.Source().Subject == nil && tfdiags.GetAttribute(d) == nil {
+			desc := d.Description()
+			d = tfdiags.AttributeValue(tfdiags.Error, desc.Summary, desc.Detail, cty.GetAttrPath(attr))
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
