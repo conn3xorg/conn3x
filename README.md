@@ -44,7 +44,7 @@ brew install conn3xorg/tap/conn3x
 Or download a release:
 
 ```sh
-VERSION=0.8.0 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.9.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
@@ -127,8 +127,12 @@ container, in about five.
   plan adopts the file, package, service or user that's already there instead of
   creating it, and shows only where the host and your circuit disagree. Steps take
   OpenTofu's `lifecycle` block too, so `prevent_destroy` and `ignore_changes` work on
-  them. [Adopt servers you already run](https://docs.conn3x.org/guides/adopt-servers)
+  them. `conn3x generate step` reads what a host has and writes the step for you.
+  [Adopt servers you already run](https://docs.conn3x.org/guides/adopt-servers)
   walks through it.
+- **Doesn't wait on the slowest host.** Set `strategy = "per_host"` on a circuit and
+  each host runs its own steps in order, so one slow server doesn't hold up the rest.
+  The default stays lockstep.
 - **Checks a file before it lands.** Give `file` a `validate` command, such as
   `visudo -cf %s`, and a broken `sudoers` or `sshd_config` never replaces the one that
   works. `conn3x convert ansible` carries it over from `copy` tasks.
@@ -137,11 +141,16 @@ container, in about five.
   small Active Directory domain with its OUs, groups and users, on Windows Server 2022
   and 2025, over OpenSSH. The
   [module pages](https://docs.conn3x.org/modules/windows_file) say what may still change.
+- **Starts on network switches, experimentally.** `eos_config`, `eos_hostname` and
+  `eos_vlan` steps configure an Arista EOS switch over its own CLI, with a revert
+  timer that rolls a change back if it cuts Conn3x off. Tested on cEOS-lab, not yet
+  on hardware. See [Network devices](https://docs.conn3x.org/network-devices).
 - **Tells you what changed by hand.** `conn3x drift` reports changes made outside Conn3x,
   in the cloud and on your servers, and exits 2 when it finds some, so a scheduled job
   can alert on it.
 - **Brings your playbooks.** `conn3x convert ansible -i inventory site.yml` turns a
   playbook into circuits and marks anything it can't translate for you to finish.
+  `-role` turns an Ansible role into a circuit directory.
 - **Borrows what others have written.** [conn3x.org/circuits](https://conn3x.org/circuits)
   lists shared circuits, such as nginx, users and a hardened baseline, that you add with
   one `module` block. Written one worth sharing? List it there.
@@ -161,9 +170,10 @@ container, in about five.
 
 It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu today,
 and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian 13.
-Windows Server 2022 and 2025 are in preview, with tested Azure examples for one server
-and for a small domain with an OU, a user and a group. A whole lab from one config
-comes next, then network devices.
+Windows Server 2022 and 2025 are in preview, with tested Azure examples for one server,
+a small domain, a whole Active Directory lab, and a domain controller with up to five
+IIS servers. Arista EOS switches are experimental. Windows at scale is the work now,
+then more network devices.
 See the [roadmap](ROADMAP.md).
 
 ## Built on OpenTofu
