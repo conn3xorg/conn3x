@@ -193,6 +193,7 @@ func (p *Provider) ReadResource(ctx context.Context, req providers.ReadResourceR
 				return providers.ReadResourceResponse{NewState: req.PriorState, Private: req.Private, Diagnostics: diags}
 			}
 		}
+		defer lockForReboot(req.TypeName, priorSSH(req.PriorState))()
 		return rt.read(ctx, req)
 	}
 	return providers.ReadResourceResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
@@ -226,6 +227,7 @@ func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyR
 	if rt, ok := resourceTypes[req.TypeName]; ok {
 		ctx, done := p.withStop(ctx)
 		defer done()
+		defer lockForReboot(req.TypeName, priorSSH(req.PlannedState))()
 		resp := rt.apply(ctx, req)
 		resp.NewState = applyRevision(req.PlannedState, resp.NewState)
 		return resp

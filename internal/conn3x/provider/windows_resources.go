@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -602,4 +604,24 @@ func applyWinPowershell(ctx context.Context, req providers.ApplyResourceChangeRe
 	vals["stdout"], vals["stderr"] = stdout, stderr
 	resp.NewState = cty.ObjectVal(vals)
 	return resp
+}
+
+// rebootLocks keep a Windows host's other steps off it while windows_reboot
+// runs, as circuits run side by side and a reboot cuts their sessions: every
+// Windows step takes its host's lock shared, and windows_reboot takes it
+// exclusive, through the wait for the host to come back.
+var rebootLocks sync.Map // host and port to *sync.RWMutex
+
+func lockForReboot(typeName string, conn cty.Value) (unlock func()) {
+	if !strings.HasPrefix(typeName, windowsTypePrefix) || conn.IsNull() {
+		return func() {}
+	}
+	m, _ := rebootLocks.LoadOrStore(hostPort(conn), &sync.RWMutex{})
+	mu := m.(*sync.RWMutex)
+	if typeName == "conn3x_windows_reboot" {
+		mu.Lock()
+		return mu.Unlock
+	}
+	mu.RLock()
+	return mu.RUnlock
 }
