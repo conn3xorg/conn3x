@@ -15,12 +15,16 @@
   <a href="https://www.youtube.com/@conn3xlabs"><img alt="YouTube" src="https://img.shields.io/badge/youtube-watch-e85d0c?logo=youtube&logoColor=white"></a>
 </p>
 
-Provisioning a server and configuring it are one job, but it usually takes two tools:
-Terraform or OpenTofu to create the machine, then Ansible to set it up, plus the glue
-scripts, inventory files and second state that hold the two together. Conn3x does the
-whole job, from one binary, with one plan and one state. That makes it an IaCC tool:
-infrastructure as code and configuration management in one plan.
-[Here's why that matters.](https://conn3x.org/blog/why-conn3x)
+Conn3x creates your servers and sets them up, from one tool. You write one configuration
+for the cloud resources and for the packages, files and services on them. `conn3x plan`
+shows every change before it's made, and `conn3x apply` makes it. It works on servers you
+already run, too.
+
+That job usually takes two tools: Terraform or OpenTofu to create the machine, then
+Ansible to set it up, plus the glue scripts and inventory files that hold the two
+together. Conn3x does it from one binary, with one plan and one state, its record of what
+it manages. We call that an IaCC tool: infrastructure as code and configuration management
+in one plan. [Here's why that matters.](https://conn3x.org/blog/why-conn3x)
 
 <p align="center">
   <img alt="conn3x applying a circuit, then planning a fix for a hand-edited file" src=".github/assets/demo.gif" width="100%">
@@ -47,8 +51,14 @@ tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x 
 
 ## Quick start
 
-Circuits are Conn3x's playbooks: HCL, beside the rest of your infrastructure. Each step
-reads the server, shows a diff, then applies it.
+A circuit is a set of steps for a group of servers, written in HCL, the language Terraform
+and OpenTofu use. If you know Ansible, it's like a playbook. Each step reads the server,
+shows a diff, then applies it once you approve.
+
+This circuit needs no cloud account, just a server you already have. It installs nginx,
+writes its config from a template, keeps it running, and reloads it when the config
+changes. Save it as `main.circuit.hcl` with your own address and login, and put your nginx
+config beside it as `nginx.conf.tftpl`.
 
 ```hcl
 circuit "web" {
@@ -89,6 +99,9 @@ circuit "web" {
 }
 ```
 
+Connect to the server once with `ssh` first, because Conn3x always checks its host key.
+Then run:
+
 ```sh
 conn3x init && conn3x plan && conn3x apply
 ```
@@ -100,8 +113,8 @@ container, in about five.
 ## What it does
 
 - **One plan for the cloud and the servers in it.** Point a circuit's `hosts` at a
-  resource and the plan shows the droplet about to be created next to the exact file,
-  package and service changes headed for it.
+  cloud resource and the plan shows the server about to be created next to the exact
+  file, package and service changes headed for it.
 - **Keeps your providers, modules and state.** Conn3x is built on OpenTofu, so every
   Terraform and OpenTofu provider works unchanged.
 - **Covers the everyday work.** Files, templates, and lines or blocks inside them;
@@ -124,8 +137,9 @@ container, in about five.
   small Active Directory domain with its OUs, groups and users, on Windows Server 2022
   and 2025, over OpenSSH. The
   [module pages](https://docs.conn3x.org/modules/windows_file) say what may still change.
-- **Tells you what changed by hand.** `conn3x drift` reports drift across both layers
-  and exits 2 when it finds some, so a scheduled job can alert on it.
+- **Tells you what changed by hand.** `conn3x drift` reports changes made outside Conn3x,
+  in the cloud and on your servers, and exits 2 when it finds some, so a scheduled job
+  can alert on it.
 - **Brings your playbooks.** `conn3x convert ansible -i inventory site.yml` turns a
   playbook into circuits and marks anything it can't translate for you to finish.
 - **Borrows what others have written.** [conn3x.org/circuits](https://conn3x.org/circuits)
@@ -141,8 +155,8 @@ container, in about five.
 | Tools | Two, plus Python on the controller and the hosts | One binary |
 | State | Terraform state for the cloud; none for hosts | One state for both |
 | Preview of host changes | A separate `--check --diff` run | In the same plan as the cloud |
-| Cloud addresses into host config | Inventory scripts or plugins | An expression |
-| Drift on hosts | Run the playbook in check mode | `conn3x drift`, both layers |
+| Getting a new server's address into host config | Inventory scripts or plugins | A reference in the same config |
+| Drift on hosts | Run the playbook in check mode | `conn3x drift`, for cloud and hosts |
 | Servers that already exist | `import` for the cloud; nothing to adopt on hosts | `import` for both |
 
 It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu today,
