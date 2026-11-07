@@ -29,7 +29,16 @@ import (
 // ".tofu", "tofu.rc" and a bare "tofu" don't match.
 var commandPattern = regexp.MustCompile(`(^|[^\w.\-/])tofu( (?:\[|-|%s|init|plan|apply|destroy|validate|fmt|console|show|state|import|output|providers|refresh|taint|untaint|workspace|graph|login|logout|get|force-unlock|test|metadata|version|modules)\b)`)
 
+// preForkVersion matches a historical "OpenTofu 0.<N>" version reference.
+// OpenTofu forked from Terraform at 1.6 and never had a 0.x release, so a
+// few upstream diagnostics that predate the fork (e.g. "OpenTofu 0.11 and
+// earlier required quotes") actually describe Terraform's history. Rewrite
+// those before the general OpenTofu->Conn3x replace, or they'd become an
+// equally wrong "Conn3x 0.<N>".
+var preForkVersion = regexp.MustCompile(`OpenTofu 0\.(\d+)`)
+
 func rewriteLiteral(lit string) string {
+	lit = preForkVersion.ReplaceAllString(lit, "Terraform 0.$1")
 	lit = strings.ReplaceAll(lit, "OpenTofu", "Conn3x")
 	return commandPattern.ReplaceAllString(lit, "${1}conn3x$2")
 }
