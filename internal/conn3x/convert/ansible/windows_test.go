@@ -189,6 +189,13 @@ func TestRefusedTasksDontEchoSecrets(t *testing.T) {
 		`microsoft.ad.domain: dns_domain_name=lab.test safe_mode_password=` + secret + ` install_dns=false`,
 		`win_user: name=bob password="` + secret + ` with spaces" groups=x unknown_opt=1`,
 		`win_user: name=bob password='` + secret + `' groups=x`,
+		`microsoft.ad.membership: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, state: workgroup}`,
+		`microsoft.ad.membership: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, state: domain, hostname: x}`,
+		`win_domain_membership: dns_domain_name=lab.test domain_admin_user=a domain_admin_password=` + secret + ` state=domain offline_join_blob=b`,
+		`microsoft.ad.domain_controller: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: member_server, local_admin_password: ` + secret + `}`,
+		`microsoft.ad.domain_controller: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller, read_only: true}`,
+		`win_domain_controller: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller, site_name: s}`,
+		`microsoft.ad.domain_controller: {dns_domain_name: lab.test, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller}`,
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if len(res.Review) != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "secret left out") {
@@ -215,6 +222,41 @@ func TestMicrosoftADOnlyByFullName(t *testing.T) {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "microsoft.ad.") {
 			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}
+
+func TestWindowsJoinAndDC(t *testing.T) {
+	for task, wants := range map[string][]string{
+		`microsoft.ad.membership: {dns_domain_name: lab.example.com, domain_admin_user: 'LAB\joiner', domain_admin_password: '{{ pw }}', domain_ou_path: 'OU=Servers,DC=lab,DC=example,DC=com', state: domain, reboot: true}`: {
+			"windows_domain_membership {", `domain   = "lab.example.com"`, `username = "LAB\\joiner"`, `ou       = "OU=Servers,DC=lab,DC=example,DC=com"`, "TODO(convert): Set password_wo",
+			"windows_reboot {", "only_if_pending = true",
+		},
+		`ansible.windows.win_domain_membership: {dns_domain_name: lab.example.com, domain_admin_user: joiner@lab.example.com, domain_admin_password: x, state: domain}`: {
+			"windows_domain_membership {", `username = "joiner@lab.example.com"`,
+		},
+		`microsoft.ad.domain_controller: {dns_domain_name: lab.example.com, domain_admin_user: 'LAB\admin', domain_admin_password: x, safe_mode_password: y, state: domain_controller, database_path: 'F:\NTDS', domain_log_path: 'F:\NTDSLOG', reboot: true, reboot_timeout: 900}`: {
+			"windows_ad_domain_controller {", `domain_name   = "lab.example.com"`, `log_path      = "F:\\NTDSLOG"`, "TODO(convert): Set password_wo and safe_mode_password_wo",
+			`timeout         = "900s"`, "windows_wait_for {", "port = 9389",
+		},
+		`win_domain_controller: {dns_domain_name: lab.example.com, domain_admin_user: 'LAB\admin', domain_admin_password: x, safe_mode_password: y, state: domain_controller, install_dns: true}`: {
+			"windows_ad_domain_controller {",
+		},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+			continue
+		}
+		for _, w := range wants {
+			if !strings.Contains(string(res.HCL), w) {
+				t.Errorf("%s: output lacks %q:\n%s", task, w, res.HCL)
+			}
+		}
+		for _, secret := range []string{"{{ pw }}", "x\"", "y\""} {
+			if strings.Contains(string(res.HCL), secret) {
+				t.Errorf("%s: output has %q:\n%s", task, secret, res.HCL)
+			}
 		}
 	}
 }

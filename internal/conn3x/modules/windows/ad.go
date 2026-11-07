@@ -83,6 +83,9 @@ type ActualForest struct {
 	Pending bool
 	// Member is the domain this host has joined as a member, if it has.
 	Member string
+	// Joined is the domain this host is in, as a member or a domain
+	// controller, or "" in a workgroup.
+	Joined string
 }
 
 // DomainRole values from Win32_ComputerSystem.
@@ -104,11 +107,15 @@ func ReadForest(ctx context.Context, r ps.Runner) (ActualForest, error) {
 		Domain string `json:"domain"`
 		RootDN string `json:"root_dn"`
 		Marker bool   `json:"marker"`
+		Part   bool   `json:"part"`
 	}
 	if err := json.Unmarshal(res.Value, &a); err != nil {
 		return ActualForest{}, errors.New("reading the forest: the host's answer wasn't valid")
 	}
 	var f ActualForest
+	if a.Part {
+		f.Joined = strings.TrimSuffix(a.Domain, ".")
+	}
 	switch {
 	case a.Role >= roleBackupDC && a.RootDN != "":
 		f.Forest = dnToName(a.RootDN)
@@ -169,6 +176,132 @@ func ApplyForest(ctx context.Context, r ps.Runner, f Forest, safeModePassword st
 	}
 	if err := json.Unmarshal(res.Value, &a); err != nil {
 		return false, fmt.Errorf("reading the result for forest %s: %w", f.DomainName, err)
+	}
+	return a.Restart, nil
+}
+
+// badUsername catches what an account name, DOMAIN\user or user@domain,
+// can't hold: control characters and the ones Windows refuses in a name.
+var badUsername = regexp.MustCompile(`[\x00-\x1f\x7f"/\[\]:;|=,+*?<>]`)
+
+func checkUsername(attr, u string) error {
+	if u == "" || len(u) > 256 || badUsername.MatchString(u) || strings.Count(u, `\`) > 1 || strings.HasPrefix(u, `\`) || strings.HasSuffix(u, `\`) {
+		return fmt.Errorf(`%s %q must be an account name, such as LAB\joiner or joiner@lab.example.com`, attr, u)
+	}
+	return nil
+}
+
+// checkPassword is for passwords sent to a host: some text, and no NUL.
+func checkPassword(attr, p string) error {
+	if p == "" || strings.ContainsRune(p, 0) {
+		return fmt.Errorf("%s must not be empty or contain NUL", attr)
+	}
+	return nil
+}
+
+// Membership is this host joined to a domain as a member.
+type Membership struct {
+	Domain   string // DNS name of the domain
+	OU       string // distinguished name of the OU for a new computer account; "" for Windows' default
+	Username string // account the join uses, such as LAB\joiner
+}
+
+// Check validates a Membership, naming the attribute at fault.
+func (m Membership) Check() (attr string, err error) {
+	if err := ValidateDomainName("domain", m.Domain); err != nil {
+		return "domain", err
+	}
+	if m.OU != "" && (len(m.OU) > 1024 || !strings.Contains(m.OU, "=") || strings.ContainsFunc(m.OU, func(r rune) bool { return r < 0x20 || r == 0x7f })) {
+		return "ou", fmt.Errorf("ou %q must be a distinguished name, such as OU=Servers,DC=lab,DC=example,DC=com", m.OU)
+	}
+	if err := checkUsername("username", m.Username); err != nil {
+		return "username", err
+	}
+	return "", nil
+}
+
+// Matches reports whether the host is in this domain, as a member or a
+// domain controller.
+func (m Membership) Matches(a ActualForest) bool {
+	return a.Joined != "" && strings.EqualFold(a.Joined, m.Domain)
+}
+
+// ApplyMembership joins the host to the domain with Add-Computer, and never
+// reboots it: the join always wants one. The password travels on stdin only,
+// and errors have it blanked.
+func ApplyMembership(ctx context.Context, r ps.Runner, m Membership, password string, timeout time.Duration) (restart bool, err error) {
+	if err := checkPassword("password_wo", password); err != nil {
+		return false, err
+	}
+	res, err := ps.Apply(ctx, r, script("apply_domain_membership.ps1"), map[string]any{
+		"domain": m.Domain, "ou": m.OU, "username": m.Username, "password": password,
+	}, timeout)
+	if err != nil {
+		return false, errors.New(Scrub(err.Error(), []string{password}))
+	}
+	return restartFrom(res.Value, "joining "+m.Domain)
+}
+
+// DomainController is this host as another domain controller in a domain
+// that exists.
+type DomainController struct {
+	DomainName   string
+	Username     string // account the promotion uses, such as LAB\admin
+	DatabasePath string
+	LogPath      string
+	SysvolPath   string
+}
+
+// Check validates a DomainController, naming the attribute at fault.
+func (d DomainController) Check() (attr string, err error) {
+	if attr, err := (Forest{DomainName: d.DomainName, DatabasePath: d.DatabasePath, LogPath: d.LogPath, SysvolPath: d.SysvolPath}).Check(); err != nil {
+		return attr, err
+	}
+	if err := checkUsername("username", d.Username); err != nil {
+		return "username", err
+	}
+	return "", nil
+}
+
+// Matches reports whether the host is a domain controller in this domain, or
+// promoted and waiting for its reboot.
+func (d DomainController) Matches(a ActualForest) bool {
+	return a.Forest != "" && strings.EqualFold(a.Joined, d.DomainName)
+}
+
+// ApplyDomainController promotes the host with Install-ADDSDomainController,
+// DNS included, and never reboots it. Both passwords travel on stdin only, and
+// errors have them blanked.
+func ApplyDomainController(ctx context.Context, r ps.Runner, d DomainController, password, safeModePassword string, timeout time.Duration) (restart bool, err error) {
+	if err := checkPassword("password_wo", password); err != nil {
+		return false, err
+	}
+	if err := checkPassword("safe_mode_password_wo", safeModePassword); err != nil {
+		return false, err
+	}
+	clean := func(p string) string {
+		if p == "" {
+			return ""
+		}
+		c, _ := CleanLocalPath("", p)
+		return c
+	}
+	res, err := ps.Apply(ctx, r, script("apply_ad_domain_controller.ps1"), map[string]any{
+		"domain_name": d.DomainName, "username": d.Username, "password": password, "safe_mode_password": safeModePassword,
+		"database_path": clean(d.DatabasePath), "log_path": clean(d.LogPath), "sysvol_path": clean(d.SysvolPath),
+	}, timeout)
+	if err != nil {
+		return false, errors.New(Scrub(err.Error(), []string{password, safeModePassword}))
+	}
+	return restartFrom(res.Value, "domain controller in "+d.DomainName)
+}
+
+func restartFrom(v json.RawMessage, what string) (bool, error) {
+	var a struct {
+		Restart bool `json:"restart"`
+	}
+	if err := json.Unmarshal(v, &a); err != nil {
+		return false, fmt.Errorf("reading the result for %s: %w", what, err)
 	}
 	return a.Restart, nil
 }

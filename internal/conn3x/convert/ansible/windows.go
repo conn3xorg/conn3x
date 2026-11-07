@@ -664,11 +664,17 @@ func winDomainModule(in *input) ([]step, string) {
 	in.ignore("safe_mode_password", "install_dns")
 	forest := step{module: "windows_ad_forest", attrs: attrs, suffix: "forest",
 		notes: []string{"TODO(convert): Set safe_mode_password_wo from an ephemeral variable. The task's password isn't copied here."}}
+	return in.thenReboot(forest, true)
+}
+
+// thenReboot follows a step that leaves a reboot pending with the reboot,
+// when the task asked Ansible to reboot, since Conn3x modules never do. With
+// adws, it then waits for AD, because sshd answers before AD does.
+func (in *input) thenReboot(first step, adws bool) ([]step, string) {
 	if !in.bool("reboot", false) {
 		in.ignore("reboot_timeout")
-		return []step{forest}, ""
+		return []step{first}, ""
 	}
-	// Conn3x modules never reboot, and sshd answers before AD does.
 	reboot := []attr{{key: "only_if_pending", val: cty.True}}
 	if in.has("reboot_timeout") {
 		secs, err := strconv.Atoi(in.str("reboot_timeout"))
@@ -677,8 +683,70 @@ func winDomainModule(in *input) ([]step, string) {
 		}
 		reboot = append(reboot, s("timeout", fmt.Sprintf("%ds", secs)))
 	}
-	return []step{forest, {module: "windows_reboot", suffix: "reboot", attrs: reboot},
-		{module: "windows_wait_for", suffix: "adws", attrs: []attr{{key: "port", val: cty.NumberIntVal(9389)}}}}, ""
+	steps := []step{first, {module: "windows_reboot", suffix: "reboot", attrs: reboot}}
+	if adws {
+		steps = append(steps, step{module: "windows_wait_for", suffix: "adws", attrs: []attr{{key: "port", val: cty.NumberIntVal(9389)}}})
+	}
+	return steps, ""
+}
+
+// winMembershipModule converts microsoft.ad.membership and
+// ansible.windows.win_domain_membership, which join a domain or leave one.
+func winMembershipModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "domain" {
+		return nil, fmt.Sprintf("has state %q; windows_domain_membership only joins a domain, and Conn3x never takes a host out of one", st)
+	}
+	for _, c := range []struct{ key, why string }{
+		{"offline_join_blob", "joins offline with a blob, which windows_domain_membership doesn't do; join with an account instead"},
+		{"hostname", "renames the host as it joins, which Conn3x doesn't do on Windows yet"},
+		{"domain_server", "names the domain controller to join through, which windows_domain_membership doesn't offer yet"},
+	} {
+		if in.has(c.key) {
+			return nil, c.why
+		}
+	}
+	if !in.has("domain_admin_user") {
+		return nil, "has no domain_admin_user; windows_domain_membership joins with an account named in username"
+	}
+	attrs := []attr{s("domain", in.str("dns_domain_name")), s("username", in.str("domain_admin_user"))}
+	attrs = in.optional(attrs, "ou", "domain_ou_path")
+	// Never read, so a password can't end up in the output.
+	in.ignore("domain_admin_password", "workgroup_name")
+	join := step{module: "windows_domain_membership", attrs: attrs, suffix: "join",
+		notes: []string{"TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here."}}
+	return in.thenReboot(join, false)
+}
+
+// winDCModule converts microsoft.ad.domain_controller and
+// ansible.windows.win_domain_controller, which promote another domain
+// controller or demote one.
+func winDCModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "domain_controller" {
+		return nil, fmt.Sprintf("has state %q; windows_ad_domain_controller only promotes, and Conn3x never demotes a domain controller", st)
+	}
+	if in.has("install_dns") && !in.bool("install_dns", true) {
+		return nil, "promotes without DNS; windows_ad_domain_controller always installs it"
+	}
+	if in.bool("read_only", false) {
+		return nil, "makes a read-only domain controller, which windows_ad_domain_controller doesn't offer yet"
+	}
+	for _, k := range []string{"site_name", "install_media_path", "replication_source_dc"} {
+		if in.has(k) {
+			return nil, "sets " + k + ", which windows_ad_domain_controller doesn't offer yet; promote with Windows' defaults or by hand"
+		}
+	}
+	if !in.has("domain_admin_user") {
+		return nil, "has no domain_admin_user; windows_ad_domain_controller promotes with an account named in username"
+	}
+	attrs := []attr{s("domain_name", in.str("dns_domain_name")), s("username", in.str("domain_admin_user"))}
+	attrs = in.optional(attrs, "database_path", "database_path")
+	attrs = in.optional(attrs, "log_path", "domain_log_path")
+	attrs = in.optional(attrs, "sysvol_path", "sysvol_path")
+	// Never read, so a password can't end up in the output.
+	in.ignore("domain_admin_password", "safe_mode_password", "local_admin_password", "install_dns", "read_only")
+	dc := step{module: "windows_ad_domain_controller", attrs: attrs, suffix: "dc",
+		notes: []string{"TODO(convert): Set password_wo and safe_mode_password_wo from ephemeral variables. The task's passwords aren't copied here."}}
+	return in.thenReboot(dc, true)
 }
 
 func winDNSClientModule(in *input) ([]step, string) {

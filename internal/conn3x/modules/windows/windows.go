@@ -29,19 +29,23 @@ import (
 //go:embed *.ps1 lib/*.ps1
 var scripts embed.FS
 
-// script returns an embedded script, with lib/safepath.ps1 in place of its
-// include line. A missing one is a bug in this package, and a test reads every
-// name passed here.
+var includeLine = regexp.MustCompile(`(?m)^#include ([a-z]+)\r?$`)
+
+// script returns an embedded script, with lib/NAME.ps1 in place of each
+// #include NAME line. A missing one is a bug in this package, and a test reads
+// every name passed here.
 func script(name string) ps.Script {
 	b, err := scripts.ReadFile(name)
 	if err != nil {
 		panic(err)
 	}
-	lib, err := scripts.ReadFile("lib/safepath.ps1")
-	if err != nil {
-		panic(err)
-	}
-	body := strings.Replace(string(b), "#include safepath", string(lib), 1)
+	body := includeLine.ReplaceAllStringFunc(string(b), func(line string) string {
+		lib, err := scripts.ReadFile("lib/" + includeLine.FindStringSubmatch(line)[1] + ".ps1")
+		if err != nil {
+			panic(err)
+		}
+		return string(lib)
+	})
 	return ps.Script{Name: name, Body: body}
 }
 

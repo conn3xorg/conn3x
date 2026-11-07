@@ -10,4 +10,4 @@ $root = ''
 if ($ntds -and $ntds.'Root Domain') { $root = [string]$ntds.'Root Domain' }
 # Left by apply_ad_forest.ps1 (and windows_package), volatile, so gone after a reboot.
 $marker = Test-Path -LiteralPath 'HKLM:\SOFTWARE\Conn3x\RebootRequired'
-@{ role = [int]$cs.DomainRole; domain = [string]$cs.Domain; root_dn = $root; marker = $marker }
+@{ role = [int]$cs.DomainRole; domain = [string]$cs.Domain; part = [bool]$cs.PartOfDomain; root_dn = $root; marker = $marker }
