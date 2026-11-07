@@ -22,6 +22,7 @@ import (
 // Issue is a task the converter left for a person to review.
 type Issue struct {
 	Task   string
+	File   string // the file the line is in, relative to the playbook or role
 	Line   int
 	Reason string
 }
@@ -31,6 +32,9 @@ type Result struct {
 	HCL       []byte // the circuits, as a .tf file meant to sit beside the playbook
 	Converted int    // tasks translated in full
 	Review    []Issue
+	// Files is a converted role: each file of the circuit directory, by its
+	// path in it. HCL is empty then.
+	Files map[string][]byte
 }
 
 // Options change how a playbook converts.
@@ -61,8 +65,9 @@ func ConvertWith(path string, opts Options) (Result, error) {
 }
 
 type converter struct {
-	dir, file string
+	dir, file string // file is the one being read, relative to dir
 	inv       *Inventory
+	role      *role // set while converting a role
 	res       Result
 	hostVars  map[string]bool // groups that still need a hosts variable
 	needUser  bool
@@ -198,55 +203,113 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 		c.issue(cb, name, p["roles"], "uses roles, which the converter can't translate yet; convert each role's tasks and add them as steps")
 	}
 
+	var tasks []*yaml.Node
+	for _, key := range []string{"pre_tasks", "tasks", "post_tasks"} {
+		tasks = append(tasks, seq(p[key])...)
+	}
+	c.steps(cb, tasks, seq(p["handlers"]), c.file, become, vars)
+	return circuit
+}
+
+// steps converts tasks, read from c.file, and the handlers they notify into
+// a circuit's steps and handlers, inlining import_tasks first.
+func (c *converter) steps(cb *hclwrite.Body, taskNodes, handlerNodes []*yaml.Node, handlerFile string, become bool, vars map[string]string) {
+	file := c.file
+	defer func() { c.file = file }()
+	c.file = handlerFile
 	// Handlers first, so steps know which notify targets exist.
 	handlers := map[string]string{} // Ansible handler name => Conn3x handler name
 	var handlerBlocks []*hclwrite.Block
 	usedH := map[string]int{}
-	for _, h := range seq(p["handlers"]) {
-		t := mapping(h)
-		hname := scalar(t["name"])
-		if c.hidesValues(h) {
-			c.issue(cb, hname, h, noLogReason)
-			continue
-		}
-		mod, args := moduleOf(t)
-		action := map[string]string{"restarted": "restart", "reloaded": "reload"}[scalar(args["state"])]
-		if (mod != "service" && mod != "systemd" && mod != "systemd_service") || action == "" || len(args) != 2 || scalar(args["name"]) == "" {
-			c.issue(cb, hname, h, "is a handler that doesn't restart or reload a service; Conn3x handlers do only that")
+	for _, h := range handlerNodes {
+		attrs, hname := c.handler(cb, h, vars)
+		if attrs == nil {
 			continue
 		}
 		id := unique(slug(hname), usedH)
 		handlers[hname] = id
 		hb := hclwrite.NewBlock("handler", []string{id})
-		svc := hb.Body().AppendNewBlock("service", nil).Body()
-		svc.SetAttributeValue("name", cty.StringVal(scalar(args["name"])))
-		svc.SetAttributeValue("action", cty.StringVal(action))
+		sb := hb.Body().AppendNewBlock("service", nil).Body()
+		for _, a := range attrs {
+			if a.raw != "" {
+				sb.SetAttributeRaw(a.key, rawTokens(a.raw))
+			} else {
+				sb.SetAttributeValue(a.key, a.val)
+			}
+		}
 		handlerBlocks = append(handlerBlocks, hb)
 	}
+	c.file = file
 
-	used := map[string]int{}
-	var tasks []*yaml.Node
-	for _, key := range []string{"pre_tasks", "tasks", "post_tasks"} {
-		tasks = append(tasks, seq(p[key])...)
-	}
+	tasks := c.flatten(taskNodes, file, []string{file})
 	// Handlers run after every task, so they count as later for all of them.
 	c.factsAfter = map[*yaml.Node]bool{}
 	later := false
-	for _, h := range seq(p["handlers"]) {
+	for _, h := range handlerNodes {
 		later = later || readsFacts(h)
 	}
 	for i := len(tasks) - 1; i >= 0; i-- {
-		c.factsAfter[tasks[i]] = later
-		later = later || readsFacts(tasks[i])
+		c.factsAfter[tasks[i].node] = later
+		later = later || readsFacts(tasks[i].node)
 	}
+	used := map[string]int{}
 	for _, t := range tasks {
-		c.task(cb, t, become, vars, handlers, used)
+		c.file = t.file
+		if t.reason != "" {
+			c.issue(cb, scalar(mapping(t.node)["name"]), t.node, t.reason)
+			continue
+		}
+		c.task(cb, t.node, become, vars, handlers, used)
 	}
 	for _, hb := range handlerBlocks {
 		cb.AppendNewline()
 		cb.AppendBlock(hb)
 	}
-	return circuit
+}
+
+// handlerKeys are what a handler may set besides its module. A notify only
+// finds a handler by its name, so listen changes nothing.
+var handlerKeys = map[string]bool{"name": true, "listen": true, "tags": true, "no_log": true}
+
+// handler converts a handler that restarts or reloads a service into its
+// service block's attributes, returned with its Ansible name, or leaves it
+// for review.
+func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]string) ([]attr, string) {
+	t := mapping(h)
+	hname := scalar(t["name"])
+	if c.hidesValues(h) {
+		c.issue(cb, hname, h, noLogReason)
+		return nil, ""
+	}
+	for _, k := range sortedKeys(t) {
+		if keywords[k] && !handlerKeys[k] {
+			c.issue(cb, hname, h, "is a handler that uses "+k+", which the converter can't translate yet")
+			return nil, ""
+		}
+	}
+	mod, args := moduleOf(t)
+	action := map[string]string{"restarted": "restart", "reloaded": "reload"}[scalar(args["state"])]
+	if (mod != "service" && mod != "systemd" && mod != "systemd_service") || action == "" || len(args) != 2 || scalar(args["name"]) == "" {
+		c.issue(cb, hname, h, "is a handler that doesn't restart or reload a service; Conn3x handlers do only that")
+		return nil, ""
+	}
+	in := c.input(mod, args, vars, nil)
+	in.ignore("state")
+	svc := []step{{attrs: []attr{s("name", in.str("name")), s("action", action)}}}
+	reason := in.problem
+	if reason == "" {
+		reason = resolveMarks(svc)
+	}
+	if reason != "" {
+		c.issue(cb, hname, h, "is a handler that "+reason)
+		return nil, ""
+	}
+	return svc[0].attrs, hname
+}
+
+// input is what a module reads a task's arguments through.
+func (c *converter) input(mod string, args map[string]*yaml.Node, vars map[string]string, items []string) *input {
+	return &input{mod: mod, role: c.role, args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil, runAs: c.runAs}
 }
 
 // effectiveUser is who a play's tasks run as, as an expression, or empty when
@@ -396,6 +459,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		module = k
 	}
+	if t["become"] != nil && c.role != nil {
+		c.issue(body, name, node, "sets become, which in a circuit the ssh block decides for every step; take it off the task, and log in as root or set ssh_become")
+		return
+	}
 	if b := t["become"]; b != nil && truthy(scalar(b)) != playBecome {
 		c.issue(body, name, node, "sets become differently from its play; give it its own circuit with its own ssh block")
 		return
@@ -410,10 +477,14 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, "uses the "+mod+" module, which has no Conn3x equivalent yet")
 		return
 	}
-	in := &input{args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil, runAs: c.runAs, factsLater: c.factsAfter[node]}
+	in := c.input(mod, args, vars, items)
+	in.factsLater = c.factsAfter[node]
 	steps, reason := m(in)
 	if reason == "" && items != nil {
-		reason = loopSteps(steps, in.itemUsed)
+		reason = loopSteps(in.itemUsed)
+	}
+	if reason == "" {
+		reason = resolveMarks(steps)
 	}
 	if reason == "" {
 		reason = in.problem
@@ -430,7 +501,6 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, reason)
 		return
 	}
-
 	var notify []string
 	for _, n := range listOf(t["notify"]) {
 		h, ok := handlers[n]
@@ -439,6 +509,15 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			return
 		}
 		notify = append(notify, "handler."+h)
+	}
+
+	if c.role != nil {
+		for _, n := range in.commaFree {
+			c.role.commaFree[n] = true
+		}
+		for p, b := range in.out {
+			c.role.files[p] = b
+		}
 	}
 
 	base := slug(firstNonEmpty(name, mod))
@@ -491,13 +570,13 @@ var digits = regexp.MustCompile(`^[0-9]+$`)
 // playIssue records something about a whole play for review, as a comment
 // at the top of its circuit.
 func (c *converter) playIssue(body *hclwrite.Body, play string, node *yaml.Node, reason string) {
-	c.res.Review = append(c.res.Review, Issue{Task: "play " + play, Line: node.Line, Reason: reason})
+	c.res.Review = append(c.res.Review, Issue{Task: "play " + play, File: c.file, Line: node.Line, Reason: reason})
 	comment(body, fmt.Sprintf("TODO(convert): Play %q (%s line %d) %s.", play, c.file, node.Line, reason))
 }
 
 // issue records a task for review and leaves it in the output as comments.
 func (c *converter) issue(body *hclwrite.Body, name string, node *yaml.Node, reason string) {
-	c.res.Review = append(c.res.Review, Issue{Task: name, Line: node.Line, Reason: reason})
+	c.res.Review = append(c.res.Review, Issue{Task: name, File: c.file, Line: node.Line, Reason: reason})
 	body.AppendNewline()
 	what := "This task"
 	if name != "" {

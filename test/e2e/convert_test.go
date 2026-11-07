@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,32 @@ func TestConvertAnsibleThenApply(t *testing.T) {
 			}
 			if got := h.exec("", "sh", "-c", "cat /etc/ssh/ssh_known_hosts /root/.ssh/known_hosts; tail -n 1 /etc/security/limits.conf"); got != "git.example.com "+hostKeyAlice+"\nmirror.example.com "+hostKeyAlice+"\napp\tsoft\tnofile\t64000\n" {
 				t.Fatalf("converted known_hosts and limit steps left:\n%s", got)
+			}
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+				t.Fatalf("plan after apply:\n%s", out)
+			}
+		})
+	}
+}
+
+// A role converted with conn3x convert ansible -role applies as a module, and
+// a second plan finds nothing to change.
+func TestConvertAnsibleRoleThenApply(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	role := filepath.Join(filepath.Dir(here), "..", "..", "internal", "conn3x", "convert", "ansible", "testdata", "role", "app")
+	for _, image := range linuxImages {
+		t.Run(image, func(t *testing.T) {
+			h := startHost(t, image)
+			w := newWorkdir(t, "convert_role")
+			if out, code := w.conn3x("convert", "ansible", "-role", role, "-out", "circuit-app"); code != 0 || !strings.Contains(out, "Converted all 7 tasks.") {
+				t.Fatalf("convert exited %d:\n%s", code, out)
+			}
+			w.write(struct{ Port, Key, KnownHosts string }{h.port, h.keyFile, h.knownHosts})
+			w.mustConn3x("init", "-no-color")
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+			want := "# Set by the caller\n# Written by the app role. Prices in ${currency} stay as they are.\nport = 8080\nuser = app\ndir = /opt/app\napp 750\napp 640\nactive\nenabled\nSet by the caller\n"
+			if got := h.exec("", "sh", "-c", "cat /opt/app/app.conf; stat -c '%U %a' /opt/app /opt/app/app.conf; systemctl is-active app; systemctl is-enabled app; tail -n 1 /etc/issue.net; command -v tree >/dev/null"); got != want {
+				t.Fatalf("host after apply:\n%s", got)
 			}
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 				t.Fatalf("plan after apply:\n%s", out)
