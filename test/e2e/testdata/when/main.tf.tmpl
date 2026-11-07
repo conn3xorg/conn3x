@@ -1,0 +1,54 @@
+locals {
+  hosts = {
+{{- range $name, $port := .Ports}}
+    {{$name}} = { address = "127.0.0.1", port = {{$port}} }
+{{- end}}
+  }
+  family = { for name, f in data.conn3x_host.facts : name => f.os_family }
+}
+
+data "conn3x_host" "facts" {
+  for_each = local.hosts
+  ssh {
+    host             = each.value.address
+    port             = each.value.port
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
+
+circuit "os" {
+  hosts    = local.hosts
+  strategy = "per_host"
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "redhat" {
+    when = {{.RedHatWhen}}
+    file {
+      path    = "/etc/conn3x-when"
+      content = "redhat\n"
+    }
+  }
+
+  step "debian" {
+    when = local.family[each.key] == "debian"
+    file {
+      path    = "/etc/conn3x-when"
+      content = "debian\n"
+    }
+  }
+
+  # No when: waits on each host for whichever of the steps above ran there.
+  step "after" {
+    command {
+      command = "test -s /etc/conn3x-when && date +%s.%N > /tmp/after"
+      creates = "/tmp/after"
+    }
+  }
+}
