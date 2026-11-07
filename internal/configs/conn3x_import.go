@@ -42,6 +42,13 @@ var importModules = map[string]string{
 	"conn3x_service":   "service",
 	"conn3x_user":      "user",
 	"conn3x_group":     "group",
+
+	"conn3x_authorized_key": "authorized_key",
+	"conn3x_cron":           "cron",
+	"conn3x_timer":          "timer",
+	"conn3x_sysctl":         "sysctl",
+	"conn3x_mount":          "mount",
+	"conn3x_repository":     "repository",
 }
 
 // importLeftOut never go into an import ID: the content is read from the

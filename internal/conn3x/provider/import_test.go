@@ -44,6 +44,12 @@ func TestImportPriorPerModule(t *testing.T) {
 			}
 			return nil
 		}},
+		{"conn3x_authorized_key", `{"user":"deploy","key":"ssh-ed25519 AAAA deploy"}`, "203.0.113.10:2222:authorized_key:deploy", nil},
+		{"conn3x_cron", `{"name":"backup","schedule":"@daily","command":"true"}`, "203.0.113.10:2222:cron:backup", nil},
+		{"conn3x_timer", `{"name":"cleanup","on_calendar":"daily","command":"true"}`, "203.0.113.10:2222:timer:cleanup", nil},
+		{"conn3x_sysctl", `{"name":"vm.swappiness","value":"10"}`, "203.0.113.10:2222:sysctl:vm.swappiness", nil},
+		{"conn3x_mount", `{"path":"/mnt/scratch","src":"tmpfs","fstype":"tmpfs"}`, "203.0.113.10:2222:mount:/mnt/scratch", nil},
+		{"conn3x_repository", `{"name":"example","url":"https://repo.example.com/","key":"k"}`, "203.0.113.10:2222:repository:example", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
 			_, v, err := importPrior(tc.typeName, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+tc.args+`}`)
@@ -56,8 +62,11 @@ func TestImportPriorPerModule(t *testing.T) {
 			if !v.GetAttr("ssh").GetAttr("port").RawEquals(cty.NumberIntVal(2222)) {
 				t.Errorf("ssh = %#v", v.GetAttr("ssh"))
 			}
-			if tc.typeName != "conn3x_group" && !v.GetAttr("on_remove").RawEquals(cty.StringVal("forget")) {
-				t.Errorf("on_remove = %#v", v.GetAttr("on_remove"))
+			// The default plan gives on_remove, so the plan after an import
+			// doesn't change it.
+			want := map[bool]string{false: "forget", true: "delete"}[importDeletes[tc.typeName]]
+			if tc.typeName != "conn3x_group" && !v.GetAttr("on_remove").RawEquals(cty.StringVal(want)) {
+				t.Errorf("on_remove = %#v, want %s", v.GetAttr("on_remove"), want)
 			}
 			if tc.check != nil {
 				if err := tc.check(v); err != nil {
@@ -76,6 +85,7 @@ func TestImportPriorRejectsBadIDs(t *testing.T) {
 		"no ssh":        {"conn3x_file", `{"v":1,"key":"web1","args":{"path":"/x"}}`, "needs key and ssh"},
 		"no path":       {"conn3x_file", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{}}`, "has no path"},
 		"no name":       {"conn3x_user", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{}}`, "has no name"},
+		"no key":        {"conn3x_authorized_key", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"user":"deploy"}}`, "has no key"},
 		"content":       {"conn3x_file", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"path":"/x","content":"s"}}`, "can't hold content"},
 		"bad arg":       {"conn3x_package", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"name":"x","nope":1}}`, "nope"},
 		"wo not file":   {"conn3x_user", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"name":"x"},"write_only":true}`, "files only"},
@@ -173,6 +183,17 @@ func TestImportMissingObjectSaysWhatToDo(t *testing.T) {
 	resp := f.importAs("conn3x_file", f.importID(fmt.Sprintf(`{"path":%q}`, f.path), false))
 	err := resp.Diagnostics.Err()
 	if err == nil || !strings.Contains(err.Error(), "Nothing to import on web1") || !strings.Contains(err.Error(), "Remove web1 from the step's import") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A cron step's read says only whether the job matches, so the import asks
+// the host first whether the job is there at all.
+func TestImportMissingCronSaysWhatToDo(t *testing.T) {
+	f := newFileTest(t)
+	resp := f.importAs("conn3x_cron", f.importID(`{"name":"conn3x-import-test-none","schedule":"@daily","command":"true"}`, false))
+	err := resp.Diagnostics.Err()
+	if err == nil || !strings.Contains(err.Error(), "Nothing to import on web1") || !strings.Contains(err.Error(), "cron job conn3x-import-test-none") {
 		t.Fatalf("err = %v", err)
 	}
 }
