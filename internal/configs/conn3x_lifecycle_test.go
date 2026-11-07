@@ -149,6 +149,29 @@ func TestTemplateStepIgnoreChangesUsesStepNames(t *testing.T) {
 	}
 }
 
+// The quoted names Terraform 0.11 required are renamed too, and still warn.
+func TestTemplateStepIgnoreChangesQuoted(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{
+		"main.circuit.hcl": lifecycleCircuit(`template {
+      source      = "motd.tftpl"
+      destination = "/etc/motd"
+    }`, `ignore_changes = ["source", "destination", mode]`),
+	})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	if len(diags) != 2 || diags[0].Summary != "Quoted references are deprecated" {
+		t.Fatalf("want two quoted-reference warnings, got %v", diags)
+	}
+	var got []string
+	for _, tr := range mod.ManagedResources["conn3x_file.web__s"].Managed.IgnoreChanges {
+		got = append(got, traversalString(tr))
+	}
+	if strings.Join(got, ",") != "content,path,mode" {
+		t.Fatalf("ignore_changes = %v", got)
+	}
+}
+
 // In a looping step, each and item inside a condition mean the host and the
 // item, as they do in the module block.
 func TestLoopingStepConditionRefsRewritten(t *testing.T) {

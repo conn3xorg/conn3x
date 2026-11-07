@@ -104,6 +104,19 @@ func TestRewriteHelpPrompt(t *testing.T) {
 	}
 }
 
+// Versions before 1.0 are Terraform's: Conn3x and OpenTofu never had them.
+func TestRewriteKeepsTerraformVersions(t *testing.T) {
+	for in, want := range map[string]string{
+		`"OpenTofu 0.11 and earlier required quotes, but quoted references are now deprecated in OpenTofu."`: `"Terraform 0.11 and earlier required quotes, but quoted references are now deprecated in Conn3x."`,
+		`"is no longer supported after OpenTofu v0.12."`:                                                     `"is no longer supported after Terraform v0.12."`,
+		`"needs OpenTofu 1.6 or later."`:                                                                     `"needs Conn3x 1.6 or later."`,
+	} {
+		if got := rewriteLiteral(in); got != want {
+			t.Errorf("rewriteLiteral(%s) = %s, want %s", in, got, want)
+		}
+	}
+}
+
 // The version message at the top of every -json stream names the Conn3x
 // release, not OpenTofu's version under the Conn3x name.
 func TestGenerateBrandsJSONVersion(t *testing.T) {

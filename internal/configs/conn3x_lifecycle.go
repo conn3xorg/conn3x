@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // A step's lifecycle block is decoded by upstream's own resource decoder,
@@ -139,24 +140,43 @@ func renameTemplateIgnores(lc *hclsyntax.Block, r *Resource) {
 	if body, ok := r.Config.(*hclsyntax.Body); ok && body.Attributes["content_wo"] != nil {
 		content = "content_wo" // upstream then explains write-only arguments can't be ignored
 	}
-	// shortcut: only bare names are renamed, not the legacy quoted form; upstream reports a quoted "source" as unknown.
-	for _, e := range list.Exprs {
-		t, ok := e.(*hclsyntax.ScopeTraversalExpr)
-		if !ok || len(t.Traversal) == 0 {
-			continue
-		}
-		root, ok := t.Traversal[0].(hcl.TraverseRoot)
-		if !ok {
-			continue
-		}
-		to, ok := templateLowered[root.Name]
-		if !ok {
-			continue
-		}
+	rename := func(name string) string {
+		to, ok := templateLowered[name]
 		if to == "content" {
 			to = content
 		}
-		root.Name = to
-		t.Traversal[0] = root
+		if !ok {
+			return name
+		}
+		return to
+	}
+	for _, e := range list.Exprs {
+		switch e := e.(type) {
+		case *hclsyntax.ScopeTraversalExpr:
+			if root, ok := e.Traversal[0].(hcl.TraverseRoot); ok {
+				root.Name = rename(root.Name)
+				e.Traversal[0] = root
+			}
+		case *hclsyntax.TemplateExpr:
+			// The quoted form upstream still accepts, with a warning, by
+			// parsing the string; rename the string's root before it does.
+			if len(e.Parts) != 1 {
+				continue
+			}
+			lit, ok := e.Parts[0].(*hclsyntax.LiteralValueExpr)
+			if !ok || lit.Val.Type() != cty.String || !lit.Val.IsKnown() || lit.Val.IsNull() {
+				continue
+			}
+			str := lit.Val.AsString()
+			tr, diags := hclsyntax.ParseTraversalAbs([]byte(str), "", hcl.InitialPos)
+			if diags.HasErrors() {
+				continue
+			}
+			root, ok := tr[0].(hcl.TraverseRoot)
+			if !ok || !strings.HasPrefix(str, root.Name) {
+				continue
+			}
+			lit.Val = cty.StringVal(rename(root.Name) + str[len(root.Name):])
+		}
 	}
 }

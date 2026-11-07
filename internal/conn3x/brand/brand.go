@@ -29,7 +29,12 @@ import (
 // ".tofu", "tofu.rc" and a bare "tofu" don't match.
 var commandPattern = regexp.MustCompile(`(^|[^\w.\-/])tofu( (?:\[|-|%s|init|plan|apply|destroy|validate|fmt|console|show|state|import|output|providers|refresh|taint|untaint|workspace|graph|login|logout|get|force-unlock|test|metadata|version|modules)\b)`)
 
+// olderRelease matches OpenTofu before a 0.x version. OpenTofu's first
+// release was 1.6, so those upstream messages mean Terraform.
+var olderRelease = regexp.MustCompile(`OpenTofu( v?0\.)`)
+
 func rewriteLiteral(lit string) string {
+	lit = olderRelease.ReplaceAllString(lit, "Terraform$1")
 	lit = strings.ReplaceAll(lit, "OpenTofu", "Conn3x")
 	return commandPattern.ReplaceAllString(lit, "${1}conn3x$2")
 }
