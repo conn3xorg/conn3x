@@ -104,6 +104,18 @@ func TestRewriteHelpPrompt(t *testing.T) {
 	}
 }
 
+// Upstream diagnostics about pre-fork behavior name the version that had
+// it, "OpenTofu 0.11", which the blanket OpenTofu->Conn3x replace would
+// otherwise turn into an equally wrong "Conn3x 0.11": OpenTofu forked from
+// Terraform at 1.6 and never had a 0.x release.
+func TestRewriteKeepsPreForkVersionAsTerraform(t *testing.T) {
+	got := rewriteLiteral("OpenTofu 0.11 and earlier required quotes, but quoted references are now deprecated and will be removed in a future version of OpenTofu.")
+	want := "Terraform 0.11 and earlier required quotes, but quoted references are now deprecated and will be removed in a future version of Conn3x."
+	if got != want {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+}
+
 // The version message at the top of every -json stream names the Conn3x
 // release, not OpenTofu's version under the Conn3x name.
 func TestGenerateBrandsJSONVersion(t *testing.T) {
