@@ -182,6 +182,18 @@ func TestConn3xChainLockstepGraph(t *testing.T) {
 	}
 }
 
+// A looping step with no items has no instance on a host to carry the
+// wait, so the step after it still waits for the one before it, and so
+// does a handler after an empty last step. Seen on Azure: circuit-iis's
+// app_pool started with IIS's install when url_rewrite was off.
+func TestConn3xChainPerHostEmptyLoop(t *testing.T) {
+	src := strings.NewReplacer("STRATEGY", `strategy = "per_host"`, "EXTRA", "", `for_each = ["x", "y"]`, "for_each = []",
+		"    notify = [handler.restart]\n  }", "    notify = [handler.restart]\n  }\n  step \"tail\" {\n    for_each = []\n    command {\n      command = \"tail\"\n    }\n  }").Replace(chainCircuit)
+	deps := chainDeps(t, testModuleInline(t, map[string]string{"main.circuit.hcl": src}))
+	checkChainDeps(t, deps, `conn3x_command.web__two["a"]`, map[string]bool{`conn3x_command.web__one["a"]`: true, `conn3x_command.web__one["b"]`: false})
+	checkChainDeps(t, deps, `conn3x_service_action.web__restart["a"]`, map[string]bool{`conn3x_command.web__two["a"]`: true, `conn3x_command.web__two["b"]`: false})
+}
+
 // A step that reads another host's value still waits for that host.
 func TestConn3xChainPerHostKeepsUserReferences(t *testing.T) {
 	deps := chainDeps(t, chainModule(t, `strategy = "per_host"`, `creates = conn3x_command.web__one["b"].revision`))
