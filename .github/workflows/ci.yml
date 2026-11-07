@@ -122,12 +122,16 @@ jobs:
         run: |
           ./dist/conn3x version | grep -E '^agent: linux/amd64 [0-9a-f]{12}, linux/arm64 [0-9a-f]{12}$' \
             || { echo "conn3x version has no agent line" >&2; exit 1; }
-      - name: Stay smaller than tofu
+      # The embedded host agents are a separate program conn3x carries for
+      # hosts; the CLI itself must stay smaller than the tofu it's built from.
+      - name: Stay smaller than tofu, not counting the embedded agents
         run: |
           c=$(stat -c %s dist/conn3x)
+          a=$(cat internal/conn3x/agent/payload/conn3x-agent-* | wc -c)
           t=$(stat -c %s dist/tofu)
-          echo "conn3x $((c / 1000000)) MB, tofu $((t / 1000000)) MB"
-          [ "$c" -lt "$t" ] || { echo "conn3x has grown past the tofu it is built from" >&2; exit 1; }
+          echo "conn3x $((c / 1000000)) MB (agents $((a / 1000)) KB), tofu $((t / 1000000)) MB"
+          [ "$a" -gt 0 ] || { echo "found no embedded agents to subtract" >&2; exit 1; }
+          [ $((c - a)) -lt "$t" ] || { echo "conn3x without its agents has grown past the tofu it is built from" >&2; exit 1; }
       - name: Cross-compile for the release targets
         run: |
           for target in linux/arm64 darwin/arm64 windows/amd64; do

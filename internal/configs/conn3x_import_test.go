@@ -72,6 +72,60 @@ func TestStepImportLowersToAnImportBlock(t *testing.T) {
 	}
 }
 
+// The modules added after the first eight lower the same way, with all of
+// the step's arguments in the ID.
+func TestStepImportSyncedModules(t *testing.T) {
+	for typ, step := range map[string]string{
+		"conn3x_authorized_key": `authorized_key {
+      user = "deploy"
+      key  = "ssh-ed25519 AAAA deploy"
+    }`,
+		"conn3x_cron": `cron {
+      name     = "backup"
+      schedule = "@daily"
+      command  = "true"
+    }`,
+		"conn3x_timer": `timer {
+      name        = "cleanup"
+      on_calendar = "daily"
+      command     = "true"
+    }`,
+		"conn3x_sysctl": `sysctl {
+      name  = "vm.swappiness"
+      value = "10"
+    }`,
+		"conn3x_mount": `mount {
+      path   = "/mnt/scratch"
+      src    = "tmpfs"
+      fstype = "tmpfs"
+    }`,
+		"conn3x_repository": `repository {
+      name = "example"
+      url  = "https://repo.example.com/"
+      key  = "k"
+    }`,
+	} {
+		mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit("step \"s\" {\n    import = true\n    " + step + "\n  }")})
+		if diags.HasErrors() {
+			t.Fatalf("%s: %s", typ, diags.Error())
+		}
+		if len(mod.Import) != 1 || mod.Import[0].StaticTo.String() != typ+".web__s" {
+			t.Fatalf("%s: imports %v", typ, mod.Import)
+		}
+	}
+	mod, _ := loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit(`step "s" {
+    import = true
+    authorized_key {
+      user = "deploy"
+      key  = "ssh-ed25519 AAAA deploy"
+    }
+  }`)})
+	got := importIDFor(t, mod.Import[0], "web1", cty.StringVal("203.0.113.10"))
+	if !strings.Contains(got, `"args":{"key":"ssh-ed25519 AAAA deploy","user":"deploy"}`) {
+		t.Fatalf("ID = %s", got)
+	}
+}
+
 func TestStepImportFalseImportsNothing(t *testing.T) {
 	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit(`step "nginx" {
     import = false
