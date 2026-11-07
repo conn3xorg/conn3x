@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -35,7 +36,7 @@ func planSynced(req providers.PlanResourceChangeRequest, kind string, keys, sett
 	vals["id"] = cty.UnknownVal(cty.String)
 	id := []string{kind}
 	for _, k := range keys {
-		if !vals[k].IsKnown() {
+		if !vals[k].IsWhollyKnown() {
 			id = nil
 			break
 		}
@@ -74,13 +75,20 @@ func planSynced(req providers.PlanResourceChangeRequest, kind string, keys, sett
 }
 
 // keyString renders a key attribute for an id: "" when null, numbers in
-// plain decimal.
+// plain decimal, a list's elements joined with " > ", as eos_config's
+// parents nest.
 func keyString(v cty.Value) string {
 	switch {
 	case v.IsNull():
 		return ""
 	case v.Type() == cty.Number:
 		return v.AsBigFloat().Text('f', -1)
+	case v.Type().IsListType():
+		parts := make([]string, 0, v.LengthInt())
+		for _, e := range v.AsValueSlice() {
+			parts = append(parts, keyString(e))
+		}
+		return strings.Join(parts, " > ")
 	}
 	return v.AsString()
 }
