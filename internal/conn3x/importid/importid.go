@@ -55,7 +55,7 @@ func Build(key string, ssh, args cty.Value) (string, error) {
 
 // attrs is an object's or map's non-null attributes.
 func attrs(what string, v cty.Value) (map[string]cty.Value, error) {
-	if v.IsNull() || !(v.Type().IsObjectType() || v.Type().IsMapType()) {
+	if v.IsNull() || (!v.Type().IsObjectType() && !v.Type().IsMapType()) {
 		return nil, fmt.Errorf("%s must be an object, such as { host = \"203.0.113.10\" }", what)
 	}
 	out := map[string]cty.Value{}
