@@ -216,6 +216,27 @@ func TestRefusedTasksDontEchoSecrets(t *testing.T) {
 	}
 }
 
+// A group's members are checked after domain_password, so these carry no
+// password: with one, the task would stop at that and never reach them.
+func TestADGroupRefusalReasons(t *testing.T) {
+	for task, reason := range map[string]string{
+		`microsoft.ad.group: {name: g, scope: global, members: [alice]}`:                                   "gives members that aren't add, set or remove lists",
+		`microsoft.ad.group: {name: g, scope: global, members: {add: [a], set: [b]}}`:                      "both adds and sets members",
+		`microsoft.ad.group: {name: g, scope: global, members: {add: [a], lookup_failure_action: warn}}`:   "sets lookup_failure_action warn",
+		`win_domain_group: {name: g, scope: global, members: {add: [a], something_new: x}}`:                "sets something_new in members",
+		`microsoft.ad.group: {name: g, scope: global, members: {add: ['CN=alice,OU=Lab,DC=lab,DC=test']}}`: "something other than its sAMAccountName",
+		`win_domain_group: {name: g, scope: global, members: {add: [alice@lab.test]}}`:                     "something other than its sAMAccountName",
+		`microsoft.ad.group: {name: g, scope: global, members: {add: ['LAB\a']}}`:                          "something other than its sAMAccountName",
+		`microsoft.ad.group: {name: g, scope: global, members: {remove: [a]}}`:                             "takes members out by name",
+		`microsoft.ad.group: {name: g, scope: global, domain_server: dc1}`:                                 "sets domain_server",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%s: converted %d, review %+v, want %q", task, res.Converted, res.Review, reason)
+		}
+	}
+}
+
 // An anchor could carry a secret's value to the place it's defined, which the
 // redaction doesn't see, so a task with any is echoed not at all.
 func TestRefusedTasksWithAnchorsAreNotEchoed(t *testing.T) {
@@ -248,6 +269,7 @@ func TestWindowsADObjects(t *testing.T) {
 			"windows_ad_group {", `scope         = "global"`, `members       = ["alice", "web1$"]`, "authoritative = true",
 		},
 		`microsoft.ad.group: {name: Ops, scope: universal, members: {add: [bob]}}`: {"windows_ad_group {", `members = ["bob"]`},
+		`microsoft.ad.group: {name: Empty, scope: global, members: {set: []}}`:     {"windows_ad_group {", `members       = []`, "authoritative = true"},
 		`community.windows.win_domain_group: {name: Ops, scope: domainlocal, organizational_unit: 'OU=Lab,DC=lab,DC=example,DC=com'}`: {
 			"windows_ad_group {", `path  = "OU=Lab,DC=lab,DC=example,DC=com"`, `scope = "domainlocal"`,
 		},
