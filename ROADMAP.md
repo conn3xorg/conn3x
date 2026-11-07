@@ -7,7 +7,7 @@ The goal: anything you'd do with Terraform, OpenTofu, Ansible, Chef or Puppet, y
 ## Today
 
 - Linux hosts: Rocky Linux, RHEL, AlmaLinux, Fedora, Debian and Ubuntu, tested on every change.
-- Windows Server 2022 and 2025 over OpenSSH, in preview: files, access rules, registry, services, features, users and groups, firewall rules, MSI packages, scheduled tasks and IIS, with a tested [Azure example](examples/azure-windows-server). A circuit can also build a small Active Directory domain: set a server's DNS servers, make it the first domain controller of a new forest, and, since v0.7.2, join other servers to the domain and promote a member to another domain controller. The [azure-domain example](examples/azure-domain) builds the forest and joins a server to it. Every Windows module is experimental.
+- Windows Server 2022 and 2025 over OpenSSH, in preview: files, access rules, registry, services, features, users and groups, firewall rules, MSI packages, scheduled tasks and IIS, with a tested [Azure example](examples/azure-windows-server). A circuit can also build a small Active Directory domain: set a server's DNS servers, make it the first domain controller of a new forest, and, since v0.7.2, join other servers to the domain and promote a member to another domain controller, and since v0.7.3, keep the OUs, groups and users inside it. The [azure-domain example](examples/azure-domain) builds the forest, joins a server to it, and creates an OU, a user and a group with that user in it. Every Windows module is experimental.
 - 125 official circuits, from nginx and PostgreSQL to k3s, Suricata and a private AI stack, in the [catalogue](https://docs.conn3x.org/circuits).
 - The [Circuit Builder](https://conn3x.org/build), which writes a config from the circuits you pick, with host roles, an optional step that creates the servers too, and a link you can share.
 - `conn3x convert ansible` for bringing playbooks across, and `conn3x drift` for both layers.
@@ -15,7 +15,7 @@ The goal: anything you'd do with Terraform, OpenTofu, Ansible, Chef or Puppet, y
 
 ## Now
 
-Windows at scale. A forest, member servers and more domain controllers work. Organizational units, groups and users come next, then a lab that builds a whole domain, and what's in it, from one config, then many Windows hosts in one apply and the modules moving out of experimental. Promoting a domain controller straight from a workgroup server, child domains and the `ou` argument on a join are still untested.
+Windows at scale. A forest, member servers, more domain controllers, and the OUs, groups and users in the domain work. Next is a lab that builds a whole domain, and what's in it, from one config, then many Windows hosts in one apply and the modules moving out of experimental. Promoting a domain controller straight from a workgroup server, child domains and the `ou` argument on a join are still untested, and a group can't list members from another domain.
 
 ## Next
 
