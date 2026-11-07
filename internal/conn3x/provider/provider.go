@@ -71,6 +71,9 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 
 	"conn3x_windows_acl":                  {winACLSchema, validateWinACL, planWinACL, readWinACL, applyWinACL, upgradeWith(winACLSchema)},
+	"conn3x_windows_ad_group":             {winADGroupSchema, validateWinADGroup, planWinADGroup, readWinADGroup, applyWinADGroup, upgradeWith(winADGroupSchema)},
+	"conn3x_windows_ad_ou":                {winADOUSchema, validateWinADOU, planWinADOU, readWinADOU, applyWinADOU, upgradeWith(winADOUSchema)},
+	"conn3x_windows_ad_user":              {winADUserSchema, validateWinADUser, planWinADUser, readWinADUser, applyWinADUser, upgradeWith(winADUserSchema)},
 	"conn3x_windows_ad_forest":            {winForestSchema, validateWinForest, planWinForest, readWinForest, applyWinForest, upgradeWith(winForestSchema)},
 	"conn3x_windows_directory":            {winDirectorySchema, validateWinDirectory, planWinDirectory, readWinDirectory, applyWinDirectory, upgradeWith(winDirectorySchema)},
 	"conn3x_windows_ad_domain_controller": {winDCSchema, validateWinDC, planWinDC, readWinDC, applyWinDC, upgradeWith(winDCSchema)},

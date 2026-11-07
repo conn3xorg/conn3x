@@ -37,3 +37,23 @@ function Set-RebootMarker {
     $k.Close()
   } finally { $parent.Close() }
 }
+
+# For the OU, group and user scripts: the ActiveDirectory module, without the
+# AD: drive, which would only slow the import down.
+function Import-AD {
+  $env:ADPS_LoadDefaultDrive = 0
+  Import-Module ActiveDirectory -ErrorAction Stop
+}
+
+# Sets one text attribute, or clears it for "", which the cmdlets refuse as a
+# value. $null leaves it as it is.
+function Set-ADText($dn, $attr, $value) {
+  if ($null -eq $value) { return }
+  if ([string]$value -eq '') { Set-ADObject -Identity $dn -Clear $attr } else { Set-ADObject -Identity $dn -Replace @{ $attr = [string]$value } }
+}
+
+# The SIDs the login has, itself and through its groups.
+function Get-LoginSIDs {
+  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+  @($id.User.Value) + @($id.Groups | ForEach-Object { $_.Value })
+}
