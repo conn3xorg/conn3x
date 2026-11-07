@@ -313,14 +313,22 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported argument in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify and one module block, not %q.", attrName),
+				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify, one module block and a lifecycle block, not %q.", attrName),
 				Subject:  &rng,
 			})
 		}
 	}
-	if len(body.Blocks) > 1 {
+	var modules, lifecycles hclsyntax.Blocks
+	for _, block := range body.Blocks {
+		if block.Type == "lifecycle" {
+			lifecycles = append(lifecycles, block)
+		} else {
+			modules = append(modules, block)
+		}
+	}
+	if len(modules) > 1 {
 		unsupported := false
-		for _, block := range body.Blocks {
+		for _, block := range modules {
 			if _, ok := circuitModules[block.Type]; ok || block.Type == "template" {
 				continue
 			}
@@ -329,7 +337,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported block in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify and one module block, not %q.", block.Type),
+				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify, one module block and a lifecycle block, not %q.", block.Type),
 				Subject:  &rng,
 			})
 		}
@@ -337,7 +345,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			return nil, diags
 		}
 	}
-	if len(body.Blocks) != 1 {
+	if len(modules) != 1 {
 		rng := step.DefRange
 		return nil, append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
@@ -346,7 +354,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			Subject:  &rng,
 		})
 	}
-	module := body.Blocks[0]
+	module := modules[0]
 	resourceType, ok := circuitModules[module.Type]
 	moduleAttrs := module.Body.Attributes
 	if module.Type == "template" {
@@ -403,6 +411,9 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			hcl.TraverseRoot{Name: previous.Type, SrcRange: step.DefRange},
 			hcl.TraverseAttr{Name: previous.Name, SrcRange: step.DefRange},
 		})
+	}
+	if len(lifecycles) > 0 {
+		diags = append(diags, stepLifecycle(r, module, lifecycles, looping)...)
 	}
 	return r, diags
 }
@@ -681,10 +692,22 @@ func warnOnConflictingEdits(steps hcl.Blocks) hcl.Diagnostics {
 	parts := map[string]hcl.Range{}
 	for _, step := range steps {
 		body, ok := step.Body.(*hclsyntax.Body)
-		if !ok || len(body.Blocks) != 1 {
+		if !ok {
 			continue
 		}
-		module := body.Blocks[0]
+		var module *hclsyntax.Block
+		for _, b := range body.Blocks {
+			if b.Type != "lifecycle" {
+				if module != nil {
+					module = nil
+					break
+				}
+				module = b
+			}
+		}
+		if module == nil {
+			continue
+		}
 		attr := module.Body.Attributes["path"]
 		if module.Type == "template" {
 			attr = module.Body.Attributes["destination"]

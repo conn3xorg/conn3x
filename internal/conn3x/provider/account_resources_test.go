@@ -86,3 +86,17 @@ func TestUserValidate(t *testing.T) {
 		t.Error("relative shell accepted")
 	}
 }
+
+// Apply gets the raw config, not the one ignore_changes was applied to, so
+// an ignored argument must take its planned (prior) value.
+func TestWithIgnoredKeepsPlannedValues(t *testing.T) {
+	cfg := userObj(map[string]cty.Value{"name": cty.StringVal("deploy"), "shell": cty.StringVal("/bin/sh")})
+	planned := userObj(deployState) // shell ignored: planned carries the prior /bin/bash
+	got := userSpec(withIgnored(cfg, planned))
+	if got.Shell == nil || *got.Shell != "/bin/bash" {
+		t.Fatalf("shell = %v, want the planned /bin/bash", got.Shell)
+	}
+	if got.Home != nil || got.UID != nil {
+		t.Fatalf("arguments the config leaves out became managed: %+v", got)
+	}
+}

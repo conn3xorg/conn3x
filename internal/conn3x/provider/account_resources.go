@@ -123,7 +123,7 @@ func readUser(ctx context.Context, req providers.ReadResourceRequest) providers.
 func applyUser(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	return applyAccount(ctx, req,
 		func(ctx context.Context, host *hostConn) (cty.Value, error) {
-			spec := userSpec(req.Config)
+			spec := userSpec(withIgnored(req.Config, req.PlannedState))
 			if err := account.ApplyUser(ctx, host, spec); err != nil {
 				return cty.NilVal, fmt.Errorf("user %s: %w", spec.Name, err)
 			}
@@ -233,7 +233,7 @@ func readGroup(ctx context.Context, req providers.ReadResourceRequest) providers
 func applyGroup(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	return applyAccount(ctx, req,
 		func(ctx context.Context, host *hostConn) (cty.Value, error) {
-			spec := groupSpec(req.Config)
+			spec := groupSpec(withIgnored(req.Config, req.PlannedState))
 			if err := account.ApplyGroup(ctx, host, spec); err != nil {
 				return cty.NilVal, fmt.Errorf("group %s: %w", spec.Name, err)
 			}
@@ -315,6 +315,21 @@ func readAccount(ctx context.Context, req providers.ReadResourceRequest, read fu
 	}
 	resp.NewState = state
 	return resp
+}
+
+// withIgnored is the configuration with lifecycle ignore_changes applied.
+// OpenTofu applies ignore_changes to the config it plans with but sends
+// apply the raw config, so each argument the config sets takes its planned
+// value instead, which is the prior value when the argument is ignored.
+// Arguments the config leaves out stay unset, so they stay unmanaged.
+func withIgnored(cfg, planned cty.Value) cty.Value {
+	vals := cfg.AsValueMap()
+	for k, v := range vals {
+		if p := planned.GetAttr(k); !v.IsNull() && p.IsKnown() && !p.IsNull() {
+			vals[k] = p
+		}
+	}
+	return cty.ObjectVal(vals)
 }
 
 func applyAccount(ctx context.Context, req providers.ApplyResourceChangeRequest,
