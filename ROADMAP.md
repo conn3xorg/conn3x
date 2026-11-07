@@ -5,7 +5,7 @@ The full roadmap lives at [docs.conn3x.org/roadmap](https://docs.conn3x.org/road
 ## Today
 
 - Linux hosts: Rocky Linux, RHEL, AlmaLinux, Fedora, Debian and Ubuntu, tested on every change.
-- Windows Server 2022 and 2025 over OpenSSH, in preview: files, access rules, registry, services, features, users and groups, firewall rules, MSI packages, scheduled tasks and IIS, with a tested [Azure example](examples/azure-windows-server). Since v0.7.1 a circuit can also set a server's DNS servers and make it the first domain controller of a new Active Directory forest. Every Windows module is experimental.
+- Windows Server 2022 and 2025 over OpenSSH, in preview: files, access rules, registry, services, features, users and groups, firewall rules, MSI packages, scheduled tasks and IIS, with a tested [Azure example](examples/azure-windows-server). A circuit can also build a small Active Directory domain: set a server's DNS servers, make it the first domain controller of a new forest, and, since v0.7.2, join other servers to the domain and promote a member to another domain controller. The [azure-domain example](examples/azure-domain) builds the forest and joins a server to it. Every Windows module is experimental.
 - 125 official circuits, from nginx and PostgreSQL to k3s, Suricata and a private AI stack, in the [catalogue](https://docs.conn3x.org/circuits).
 - The [Circuit Builder](https://conn3x.org/build), which writes a config from the circuits you pick, with host roles, an optional step that creates the servers too, and a link you can share.
 - `conn3x convert ansible` for bringing playbooks across, and `conn3x drift` for both layers.
@@ -13,7 +13,7 @@ The full roadmap lives at [docs.conn3x.org/roadmap](https://docs.conn3x.org/road
 
 ## Now
 
-The rest of Active Directory on Windows. A new forest works; more domain controllers and joining a server to a domain don't yet. After those, a lab that builds a whole domain from one config.
+The rest of Active Directory on Windows. A forest, member servers and more domain controllers work. Organizational units, groups and users don't yet. After those, a lab that builds a whole domain, and what's in it, from one config. Promoting a domain controller straight from a workgroup server, child domains and the `ou` argument on a join are still untested.
 
 ## Next
 
