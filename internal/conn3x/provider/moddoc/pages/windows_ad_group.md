@@ -32,6 +32,8 @@ step "web_servers" {
 
 **Names.** `name` is the group's name and its sAMAccountName, the name you'd type after `LAB\`. The group is found by that name anywhere in the domain, so if it's sitting in another OU and `path` is set, apply moves it.
 
+**Waiting for AD.** Straight after a DC reboots, Active Directory can answer for the domain a minute before its global catalog does, and a write made in that minute can hang. So apply first waits until a query through the global catalog works too, for up to 10 minutes, then fails with the reason AD last gave. A write that gets no answer at all runs once more when AD answers again. It reads first, so it only writes what's still missing. A host that isn't a DC isn't waited on.
+
 **Members.** Each member is a sAMAccountName in the same domain: `alice` for a user, `ops` for a group, `web1$` for a computer. Not `LAB\alice` and not a distinguished name, so there's only one way to write each account. Conn3x compares them by distinguished name, which means moving a user to another OU doesn't make the group drift.
 
 By default, `members` are added and nobody else is taken out. With `authoritative = true` the list is complete, and anyone else is removed on apply. Accounts from other domains can't be listed yet; with `authoritative`, they'd be removed.

@@ -35,6 +35,8 @@ step "svc_backup" {
 
 **Names.** `name` is the logon name, the sAMAccountName, up to 20 characters. The user is found by it anywhere in the domain, and it's also the user's name in the directory. If the user is in another OU and `path` is set, apply moves it.
 
+**Waiting for AD.** Straight after a DC reboots, Active Directory can answer for the domain a minute before its global catalog does, and a write made in that minute can hang. So apply first waits until a query through the global catalog works too, for up to 10 minutes, then fails with the reason AD last gave. A write that gets no answer at all runs once more when AD answers again. It reads first, so it only writes what's still missing. A host that isn't a DC isn't waited on.
+
 **The password.** `password_wo` goes to the domain controller on stdin and becomes a `SecureString` through .NET before any cmdlet sees it, so a logging policy that records cmdlet parameters records only the type name. It's never in plan or state, and it's blanked from errors. State keeps an HMAC of it, so a new password plans a change and the same one doesn't. A password someone resets in the domain isn't detected, because it can't be read back.
 
 **Enabled.** A new user with `password_wo` is enabled, and one without stays disabled, as Windows would have it. It's made disabled first and enabled only once the password is set. `enabled = true` with no password ever set is refused. Conn3x won't disable or delete the user it logs in as.
