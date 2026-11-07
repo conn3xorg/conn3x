@@ -19,7 +19,7 @@ step "join" {
   windows_domain_membership {
     domain      = "lab.example.com"
     username    = "LAB\\joiner"
-    password_wo = var.join_password
+    password_wo = "use an ephemeral variable here"
   }
 }
 ```

@@ -20,8 +20,8 @@ step "dc" {
   windows_ad_domain_controller {
     domain_name           = "lab.example.com"
     username              = "LAB\\azadmin"
-    password_wo           = var.domain_admin_password
-    safe_mode_password_wo = var.dsrm_password
+    password_wo           = "use an ephemeral variable here"
+    safe_mode_password_wo = "use an ephemeral variable here"
   }
 }
 ```
