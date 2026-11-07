@@ -137,3 +137,88 @@ func TestApplyForestPassword(t *testing.T) {
 		t.Error("accepted an empty password")
 	}
 }
+
+func TestReadJoined(t *testing.T) {
+	for _, c := range []struct {
+		value map[string]any
+		want  ActualForest
+	}{
+		// A workgroup's name is in domain too, so only PartOfDomain says joined.
+		{map[string]any{"role": 2, "domain": "WORKGROUP", "part": false}, ActualForest{}},
+		{map[string]any{"role": 3, "domain": "lab.test", "part": true}, ActualForest{Member: "lab.test", Joined: "lab.test"}},
+		// Promoted from a member, before its reboot.
+		{map[string]any{"role": 3, "domain": "lab.test", "part": true, "root_dn": "DC=lab,DC=test", "marker": true}, ActualForest{Forest: "lab.test", Pending: true, Joined: "lab.test"}},
+		{map[string]any{"role": 4, "domain": "lab.test", "part": true, "root_dn": "DC=lab,DC=test"}, ActualForest{Forest: "lab.test", Joined: "lab.test"}},
+	} {
+		got, err := ReadForest(context.Background(), &fake{answers: []map[string]any{{"ok": true, "value": c.value}}})
+		if err != nil || got != c.want {
+			t.Errorf("%v: got %+v, %v", c.value, got, err)
+		}
+	}
+	m := Membership{Domain: "Lab.Test"}
+	if !m.Matches(ActualForest{Joined: "lab.test"}) || !m.Matches(ActualForest{Forest: "lab.test", Joined: "lab.test"}) || m.Matches(ActualForest{}) || m.Matches(ActualForest{Joined: "other.test"}) {
+		t.Error("Membership.Matches")
+	}
+	d := DomainController{DomainName: "Lab.Test"}
+	if !d.Matches(ActualForest{Forest: "lab.test", Joined: "lab.test"}) || d.Matches(ActualForest{Member: "lab.test", Joined: "lab.test"}) || d.Matches(ActualForest{Forest: "lab.test", Joined: "child.lab.test"}) {
+		t.Error("DomainController.Matches")
+	}
+}
+
+func TestMembershipCheck(t *testing.T) {
+	for _, m := range []Membership{
+		{Domain: "lab.test", Username: `LAB\joiner`},
+		{Domain: "lab.test", Username: "joiner@lab.test", OU: "OU=Servers,DC=lab,DC=test"},
+	} {
+		if _, err := m.Check(); err != nil {
+			t.Errorf("%+v: %v", m, err)
+		}
+	}
+	for want, m := range map[string]Membership{
+		"domain":   {Domain: "lab", Username: "a"},
+		"ou":       {Domain: "lab.test", Username: "a", OU: "Servers"},
+		"username": {Domain: "lab.test", Username: `LAB\a\b`},
+	} {
+		if attr, err := m.Check(); attr != want || err == nil {
+			t.Errorf("%+v: %s, %v", m, attr, err)
+		}
+	}
+	for _, u := range []string{"", `\a`, `a\`, "a\nb", "a:b", `a"b`, "a*"} {
+		if checkUsername("username", u) == nil {
+			t.Errorf("%q: accepted", u)
+		}
+	}
+	if attr, _ := (DomainController{DomainName: "lab.test", Username: "a", SysvolPath: `F:\`}).Check(); attr != "sysvol_path" {
+		t.Errorf("dc sysvol_path: %s", attr)
+	}
+	if attr, _ := (DomainController{DomainName: "lab.test"}).Check(); attr != "username" {
+		t.Errorf("dc username: %s", attr)
+	}
+}
+
+// Passwords travel as arguments on stdin and nowhere else, and an error that
+// echoes them comes back blanked.
+func TestApplyJoinAndDCPasswords(t *testing.T) {
+	const pw, dsrm = "s3ntinel-Join!", "s3ntinel-Dsrm!"
+	f := &fake{answers: []map[string]any{{"ok": false, "error": "refused " + pw}}}
+	if _, err := ApplyMembership(context.Background(), f, Membership{Domain: "lab.test", Username: `LAB\j`}, pw, time.Minute); err == nil || strings.Contains(err.Error(), pw) {
+		t.Fatalf("join: %v", err)
+	}
+	if args := f.sent[0]["args"].(map[string]any); args["password"] != pw || strings.Contains(f.sent[0]["script"].(string), pw) {
+		t.Errorf("join sent %v", args)
+	}
+	f = &fake{answers: []map[string]any{{"ok": false, "error": "refused " + pw + " and " + dsrm}}}
+	if _, err := ApplyDomainController(context.Background(), f, DomainController{DomainName: "lab.test", Username: `LAB\j`, DatabasePath: "F:/NTDS/"}, pw, dsrm, time.Minute); err == nil || strings.Contains(err.Error(), pw) || strings.Contains(err.Error(), dsrm) {
+		t.Fatalf("dc: %v", err)
+	}
+	args := f.sent[0]["args"].(map[string]any)
+	if args["password"] != pw || args["safe_mode_password"] != dsrm || args["database_path"] != `F:\NTDS` {
+		t.Errorf("dc sent %v", args)
+	}
+	if _, err := ApplyMembership(context.Background(), &fake{}, Membership{Domain: "lab.test", Username: "j"}, "", time.Minute); err == nil {
+		t.Error("join accepted an empty password")
+	}
+	if _, err := ApplyDomainController(context.Background(), &fake{}, DomainController{DomainName: "lab.test", Username: "j"}, "x", "", time.Minute); err == nil {
+		t.Error("dc accepted an empty safe mode password")
+	}
+}

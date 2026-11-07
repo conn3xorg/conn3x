@@ -31,6 +31,8 @@ step "restart_if_needed" {
 
 **`only_if_pending`.** A refresh checks the markers Windows leaves when it wants a restart: component servicing, Windows Update, pending file renames and a changed computer name. If it finds one, the plan shows a reboot, so one that a failed run missed still happens.
 
+**Other circuits wait.** Circuits run side by side, and a reboot would cut a session another circuit has open on the same host. So while a `windows_reboot` runs, from the moment it starts to the moment the host is back, no other Windows step reaches that host in the same run; they wait their turn, and the reboot waits for any already running. Hosts are told apart by address and port, so the same host reached by two different names isn't covered.
+
 **Up is not ready.** sshd answers before everything else has started. Follow a reboot with [`windows_wait_for`](windows_wait_for.md) on whatever the next step needs.
 
 ## Removal

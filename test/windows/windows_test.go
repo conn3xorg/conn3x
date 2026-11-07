@@ -1431,6 +1431,16 @@ func TestSystemReadsChangeNothing(t *testing.T) {
 		if _, err := windows.ReadDNSClient(ctx, c, windows.DNSClient{}); err != nil {
 			t.Fatal(err)
 		}
+		// Off a DC these read as nothing there; on one, as whatever is.
+		if _, err := windows.ReadOU(ctx, c, windows.OU{Name: "c3-none"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := windows.ReadADGroup(ctx, c, windows.ADGroup{Name: "Domain Admins", Members: []string{"c3-nobody"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := windows.ReadADUser(ctx, c, windows.ADUser{Name: "c3-nobody", Path: "OU=None,DC=c3,DC=test"}); err != nil {
+			t.Fatal(err)
+		}
 		// A key that doesn't exist must stay that way.
 		if _, err := windows.ReadRegistry(ctx, c, windows.RegistryValue{Key: `HKLM\SOFTWARE\Conn3xNeverMade`, Name: "x", Type: "string"}, false); err != nil {
 			t.Fatal(err)

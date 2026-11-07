@@ -169,3 +169,132 @@ func TestWinForestAction(t *testing.T) {
 		}
 	}
 }
+
+func TestWinJoinAndDCValidate(t *testing.T) {
+	join := resourceTypes["conn3x_windows_domain_membership"]
+	dc := resourceTypes["conn3x_windows_ad_domain_controller"]
+	okJoin := map[string]cty.Value{"domain": cty.StringVal("lab.test"), "username": cty.StringVal(`LAB\joiner`), "password_wo": cty.StringVal("x")}
+	okDC := map[string]cty.Value{"domain_name": cty.StringVal("lab.test"), "username": cty.StringVal(`LAB\admin`), "password_wo": cty.StringVal("x"), "safe_mode_password_wo": cty.StringVal("y")}
+	for _, c := range []struct {
+		r     resourceType
+		attrs map[string]cty.Value
+	}{{join, okJoin}, {dc, okDC}} {
+		for _, user := range []string{"azadmin", `LAB\azadmin`, `win2\azadmin`} {
+			if d := c.r.validate(forestCfg(c.r, user, c.attrs)); d.HasErrors() {
+				t.Errorf("%s: %v", user, d.Err())
+			}
+		}
+	}
+	with := func(base map[string]cty.Value, k string, v cty.Value) map[string]cty.Value {
+		m := map[string]cty.Value{}
+		for a, b := range base {
+			m[a] = b
+		}
+		m[k] = v
+		return m
+	}
+	for name, c := range map[string]struct {
+		r     resourceType
+		attrs map[string]cty.Value
+		attr  string
+	}{
+		"join single label": {join, with(okJoin, "domain", cty.StringVal("lab")), "domain"},
+		"join ou":           {join, with(okJoin, "ou", cty.StringVal("Servers")), "ou"},
+		"join username":     {join, with(okJoin, "username", cty.StringVal("a\nb")), "username"},
+		"join empty pw":     {join, with(okJoin, "password_wo", cty.StringVal("")), "password_wo"},
+		"join timeout":      {join, with(okJoin, "timeout", cty.StringVal("soon")), "timeout"},
+		"dc empty dsrm":     {dc, with(okDC, "safe_mode_password_wo", cty.StringVal("")), "safe_mode_password_wo"},
+		"dc unc":            {dc, with(okDC, "sysvol_path", cty.StringVal(`\\s\x`)), "sysvol_path"},
+		"dc drive root":     {dc, with(okDC, "database_path", cty.StringVal(`F:\`)), "database_path"},
+		"dc username":       {dc, with(okDC, "username", cty.StringVal(`a:b`)), "username"},
+		"dc single label":   {dc, with(okDC, "domain_name", cty.StringVal("lab")), "domain_name"},
+	} {
+		d := c.r.validate(forestCfg(c.r, "azadmin", c.attrs))
+		if len(d) != 1 || !tfdiags.GetAttribute(d[0]).Equals(cty.GetAttrPath(c.attr)) {
+			t.Errorf("%s: %v", name, d.Err())
+		}
+	}
+	// A key login has nothing to reach the domain with, but adopting a host
+	// that's already there needs no password: apply asks only when it joins.
+	if d := join.validate(forestCfg(join, "azadmin", with(okJoin, "password_wo", cty.NullVal(cty.String)))); d.HasErrors() {
+		t.Error(d.Err())
+	}
+	if d := dc.validate(forestCfg(dc, `.\azadmin`, okDC)); !d.HasErrors() || !strings.Contains(d.Err().Error(), "local account") {
+		t.Errorf(".\\azadmin: %v", d.Err())
+	}
+	c := forestCfg(dc, `WIN2\azadmin`, okDC)
+	if why := dcLockout(c, "win2"); !strings.Contains(why, "local account") {
+		t.Errorf("host-named login: %q", why)
+	}
+	if why := dcLockout(forestCfg(dc, `LAB\azadmin`, okDC), "win2"); why != "" {
+		t.Errorf("domain login: %q", why)
+	}
+}
+
+// Passwords are in no plan or state, and removing either step forgets it
+// without reaching the host.
+func TestWinJoinAndDCPlanAndRemove(t *testing.T) {
+	for rt, attrs := range map[string]map[string]cty.Value{
+		"conn3x_windows_domain_membership":    {"domain": cty.StringVal("Lab.Test"), "username": cty.StringVal(`LAB\j`), "password_wo": cty.StringVal("s3ntinel")},
+		"conn3x_windows_ad_domain_controller": {"domain_name": cty.StringVal("Lab.Test"), "username": cty.StringVal(`LAB\j`), "password_wo": cty.StringVal("s3ntinel"), "safe_mode_password_wo": cty.StringVal("s3ntinel")},
+	} {
+		r := resourceTypes[rt]
+		c := forestCfg(r, "azadmin", attrs)
+		p := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(c.Type()), ProposedNewState: c, Config: c}).PlannedState
+		if strings.Contains(p.GoString(), "s3ntinel") || !p.GetAttr("password_wo").IsNull() || p.GetAttr("reboot_required").IsKnown() {
+			t.Errorf("%s: planned %#v", rt, p)
+		}
+		vals := p.AsValueMap()
+		vals["revision"], vals["in_sync"], vals["reboot_required"] = cty.StringVal("r"), cty.True, cty.True
+		prior := cty.ObjectVal(vals)
+		lower := prior.AsValueMap()
+		for k, v := range lower {
+			if v.Type() == cty.String && v.IsKnown() && !v.IsNull() && v.AsString() == "Lab.Test" {
+				lower[k] = cty.StringVal("lab.test")
+			}
+		}
+		if resp := r.plan(providers.PlanResourceChangeRequest{PriorState: prior, ProposedNewState: cty.ObjectVal(lower), Config: c}); len(resp.RequiresReplace) != 0 {
+			t.Errorf("%s: replace %v", rt, resp.RequiresReplace)
+		}
+		resp := r.apply(context.Background(), providers.ApplyResourceChangeRequest{PriorState: prior, PlannedState: cty.NullVal(prior.Type()), Config: cty.NullVal(prior.Type())})
+		if resp.Diagnostics.HasErrors() || !resp.NewState.IsNull() {
+			t.Errorf("%s: remove %v %#v", rt, resp.Diagnostics.Err(), resp.NewState)
+		}
+	}
+}
+
+func TestWinJoinAndDCAction(t *testing.T) {
+	m := windows.Membership{Domain: "lab.test"}
+	for _, c := range []struct {
+		a    windows.ActualForest
+		join bool
+		err  string
+	}{
+		{windows.ActualForest{}, true, ""},
+		{windows.ActualForest{Member: "LAB.test", Joined: "LAB.test"}, false, ""},
+		{windows.ActualForest{Forest: "lab.test", Joined: "lab.test"}, false, ""}, // promoted later: still in the domain
+		{windows.ActualForest{Member: "corp.test", Joined: "corp.test"}, false, "already in corp.test"},
+	} {
+		join, err := membershipAction(m, c.a)
+		if join != c.join || (err == nil) != (c.err == "") || (err != nil && !strings.Contains(err.Error(), c.err)) {
+			t.Errorf("join %+v: %v, %v", c.a, join, err)
+		}
+	}
+	d := windows.DomainController{DomainName: "lab.test"}
+	for _, c := range []struct {
+		a       windows.ActualForest
+		promote bool
+		err     string
+	}{
+		{windows.ActualForest{}, true, ""},
+		{windows.ActualForest{Member: "lab.test", Joined: "lab.test"}, true, ""},
+		{windows.ActualForest{Forest: "lab.test", Pending: true, Joined: "LAB.test"}, false, ""},
+		{windows.ActualForest{Forest: "other.test", Joined: "other.test"}, false, "already a domain controller in other.test"},
+		{windows.ActualForest{Member: "corp.test", Joined: "corp.test"}, false, "member of corp.test"},
+	} {
+		promote, err := dcAction(d, c.a)
+		if promote != c.promote || (err == nil) != (c.err == "") || (err != nil && !strings.Contains(err.Error(), c.err)) {
+			t.Errorf("dc %+v: %v, %v", c.a, promote, err)
+		}
+	}
+}

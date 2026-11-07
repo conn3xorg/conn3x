@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -176,4 +177,30 @@ func TestWinGuardsCheckedBeforeConnecting(t *testing.T) {
 	if !apply.Diagnostics.HasErrors() || !strings.Contains(apply.Diagnostics.Err().Error(), "local drive") {
 		t.Errorf("wait_for apply: %v", apply.Diagnostics.Err())
 	}
+}
+
+// Windows steps on one host run side by side, but none while it reboots.
+func TestRebootLock(t *testing.T) {
+	conn := cty.ObjectVal(map[string]cty.Value{"host": cty.StringVal("10.9.9.9"), "port": cty.NullVal(cty.Number)})
+	a := lockForReboot("conn3x_windows_file", conn)
+	b := lockForReboot("conn3x_windows_service", conn) // shared: doesn't wait
+	got := make(chan struct{})
+	go func() {
+		defer lockForReboot("conn3x_windows_reboot", conn)()
+		close(got)
+	}()
+	select {
+	case <-got:
+		t.Fatal("the reboot didn't wait for the steps running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	a()
+	b()
+	<-got
+	// Another host, and Linux steps, never wait.
+	other := cty.ObjectVal(map[string]cty.Value{"host": cty.StringVal("10.9.9.9"), "port": cty.NumberIntVal(2222)})
+	reboot := lockForReboot("conn3x_windows_reboot", conn)
+	lockForReboot("conn3x_windows_file", other)()
+	lockForReboot("conn3x_file", conn)()
+	reboot()
 }

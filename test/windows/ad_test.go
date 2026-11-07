@@ -406,3 +406,32 @@ $dcpromo = Test-Path -LiteralPath 'C:\Windows\debug\dcpromo.log'
 		t.Errorf("files: %s", got)
 	}
 }
+
+// A join or a promotion that fails, here for a domain that doesn't exist,
+// changes nothing and leaves the passwords out of the error. The promotion
+// runs as far as its folder checks, which windows_ad_forest shares, or to the
+// AD DS check on a host without the role.
+func TestJoinAndDCFailWithoutPasswords(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	before, err := windows.ReadForest(ctx, c)
+	if err != nil || before.Joined != "" {
+		t.Skipf("not a workgroup server: %+v, %v", before, err)
+	}
+	pw, dsrm := "s3ntinel-Join-"+randHex(6)+"Q", "s3ntinel-Dsrm-"+randHex(6)+"Q"
+	_, err = windows.ApplyMembership(ctx, c, windows.Membership{Domain: "nowhere.conn3x.invalid", Username: `NOWHERE\joiner`}, pw, 5*time.Minute)
+	if err == nil || strings.Contains(err.Error(), pw) {
+		t.Errorf("join: %v", err)
+	}
+	t.Logf("join: %v", err)
+	base := `C:\c3d-` + randHex(4)
+	run(t, c, `param($A) [void][IO.Directory]::CreateDirectory($A.b); & icacls.exe $A.b /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null`, map[string]any{"b": base})
+	t.Cleanup(func() { _, _ = ps.User(context.Background(), c, `param($A) [IO.Directory]::Delete($A.b, $true)`, map[string]any{"b": base}, time.Minute) })
+	_, err = windows.ApplyDomainController(ctx, c, windows.DomainController{DomainName: "nowhere.conn3x.invalid", Username: `NOWHERE\admin`, DatabasePath: base}, pw, dsrm, 5*time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "can rename or replace") || strings.Contains(err.Error(), pw) || strings.Contains(err.Error(), dsrm) {
+		t.Errorf("dc with an open folder: %v", err)
+	}
+	if after, err := windows.ReadForest(ctx, c); err != nil || after != before {
+		t.Errorf("after: %+v, %v", after, err)
+	}
+}
