@@ -4,6 +4,7 @@
 package configs
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -87,4 +88,15 @@ func chainRange(b *hcl.Block, perHost bool) hcl.Range {
 		return b.DefRange
 	}
 	return b.TypeRange
+}
+
+// chainAfter is what the step after r waits for. In lockstep that's r. Per
+// host, a looping r may have no items on a host, and then nothing of r on
+// that host would carry the wait for the steps before it: so the next step
+// also waits for those, back to the last step that doesn't loop.
+func chainAfter(chain []*Resource, r *Resource, perHost bool) []*Resource {
+	if _, looping := r.ForEach.(*hostItemProduct); perHost && looping {
+		return append(slices.Clip(chain), r)
+	}
+	return []*Resource{r}
 }
