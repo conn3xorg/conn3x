@@ -5,11 +5,15 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules/windows/ps"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/providers"
 )
 
@@ -100,5 +104,31 @@ func TestWinADObjectsForgetOnRemove(t *testing.T) {
 		if resp.Diagnostics.HasErrors() || !resp.NewState.IsNull() {
 			t.Errorf("%s: %v", typ, resp.Diagnostics.Err())
 		}
+	}
+}
+
+// A write that got no answer runs once more after AD answers again; any other
+// failure is final.
+func TestADWriteRetriesOnlyNoAnswer(t *testing.T) {
+	ready := &rawAnswer{res: ssh.Result{Stdout: []byte("conn3x-result:" + base64.StdEncoding.EncodeToString([]byte(`{"ok":true,"value":""}`)))}}
+	ctx := context.Background()
+	calls := 0
+	err := adWrite(ctx, ready, func() error {
+		if calls++; calls == 1 {
+			return &ps.NoResultError{Reason: "PowerShell did not finish within 2m0s"}
+		}
+		return nil
+	})
+	if err != nil || calls != 2 || ready.runs != 2 {
+		t.Errorf("no answer: %v, %d writes, %d checks", err, calls, ready.runs)
+	}
+	calls = 0
+	refused := errors.New("the OU exists")
+	if err := adWrite(ctx, ready, func() error { calls++; return refused }); err != refused || calls != 1 {
+		t.Errorf("refused: %v, %d writes", err, calls)
+	}
+	calls = 0
+	if err := adWrite(ctx, ready, func() error { calls++; return &ps.NoResultError{Reason: "x"} }); err == nil || calls != 2 {
+		t.Errorf("twice: %v, %d writes", err, calls)
 	}
 }

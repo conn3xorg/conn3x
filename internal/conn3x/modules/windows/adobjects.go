@@ -90,6 +90,50 @@ type ActualOU struct {
 	Protected   bool
 }
 
+// How long WaitAD waits in all, how long one check may take, and the pause
+// between checks. Variables so tests can shorten them.
+var (
+	ADReadyLimit = 10 * time.Minute
+	adCheckLimit = time.Minute
+	adPoll       = 5 * time.Second
+)
+
+// WaitAD waits until AD on a domain controller answers, global catalog
+// included, for up to limit. On a host that isn't a DC it returns at once,
+// leaving the error to the module's own read. Writes come after it: one made
+// straight after a DC's reboot, before the global catalog answers, can hang.
+func WaitAD(ctx context.Context, r ps.Runner, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	for {
+		check, cancel := context.WithTimeout(ctx, adCheckLimit)
+		res, err := ps.Read(check, r, script("read_ad_ready.ps1"), nil)
+		timedOut := check.Err() != nil
+		cancel()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var why string
+		switch {
+		case timedOut:
+			why = fmt.Sprintf("a check got no answer within %s", adCheckLimit)
+		case err != nil:
+			why = err.Error()
+		case json.Unmarshal(res.Value, &why) != nil:
+			why = "the host's answer wasn't valid"
+		case why == "":
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("Active Directory on this domain controller didn't answer within %s, global catalog included: %s", limit, why)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(adPoll):
+		}
+	}
+}
+
 // decodeAD reads a read script's answer into a.
 func decodeAD[T any](res ps.Result, err error, what string) (T, error) {
 	var a T
