@@ -13,8 +13,9 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
-// fakeSwitch records what it was sent and answers from a script. A session
-// script whose lines contain refuse gets "% Invalid input", as EOS prints it.
+// fakeSwitch records what it was sent and answers the way cEOS-lab 4.37.0F
+// does: a script with a line containing refuse gets "% Invalid input" and
+// exit status 1.
 type fakeSwitch struct {
 	name   string
 	sent   *[]string
@@ -35,7 +36,7 @@ func (f fakeSwitch) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.R
 		return ssh.Result{}, errors.New("connection lost")
 	}
 	if f.refuse != "" && strings.Contains(what, f.refuse) {
-		return ssh.Result{Stdout: []byte("% Invalid input (at token 1: '" + f.refuse + "')\n")}, nil
+		return ssh.Result{Stdout: []byte("\n> " + f.refuse + "\n% Invalid input at line 2\n"), ExitCode: 1}, nil
 	}
 	if strings.HasSuffix(cmd, " diffs") {
 		return ssh.Result{Stdout: []byte("+hostname leaf1\n")}, nil
@@ -64,8 +65,8 @@ func TestApplyCommitsConfirmsAndSaves(t *testing.T) {
 	want := []string{
 		"pool: configure session " + name + " / hostname leaf1 / end",
 		"pool: show session-config named " + name + " diffs",
-		"pool: configure session " + name + " / commit timer 00:05:00 / end",
-		"fresh: configure session " + name + " / commit / end",
+		"pool: configure session " + name + " commit timer 00:05:00",
+		"fresh: configure session " + name + " commit",
 		"pool: copy running-config startup-config",
 	}
 	for i := range want {
@@ -85,7 +86,7 @@ func TestApplyAbortsWhenALineIsRefused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "% Invalid input") || !strings.Contains(err.Error(), "Nothing was changed") {
 		t.Fatalf("err = %v", err)
 	}
-	if len(sent) != 2 || !strings.HasSuffix(sent[1], " / abort / end") {
+	if len(sent) != 2 || !strings.HasSuffix(sent[1], " abort") || strings.Contains(sent[1], " / ") {
 		t.Errorf("sent %q, want the session then its abort", sent)
 	}
 }
@@ -145,4 +146,21 @@ func TestReadFacts(t *testing.T) {
 	if _, err := ReadFacts(context.Background(), jsonSwitch{"show version | json": "bash: show: command not found"}); err == nil || !strings.Contains(err.Error(), "Arista EOS") {
 		t.Errorf("a shell, not EOS: %v", err)
 	}
+}
+
+func TestRunStripsTheEchoAndNamesTheLoginProblem(t *testing.T) {
+	out, err := Show(context.Background(), jsonSwitch{"show running-config": "> show running-config\n! Command: show running-config\nhostname leaf1\n"}, "show running-config")
+	if err != nil || strings.Contains(out, "> show") || !strings.Contains(out, "hostname leaf1") {
+		t.Errorf("out %q, err %v", out, err)
+	}
+	_, err = Show(context.Background(), exitSwitch{"\n> show running-config\n% Invalid input (privileged mode required) at line 1\n"}, "show running-config")
+	if !errors.Is(err, ErrNotPrivileged) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+type exitSwitch struct{ out string }
+
+func (e exitSwitch) RunRaw(context.Context, string, []byte) (ssh.Result, error) {
+	return ssh.Result{Stdout: []byte(e.out), ExitCode: 1}, nil
 }

@@ -35,7 +35,7 @@ func validateEOSSSH(cfg cty.Value) tfdiags.Diagnostics {
 	}
 	for attr, why := range map[string]string{
 		"agent":                "The conn3x agent needs a shell, and an EOS login has the switch's CLI instead. Remove agent from this ssh block.",
-		"become":               "EOS has no sudo. Log in as a user with privilege 15, such as one made with \"username x privilege 15 role network-admin\", and remove become from this ssh block.",
+		"become":               "EOS has no sudo. Log in as a user with privilege 15 (\"username x privilege 15 role network-admin\") on a switch with \"aaa authorization exec default local\", so the login starts privileged, and remove become from this ssh block.",
 		"become_password_file": "EOS has no sudo, so there is no password to give it. Remove become_password_file from this ssh block.",
 	} {
 		v := conn.GetAttr(attr)
@@ -262,8 +262,8 @@ func eosDeviceSchema() providers.Schema {
 		Attributes: map[string]*configschema.Attribute{
 			"hostname":   {Type: cty.String, Computed: true, Description: "The switch's hostname."},
 			"model":      {Type: cty.String, Computed: true, Description: "Model, such as DCS-7050SX3-48YC8, or cEOSLab."},
-			"version":    {Type: cty.String, Computed: true, Description: "EOS version, such as 4.37.0F."},
-			"serial":     {Type: cty.String, Computed: true, Description: "Serial number. Empty on cEOS."},
+			"version":    {Type: cty.String, Computed: true, Description: "EOS version as show version prints it, such as 4.37.0F or 4.37.0F-51574443.4370F.1 (engineering build)."},
+			"serial":     {Type: cty.String, Computed: true, Description: "Serial number. cEOS-lab reports a made-up one."},
 			"system_mac": {Type: cty.String, Computed: true, Description: "System MAC address."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},

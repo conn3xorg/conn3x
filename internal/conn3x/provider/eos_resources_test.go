@@ -98,3 +98,31 @@ func TestEOSVLANPlansDeleteByDefault(t *testing.T) {
 		t.Errorf("on_remove = %v", got)
 	}
 }
+
+func TestEOSConfigPlansWithParents(t *testing.T) {
+	parents := cty.ListVal([]cty.Value{cty.StringVal("router bgp 65000"), cty.StringVal("address-family ipv4")})
+	cfg := eosStep("conn3x_eos_config", map[string]cty.Value{
+		"parents": parents,
+		"lines":   cty.ListVal([]cty.Value{cty.StringVal("neighbor 10.0.0.1 activate")}),
+	}, nil)
+	resp := eosConfigKind.plan(providers.PlanResourceChangeRequest{
+		TypeName: "conn3x_eos_config", Config: cfg, ProposedNewState: cfg, PriorState: cty.NullVal(cfg.Type()),
+	})
+	if resp.Diagnostics.HasErrors() {
+		t.Fatal(resp.Diagnostics.Err())
+	}
+	if id := resp.PlannedState.GetAttr("id"); !id.IsKnown() {
+		t.Error("a known parents list should give a known id")
+	}
+
+	unknown := eosStep("conn3x_eos_config", map[string]cty.Value{
+		"parents": cty.ListVal([]cty.Value{cty.UnknownVal(cty.String)}),
+		"lines":   cty.ListVal([]cty.Value{cty.StringVal("description x")}),
+	}, nil)
+	resp = eosConfigKind.plan(providers.PlanResourceChangeRequest{
+		TypeName: "conn3x_eos_config", Config: unknown, ProposedNewState: unknown, PriorState: cty.NullVal(unknown.Type()),
+	})
+	if resp.Diagnostics.HasErrors() || resp.PlannedState.GetAttr("id").IsKnown() {
+		t.Errorf("a parent known only at apply: id %#v, %v", resp.PlannedState.GetAttr("id"), resp.Diagnostics.Err())
+	}
+}

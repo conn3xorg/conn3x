@@ -9,11 +9,11 @@
 package eos
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -22,8 +22,9 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
-// Device runs one EOS CLI command per call, with stdin fed to it. An
-// *ssh.Client logged in as a privilege 15 user is one.
+// Device runs one EOS CLI command per call, or with an empty command, the
+// CLI lines fed on stdin. An *ssh.Client whose login starts in privileged
+// mode is one; see ErrNotPrivileged.
 type Device interface {
 	RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error)
 }
@@ -36,12 +37,21 @@ const commandTimeout = 2 * time.Minute
 // back on its own.
 const RevertAfter = 5 * time.Minute
 
-// cliError matches how the EOS CLI reports a command it refused: a line
-// starting with "% ", such as "% Invalid input" or "% Incomplete command".
+// cliError matches how the EOS CLI explains a command it refused: a line
+// starting with "% ", such as "% Invalid input at line 2".
 var cliError = regexp.MustCompile(`(?m)^% .*$`)
 
-// run sends cmd, with stdin, and returns what it printed. A refused command
-// is an error naming the device's own message.
+// echo matches the line the CLI prints back before some output, such as
+// "> show running-config", when it reads commands rather than a terminal.
+var echo = regexp.MustCompile(`(?m)^> .*\n?`)
+
+// ErrNotPrivileged is what a command reports when the login lands in
+// unprivileged mode. Conn3x never sends enable: on a switch with an enable
+// password, enable would read the next line of the script as the password.
+var ErrNotPrivileged = errors.New(`this login isn't privileged. Give the user privilege 15 ("username ops privilege 15 role network-admin") and add "aaa authorization exec default local", so an SSH login starts in privileged mode`)
+
+// run sends cmd, with stdin, and returns what it printed. EOS exits non-zero
+// when it refuses any line, and that is an error naming its own message.
 func run(ctx context.Context, d Device, cmd string, stdin []byte) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
@@ -49,14 +59,18 @@ func run(ctx context.Context, d Device, cmd string, stdin []byte) (string, error
 	if err != nil {
 		return "", err
 	}
-	out := string(res.Stdout) + string(res.Stderr)
-	if m := cliError.FindAllString(out, -1); len(m) > 0 {
-		return out, fmt.Errorf("the switch refused %s: %s", describe(cmd), strings.Join(m, "; "))
+	out := echo.ReplaceAllString(string(res.Stdout), "")
+	if res.ExitCode == 0 {
+		return out, nil
 	}
-	if res.ExitCode != 0 {
-		return out, fmt.Errorf("%s exited %d: %s", describe(cmd), res.ExitCode, strings.TrimSpace(out))
+	msg := strings.Join(cliError.FindAllString(string(res.Stdout)+string(res.Stderr), -1), "; ")
+	if strings.Contains(msg, "privileged mode required") {
+		return out, ErrNotPrivileged
 	}
-	return out, nil
+	if msg == "" {
+		msg = fmt.Sprintf("exit status %d: %s", res.ExitCode, strings.TrimSpace(string(res.Stdout)+string(res.Stderr)))
+	}
+	return out, fmt.Errorf("the switch refused %s: %s", describe(cmd), msg)
 }
 
 func describe(cmd string) string {
@@ -126,19 +140,6 @@ func sessionName() string {
 	return "conn3x-" + hex.EncodeToString(b)
 }
 
-// inSession runs lines inside the named config session, creating it if it
-// isn't there yet. The session outlives the CLI process: EOS keeps a named
-// session pending until it is committed or aborted.
-func inSession(ctx context.Context, d Device, name string, lines ...string) (string, error) {
-	var script bytes.Buffer
-	fmt.Fprintf(&script, "configure session %s\n", name)
-	for _, l := range lines {
-		script.WriteString(l + "\n")
-	}
-	script.WriteString("end\n")
-	return run(ctx, d, "", script.Bytes())
-}
-
 // timerText writes a duration the way commit timer takes it, hh:mm:ss.
 func timerText(d time.Duration) string {
 	s := int(d.Seconds())
@@ -163,25 +164,28 @@ func Apply(ctx context.Context, d Device, reconnect func(context.Context) (Devic
 		return "", nil
 	}
 	name := sessionName()
+	session := "configure session " + name
 	abort := func(err error) error {
-		if _, abortErr := inSession(ctx, d, name, "abort"); abortErr != nil {
-			return fmt.Errorf("%w; aborting config session %s also failed, so remove it by hand with \"configure session %s abort\": %v", err, name, name, abortErr)
+		if _, abortErr := run(ctx, d, session+" abort", nil); abortErr != nil {
+			return fmt.Errorf("%w; aborting config session %s also failed, so remove it by hand with \"%s abort\": %v", err, name, session, abortErr)
 		}
 		return fmt.Errorf("%w. Nothing was changed", err)
 	}
-	if _, err := inSession(ctx, d, name, cmds...); err != nil {
+	// The CLI reads the script from stdin; "end" leaves the session pending.
+	script := session + "\n" + strings.Join(cmds, "\n") + "\nend\n"
+	if _, err := run(ctx, d, "", []byte(script)); err != nil {
 		return "", abort(err)
 	}
 	diff, err := Show(ctx, d, "show session-config named "+name+" diffs")
 	if err != nil {
 		return "", abort(err)
 	}
-	if _, err := inSession(ctx, d, name, "commit timer "+timerText(RevertAfter)); err != nil {
+	if _, err := run(ctx, d, session+" commit timer "+timerText(RevertAfter), nil); err != nil {
 		return diff, abort(err)
 	}
 	fresh, err := reconnect(ctx)
 	if err == nil {
-		_, err = inSession(ctx, fresh, name, "commit")
+		_, err = run(ctx, fresh, session+" commit", nil)
 		if c, ok := fresh.(interface{ Close() error }); ok {
 			_ = c.Close()
 		}

@@ -1,4 +1,4 @@
-**Experimental.** Network devices are new, this module may change between releases, and it hasn't yet run against a switch in our CI. Try it on a lab switch first.
+**Experimental.** Network devices are new, and this module may change between releases. It's tested against cEOS-lab 4.37.0F on a local machine, not yet in CI, so try it on a lab switch first.
 
 Use `eos_config` to own a few lines of an Arista EOS switch's configuration: a description on an interface, a neighbor under BGP, a banner. You write each line the way `show running-config` prints it, without the indent, and Conn3x leaves every other line alone.
 
@@ -37,6 +37,15 @@ step "mgmt_acl" {
 
 ## Notes
 
-- Log in as a user with privilege 15, such as one made with `username ops privilege 15 role network-admin`. EOS has no shell and no sudo, so `become` and `agent` are refused in the circuit's `ssh` block.
+- The login has to start in privileged mode. Give the user privilege 15 and let EOS honour it at login:
+
+  ```
+  username ops privilege 15 role network-admin
+  username ops ssh-key ssh-ed25519 AAAA...
+  aaa authorization exec default local
+  ```
+
+  Conn3x never types `enable`: on a switch with an enable password, `enable` would read the next line of the change as the password. Without the `aaa` line, every step fails and says so.
+- EOS has no shell and no sudo, so `become` and `agent` are refused in the circuit's `ssh` block. Log in with a key; password login isn't supported yet.
 - A line the switch rewrites, such as `int et1` for `interface Ethernet1`, never matches, and the step shows as changed on every plan. Copy lines from `show running-config`.
 - Don't put secrets in `lines`: they'd be stored in state. Write-only lines are planned for a later release.
