@@ -13,13 +13,19 @@ The full roadmap lives at [docs.conn3x.org/roadmap](https://docs.conn3x.org/road
 
 ## Now
 
-The rest of Active Directory on Windows. A forest, member servers and more domain controllers work. Organizational units, groups and users don't yet. After those, a lab that builds a whole domain, and what's in it, from one config. Promoting a domain controller straight from a workgroup server, child domains and the `ou` argument on a join are still untested.
+Windows at scale. A forest, member servers and more domain controllers work. Organizational units, groups and users come next, then a lab that builds a whole domain, and what's in it, from one config, then many Windows hosts in one apply and the modules moving out of experimental. Promoting a domain controller straight from a workgroup server, child domains and the `ou` argument on a join are still untested.
 
 ## Next
 
-Another round of circuits, then network devices: switches, routers and firewalls, in the same plan as the hosts behind them.
+Network devices over their own CLI, starting with Arista EOS: switches, routers and firewalls, in the same plan as the hosts behind them. The first three device circuits are already out, and they're experimental: [RouterOS baseline](https://docs.conn3x.org/circuits/routeros-baseline), [OPNsense VLANs](https://docs.conn3x.org/circuits/opnsense-vlans) and [Proxmox VE network](https://docs.conn3x.org/circuits/proxmox-network). They go through community OpenTofu providers and were tested on virtual images, not hardware.
 
-The first three device circuits are already out, and they're experimental: [RouterOS baseline](https://docs.conn3x.org/circuits/routeros-baseline), [OPNsense VLANs](https://docs.conn3x.org/circuits/opnsense-vlans) and [Proxmox VE network](https://docs.conn3x.org/circuits/proxmox-network). They go through community OpenTofu providers and were tested on virtual images, not hardware. What comes next is Conn3x talking to devices over their own CLI.
+## After that
+
+- Ansible roles and Galaxy: `conn3x convert ansible` turns a role into a circuit, rewriting what it can prove and marking the rest.
+- Ad-hoc commands: run one thing on a group of hosts and see what comes back, without writing a circuit.
+- A web UI: a self-hosted, open-source app for teams to run plans and applies, approve them, see history, schedule drift checks and keep credentials per project, in the spirit of [Semaphore UI](https://github.com/semaphoreui/semaphore) and AWX.
+
+More circuits come alongside, when people ask for them.
 
 ## Later
 
