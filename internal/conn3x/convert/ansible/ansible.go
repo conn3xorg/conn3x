@@ -289,7 +289,12 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 	}
 	mod, args := moduleOf(t)
 	action := map[string]string{"restarted": "restart", "reloaded": "reload"}[scalar(args["state"])]
-	if (mod != "service" && mod != "systemd" && mod != "systemd_service") || action == "" || len(args) != 2 || scalar(args["name"]) == "" {
+	// name=x state=restarted text also carries _raw, which tasks ignore too.
+	n := len(args)
+	if _, raw := args["_raw"]; raw {
+		n--
+	}
+	if (mod != "service" && mod != "systemd" && mod != "systemd_service") || action == "" || n != 2 || scalar(args["name"]) == "" {
 		c.issue(cb, hname, h, "is a handler that doesn't restart or reload a service; Conn3x handlers do only that")
 		return nil, ""
 	}
@@ -301,7 +306,9 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 		reason = resolveMarks(svc)
 	}
 	if reason != "" {
-		c.issue(cb, hname, h, "is a handler that "+reason)
+		// These start with the argument, such as "name uses a Jinja
+		// expression ...", and read as they do for a task.
+		c.issue(cb, hname, h, reason)
 		return nil, ""
 	}
 	return svc[0].attrs, hname
