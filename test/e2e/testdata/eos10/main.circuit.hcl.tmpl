@@ -1,0 +1,40 @@
+circuit "ten" {
+  hosts = { leaf1 = "{{.Host}}" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "admin"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+    confirm_after    = "{{.ConfirmAfter}}"
+  }
+
+  step "name" {
+    eos_hostname {
+      name = "{{.Hostname}}"
+    }
+  }
+{{- range .VLANs}}
+
+  step "v{{.}}" {
+{{- if eq . $.Bad}}
+    eos_config {
+      parents = ["interface Loopback3"]
+      lines   = ["this is not a command"]
+    }
+{{- else}}
+    eos_vlan {
+      vlan_id = {{.}}
+      name    = "ten{{.}}"
+    }
+{{- end}}
+  }
+{{- end}}
+
+  step "loopback" {
+    eos_config {
+      parents = ["interface Loopback2"]
+      lines   = ["description ten steps"]
+    }
+  }
+}

@@ -261,6 +261,16 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 
 	diags = append(diags, warnOnConflictingEdits(content.Blocks.OfType("step"))...)
 
+	var eosSteps []*Resource
+	for _, r := range resources {
+		if strings.HasPrefix(r.Type, "conn3x_eos_") {
+			eosSteps = append(eosSteps, r)
+		}
+	}
+	if len(eosSteps) > 0 {
+		resources = append(resources, lowerEOSCommit(name, block, hosts, sshAttrs, sshRange, eosSteps, chain, perHost))
+	}
+
 	handlers := map[string]bool{}
 	for _, h := range content.Blocks.OfType("handler") {
 		hName := h.Labels[0]
@@ -584,46 +594,14 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 	}
 
 	rng := chainRange(h, perHost)
-	var triggers []hclsyntax.Expression
-	for _, n := range notifiers {
-		if stepLoops(n.ForEach) || stepFiltered(n.ForEach) {
-			// The step may have no instance on this host, so it's read
-			// through a filter rather than indexed by the host.
-			step := &hclsyntax.ScopeTraversalExpr{
-				Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: rng}, hcl.TraverseAttr{Name: n.Name, SrcRange: rng}},
-				SrcRange:  rng,
-			}
-			if stepLoops(n.ForEach) {
-				triggers = append(triggers, hostInstances(step, rng))
-			} else {
-				triggers = append(triggers, hostInstance(step, rng))
-			}
-			continue
-		}
-		// Watch the step's revision on this host, which changes whenever
-		// Conn3x changes something there.
-		triggers = append(triggers, &hclsyntax.RelativeTraversalExpr{
-			Source: &hclsyntax.IndexExpr{
-				Collection: &hclsyntax.ScopeTraversalExpr{
-					Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: rng}, hcl.TraverseAttr{Name: n.Name, SrcRange: rng}},
-					SrcRange:  rng,
-				},
-				Key:          eachTraversal("key", rng),
-				SrcRange:     rng,
-				OpenRange:    rng,
-				BracketRange: rng,
-			},
-			Traversal: hcl.Traversal{hcl.TraverseAttr{Name: "revision", SrcRange: rng}},
-			SrcRange:  rng,
-		})
-	}
+	triggers := hostRevisions(notifiers, rng)
 	attrs := hclsyntax.Attributes{}
 	for k, v := range svc.Body.Attributes {
 		attrs[k] = v
 	}
 	attrs["triggers"] = &hclsyntax.Attribute{
 		Name:      "triggers",
-		Expr:      &hclsyntax.TupleConsExpr{Exprs: triggers, SrcRange: rng, OpenRange: rng},
+		Expr:      triggers,
 		SrcRange:  rng,
 		NameRange: rng,
 	}
@@ -645,6 +623,71 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 		})
 	}
 	return r, diags
+}
+
+// hostRevisions is the revisions of steps on this host, each.key: what a
+// handler or an EOS commit watches, since a step's revision changes whenever
+// Conn3x changes something there.
+func hostRevisions(steps []*Resource, rng hcl.Range) *hclsyntax.TupleConsExpr {
+	var revisions []hclsyntax.Expression
+	for _, n := range steps {
+		step := &hclsyntax.ScopeTraversalExpr{
+			Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: rng}, hcl.TraverseAttr{Name: n.Name, SrcRange: rng}},
+			SrcRange:  rng,
+		}
+		// A step that loops, or has when, may have no instance on this
+		// host, so it's read through a filter rather than indexed by the host.
+		if stepLoops(n.ForEach) {
+			revisions = append(revisions, hostInstances(step, rng))
+			continue
+		}
+		if stepFiltered(n.ForEach) {
+			revisions = append(revisions, hostInstance(step, rng))
+			continue
+		}
+		revisions = append(revisions, &hclsyntax.RelativeTraversalExpr{
+			Source: &hclsyntax.IndexExpr{
+				Collection:   step,
+				Key:          eachTraversal("key", rng),
+				SrcRange:     rng,
+				OpenRange:    rng,
+				BracketRange: rng,
+			},
+			Traversal: hcl.Traversal{hcl.TraverseAttr{Name: "revision", SrcRange: rng}},
+			SrcRange:  rng,
+		})
+	}
+	return &hclsyntax.TupleConsExpr{Exprs: revisions, SrcRange: rng, OpenRange: rng}
+}
+
+// lowerEOSCommit adds a circuit's conn3x_eos_commit: one per switch, after
+// every step on it, watching the eos steps' revisions. The eos steps only
+// stage their lines in a config session; this commits that session once,
+// so a switch waits confirm_after once per apply, not once per step.
+func lowerEOSCommit(circuit string, block *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, eosSteps, chain []*Resource, perHost bool) *Resource {
+	rng := chainRange(block, perHost)
+	r := &Resource{
+		Mode: addrs.ManagedResourceMode,
+		Type: "conn3x_eos_commit",
+		Name: circuit + "__commit", // the type keeps it apart from a step named commit
+		Config: &hclsyntax.Body{
+			Attributes: hclsyntax.Attributes{"triggers": {Name: "triggers", Expr: hostRevisions(eosSteps, rng), SrcRange: rng, NameRange: rng}},
+			Blocks:     hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})},
+			SrcRange:   block.DefRange,
+			EndRange:   block.DefRange,
+		},
+		ForEach:   hosts,
+		DeclRange: block.DefRange,
+		TypeRange: block.TypeRange,
+		Managed:   &ManagedResource{},
+	}
+	for _, last := range chain {
+		r.DependsOn = append(r.DependsOn, hcl.Traversal{
+			hcl.TraverseRoot{Name: last.Type, SrcRange: rng},
+			hcl.TraverseAttr{Name: last.Name, SrcRange: rng},
+		})
+	}
+	return r
 }
 
 var templateSchema = &hcl.BodySchema{
