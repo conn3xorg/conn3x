@@ -68,6 +68,9 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_mount":            {mountSchema, validateWith("path", func(v cty.Value) error { return mountFrom(v).Validate() }), planMount, readMount, applyMount, upgradeWith(mountSchema)},
 	"conn3x_wait_for":         {waitForSchema, validateWaitFor, planWaitFor, readWaitFor, applyWaitFor, upgradeWith(waitForSchema)},
 	"conn3x_reboot":           {rebootSchema, validateReboot, planReboot, readReboot, applyReboot, upgradeWith(rebootSchema)},
+	"conn3x_eos_config":       eosConfigKind.entry(eosConfigSchema, validateEOSConfig),
+	"conn3x_eos_hostname":     eosHostnameKind.entry(eosHostnameSchema, validateEOSHostname),
+	"conn3x_eos_vlan":         eosVLANKind.entry(eosVLANSchema, validateEOSVLAN),
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 
 	"conn3x_windows_acl":                  {winACLSchema, validateWinACL, planWinACL, readWinACL, applyWinACL, upgradeWith(winACLSchema)},
@@ -122,7 +125,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 	return providers.GetProviderSchemaResponse{
 		Provider:      providers.Schema{Block: emptyBlock()},
 		ResourceTypes: resourceSchemas(),
-		DataSources:   map[string]providers.Schema{"conn3x_host": hostDataSchema()},
+		DataSources:   map[string]providers.Schema{"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema()},
 	}
 }
 
@@ -137,12 +140,18 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 		if strings.HasPrefix(req.TypeName, windowsTypePrefix) {
 			diags = diags.Append(validateWindowsSSH(req.Config))
 		}
+		if strings.HasPrefix(req.TypeName, eosTypePrefix) {
+			diags = diags.Append(validateEOSSSH(req.Config))
+		}
 		return providers.ValidateResourceConfigResponse{Diagnostics: diags}
 	}
 	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
 func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
+	if req.TypeName == "conn3x_eos_device" {
+		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateEOSSSH(req.Config))}
+	}
 	if req.TypeName != "conn3x_host" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data source " + req.TypeName)}
 	}
@@ -240,13 +249,15 @@ func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyR
 	return providers.ApplyResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
-
 func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
-	if req.TypeName != "conn3x_host" {
+	if req.TypeName != "conn3x_host" && req.TypeName != "conn3x_eos_device" {
 		return providers.ReadDataSourceResponse{Diagnostics: unsupported("data source " + req.TypeName)}
 	}
 	ctx, done := p.withStop(ctx)
 	defer done()
+	if req.TypeName == "conn3x_eos_device" {
+		return readEOSDevice(ctx, req)
+	}
 	return readHostData(ctx, req)
 }
 
