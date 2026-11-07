@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
@@ -14,8 +15,10 @@ import (
 
 	"github.com/opentofu/opentofu/internal/conn3x/importid"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/firewall"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mount"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/selinux"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/service"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
@@ -73,11 +76,71 @@ var importable = map[string]struct {
 	"conn3x_hostname": {singleID("hostname"), notNull, "%s", nil},
 	"conn3x_timezone": {singleID("timezone"), notNull, "%s", nil},
 	"conn3x_locale":   {singleID("locale"), notNull, "%s", nil},
+
+	// A rule's id is all its fields, as planRule writes it.
+	"conn3x_firewalld":        {keysID("firewalld", "zone", "service", "port"), notNull, "", hasFirewalld},
+	"conn3x_ufw_rule":         {keysID("ufw", "action", "port", "from"), notNull, "", hasUFWRule},
+	"conn3x_selinux_boolean":  {keysID("selinux_boolean", "name"), notNull, "SELinux boolean %s", hasSELinuxBoolean},
+	"conn3x_selinux_fcontext": {keysID("selinux_fcontext", "target"), notNull, "a local SELinux file context for %s", hasFcontext},
 }
 
 // importDeletes are the types whose on_remove defaults to delete at plan
 // time (deleteByDefault), so an import must default it the same way.
-var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true}
+var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true, "conn3x_firewalld": true, "conn3x_ufw_rule": true}
+
+// ruleWhat says which rule a missing-object error is about, since no one
+// part of a rule's id names it.
+var ruleWhat = map[string]func(cty.Value) string{
+	"conn3x_firewalld": func(v cty.Value) string {
+		what := "the firewalld rule allowing " + stringOr(v.GetAttr("service"), "") + stringOr(v.GetAttr("port"), "")
+		if z := stringOr(v.GetAttr("zone"), ""); z != "" {
+			what += " in zone " + z
+		}
+		return what
+	},
+	"conn3x_ufw_rule": func(v cty.Value) string {
+		what := "the ufw rule " + v.GetAttr("action").AsString() + " " + v.GetAttr("port").AsString()
+		if from := stringOr(v.GetAttr("from"), ""); from != "" {
+			what += " from " + from
+		}
+		return what
+	},
+}
+
+// keysID is the id planSynced writes for these key attributes.
+func keysID(kind string, keys ...string) func(cty.Value) []string {
+	return func(v cty.Value) []string {
+		id := []string{kind}
+		for _, k := range keys {
+			id = append(id, keyString(v.GetAttr(k)))
+		}
+		return id
+	}
+}
+
+// hasFirewalld: the running or the permanent firewall allows it; allowed
+// in only one, it imports and plans an update.
+func hasFirewalld(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	runtime, permanent, err := firewall.ReadFirewalld(ctx, h, firewalldFrom(v))
+	return runtime || permanent, err
+}
+
+func hasUFWRule(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	return firewall.ReadUFW(ctx, h, ufwRuleFrom(v))
+}
+
+// hasSELinuxBoolean: the policy has the boolean. With SELinux off there is
+// no /sys/fs/selinux, and the read that follows says so.
+func hasSELinuxBoolean(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	f := "/sys/fs/selinux/booleans/" + v.GetAttr("name").AsString()
+	res, err := h.Run(ctx, "test ! -d /sys/fs/selinux || test -e "+ssh.Quote(f), nil)
+	return err == nil && res.ExitCode == 0, err
+}
+
+func hasFcontext(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	ty, err := selinux.ReadFcontext(ctx, h, fcontextFrom(v))
+	return ty != "", err
+}
 
 // singleID names one-per-host settings by kind alone, as planSynced does
 // with no keys.
@@ -210,6 +273,9 @@ func (p *Provider) readExisting(ctx context.Context, typeName, rawID string) (st
 		return cty.NilVal, "", "", diags.Append(tfdiags.Sourceless(tfdiags.Error, "Invalid import ID", err.Error()))
 	}
 	missing := func() (cty.Value, string, string, tfdiags.Diagnostics) {
+		if describe, ok := ruleWhat[typeName]; ok {
+			return cty.NilVal, id.Key, describe(prior), diags
+		}
 		return cty.NilVal, id.Key, fmt.Sprintf(kind.what, kind.id(prior)[len(kind.id(prior))-1]), diags
 	}
 
@@ -272,11 +338,16 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 	if err != nil {
 		return id, cty.NilVal, fmt.Errorf("import ID for %s: %w", typeName, err)
 	}
-	// Every importable type requires what names its object.
-	for _, need := range []string{"path", "name", "user", "key"} {
-		if a := resourceTypes[typeName].schema().Block.Attributes[need]; a != nil && a.Required && v.GetAttr(need).IsNull() {
-			return id, cty.NilVal, fmt.Errorf("import ID for %s has no %s", typeName, need)
+	// The step always sets its required arguments; reads and ids rely on them.
+	var missing []string
+	for name, a := range resourceTypes[typeName].schema().Block.Attributes {
+		if a.Required && !importid.LeftOut[name] && v.GetAttr(name).IsNull() {
+			missing = append(missing, name)
 		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return id, cty.NilVal, fmt.Errorf("import ID for %s has no %s", typeName, strings.Join(missing, " or "))
 	}
 	if v.GetAttr("ssh").GetAttr("host").IsNull() {
 		return id, cty.NilVal, fmt.Errorf("import ID has no ssh host")

@@ -212,7 +212,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	var resources []*Resource
 	var imports []*Import
 	steps := map[string]hcl.Range{}
-	var previous *Resource
+	var chain []*Resource                 // the steps the next step waits for
 	notifiers := map[string][]*Resource{} // handler name => steps that notify it
 	notifyRefs := map[string][]hcl.Range{}
 	for _, step := range content.Blocks.OfType("step") {
@@ -238,18 +238,18 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 		steps[stepName] = step.DefRange
 
 		stepHosts := hosts
-		if previous == nil {
+		if len(chain) == 0 {
 			// Checked on the first step only, so a bad host is reported once.
 			stepHosts = &checkedHosts{hosts}
 		}
-		r, imp, stepDiags := lowerStep(name, step, stepHosts, sshAttrs, sshRange, previous, perHost)
+		r, imp, stepDiags := lowerStep(name, step, stepHosts, sshAttrs, sshRange, chain, perHost)
 		diags = append(diags, stepDiags...)
 		if imp != nil {
 			imports = append(imports, imp)
 		}
 		if r != nil {
 			resources = append(resources, r)
-			previous = r
+			chain = chainAfter(chain, r, perHost)
 			notified, notifyDiags := stepNotify(step)
 			diags = append(diags, notifyDiags...)
 			for _, n := range notified {
@@ -292,7 +292,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			})
 			continue
 		}
-		r, hDiags := lowerHandler(name, h, hosts, sshAttrs, sshRange, notifiers[hName], previous, perHost)
+		r, hDiags := lowerHandler(name, h, hosts, sshAttrs, sshRange, notifiers[hName], chain, perHost)
 		diags = append(diags, hDiags...)
 		if r != nil {
 			resources = append(resources, r)
@@ -314,7 +314,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	return resources, imports, diags
 }
 
-func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, previous *Resource, perHost bool) (*Resource, *Import, hcl.Diagnostics) {
+func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, chain []*Resource, perHost bool) (*Resource, *Import, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	body, ok := step.Body.(*hclsyntax.Body)
 	if !ok {
@@ -420,7 +420,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		diags = append(diags, depsDiags...)
 		r.DependsOn = append(r.DependsOn, deps...)
 	}
-	if previous != nil {
+	for _, previous := range chain {
 		rng := chainRange(step, perHost)
 		r.DependsOn = append(r.DependsOn, hcl.Traversal{
 			hcl.TraverseRoot{Name: previous.Type, SrcRange: rng},
@@ -555,7 +555,7 @@ var handlerServiceSchema = &hcl.BodySchema{
 // lowerHandler turns a handler into a conn3x_service_action whose triggers
 // are the notifying steps on the same host, so it runs only after one of
 // them changed, and always after them.
-func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, notifiers []*Resource, last *Resource, perHost bool) (*Resource, hcl.Diagnostics) {
+func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, notifiers []*Resource, chain []*Resource, perHost bool) (*Resource, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	body, ok := h.Body.(*hclsyntax.Body)
 	if !ok {
@@ -624,7 +624,7 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 		Managed:   &ManagedResource{},
 	}
 	// Like Ansible, handlers run after every step in the circuit.
-	if last != nil {
+	for _, last := range chain {
 		r.DependsOn = append(r.DependsOn, hcl.Traversal{
 			hcl.TraverseRoot{Name: last.Type, SrcRange: rng},
 			hcl.TraverseAttr{Name: last.Name, SrcRange: rng},

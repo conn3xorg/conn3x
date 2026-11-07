@@ -110,6 +110,21 @@ func TestStepImportSyncedModules(t *testing.T) {
 		"conn3x_locale": `locale {
       name = "C.UTF-8"
     }`,
+		"conn3x_firewalld": `firewalld {
+      service = "http"
+    }`,
+		"conn3x_ufw_rule": `ufw {
+      action = "allow"
+      port   = "22/tcp"
+    }`,
+		"conn3x_selinux_boolean": `selinux_boolean {
+      name  = "httpd_can_network_connect"
+      value = true
+    }`,
+		"conn3x_selinux_fcontext": `selinux_fcontext {
+      target = "/srv/www(/.*)?"
+      setype = "httpd_sys_content_t"
+    }`,
 		"conn3x_repository": `repository {
       name = "example"
       url  = "https://repo.example.com/"
