@@ -52,6 +52,17 @@ var importModules = map[string]string{
 	"conn3x_repository":     "repository",
 }
 
+// ImportableType is the resource type a module's step lowers to, when the
+// module can import; conn3x generate step takes the same modules.
+func ImportableType(module string) (string, bool) {
+	for typ, m := range importModules {
+		if m == module {
+			return typ, true
+		}
+	}
+	return "", false
+}
+
 func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.Attributes, ssh *hclsyntax.Block) (*Import, hcl.Diagnostics) {
 	rng := attr.SrcRange
 	if _, ok := importModules[r.Type]; !ok {

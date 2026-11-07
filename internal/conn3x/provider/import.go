@@ -156,55 +156,77 @@ func observed(attr string) func(cty.Value) bool {
 
 func (p *Provider) ImportResourceState(ctx context.Context, req providers.ImportResourceStateRequest) providers.ImportResourceStateResponse {
 	var resp providers.ImportResourceStateResponse
-	kind, ok := importable[req.TypeName]
-	if !ok {
-		resp.Diagnostics = unsupported("importing " + req.TypeName)
+	state, key, what, diags := p.readExisting(ctx, req.TypeName, req.Target.ID)
+	resp.Diagnostics = diags
+	if what != "" {
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(tfdiags.Error,
+			fmt.Sprintf("Nothing to import on %s", key),
+			fmt.Sprintf("The step imports %s on %s, but %s doesn't have it, so there's nothing to adopt. "+
+				"Remove %s from the step's import, or set import to the hosts that already have it; "+
+				"Conn3x then creates it on the rest.", what, key, key, key)))
+	}
+	if resp.Diagnostics.HasErrors() {
 		return resp
 	}
-	id, prior, err := importPrior(req.TypeName, req.Target.ID)
+	resp.ImportedResources = []providers.ImportedResource{{TypeName: req.TypeName, State: state}}
+	return resp
+}
+
+// ReadExisting reads what an import ID names on its host, the way an import
+// does, for conn3x generate step: the state an import would adopt, or an
+// error naming what the host doesn't have.
+func ReadExisting(ctx context.Context, typeName, rawID string) (cty.Value, error) {
+	state, key, what, diags := (&Provider{}).readExisting(ctx, typeName, rawID)
+	if what != "" {
+		return cty.NilVal, fmt.Errorf("%s doesn't have %s", key, what)
+	}
+	if err := diags.Err(); err != nil {
+		return cty.NilVal, err
+	}
+	return state, nil
+}
+
+// readExisting reads the object an import ID names. When the host doesn't
+// have it, what describes the object and the state is empty.
+func (p *Provider) readExisting(ctx context.Context, typeName, rawID string) (state cty.Value, key, what string, diags tfdiags.Diagnostics) {
+	kind, ok := importable[typeName]
+	if !ok {
+		return cty.NilVal, "", "", unsupported("importing " + typeName)
+	}
+	id, prior, err := importPrior(typeName, rawID)
 	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(tfdiags.Error, "Invalid import ID", err.Error()))
-		return resp
+		return cty.NilVal, "", "", diags.Append(tfdiags.Sourceless(tfdiags.Error, "Invalid import ID", err.Error()))
+	}
+	missing := func() (cty.Value, string, string, tfdiags.Diagnostics) {
+		return cty.NilVal, id.Key, fmt.Sprintf(kind.what, kind.id(prior)[len(kind.id(prior))-1]), diags
 	}
 
 	// Read here rather than leave it to the refresh that follows, so a
 	// missing object gets an error that says what to do about it.
 	ctx, done := p.withStop(ctx)
 	defer done()
-	missing := func() providers.ImportResourceStateResponse {
-		what := fmt.Sprintf(kind.what, kind.id(prior)[len(kind.id(prior))-1])
-		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(tfdiags.Error,
-			fmt.Sprintf("Nothing to import on %s", id.Key),
-			fmt.Sprintf("The step imports %s on %s, but %s doesn't have it, so there's nothing to adopt. "+
-				"Remove %s from the step's import, or set import to the hosts that already have it; "+
-				"Conn3x then creates it on the rest.", what, id.Key, id.Key, id.Key)))
-		return resp
-	}
 	if kind.probe != nil {
 		h, err := dialConnection(ctx, prior.GetAttr("ssh"))
 		if err != nil {
-			resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
-			return resp
+			return cty.NilVal, id.Key, "", diags.Append(attrError("ssh", err.Error()))
 		}
 		found, err := kind.probe(ctx, h, prior)
 		if err != nil {
-			resp.Diagnostics = resp.Diagnostics.Append(err)
-			return resp
+			return cty.NilVal, id.Key, "", diags.Append(err)
 		}
 		if !found {
 			return missing()
 		}
 	}
-	read := resourceTypes[req.TypeName].read(ctx, providers.ReadResourceRequest{TypeName: req.TypeName, PriorState: prior})
-	resp.Diagnostics = resp.Diagnostics.Append(read.Diagnostics)
-	if resp.Diagnostics.HasErrors() {
-		return resp
+	read := resourceTypes[typeName].read(ctx, providers.ReadResourceRequest{TypeName: typeName, PriorState: prior})
+	diags = diags.Append(read.Diagnostics)
+	if diags.HasErrors() {
+		return cty.NilVal, id.Key, "", diags
 	}
 	if !kind.exists(read.NewState) {
 		return missing()
 	}
-	resp.ImportedResources = []providers.ImportedResource{{TypeName: req.TypeName, State: adopted(req.TypeName, read.NewState)}}
-	return resp
+	return adopted(typeName, read.NewState), id.Key, "", diags
 }
 
 // importPrior decodes an import ID into the state a read starts from.
