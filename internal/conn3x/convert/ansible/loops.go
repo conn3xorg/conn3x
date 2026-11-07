@@ -4,6 +4,7 @@
 package ansible
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -16,7 +17,12 @@ import (
 // about loops stays for a person.
 
 // itemMark stands in for {{ item }} while a module builds its attributes.
-const itemMark = "\x00item\x00"
+const itemMark = "\x00item.value\x00"
+
+// refMark stands in for an HCL expression, such as var.port, the same way.
+func refMark(expr string) string { return "\x00" + expr + "\x00" }
+
+var marks = regexp.MustCompile("\x00([^\x00]*)\x00")
 
 // literalLoop reads loop: [a, b, ...]. It returns the reason when the loop
 // isn't a list of plain values written in the playbook.
@@ -39,45 +45,73 @@ func literalLoop(n *yaml.Node) ([]string, string) {
 	return items, ""
 }
 
-// loopSteps turns {{ item }} in the steps' attributes into item.value.
-func loopSteps(steps []step, used bool) string {
+// loopSteps checks a looping task's steps use item.
+func loopSteps(used bool) string {
 	if !used {
 		return "loops but doesn't use item, so each pass would do the same thing"
 	}
+	return ""
+}
+
+// resolveMarks turns marks in the steps' attributes into HCL references.
+// A mark anywhere but a plain string attribute stops the task.
+func resolveMarks(steps []step) string {
+	refused := func(v, key, how string) string {
+		what := "a role default"
+		if strings.Contains(v, "item.value") { // a mark, raw or as GoString shows it
+			what = "item"
+		}
+		return "uses " + what + " " + how + " " + key + ", which the converter can't translate yet"
+	}
 	for _, s := range steps {
+		for _, b := range s.blocks {
+			for _, a := range b.attrs {
+				if v := a.val.GoString(); strings.Contains(v, `\x00`) {
+					return refused(v, b.name+"."+a.key, "inside")
+				}
+			}
+		}
 		for i, a := range s.attrs {
 			if a.raw != "" || a.val.IsNull() {
-				if strings.Contains(a.raw, itemMark) {
-					return "uses item in " + a.key + ", which the converter can't translate yet"
+				if strings.Contains(a.raw, "\x00") {
+					return refused(a.raw, a.key, "in")
 				}
 				continue
 			}
 			if !a.val.Type().Equals(cty.String) {
-				if strings.Contains(a.val.GoString(), "\\x00item") {
-					return "uses item inside " + a.key + ", which the converter can't translate yet"
+				if v := a.val.GoString(); strings.Contains(v, `\x00`) {
+					return refused(v, a.key, "inside")
 				}
 				continue
 			}
-			v := a.val.AsString()
-			if !strings.Contains(v, itemMark) {
-				continue
+			if v := a.val.AsString(); strings.Contains(v, "\x00") {
+				s.attrs[i] = attr{key: a.key, raw: markTemplate(v)}
 			}
-			s.attrs[i] = attr{key: a.key, raw: itemTemplate(v)}
 		}
 	}
 	return ""
 }
 
-// itemTemplate writes a string holding itemMark as HCL: item.value alone,
-// or a quoted template with ${item.value} in it.
-func itemTemplate(v string) string {
-	if v == itemMark {
-		return "item.value"
+// markTemplate writes a string holding marks as HCL: the expression alone,
+// or a quoted template with ${expr} in it.
+func markTemplate(v string) string {
+	if m := marks.FindStringSubmatch(v); m != nil && m[0] == v {
+		return m[1]
 	}
-	parts := strings.Split(v, itemMark)
-	for i, p := range parts {
-		q := string(hclwrite.TokensForValue(cty.StringVal(p)).Bytes())
-		parts[i] = q[1 : len(q)-1]
+	var b strings.Builder
+	b.WriteString(`"`)
+	last := 0
+	for _, m := range marks.FindAllStringSubmatchIndex(v, -1) {
+		b.WriteString(quoted(v[last:m[0]]))
+		b.WriteString("${" + v[m[2]:m[3]] + "}")
+		last = m[1]
 	}
-	return `"` + strings.Join(parts, "${item.value}") + `"`
+	b.WriteString(quoted(v[last:]) + `"`)
+	return b.String()
+}
+
+// quoted escapes s for the inside of an HCL string.
+func quoted(s string) string {
+	q := string(hclwrite.TokensForValue(cty.StringVal(s)).Bytes())
+	return q[1 : len(q)-1]
 }

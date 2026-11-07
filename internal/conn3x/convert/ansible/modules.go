@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,6 +52,8 @@ type attr struct {
 // input reads a task's arguments, remembering which it used so that any it
 // didn't stop the conversion.
 type input struct {
+	mod      string
+	role     *role // set while converting a role
 	args     map[string]*yaml.Node
 	vars     map[string]string
 	dir      string
@@ -61,7 +64,37 @@ type input struct {
 	itemUsed bool
 	// factsLater is set when a later task or handler in the play reads facts.
 	factsLater bool
+	// commaFree lists role defaults used as package names: Ansible splits a
+	// name at commas into several packages, so the variable can't hold one.
+	commaFree []string
+	// out holds files a role's task adds to the circuit, kept only if the
+	// task converts.
+	out map[string][]byte
 }
+
+// verbatim lists, by module, the arguments Conn3x uses exactly as Ansible
+// does whatever their value. Only there can a role default stay a variable
+// for the caller to set; anywhere else the converter proves something about
+// the value first, such as that a path is no glob, and can't for one it
+// doesn't know.
+var verbatim = map[string][]string{
+	"copy":            {"content", "owner", "group"},
+	"template":        {"owner", "group"},
+	"file":            {"owner", "group"},
+	"lineinfile":      {"line"},
+	"blockinfile":     {"block", "content"},
+	"package":         {"name", "pkg"},
+	"dnf":             {"name", "pkg"},
+	"yum":             {"name", "pkg"},
+	"apt":             {"name", "pkg"},
+	"service":         {"name"},
+	"systemd":         {"name"},
+	"systemd_service": {"name"},
+	"user":            {"name", "shell"},
+	"group":           {"name"},
+}
+
+var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true}
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
 
@@ -147,7 +180,21 @@ func (in *input) render(key, s string) string {
 		if v, ok := in.vars[name]; ok {
 			return v
 		}
-		in.fail(fmt.Sprintf("%s refers to %q, which isn't a play variable the converter can fill in", key, name))
+		if in.role != nil && in.role.defaults[name] != nil {
+			if !slices.Contains(verbatim[in.mod], key) {
+				in.fail(fmt.Sprintf("%s refers to the role default %q, and the converter keeps a default as a variable only where Conn3x uses its value exactly as Ansible does, whatever it is set to; here it would have to check the value first", key, name))
+				return m
+			}
+			if packageModules[in.mod] {
+				in.commaFree = append(in.commaFree, name)
+			}
+			return refMark("var." + name)
+		}
+		what := "a play variable"
+		if in.role != nil {
+			what = "a role variable"
+		}
+		in.fail(fmt.Sprintf("%s refers to %q, which isn't %s the converter can fill in", key, name, what))
 		return m
 	})
 	if strings.Contains(out, "{{") || strings.Contains(out, "{%") {
@@ -208,13 +255,27 @@ func (in *input) state(def string, allowed ...string) string {
 }
 
 // local finds a file the playbook refers to, the way Ansible looks for it.
+// A role's files are only looked for in its own sub, since they're copied
+// into the circuit.
 func (in *input) local(sub, name string) string {
-	for _, p := range []string{filepath.Join(sub, name), name} {
+	places := []string{filepath.Join(sub, name), name}
+	if in.role != nil {
+		if !filepath.IsLocal(name) {
+			in.fail(fmt.Sprintf("%s is outside the role's %s/", name, sub))
+			return ""
+		}
+		places = places[:1]
+	}
+	for _, p := range places {
 		if _, err := os.Stat(filepath.Join(in.dir, p)); err == nil {
 			return filepath.ToSlash(p)
 		}
 	}
-	in.fail(fmt.Sprintf("%s was not found beside the playbook or in %s/", name, sub))
+	if in.role != nil {
+		in.fail(fmt.Sprintf("%s was not found in the role's %s/", name, sub))
+	} else {
+		in.fail(fmt.Sprintf("%s was not found beside the playbook or in %s/", name, sub))
+	}
 	return ""
 }
 
@@ -327,6 +388,9 @@ func copyModule(in *input) ([]step, string) {
 	case in.has("src"):
 		if p := in.local("files", in.str("src")); p != "" {
 			attrs = append(attrs, attr{key: "content", raw: fmt.Sprintf(`file("${path.module}/%s")`, p)})
+			if in.role != nil {
+				in.copy(p)
+			}
 		}
 		if in.has("remote_src") && in.bool("remote_src", false) {
 			return nil, "copies a file already on the host (remote_src), which the converter can't translate yet"
@@ -433,8 +497,38 @@ func blockModule(in *input) ([]step, string) {
 }
 
 func templateModule(in *input) ([]step, string) {
-	in.ignore("src", "dest", "mode", "owner", "group")
-	return nil, "renders a Jinja template; rewrite it in templatefile syntax (${var}, %{ if }) and use a template step"
+	if in.role == nil {
+		in.ignore("src", "dest", "mode", "owner", "group")
+		return nil, "renders a Jinja template; rewrite it in templatefile syntax (${var}, %{ if }) and use a template step"
+	}
+	attrs := []attr{s("destination", in.str("dest"))}
+	p := in.local("templates", in.str("src"))
+	if p == "" {
+		return nil, in.problem
+	}
+	source, vars, why := in.template(p)
+	if why != "" {
+		return nil, "renders a template that " + why + "; rewrite it in templatefile syntax (${var}, %{ if }) and use a template step"
+	}
+	attrs = append([]attr{{key: "source", raw: fmt.Sprintf(`"${path.module}/%s"`, source)}}, attrs...)
+	if vars != "" {
+		attrs = append(attrs, attr{key: "vars", raw: vars})
+	}
+	if m, ok := in.mode("mode"); ok {
+		attrs = append(attrs, m)
+	}
+	if !in.bool("force", true) {
+		return nil, "sets force: no, so Ansible writes the file only when it's missing; Conn3x would replace it on every apply"
+	}
+	if in.has("validate") {
+		v, reason := fileValidate(in.str("validate"))
+		if reason != "" {
+			return nil, reason
+		}
+		attrs = append(attrs, s("validate", v))
+	}
+	in.ignore("backup")
+	return one("template", in.owners(attrs))
 }
 
 func packageModule(in *input) ([]step, string) {

@@ -1,0 +1,6 @@
+mixed_enabled: yes
+mixed_mode: "0644"
+mixed_conf_dir: /etc/mixed
+mixed_conf: "{{ mixed_conf_dir }}/mixed.conf"
+mixed_ports: [80, 443]
+mixed_umask: 0022
