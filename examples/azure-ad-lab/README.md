@@ -23,7 +23,7 @@ You need room for 8 vCPUs in the region. A new pay-as-you-go subscription can st
 
 ## Run it
 
-You need an Azure subscription, `az login`, a Conn3x build that has `windows_ad_ou` (main at `d39bab3` or later, or the first release after v0.7.2), and an SSH key.
+You need an Azure subscription, `az login`, Conn3x v0.7.3 or later, and an SSH key.
 
 ```sh
 export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
