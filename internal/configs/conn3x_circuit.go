@@ -65,6 +65,9 @@ var circuitModules = map[string]string{
 	"user":             "conn3x_user",
 	"group":            "conn3x_group",
 
+	"eos_config":                   "conn3x_eos_config",
+	"eos_hostname":                 "conn3x_eos_hostname",
+	"eos_vlan":                     "conn3x_eos_vlan",
 	"windows_acl":                  "conn3x_windows_acl",
 	"windows_ad_domain_controller": "conn3x_windows_ad_domain_controller",
 	"windows_ad_forest":            "conn3x_windows_ad_forest",
@@ -445,7 +448,7 @@ var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "ju
 // sshOnly are the ssh settings a host object can't set. Naming one in a host
 // object is an error, because it would otherwise do nothing; any other field
 // is the user's own data, read with each.value.
-var sshOnly = []string{"host", "ssh_config_file", "known_hosts_file", "become", "become_password_file", "agent", "timeout"}
+var sshOnly = []string{"host", "ssh_config_file", "known_hosts_file", "become", "become_password_file", "agent", "timeout", "confirm_after"}
 
 // Conn3xSSHSettings lists every ssh setting circuits know about, so the
 // provider can check it against its schema.

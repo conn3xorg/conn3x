@@ -1,0 +1,43 @@
+circuit "eos" {
+  hosts = { leaf1 = "{{.Host}}" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "admin"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+{{- if .ConfirmAfter}}
+    confirm_after    = "{{.ConfirmAfter}}"
+{{- end}}
+  }
+
+  step "name" {
+    eos_hostname {
+      name = "c3x-leaf1"
+    }
+  }
+
+  step "vlans" {
+    for_each = { users = 10, voice = 20 }
+    eos_vlan {
+      vlan_id = item.value
+      name    = item.key
+    }
+  }
+
+  step "loopback" {
+    eos_config {
+      parents = ["interface Loopback0"]
+      lines   = ["description managed by conn3x"]
+    }
+  }
+{{- if .Lockout}}
+
+  step "lockout" {
+    eos_config {
+      parents = ["management ssh"]
+      lines   = ["shutdown"]
+    }
+  }
+{{- end}}
+}

@@ -1,0 +1,31 @@
+circuit "adopt" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "name" {
+    import = true
+    hostname {
+      name = "{{.Hostname}}"
+    }
+  }
+
+  step "zone" {
+    import = true
+    timezone {
+      name = "{{.Zone}}"
+    }
+  }
+
+  step "lang" {
+    import = true
+    locale {
+      name = "C.UTF-8"
+    }
+  }
+}
