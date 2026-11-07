@@ -107,9 +107,10 @@ func loadConfigFileBody(body hcl.Body, _ string, override bool) (*File, hcl.Diag
 
 		// CONN3X: circuits are lowered to conn3x resources (see conn3x_circuit.go).
 		case "circuit":
-			resources, circuitDiags := decodeCircuitBlock(block, circuits)
+			resources, imports, circuitDiags := decodeCircuitBlock(block, circuits)
 			diags = append(diags, circuitDiags...)
 			file.ManagedResources = append(file.ManagedResources, resources...)
+			file.Import = append(file.Import, imports...)
 
 		case "language":
 			cfgDiags := validateLanguageBlock(block, override)

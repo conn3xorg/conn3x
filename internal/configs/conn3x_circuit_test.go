@@ -896,7 +896,7 @@ func TestLoopingStepLowersTwice(t *testing.T) {
 	content, _ := file.Body.Content(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "circuit", LabelNames: []string{"name"}}}})
 	var second []*Resource
 	for range 2 {
-		rs, d := decodeCircuitBlock(content.Blocks[0], map[string]hcl.Range{})
+		rs, _, d := decodeCircuitBlock(content.Blocks[0], map[string]hcl.Range{})
 		if d.HasErrors() {
 			t.Fatal(d.Error())
 		}

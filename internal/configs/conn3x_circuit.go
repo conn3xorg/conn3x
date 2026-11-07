@@ -129,7 +129,7 @@ func circuitFileExtOf(path string) string {
 
 // decodeCircuitBlock lowers one circuit block to managed resources. seen
 // tracks circuit names already declared in the same file.
-func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resource, hcl.Diagnostics) {
+func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resource, []*Import, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	name := block.Labels[0]
 	if !validCircuitName(name) {
@@ -139,7 +139,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			Detail:   "A circuit name must be a valid identifier without a double underscore, which Conn3x uses to separate circuit and step names.",
 			Subject:  &block.LabelRanges[0],
 		})
-		return nil, diags
+		return nil, nil, diags
 	}
 	if prev, dup := seen[name]; dup {
 		diags = append(diags, &hcl.Diagnostic{
@@ -148,14 +148,14 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			Detail:   fmt.Sprintf("A circuit named %q was already declared at %s. Circuit names must be unique within a module.", name, prev),
 			Subject:  &block.DefRange,
 		})
-		return nil, diags
+		return nil, nil, diags
 	}
 	seen[name] = block.DefRange
 
 	content, moreDiags := block.Body.Content(circuitSchema)
 	diags = append(diags, moreDiags...)
 	if moreDiags.HasErrors() {
-		return nil, diags
+		return nil, nil, diags
 	}
 	hosts := content.Attributes["hosts"].Expr
 
@@ -169,7 +169,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			Detail:   "A circuit needs an ssh block that says how to log in to its hosts.",
 			Subject:  &block.DefRange,
 		})
-		return nil, diags
+		return nil, nil, diags
 	case n > 1:
 		second := content.Blocks.OfType("ssh")[1]
 		diags = append(diags, &hcl.Diagnostic{
@@ -178,14 +178,14 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			Detail:   "A circuit has one ssh block.",
 			Subject:  &second.DefRange,
 		})
-		return nil, diags
+		return nil, nil, diags
 	default:
 		ssh := content.Blocks.OfType("ssh")[0]
 		sshRange = ssh.DefRange
 		body, ok := ssh.Body.(*hclsyntax.Body)
 		if !ok {
 			diags = append(diags, nativeSyntaxRequired(ssh.DefRange))
-			return nil, diags
+			return nil, nil, diags
 		}
 		if attr, ok := body.Attributes["host"]; ok {
 			rng := attr.SrcRange
@@ -195,12 +195,13 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 				Detail:   "Each host's address comes from hosts, so the circuit's ssh block must not set host.",
 				Subject:  &rng,
 			})
-			return nil, diags
+			return nil, nil, diags
 		}
 		sshAttrs = body.Attributes
 	}
 
 	var resources []*Resource
+	var imports []*Import
 	steps := map[string]hcl.Range{}
 	var previous *Resource
 	notifiers := map[string][]*Resource{} // handler name => steps that notify it
@@ -232,8 +233,11 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			// Checked on the first step only, so a bad host is reported once.
 			stepHosts = &checkedHosts{hosts}
 		}
-		r, stepDiags := lowerStep(name, step, stepHosts, sshAttrs, sshRange, previous)
+		r, imp, stepDiags := lowerStep(name, step, stepHosts, sshAttrs, sshRange, previous)
 		diags = append(diags, stepDiags...)
+		if imp != nil {
+			imports = append(imports, imp)
+		}
 		if r != nil {
 			resources = append(resources, r)
 			previous = r
@@ -298,22 +302,22 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			}
 		}
 	}
-	return resources, diags
+	return resources, imports, diags
 }
 
-func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, previous *Resource) (*Resource, hcl.Diagnostics) {
+func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, previous *Resource) (*Resource, *Import, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	body, ok := step.Body.(*hclsyntax.Body)
 	if !ok {
-		return nil, append(diags, nativeSyntaxRequired(step.DefRange))
+		return nil, nil, append(diags, nativeSyntaxRequired(step.DefRange))
 	}
 	for attrName, attr := range body.Attributes {
-		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" {
+		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" && attrName != "import" {
 			rng := attr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported argument in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify, one module block and a lifecycle block, not %q.", attrName),
+				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify, import, one module block and a lifecycle block, not %q.", attrName),
 				Subject:  &rng,
 			})
 		}
@@ -337,17 +341,17 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported block in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify, one module block and a lifecycle block, not %q.", block.Type),
+				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify, import, one module block and a lifecycle block, not %q.", block.Type),
 				Subject:  &rng,
 			})
 		}
 		if unsupported {
-			return nil, diags
+			return nil, nil, diags
 		}
 	}
 	if len(modules) != 1 {
 		rng := step.DefRange
-		return nil, append(diags, &hcl.Diagnostic{
+		return nil, nil, append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "A step needs exactly one module",
 			Detail:   fmt.Sprintf("Each step contains exactly one module block, such as %s.", moduleList()),
@@ -361,13 +365,13 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		attrs, templateDiags := lowerTemplate(module)
 		diags = append(diags, templateDiags...)
 		if templateDiags.HasErrors() {
-			return nil, diags
+			return nil, nil, diags
 		}
 		resourceType, ok, moduleAttrs = "conn3x_file", true, attrs
 	}
 	if !ok {
 		rng := module.TypeRange
-		return nil, append(diags, &hcl.Diagnostic{
+		return nil, nil, append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("Unknown module %q", module.Type),
 			Detail:   fmt.Sprintf("Supported modules are %s.", moduleList()),
@@ -377,16 +381,17 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	items, looping := body.Attributes["for_each"]
 	diags = append(diags, loopRefs(moduleAttrs, module.Body.Blocks, looping)...)
 	if diags.HasErrors() {
-		return nil, diags
+		return nil, nil, diags
 	}
 	forEach, hostPath := hosts, []string{"value"}
 	if looping {
 		forEach, hostPath = &hostItemProduct{hosts: hosts, items: items.Expr}, []string{"value", "host"}
 	}
 
+	ssh := sshBlockFor(sshAttrs, sshRange, hostPath)
 	config := &hclsyntax.Body{
 		Attributes: moduleAttrs,
-		Blocks:     append(append(hclsyntax.Blocks{}, module.Body.Blocks...), sshBlockFor(sshAttrs, sshRange, hostPath)),
+		Blocks:     append(append(hclsyntax.Blocks{}, module.Body.Blocks...), ssh),
 		SrcRange:   module.Body.SrcRange,
 		EndRange:   module.Body.EndRange,
 	}
@@ -415,7 +420,13 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	if len(lifecycles) > 0 {
 		diags = append(diags, stepLifecycle(r, module, lifecycles, looping)...)
 	}
-	return r, diags
+	var imp *Import
+	if attr, ok := body.Attributes["import"]; ok {
+		var importDiags hcl.Diagnostics
+		imp, importDiags = stepImport(r, attr, moduleAttrs, ssh)
+		diags = append(diags, importDiags...)
+	}
+	return r, imp, diags
 }
 
 // sshBlockFor is a step's ssh block: the circuit's settings plus this
