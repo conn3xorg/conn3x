@@ -67,11 +67,23 @@ var importable = map[string]struct {
 	"conn3x_sysctl":         {nameID("sysctl", nil), notNull, "kernel parameter %s", hasSysctl},
 	"conn3x_mount":          {pathID("mount"), notNull, "mount %s", hasMount},
 	"conn3x_repository":     {nameID("repository", nil), notNull, "repository %s", hasRepository},
+
+	// A host always has a hostname, time zone and locale, so there's
+	// nothing to find first: a different one imports and plans an update.
+	"conn3x_hostname": {singleID("hostname"), notNull, "%s", nil},
+	"conn3x_timezone": {singleID("timezone"), notNull, "%s", nil},
+	"conn3x_locale":   {singleID("locale"), notNull, "%s", nil},
 }
 
 // importDeletes are the types whose on_remove defaults to delete at plan
 // time (deleteByDefault), so an import must default it the same way.
 var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true}
+
+// singleID names one-per-host settings by kind alone, as planSynced does
+// with no keys.
+func singleID(kind string) func(cty.Value) []string {
+	return func(cty.Value) []string { return []string{kind} }
+}
 
 func authorizedKeyID(v cty.Value) []string {
 	return []string{"authorized_key", v.GetAttr("user").AsString()}
@@ -270,7 +282,7 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 		return id, cty.NilVal, fmt.Errorf("import ID has no ssh host")
 	}
 	vals := v.AsValueMap()
-	if vals["on_remove"].IsNull() {
+	if ty.HasAttribute("on_remove") && vals["on_remove"].IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 		if importDeletes[typeName] {
 			vals["on_remove"] = cty.StringVal(onRemoveDelete)

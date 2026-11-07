@@ -101,6 +101,15 @@ func TestStepImportSyncedModules(t *testing.T) {
       src    = "tmpfs"
       fstype = "tmpfs"
     }`,
+		"conn3x_hostname": `hostname {
+      name = "web1"
+    }`,
+		"conn3x_timezone": `timezone {
+      name = "UTC"
+    }`,
+		"conn3x_locale": `locale {
+      name = "C.UTF-8"
+    }`,
 		"conn3x_repository": `repository {
       name = "example"
       url  = "https://repo.example.com/"

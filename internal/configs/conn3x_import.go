@@ -50,6 +50,9 @@ var importModules = map[string]string{
 	"conn3x_sysctl":         "sysctl",
 	"conn3x_mount":          "mount",
 	"conn3x_repository":     "repository",
+	"conn3x_hostname":       "hostname",
+	"conn3x_timezone":       "timezone",
+	"conn3x_locale":         "locale",
 }
 
 // ImportableType is the resource type a module's step lowers to, when the
