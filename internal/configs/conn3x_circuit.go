@@ -111,6 +111,7 @@ func Conn3xStepResourceTypes() []string {
 var circuitSchema = &hcl.BodySchema{
 	Attributes: []hcl.AttributeSchema{
 		{Name: "hosts", Required: true},
+		{Name: "strategy"},
 	},
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "ssh"},
@@ -158,6 +159,11 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 		return nil, nil, diags
 	}
 	hosts := content.Attributes["hosts"].Expr
+	perHost, strategyDiags := circuitStrategy(content.Attributes["strategy"])
+	diags = append(diags, strategyDiags...)
+	if strategyDiags.HasErrors() {
+		return nil, nil, diags
+	}
 
 	var sshAttrs hclsyntax.Attributes
 	var sshRange hcl.Range
@@ -233,7 +239,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			// Checked on the first step only, so a bad host is reported once.
 			stepHosts = &checkedHosts{hosts}
 		}
-		r, imp, stepDiags := lowerStep(name, step, stepHosts, sshAttrs, sshRange, previous)
+		r, imp, stepDiags := lowerStep(name, step, stepHosts, sshAttrs, sshRange, previous, perHost)
 		diags = append(diags, stepDiags...)
 		if imp != nil {
 			imports = append(imports, imp)
@@ -283,7 +289,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			})
 			continue
 		}
-		r, hDiags := lowerHandler(name, h, hosts, sshAttrs, sshRange, notifiers[hName], previous)
+		r, hDiags := lowerHandler(name, h, hosts, sshAttrs, sshRange, notifiers[hName], previous, perHost)
 		diags = append(diags, hDiags...)
 		if r != nil {
 			resources = append(resources, r)
@@ -305,7 +311,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	return resources, imports, diags
 }
 
-func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, previous *Resource) (*Resource, *Import, hcl.Diagnostics) {
+func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, previous *Resource, perHost bool) (*Resource, *Import, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	body, ok := step.Body.(*hclsyntax.Body)
 	if !ok {
@@ -412,9 +418,10 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		r.DependsOn = append(r.DependsOn, deps...)
 	}
 	if previous != nil {
+		rng := chainRange(step, perHost)
 		r.DependsOn = append(r.DependsOn, hcl.Traversal{
-			hcl.TraverseRoot{Name: previous.Type, SrcRange: step.DefRange},
-			hcl.TraverseAttr{Name: previous.Name, SrcRange: step.DefRange},
+			hcl.TraverseRoot{Name: previous.Type, SrcRange: rng},
+			hcl.TraverseAttr{Name: previous.Name, SrcRange: rng},
 		})
 	}
 	if len(lifecycles) > 0 {
@@ -545,7 +552,7 @@ var handlerServiceSchema = &hcl.BodySchema{
 // lowerHandler turns a handler into a conn3x_service_action whose triggers
 // are the notifying steps on the same host, so it runs only after one of
 // them changed, and always after them.
-func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, notifiers []*Resource, last *Resource) (*Resource, hcl.Diagnostics) {
+func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, notifiers []*Resource, last *Resource, perHost bool) (*Resource, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	body, ok := h.Body.(*hclsyntax.Body)
 	if !ok {
@@ -565,14 +572,15 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 		return nil, append(diags, contentDiags...)
 	}
 
+	rng := chainRange(h, perHost)
 	var triggers []hclsyntax.Expression
 	for _, n := range notifiers {
 		if _, looping := n.ForEach.(*hostItemProduct); looping {
 			step := &hclsyntax.ScopeTraversalExpr{
-				Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: h.DefRange}, hcl.TraverseAttr{Name: n.Name, SrcRange: h.DefRange}},
-				SrcRange:  h.DefRange,
+				Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: rng}, hcl.TraverseAttr{Name: n.Name, SrcRange: rng}},
+				SrcRange:  rng,
 			}
-			triggers = append(triggers, hostInstances(step, h.DefRange))
+			triggers = append(triggers, hostInstances(step, rng))
 			continue
 		}
 		// Watch the step's revision on this host, which changes whenever
@@ -580,16 +588,16 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 		triggers = append(triggers, &hclsyntax.RelativeTraversalExpr{
 			Source: &hclsyntax.IndexExpr{
 				Collection: &hclsyntax.ScopeTraversalExpr{
-					Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: h.DefRange}, hcl.TraverseAttr{Name: n.Name, SrcRange: h.DefRange}},
-					SrcRange:  h.DefRange,
+					Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: rng}, hcl.TraverseAttr{Name: n.Name, SrcRange: rng}},
+					SrcRange:  rng,
 				},
-				Key:          eachTraversal("key", h.DefRange),
-				SrcRange:     h.DefRange,
-				OpenRange:    h.DefRange,
-				BracketRange: h.DefRange,
+				Key:          eachTraversal("key", rng),
+				SrcRange:     rng,
+				OpenRange:    rng,
+				BracketRange: rng,
 			},
-			Traversal: hcl.Traversal{hcl.TraverseAttr{Name: "revision", SrcRange: h.DefRange}},
-			SrcRange:  h.DefRange,
+			Traversal: hcl.Traversal{hcl.TraverseAttr{Name: "revision", SrcRange: rng}},
+			SrcRange:  rng,
 		})
 	}
 	attrs := hclsyntax.Attributes{}
@@ -598,9 +606,9 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 	}
 	attrs["triggers"] = &hclsyntax.Attribute{
 		Name:      "triggers",
-		Expr:      &hclsyntax.TupleConsExpr{Exprs: triggers, SrcRange: h.DefRange, OpenRange: h.DefRange},
-		SrcRange:  h.DefRange,
-		NameRange: h.DefRange,
+		Expr:      &hclsyntax.TupleConsExpr{Exprs: triggers, SrcRange: rng, OpenRange: rng},
+		SrcRange:  rng,
+		NameRange: rng,
 	}
 	r := &Resource{
 		Mode:      addrs.ManagedResourceMode,
@@ -615,8 +623,8 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 	// Like Ansible, handlers run after every step in the circuit.
 	if last != nil {
 		r.DependsOn = append(r.DependsOn, hcl.Traversal{
-			hcl.TraverseRoot{Name: last.Type, SrcRange: h.DefRange},
-			hcl.TraverseAttr{Name: last.Name, SrcRange: h.DefRange},
+			hcl.TraverseRoot{Name: last.Type, SrcRange: rng},
+			hcl.TraverseAttr{Name: last.Name, SrcRange: rng},
 		})
 	}
 	return r, diags

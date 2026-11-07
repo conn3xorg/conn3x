@@ -1,0 +1,29 @@
+circuit "fleet" {
+  hosts = {
+    a    = { address = "127.0.0.1", port = {{.PortA}} }
+    b    = { address = "127.0.0.1", port = {{.PortB}} }
+    slow = { address = "127.0.0.1", port = {{.PortSlow}} }
+  }
+
+  strategy = "per_host"
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "one" {
+    command {
+      command = "${each.key == "slow" ? "sleep 15; " : ""}date +%s.%N > /tmp/one"
+      creates = "/tmp/one"
+    }
+  }
+
+  step "two" {
+    command {
+      command = "date +%s.%N > /tmp/two"
+      creates = "/tmp/two"
+    }
+  }
+}
