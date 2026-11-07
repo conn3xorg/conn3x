@@ -93,7 +93,7 @@ Run the checks CI runs:
 ```sh
 go test ./internal/conn3x/... ./cmd/conn3x/... ./internal/dag/... ./internal/configs/... ./internal/addrs/...
 golangci-lint run ./internal/conn3x/... ./cmd/conn3x/... ./cmd/conn3x-agent/...
-bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 5
+bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 6
 bash scripts/upstream/sync_test.sh
 bash scripts/upstream/commit_payload_test.sh
 bash scripts/upstream/hook-budget_test.sh

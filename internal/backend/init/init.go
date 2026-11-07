@@ -18,12 +18,10 @@ import (
 	backendRemote "github.com/opentofu/opentofu/internal/backend/remote"
 	backendAzure "github.com/opentofu/opentofu/internal/backend/remote-state/azure"
 	backendConsul "github.com/opentofu/opentofu/internal/backend/remote-state/consul"
-	backendCos "github.com/opentofu/opentofu/internal/backend/remote-state/cos"
 	backendGCS "github.com/opentofu/opentofu/internal/backend/remote-state/gcs"
 	backendHTTP "github.com/opentofu/opentofu/internal/backend/remote-state/http"
 	backendInmem "github.com/opentofu/opentofu/internal/backend/remote-state/inmem"
 	backendKubernetes "github.com/opentofu/opentofu/internal/backend/remote-state/kubernetes"
-	backendOSS "github.com/opentofu/opentofu/internal/backend/remote-state/oss"
 	backendPg "github.com/opentofu/opentofu/internal/backend/remote-state/pg"
 	backendS3 "github.com/opentofu/opentofu/internal/backend/remote-state/s3"
 	backendCloud "github.com/opentofu/opentofu/internal/cloud"
@@ -78,12 +76,10 @@ func Init(services *disco.Disco) {
 		// Remote State backends.
 		"azurerm":    func(enc encryption.StateEncryption) backend.Backend { return backendAzure.New(enc) },
 		"consul":     func(enc encryption.StateEncryption) backend.Backend { return backendConsul.New(enc) },
-		"cos":        func(enc encryption.StateEncryption) backend.Backend { return backendCos.New(enc) },
 		"gcs":        func(enc encryption.StateEncryption) backend.Backend { return backendGCS.New(enc) },
 		"http":       func(enc encryption.StateEncryption) backend.Backend { return backendHTTP.New(enc) },
 		"inmem":      func(enc encryption.StateEncryption) backend.Backend { return backendInmem.New(enc) },
 		"kubernetes": func(enc encryption.StateEncryption) backend.Backend { return backendKubernetes.New(enc) },
-		"oss":        func(enc encryption.StateEncryption) backend.Backend { return backendOSS.New(enc) },
 		"pg":         func(enc encryption.StateEncryption) backend.Backend { return backendPg.New(enc) },
 		"s3":         func(enc encryption.StateEncryption) backend.Backend { return backendS3.New(enc) },
 
@@ -96,6 +92,10 @@ func Init(services *disco.Disco) {
 	}
 
 	RemovedBackends = map[string]string{
+		// CONN3X: Conn3x leaves out the Tencent COS and Alibaba OSS backends,
+		// each of which carries its cloud's SDK.
+		"cos":         `The "cos" backend is not included in Conn3x, to keep the binary small. Move the state to another backend first, for example with OpenTofu's init -migrate-state.`,
+		"oss":         `The "oss" backend is not included in Conn3x, to keep the binary small. Move the state to another backend first, for example with OpenTofu's init -migrate-state.`,
 		"artifactory": `The "artifactory" backend is not supported in OpenTofu v1.3 or later.`,
 		"azure":       `The "azure" backend name has been removed, please use "azurerm".`,
 		"etcd":        `The "etcd" backend is not supported in OpenTofu v1.3 or later.`,

@@ -5,9 +5,8 @@
 // upstream OpenTofu sources. Generate writes rewritten copies of the files
 // whose string literals name OpenTofu or a tofu command, plus a go build
 // overlay that swaps them in. Comments, identifiers, file extensions and
-// environment variable names are left alone. The overlay also leaves out
-// the remote-state backends in prunedBackends, and applies the few code
-// patches in patches.
+// environment variable names are left alone. The overlay also applies the
+// few code patches in patches.
 package brand
 
 import (
@@ -124,9 +123,6 @@ func Generate(root, outDir string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-	}
-	if err := prune(root, outDir, replace); err != nil {
-		return "", err
 	}
 	if err := patch(root, outDir, replace); err != nil {
 		return "", err

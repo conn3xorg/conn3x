@@ -31,3 +31,5 @@ scripts/upstream/
 internal/conn3x/
 cmd/conn3x/
 internal/backend/remote-state/consul/Dockerfile
+internal/backend/remote-state/cos/
+internal/backend/remote-state/oss/

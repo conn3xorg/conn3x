@@ -25,7 +25,7 @@ func TestInit_backend(t *testing.T) {
 		{"remote", "*remote.Remote", "remote"},
 		{"azurerm", "*azure.Backend", "azurerm"},
 		{"consul", "*consul.Backend", "consul"},
-		{"cos", "*cos.Backend", "cos"},
+		// CONN3X: the cos backend is not included in Conn3x.
 		{"gcs", "*gcs.Backend", "gcs"},
 		{"inmem", "*inmem.Backend", "inmem"},
 		{"pg", "*pg.Backend", "pg"},
