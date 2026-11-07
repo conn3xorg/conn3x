@@ -1,0 +1,7 @@
+dependencies:
+  - common
+  - role: geerlingguy.firewall
+argument_specs:
+  main:
+    options:
+      mixed_mode: {type: str}

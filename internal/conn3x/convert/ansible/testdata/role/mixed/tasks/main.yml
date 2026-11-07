@@ -1,0 +1,42 @@
+- name: Pick the OS tasks
+  include_tasks: "{{ ansible_os_family }}.yml"
+
+- name: Only on Debian
+  import_tasks: debian.yml
+  when: ansible_os_family == "Debian"
+
+- name: Missing file
+  import_tasks: nowhere.yml
+
+- name: Loops back
+  import_tasks: loop.yml
+
+- name: Another role
+  include_role:
+    name: common
+
+- name: As root
+  package:
+    name: vim
+  become: true
+
+- name: Mode from a default
+  copy:
+    dest: /etc/mixed.txt
+    content: "hi\n"
+    mode: "{{ mixed_mode }}"
+
+- name: Path from a default
+  file:
+    path: "{{ mixed_conf_dir }}"
+    state: directory
+
+- name: Templated config
+  template:
+    src: logic.conf.j2
+    dest: /etc/mixed/logic.conf
+
+- name: Outside the role
+  copy:
+    src: ../../etc/passwd
+    dest: /tmp/passwd

@@ -1,0 +1,42 @@
+---
+- name: Install the tools
+  ansible.builtin.import_tasks: install.yml
+
+- name: Service account
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    shell: /bin/sh
+
+- name: App directory
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    mode: "0750"
+
+- name: App config
+  ansible.builtin.template:
+    src: app.conf.j2
+    dest: "{{ app_dir }}/app.conf"
+    owner: "{{ app_user }}"
+    mode: "0640"
+  notify: Restart app
+
+- name: App unit
+  ansible.builtin.copy:
+    src: app.service
+    dest: /etc/systemd/system/app.service
+    mode: "0644"
+  notify: Restart app
+
+- name: Login banner
+  ansible.builtin.lineinfile:
+    path: /etc/issue.net
+    line: "{{ app_greeting }}"
+    create: true
+
+- name: Start the app
+  ansible.builtin.service:
+    name: app
+    state: started
+    enabled: true

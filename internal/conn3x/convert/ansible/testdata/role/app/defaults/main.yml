@@ -1,0 +1,5 @@
+---
+app_package: tree
+app_user: app
+app_port: 8080
+app_greeting: "Hello from a role"
