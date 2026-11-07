@@ -1,0 +1,67 @@
+circuit "adopt" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "motd" {
+    import = true
+    file {
+      path    = "/etc/motd"
+      content = "Welcome\n"
+      mode    = "{{.Mode}}"
+    }
+  }
+
+  step "token" {
+    import = true
+    file {
+      path       = "/etc/app-token"
+      content_wo = "s3cret-token\n"
+    }
+  }
+
+  step "tree" {
+    import = true
+    package {
+      name = "tree"
+    }
+  }
+
+  step "sshd" {
+    import = true
+    service {
+      name    = "sshd"
+      state   = "started"
+      enabled = true
+    }
+  }
+
+  step "ops" {
+    import = true
+    group {
+      name = "ops"
+    }
+  }
+
+  step "deploy" {
+    import = true
+    user {
+      name   = "deploy"
+      groups = ["ops"]
+    }
+  }
+{{if .Missing}}
+  step "missing" {
+    import = true
+    file {
+      path    = "/etc/not-here"
+      content = "x\n"
+    }
+  }
+{{end}}
+}

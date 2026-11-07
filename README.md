@@ -40,7 +40,7 @@ brew install conn3xorg/tap/conn3x
 Or download a release:
 
 ```sh
-VERSION=0.7.2 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.8.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
@@ -110,12 +110,19 @@ container, in about five.
   downloads, archives, git checkouts, reboots, waits and guarded commands, plus facts
   about each host to plan with. [Every module](https://docs.conn3x.org/modules/file)
   is in the docs.
+- **Takes over servers you already run.** Put `import = true` on a step and the first
+  plan adopts the file, package, service or user that's already there instead of
+  creating it, and shows only where the host and your circuit disagree. Steps take
+  OpenTofu's `lifecycle` block too, so `prevent_destroy` and `ignore_changes` work on
+  them. [Adopt servers you already run](https://docs.conn3x.org/guides/adopt-servers)
+  walks through it.
 - **Checks a file before it lands.** Give `file` a `validate` command, such as
   `visudo -cf %s`, and a broken `sudoers` or `sshd_config` never replaces the one that
   works. `conn3x convert ansible` carries it over from `copy` tasks.
 - **Reaches Windows Server too, in preview.** Files, access rules, the registry,
-  services, users and groups, firewall rules, MSI packages, scheduled tasks, IIS and a
-  small Active Directory domain on Windows Server 2022 and 2025, over OpenSSH. The
+  services, users and groups, firewall rules, MSI packages, scheduled tasks, IIS, and a
+  small Active Directory domain with its OUs, groups and users, on Windows Server 2022
+  and 2025, over OpenSSH. The
   [module pages](https://docs.conn3x.org/modules/windows_file) say what may still change.
 - **Tells you what changed by hand.** `conn3x drift` reports drift across both layers
   and exits 2 when it finds some, so a scheduled job can alert on it.
@@ -136,11 +143,13 @@ container, in about five.
 | Preview of host changes | A separate `--check --diff` run | In the same plan as the cloud |
 | Cloud addresses into host config | Inventory scripts or plugins | An expression |
 | Drift on hosts | Run the playbook in check mode | `conn3x drift`, both layers |
+| Servers that already exist | `import` for the cloud; nothing to adopt on hosts | `import` for both |
 
 It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu today,
 and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian 13.
 Windows Server 2022 and 2025 are in preview, with tested Azure examples for one server
-and for a small domain. OUs, groups and users come next, then network devices.
+and for a small domain with an OU, a user and a group. A whole lab from one config
+comes next, then network devices.
 See the [roadmap](ROADMAP.md).
 
 ## Built on OpenTofu

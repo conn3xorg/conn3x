@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/windows"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/windows/ps"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
@@ -78,12 +80,30 @@ func adRemove(ctx context.Context, req providers.ApplyResourceChangeRequest, kin
 	}
 	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
 	if err == nil {
-		err = remove(h.client)
+		err = adWrite(ctx, h.client, func() error { return remove(h.client) })
 	}
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("%s: %w", kind, err))
 	}
 	return resp
+}
+
+// adWrite runs write once AD on the DC answers. A write that got no answer,
+// as one can straight after a DC's reboot, may still have landed, so once AD
+// answers again it runs one more time; write reads first and skips what's done.
+func adWrite(ctx context.Context, c ps.Runner, write func() error) error {
+	if err := windows.WaitAD(ctx, c, windows.ADReadyLimit); err != nil {
+		return err
+	}
+	err := write()
+	var noResult *ps.NoResultError
+	if !errors.As(err, &noResult) || ctx.Err() != nil {
+		return err
+	}
+	if werr := windows.WaitAD(ctx, c, windows.ADReadyLimit); werr != nil {
+		return fmt.Errorf("%w, and then %w", err, werr)
+	}
+	return write()
 }
 
 func winADOUSchema() providers.Schema {
@@ -141,15 +161,21 @@ func applyWinADOU(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadOU(ctx, h.client, o)
+	wrote := false
+	err = adWrite(ctx, h.client, func() error {
+		a, err := windows.ReadOU(ctx, h.client, o)
+		if err != nil || o.Matches(a) {
+			return err
+		}
+		wrote = true
+		return windows.ApplyOU(ctx, h.client, o, a)
+	})
 	if err != nil {
 		return fail(err)
 	}
-	if !o.Matches(a) {
-		if err := windows.ApplyOU(ctx, h.client, o, a); err != nil {
-			return fail(err)
-		}
-		if a, err = windows.ReadOU(ctx, h.client, o); err != nil {
+	if wrote {
+		a, err := windows.ReadOU(ctx, h.client, o)
+		if err != nil {
 			return fail(err)
 		}
 		if !o.Matches(a) {
@@ -231,15 +257,21 @@ func applyWinADGroup(ctx context.Context, req providers.ApplyResourceChangeReque
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadADGroup(ctx, h.client, g)
+	wrote := false
+	err = adWrite(ctx, h.client, func() error {
+		a, err := windows.ReadADGroup(ctx, h.client, g)
+		if err != nil || g.Matches(a) {
+			return err
+		}
+		wrote = true
+		return windows.ApplyADGroup(ctx, h.client, g, a)
+	})
 	if err != nil {
 		return fail(err)
 	}
-	if !g.Matches(a) {
-		if err := windows.ApplyADGroup(ctx, h.client, g, a); err != nil {
-			return fail(err)
-		}
-		if a, err = windows.ReadADGroup(ctx, h.client, g); err != nil {
+	if wrote {
+		a, err := windows.ReadADGroup(ctx, h.client, g)
+		if err != nil {
 			return fail(err)
 		}
 		if !g.Matches(a) {
@@ -370,20 +402,30 @@ func applyWinADUser(ctx context.Context, req providers.ApplyResourceChangeReques
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadADUser(ctx, h.client, u)
+	wrote := false
+	err = adWrite(ctx, h.client, func() error {
+		a, err := windows.ReadADUser(ctx, h.client, u)
+		if err != nil {
+			return err
+		}
+		pw := password
+		// A user deleted behind Conn3x's back is made again with its password.
+		if wo := req.Config.GetAttr("password_wo"); pw == nil && !wo.IsNull() && !a.Exists {
+			s := wo.AsString()
+			pw = &s
+		}
+		if pw == nil && u.Matches(a) {
+			return nil
+		}
+		wrote = true
+		return windows.ApplyADUser(ctx, h.client, u, a, pw)
+	})
 	if err != nil {
 		return fail(err)
 	}
-	// A user deleted behind Conn3x's back is made again with its password.
-	if wo := req.Config.GetAttr("password_wo"); password == nil && !wo.IsNull() && !a.Exists {
-		s := wo.AsString()
-		password = &s
-	}
-	if password != nil || !u.Matches(a) {
-		if err := windows.ApplyADUser(ctx, h.client, u, a, password); err != nil {
-			return fail(err)
-		}
-		if a, err = windows.ReadADUser(ctx, h.client, u); err != nil {
+	if wrote {
+		a, err := windows.ReadADUser(ctx, h.client, u)
+		if err != nil {
 			return fail(err)
 		}
 		if !u.Matches(a) {

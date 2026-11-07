@@ -1,0 +1,76 @@
+circuit "adopt" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "deploy_key" {
+    import = {{.Import}}
+    authorized_key {
+      user = "deploy"
+      key  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFA30yskh0RFyK4bzDWE6i5mGfLrYKS1SSM7cc4EDouS deploy@example"
+    }
+  }
+
+  step "backup" {
+    import = {{.Import}}
+    cron {
+      name     = "backup"
+      schedule = "{{.Schedule}}"
+      command  = "/usr/bin/true"
+    }
+  }
+
+  step "cleanup" {
+    import = {{.Import}}
+    timer {
+      name        = "cleanup"
+      on_calendar = "daily"
+      command     = "/usr/bin/true"
+    }
+  }
+
+  step "ports" {
+    import = {{.Import}}
+    sysctl {
+      name  = "net.ipv4.ip_local_port_range"
+      value = "20000 60999"
+    }
+  }
+
+  step "scratch" {
+    import = {{.Import}}
+    mount {
+      path   = "/mnt/scratch"
+      src    = "tmpfs"
+      fstype = "tmpfs"
+    }
+  }
+
+  step "example_repo" {
+    import = {{.Import}}
+    repository {
+      name = "example"
+      url  = "https://repo.example.com/el10/"
+      key  = <<-EOT
+        -----BEGIN PGP PUBLIC KEY BLOCK-----
+        not a real key; dnf never reads it here
+        -----END PGP PUBLIC KEY BLOCK-----
+      EOT
+    }
+  }
+{{if .Missing}}
+  step "missing" {
+    import = true
+    cron {
+      name     = "not-here"
+      schedule = "@daily"
+      command  = "/usr/bin/true"
+    }
+  }
+{{end}}
+}

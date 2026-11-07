@@ -1,0 +1,39 @@
+circuit "life" {
+  hosts = {{if .NoHosts}}{}{{else}}{ box = "127.0.0.1" }{{end}}
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "motd" {
+    file {
+      path    = "/etc/motd"
+      content = "Managed by Conn3x\n"
+    }
+
+    lifecycle {
+      ignore_changes  = [content]
+      prevent_destroy = true
+
+      precondition {
+        condition     = each.key == "{{.Allowed}}"
+        error_message = "Only {{.Allowed}} runs this circuit, not ${each.key}."
+      }
+    }
+  }
+
+  step "alice" {
+    user {
+      name   = "alice"
+      shell  = "/bin/sh"
+      groups = [{{if .Wheel}}"wheel"{{end}}]
+    }
+
+    lifecycle {
+      ignore_changes = [shell]
+    }
+  }
+}

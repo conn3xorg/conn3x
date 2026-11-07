@@ -2,18 +2,21 @@
 
 The full roadmap lives at [docs.conn3x.org/roadmap](https://docs.conn3x.org/roadmap). This is the short version. There are no dates, and nothing here works until a [release](https://github.com/conn3xorg/conn3x/releases) says it does.
 
+The goal: anything you'd do with Terraform, OpenTofu, Ansible, Chef or Puppet, you'll be able to do with Conn3x.
+
 ## Today
 
 - Linux hosts: Rocky Linux, RHEL, AlmaLinux, Fedora, Debian and Ubuntu, tested on every change.
-- Windows Server 2022 and 2025 over OpenSSH, in preview: files, access rules, registry, services, features, users and groups, firewall rules, MSI packages, scheduled tasks and IIS, with a tested [Azure example](examples/azure-windows-server). A circuit can also build a small Active Directory domain: set a server's DNS servers, make it the first domain controller of a new forest, and, since v0.7.2, join other servers to the domain and promote a member to another domain controller. The [azure-domain example](examples/azure-domain) builds the forest and joins a server to it. Every Windows module is experimental.
-- 125 official circuits, from nginx and PostgreSQL to k3s, Suricata and a private AI stack, in the [catalogue](https://docs.conn3x.org/circuits).
+- Windows Server 2022 and 2025 over OpenSSH, in preview: files, access rules, registry, services, features, users and groups, firewall rules, MSI packages, scheduled tasks and IIS, with a tested [Azure example](examples/azure-windows-server). A circuit can also build a small Active Directory domain: set a server's DNS servers, make it the first domain controller of a new forest, and, since v0.7.2, join other servers to the domain and promote a member to another domain controller, and since v0.7.3, keep the OUs, groups and users inside it. The [azure-domain example](examples/azure-domain) builds the forest, joins a server to it, and creates an OU, a user and a group with that user in it. Every Windows module is experimental.
+- 127 official circuits, from nginx and PostgreSQL to k3s, Suricata and a private AI stack, in the [catalogue](https://docs.conn3x.org/circuits).
 - The [Circuit Builder](https://conn3x.org/build), which writes a config from the circuits you pick, with host roles, an optional step that creates the servers too, and a link you can share.
+- Adopting servers you already run, since v0.8.0: `import` on a step takes over the `file`, `template`, `directory`, `link`, `package`, `service`, `user` or `group` a Linux host already has, and steps take OpenTofu's `lifecycle` block, from `prevent_destroy` to preconditions. See [Adopt servers you already run](https://docs.conn3x.org/guides/adopt-servers).
 - `conn3x convert ansible` for bringing playbooks across, and `conn3x drift` for both layers.
 - Any OpenTofu provider. AWS, Azure, Google Cloud and DigitalOcean are tested end to end, each with a [tutorial](https://docs.conn3x.org/tutorials).
 
 ## Now
 
-Windows at scale. A forest, member servers and more domain controllers work. Organizational units, groups and users come next, then a lab that builds a whole domain, and what's in it, from one config, then many Windows hosts in one apply and the modules moving out of experimental. Promoting a domain controller straight from a workgroup server, child domains and the `ou` argument on a join are still untested.
+Windows at scale. A forest, member servers, more domain controllers, and the OUs, groups and users in the domain work. Next is a lab that builds a whole domain, and what's in it, from one config, then many Windows hosts in one apply and the modules moving out of experimental. Promoting a domain controller straight from a workgroup server, child domains and the `ou` argument on a join are still untested, and a group can't list members from another domain.
 
 ## Next
 
@@ -26,6 +29,19 @@ Network devices over their own CLI, starting with Arista EOS: switches, routers 
 - A web UI: a self-hosted, open-source app for teams to run plans and applies, approve them, see history, schedule drift checks and keep credentials per project, in the spirit of [Semaphore UI](https://github.com/semaphoreui/semaphore) and AWX.
 
 More circuits come alongside, when people ask for them.
+
+## Toward full IaCC
+
+The rest, in order. The full roadmap says where each one fits among the items above.
+
+- The rest of OpenTofu on host steps. `import` and `lifecycle` on steps shipped in v0.8.0; what's left is import for `hostname`, `timezone`, `locale`, `firewalld`, `ufw` and the SELinux modules, through a shared circuit called as a module, and on Windows, plus `conn3x generate step` to write a step from what a host already has.
+- Inventory and host data: Ansible inventories with `group_vars` and `host_vars`, and values looked up by host, group and environment, as Hiera does.
+- Rolling updates and orchestration: batches with a failure limit, run-once and delegated steps, tasks and plans like Bolt's.
+- Servers that keep themselves right: scheduled applies from the web UI, run reports and host facts you can search, then a pull mode.
+- Encrypted variable files you can commit, like Ansible Vault.
+- Compliance checks that only report, a test command on containers, and policy on plans.
+- Your own modules, converters for Chef cookbooks and Puppet modules, and a circuit registry.
+- Runs that start on an event, such as an alert or a webhook.
 
 ## Later
 

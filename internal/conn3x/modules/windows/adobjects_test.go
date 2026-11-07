@@ -7,6 +7,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
 func TestADObjectsCheck(t *testing.T) {
@@ -131,5 +134,55 @@ func TestADUserApply(t *testing.T) {
 	upn := "alice@lab.test"
 	if !(ADUser{Name: "alice", UPN: &upn}).Matches(a) || (ADUser{Name: "alice", Enabled: &no}).Matches(a) || (ADUser{Name: "alice", Path: "OU=Lab,DC=lab,DC=test"}).Matches(a) {
 		t.Error("matches")
+	}
+}
+
+// hang never answers, like a write to AD before its global catalog is up.
+type hang struct{ runs int }
+
+func (h *hang) RunRaw(ctx context.Context, _ string, _ []byte) (ssh.Result, error) {
+	h.runs++
+	<-ctx.Done()
+	return ssh.Result{}, ctx.Err()
+}
+
+func TestWaitAD(t *testing.T) {
+	poll, check := adPoll, adCheckLimit
+	adPoll, adCheckLimit = time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { adPoll, adCheckLimit = poll, check })
+	ctx := context.Background()
+
+	// Ready, or not a DC: one check and done.
+	f := &fake{answers: []map[string]any{{"ok": true, "value": ""}}}
+	if err := WaitAD(ctx, f, time.Minute); err != nil || len(f.sent) != 1 || !strings.Contains(f.sent[0]["script"].(string), "3268") {
+		t.Errorf("ready: %v, %d runs", err, len(f.sent))
+	}
+	// A reason, then an error from the script, then ready.
+	f = &fake{answers: []map[string]any{
+		{"ok": true, "value": "Unable to contact the server."},
+		{"ok": false, "error": "Unable to find a default server with Active Directory Web Services running."},
+		{"ok": true, "value": ""},
+	}}
+	if err := WaitAD(ctx, f, time.Minute); err != nil || len(f.sent) != 3 {
+		t.Errorf("came up: %v, %d runs", err, len(f.sent))
+	}
+	// Never ready: the error says how long and why, after more than one check.
+	f = &fake{}
+	for range 1000 {
+		f.answers = append(f.answers, map[string]any{"ok": true, "value": "Unable to contact the server."})
+	}
+	if err := WaitAD(ctx, f, 20*time.Millisecond); err == nil || !strings.Contains(err.Error(), "within 20ms") || !strings.Contains(err.Error(), "Unable to contact") || len(f.sent) < 2 {
+		t.Errorf("never: %v, %d runs", err, len(f.sent))
+	}
+	// A check that hangs is cut off and counts as not ready.
+	h := &hang{}
+	if err := WaitAD(ctx, h, 120*time.Millisecond); err == nil || !strings.Contains(err.Error(), "no answer within 50ms") || h.runs < 2 {
+		t.Errorf("hang: %v, %d runs", err, h.runs)
+	}
+	// A cancelled apply stops the wait.
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := WaitAD(cctx, &hang{}, time.Minute); err != context.Canceled {
+		t.Errorf("cancelled: %v", err)
 	}
 }

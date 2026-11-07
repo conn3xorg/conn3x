@@ -240,9 +240,6 @@ func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyR
 	return providers.ApplyResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
-func (p *Provider) ImportResourceState(context.Context, providers.ImportResourceStateRequest) providers.ImportResourceStateResponse {
-	return providers.ImportResourceStateResponse{Diagnostics: unsupported("import")}
-}
 
 func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
 	if req.TypeName != "conn3x_host" {

@@ -39,7 +39,7 @@ func (f *fake) RunRaw(_ context.Context, _ string, stdin []byte) (ssh.Result, er
 
 func TestGather(t *testing.T) {
 	value := map[string]any{
-		"version": "10.0.26100", "build": "26100", "product_type": 3, "arch": "AMD64", "cpus": 2, "memory_kb": 8 * 1024 * 1024,
+		"version": "10.0.26100", "build": "26100", "ubr": 2314, "product_type": 3, "arch": "AMD64", "cpus": 2, "memory_kb": 8 * 1024 * 1024,
 		"ipv4": "10.0.0.4", "edition": "ServerDatacenter", "installation_type": "Server", "hostname": "web1", "domain": "WORKGROUP",
 		"domain_role": 2, "powershell": "5.1.26100.1", "elevated": true,
 	}
@@ -47,7 +47,7 @@ func TestGather(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Arch != "x86_64" || f.Release != "2025" || f.MemoryMB != 8192 || f.Version != "10.0.26100" || !f.Elevated {
+	if f.Arch != "x86_64" || f.Release != "2025" || f.MemoryMB != 8192 || f.Version != "10.0.26100" || f.Build != "26100" || f.UBR != 2314 || !f.Elevated {
 		t.Errorf("got %+v", f)
 	}
 	value["product_type"] = 1

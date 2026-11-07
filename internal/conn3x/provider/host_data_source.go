@@ -36,7 +36,7 @@ func hostDataSchema() providers.Schema {
 			},
 			"windows": {
 				Type: windowsFactsType, Computed: true,
-				Description: "Experimental. On Windows, its release, edition, installation_type, hostname, domain, domain_role, powershell version and whether the login is elevated. Null on Linux.",
+				Description: "Experimental. On Windows, its release, build and update_revision, edition, installation_type, hostname, domain, domain_role, powershell version and whether the login is elevated. Null on Linux.",
 			},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
@@ -68,7 +68,7 @@ func readHostData(ctx context.Context, req providers.ReadDataSourceRequest) prov
 }
 
 var windowsFactsType = cty.Object(map[string]cty.Type{
-	"release": cty.String, "edition": cty.String, "installation_type": cty.String, "hostname": cty.String,
+	"release": cty.String, "build": cty.String, "update_revision": cty.Number, "edition": cty.String, "installation_type": cty.String, "hostname": cty.String,
 	"domain": cty.String, "domain_role": cty.Number, "powershell": cty.String, "elevated": cty.Bool,
 })
 
@@ -99,7 +99,7 @@ func gatherFacts(ctx context.Context, posix modules.Runner, raw ps.Runner, allow
 	}
 	return facts.Facts{Family: "windows", ID: "windows", Version: w.Version, Arch: w.Arch, CPUs: w.CPUs, MemoryMB: w.MemoryMB, IPv4: w.IPv4},
 		cty.ObjectVal(map[string]cty.Value{
-			"release": cty.StringVal(w.Release), "edition": cty.StringVal(w.Edition), "installation_type": cty.StringVal(w.InstallationType),
+			"release": cty.StringVal(w.Release), "build": cty.StringVal(w.Build), "update_revision": cty.NumberIntVal(int64(w.UBR)), "edition": cty.StringVal(w.Edition), "installation_type": cty.StringVal(w.InstallationType),
 			"hostname": cty.StringVal(w.Hostname), "domain": cty.StringVal(w.Domain), "domain_role": cty.NumberIntVal(int64(w.DomainRole)),
 			"powershell": cty.StringVal(w.PowerShell), "elevated": cty.BoolVal(w.Elevated),
 		}), nil

@@ -55,7 +55,7 @@ func (r *rawAnswer) RunRaw(context.Context, string, []byte) (ssh.Result, error) 
 
 func windowsAnswer(productType int) *rawAnswer {
 	b, _ := json.Marshal(map[string]any{"ok": true, "value": map[string]any{
-		"version": "10.0.26100", "build": "26100", "product_type": productType, "arch": "AMD64", "cpus": 2, "memory_kb": 8388608,
+		"version": "10.0.26100", "build": "26100", "ubr": 2314, "product_type": productType, "arch": "AMD64", "cpus": 2, "memory_kb": 8388608,
 		"ipv4": "10.0.0.4", "edition": "ServerDatacenter", "installation_type": "Server", "hostname": "web1", "domain": "WORKGROUP",
 		"domain_role": 2, "powershell": "5.1", "elevated": true,
 	}})
@@ -74,7 +74,8 @@ func TestWindowsFactsOnlyWhenAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Family != "windows" || f.ID != "windows" || f.Arch != "x86_64" || win.GetAttr("release").AsString() != "2025" {
+	if f.Family != "windows" || f.ID != "windows" || f.Arch != "x86_64" || win.GetAttr("release").AsString() != "2025" ||
+		win.GetAttr("build").AsString() != "26100" || !win.GetAttr("update_revision").RawEquals(cty.NumberIntVal(2314)) {
 		t.Errorf("facts %+v, windows %#v", f, win)
 	}
 	if _, _, err := gatherFacts(ctx, refused, windowsAnswer(1), true); err == nil || !strings.Contains(err.Error(), "client") {

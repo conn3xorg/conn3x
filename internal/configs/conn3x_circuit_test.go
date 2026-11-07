@@ -213,20 +213,6 @@ func TestCircuitErrors(t *testing.T) {
     }
   }
 }`, "exactly one module"},
-		"lifecycle block": {`circuit "a" {
-  hosts = { h = "1.2.3.4" }
-  ssh {
-    user = "root"
-  }
-  step "s" {
-    package {
-      name = "nginx"
-    }
-    lifecycle {
-      prevent_destroy = true
-    }
-  }
-}`, `one module block, not "lifecycle"`},
 		"unknown block": {`circuit "a" {
   hosts = { h = "1.2.3.4" }
   ssh {
@@ -240,7 +226,7 @@ func TestCircuitErrors(t *testing.T) {
       count = 3
     }
   }
-}`, `one module block, not "retries"`},
+}`, `a lifecycle block, not "retries"`},
 		"duplicate step": {`circuit "a" {
   hosts = { h = "1.2.3.4" }
   ssh {
@@ -318,16 +304,16 @@ func TestUnsupportedStepBlockPointsAtItsType(t *testing.T) {
     package {
       name = "nginx"
     }
-    lifecycle {
-      prevent_destroy = true
+    retries {
+      count = 3
     }
   }
 }`})
 	if len(diags) != 1 {
 		t.Fatalf("want one diagnostic, got %d: %s", len(diags), diags.Error())
 	}
-	if rng := diags[0].Subject; rng == nil || rng.Start.Line != 10 || rng.Start.Column != 5 || rng.End.Column != 14 {
-		t.Fatalf("subject %v should cover the lifecycle keyword", rng)
+	if rng := diags[0].Subject; rng == nil || rng.Start.Line != 10 || rng.Start.Column != 5 || rng.End.Column != 12 {
+		t.Fatalf("subject %v should cover the retries keyword", rng)
 	}
 }
 
@@ -910,7 +896,7 @@ func TestLoopingStepLowersTwice(t *testing.T) {
 	content, _ := file.Body.Content(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "circuit", LabelNames: []string{"name"}}}})
 	var second []*Resource
 	for range 2 {
-		rs, d := decodeCircuitBlock(content.Blocks[0], map[string]hcl.Range{})
+		rs, _, d := decodeCircuitBlock(content.Blocks[0], map[string]hcl.Range{})
 		if d.HasErrors() {
 			t.Fatal(d.Error())
 		}
