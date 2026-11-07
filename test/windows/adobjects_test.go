@@ -41,7 +41,8 @@ func TestADObjectsFlow(t *testing.T) {
 	ctx := context.Background()
 	suffix := randHex(4)
 	hostile := "$(x)'`%PATH%"
-	ouName := "c3 " + hostile + suffix
+	// An OU name can't hold ( or ), so its hostile part is the rest.
+	ouName := "c3 $x'`%PATH%" + suffix
 	userName := "c3u'$" + suffix // 20 characters at most
 	groupName := "c3g " + hostile + suffix
 	password := "Aa1!'\"`$(New-Item C:\\marker) %PATH% ;|& \\\"" + suffix
