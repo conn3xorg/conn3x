@@ -14,6 +14,7 @@ if ($route) {
   version           = [string]$os.Version
   product_type      = [int]$os.ProductType
   build             = [string]$os.BuildNumber
+  ubr               = [int]$nt.UBR
   arch              = [string]$env:PROCESSOR_ARCHITECTURE
   cpus              = [int]$cs.NumberOfLogicalProcessors
   memory_kb         = [int64]$os.TotalVisibleMemorySize

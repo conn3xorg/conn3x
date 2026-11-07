@@ -66,6 +66,7 @@ func readBool(ctx context.Context, r ps.Runner, s ps.Script, args map[string]any
 type Facts struct {
 	Version          string
 	Build            string
+	UBR              int // update build revision: the patch level within Build
 	Arch             string
 	CPUs             int
 	MemoryMB         int
@@ -95,6 +96,7 @@ func Gather(ctx context.Context, r ps.Runner) (Facts, error) {
 	var raw struct {
 		Version          string `json:"version"`
 		Build            string `json:"build"`
+		UBR              int    `json:"ubr"`
 		ProductType      int    `json:"product_type"`
 		Arch             string `json:"arch"`
 		CPUs             int    `json:"cpus"`
@@ -119,7 +121,7 @@ func Gather(ctx context.Context, r ps.Runner) (Facts, error) {
 		arch = n
 	}
 	return Facts{
-		Version: raw.Version, Build: raw.Build, Arch: arch, CPUs: raw.CPUs, MemoryMB: int(raw.MemoryKB / 1024), IPv4: raw.IPv4,
+		Version: raw.Version, Build: raw.Build, UBR: raw.UBR, Arch: arch, CPUs: raw.CPUs, MemoryMB: int(raw.MemoryKB / 1024), IPv4: raw.IPv4,
 		Release: serverReleases[raw.Build], Edition: raw.Edition, InstallationType: raw.InstallationType, Hostname: raw.Hostname,
 		Domain: raw.Domain, DomainRole: raw.DomainRole, PowerShell: raw.PowerShell, Elevated: raw.Elevated,
 	}, nil

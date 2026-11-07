@@ -93,7 +93,8 @@ func TestFacts(t *testing.T) {
 	}
 	t.Logf("%+v", f)
 	if !strings.HasPrefix(f.Version, "10.0.") || f.Release == "" || f.Arch != "x86_64" || f.CPUs < 1 || f.MemoryMB < 512 ||
-		f.Hostname == "" || !strings.HasPrefix(f.PowerShell, "5.1") || f.Edition == "" || f.InstallationType == "" {
+		f.Hostname == "" || !strings.HasPrefix(f.PowerShell, "5.1") || f.Edition == "" || f.InstallationType == "" ||
+		!strings.HasSuffix(f.Version, "."+f.Build) || f.UBR < 1 {
 		t.Errorf("implausible facts: %+v", f)
 	}
 	if f.IPv4 == "" {
