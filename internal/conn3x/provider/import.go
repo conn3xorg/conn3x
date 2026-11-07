@@ -12,8 +12,12 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/mount"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/service"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
@@ -40,18 +44,88 @@ type importID struct {
 
 // importable maps each resource type a step can adopt to what names the
 // object in its id, and how to tell whether the host has it after a read.
+// A resource whose read reports only in_sync can't tell a missing object
+// from a different one, so it asks the host with probe before the read.
 var importable = map[string]struct {
 	id     func(state cty.Value) []string
 	exists func(read cty.Value) bool
 	what   string
+	probe  func(ctx context.Context, h *hostConn, prior cty.Value) (bool, error)
 }{
-	"conn3x_file":      {pathID(""), notNull, "file %s"},
-	"conn3x_directory": {pathID("directory"), notNull, "directory %s"},
-	"conn3x_link":      {pathID("link"), notNull, "link %s"},
-	"conn3x_package":   {nameID("package", nil), observed("installed_version"), "package %s"},
-	"conn3x_service":   {nameID("service", service.Unit), observed("running"), "service %s"},
-	"conn3x_user":      {nameID("user", nil), observed("uid"), "user %s"},
-	"conn3x_group":     {nameID("group", nil), observed("gid"), "group %s"},
+	"conn3x_file":      {pathID(""), notNull, "file %s", nil},
+	"conn3x_directory": {pathID("directory"), notNull, "directory %s", nil},
+	"conn3x_link":      {pathID("link"), notNull, "link %s", nil},
+	"conn3x_package":   {nameID("package", nil), observed("installed_version"), "package %s", nil},
+	"conn3x_service":   {nameID("service", service.Unit), observed("running"), "service %s", nil},
+	"conn3x_user":      {nameID("user", nil), observed("uid"), "user %s", nil},
+	"conn3x_group":     {nameID("group", nil), observed("gid"), "group %s", nil},
+
+	"conn3x_authorized_key": {authorizedKeyID, notNull, "the key in %s's authorized_keys", hasAuthorizedKey},
+	"conn3x_cron":           {nameID("cron", nil), notNull, "cron job %s", hasCron},
+	"conn3x_timer":          {nameID("timer", nil), notNull, "timer %s", hasTimer},
+	"conn3x_sysctl":         {nameID("sysctl", nil), notNull, "kernel parameter %s", hasSysctl},
+	"conn3x_mount":          {pathID("mount"), notNull, "mount %s", hasMount},
+	"conn3x_repository":     {nameID("repository", nil), notNull, "repository %s", hasRepository},
+}
+
+// importDeletes are the types whose on_remove defaults to delete at plan
+// time (deleteByDefault), so an import must default it the same way.
+var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true}
+
+func authorizedKeyID(v cty.Value) []string {
+	return []string{"authorized_key", v.GetAttr("user").AsString()}
+}
+
+// hasAuthorizedKey: the user exists and the key is already in the file.
+func hasAuthorizedKey(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	loc, err := sshkey.Locate(ctx, h, v.GetAttr("user").AsString())
+	if err != nil {
+		return false, nil // no such user, as readAuthorizedKey treats it
+	}
+	content, err := sshkey.Read(ctx, h, loc)
+	if err != nil {
+		return false, err
+	}
+	edited, err := sshkey.Edit(content, v.GetAttr("key").AsString(), true)
+	return err == nil && edited == content, err
+}
+
+func hasCron(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := file.Read(ctx, h, cronFrom(v).Path())
+	return a.Exists, err
+}
+
+func hasTimer(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	u, err := service.Read(ctx, h, v.GetAttr("name").AsString()+".timer")
+	return u.Exists, err
+}
+
+// hasSysctl: the kernel has the parameter. Its value and drop-in file are
+// what the step then manages, so a different value plans a change.
+func hasSysctl(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	res, err := h.Run(ctx, "sysctl -n -- "+ssh.Quote(v.GetAttr("name").AsString()), nil)
+	return err == nil && res.ExitCode == 0, err
+}
+
+// hasMount: fstab has an entry for the path, or something is mounted there.
+func hasMount(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := mount.Read(ctx, h, mountFrom(v))
+	return a.Entry != "" || a.Mounted, err
+}
+
+// hasRepository: any of the repository's files is there.
+func hasRepository(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	family, err := pkg.DetectFamily(ctx, h)
+	if err != nil {
+		return false, err
+	}
+	for path := range repoFrom(v).Files(family) {
+		a, err := file.Read(ctx, h, path)
+		if err != nil || a.Exists {
+			return a.Exists, err
+		}
+	}
+	return false, nil
 }
 
 func pathID(kind string) func(cty.Value) []string {
@@ -96,12 +170,7 @@ func (p *Provider) ImportResourceState(ctx context.Context, req providers.Import
 	// missing object gets an error that says what to do about it.
 	ctx, done := p.withStop(ctx)
 	defer done()
-	read := resourceTypes[req.TypeName].read(ctx, providers.ReadResourceRequest{TypeName: req.TypeName, PriorState: prior})
-	resp.Diagnostics = resp.Diagnostics.Append(read.Diagnostics)
-	if resp.Diagnostics.HasErrors() {
-		return resp
-	}
-	if !kind.exists(read.NewState) {
+	missing := func() providers.ImportResourceStateResponse {
 		what := fmt.Sprintf(kind.what, kind.id(prior)[len(kind.id(prior))-1])
 		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(tfdiags.Error,
 			fmt.Sprintf("Nothing to import on %s", id.Key),
@@ -109,6 +178,29 @@ func (p *Provider) ImportResourceState(ctx context.Context, req providers.Import
 				"Remove %s from the step's import, or set import to the hosts that already have it; "+
 				"Conn3x then creates it on the rest.", what, id.Key, id.Key, id.Key)))
 		return resp
+	}
+	if kind.probe != nil {
+		h, err := dialConnection(ctx, prior.GetAttr("ssh"))
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+			return resp
+		}
+		found, err := kind.probe(ctx, h, prior)
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(err)
+			return resp
+		}
+		if !found {
+			return missing()
+		}
+	}
+	read := resourceTypes[req.TypeName].read(ctx, providers.ReadResourceRequest{TypeName: req.TypeName, PriorState: prior})
+	resp.Diagnostics = resp.Diagnostics.Append(read.Diagnostics)
+	if resp.Diagnostics.HasErrors() {
+		return resp
+	}
+	if !kind.exists(read.NewState) {
+		return missing()
 	}
 	resp.ImportedResources = []providers.ImportedResource{{TypeName: req.TypeName, State: adopted(req.TypeName, read.NewState)}}
 	return resp
@@ -145,8 +237,9 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 	if err != nil {
 		return id, cty.NilVal, fmt.Errorf("import ID for %s: %w", typeName, err)
 	}
-	for _, need := range []string{"path", "name"} {
-		if ty.HasAttribute(need) && v.GetAttr(need).IsNull() {
+	// Every importable type requires what names its object.
+	for _, need := range []string{"path", "name", "user", "key"} {
+		if a := resourceTypes[typeName].schema().Block.Attributes[need]; a != nil && a.Required && v.GetAttr(need).IsNull() {
 			return id, cty.NilVal, fmt.Errorf("import ID for %s has no %s", typeName, need)
 		}
 	}
@@ -156,6 +249,9 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 	vals := v.AsValueMap()
 	if vals["on_remove"].IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
+		if importDeletes[typeName] {
+			vals["on_remove"] = cty.StringVal(onRemoveDelete)
+		}
 	}
 	if typeName == "conn3x_package" && vals["state"].IsNull() {
 		vals["state"] = cty.StringVal(string(pkg.Present)) // what planPackage defaults it to
