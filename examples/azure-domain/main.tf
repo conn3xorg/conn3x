@@ -58,6 +58,12 @@ variable "dsrm_password" {
   description = "Directory Services Restore Mode password for the domain controller. Never in plan or state."
 }
 
+variable "alice_password" {
+  type        = string
+  ephemeral   = true
+  description = "Password for the example user alice. Never in plan or state."
+}
+
 variable "name" {
   type        = string
   default     = "conn3x-domain-example"
@@ -291,6 +297,36 @@ circuit "dc" {
   step "dns" {
     windows_dns_client {
       servers = [local.vms.dc1, "127.0.0.1"]
+    }
+  }
+
+  # A place for the lab's accounts, a user, and a group she's in. The user
+  # comes first, so the group can find her.
+  step "lab_ou" {
+    windows_ad_ou {
+      name        = "Lab"
+      description = "Accounts made by Conn3x"
+    }
+  }
+
+  step "alice" {
+    windows_ad_user {
+      name         = "alice"
+      path         = "OU=Lab,DC=lab,DC=conn3x,DC=test"
+      upn          = "alice@${local.domain}"
+      given_name   = "Alice"
+      surname      = "Example"
+      display_name = "Alice Example"
+      password_wo  = var.alice_password
+    }
+  }
+
+  step "lab_admins" {
+    windows_ad_group {
+      name        = "LabAdmins"
+      path        = "OU=Lab,DC=lab,DC=conn3x,DC=test"
+      description = "Can manage the lab"
+      members     = ["alice"]
     }
   }
 

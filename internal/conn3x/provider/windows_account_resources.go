@@ -114,13 +114,19 @@ func validateWinUser(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
-// winUserID is what a password's HMAC is bound to: the host as well as the
+// passwordID is what a password's HMAC is bound to: the host as well as the
 // name, so one password on many hosts doesn't give one HMAC in state.
-func winUserID(host, name string) string {
-	return "windows_user:" + strings.ToLower(host) + ":" + strings.ToLower(name)
+func passwordID(kind, host, name string) string {
+	return kind + ":" + strings.ToLower(host) + ":" + strings.ToLower(name)
 }
 
 func planWinUser(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planWithPassword(req, "windows_user", []string{"full_name", "description", "disabled", "password_hmac"})
+}
+
+// planWithPassword plans a step with a write-only password_wo: null in plan
+// and state, which keep only password_hmac, so a new password plans a change.
+func planWithPassword(req providers.PlanResourceChangeRequest, kind string, settings []string) providers.PlanResourceChangeResponse {
 	if req.ProposedNewState.IsNull() {
 		return providers.PlanResourceChangeResponse{PlannedState: req.ProposedNewState}
 	}
@@ -147,11 +153,11 @@ func planWinUser(req providers.PlanResourceChangeRequest) providers.PlanResource
 			host = conn.GetAttr("host")
 		}
 		if wo.IsKnown() && known(vals["name"]) && known(host) {
-			vals["password_hmac"] = cty.StringVal(passwordHMAC(key, winUserID(host.AsString(), vals["name"].AsString()), wo.AsString()))
+			vals["password_hmac"] = cty.StringVal(passwordHMAC(key, passwordID(kind, host.AsString(), vals["name"].AsString()), wo.AsString()))
 		}
 	}
 	req.ProposedNewState = cty.ObjectVal(vals)
-	resp = planSyncedFold(req, "windows_user", []string{"name"}, []string{"full_name", "description", "disabled", "password_hmac"})
+	resp = planSyncedFold(req, kind, []string{"name"}, settings)
 	if warn != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(warn.Error()))
 	}
@@ -211,33 +217,11 @@ func applyWinUser(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	}
 	vals := planned.AsValueMap()
 	vals["password_wo"] = cty.NullVal(cty.String)
-	var password *string
-	if wo := req.Config.GetAttr("password_wo"); !wo.IsNull() {
-		// A saved plan applied elsewhere must use the key it was made with.
-		key, err := hmacKey(true)
-		if err != nil {
-			return fail(err)
-		}
-		var prior cty.Value
-		if !req.PriorState.IsNull() {
-			prior = req.PriorState.GetAttr("password_hmac")
-		}
-		for _, v := range []cty.Value{planned.GetAttr("password_hmac"), prior} {
-			if v != cty.NilVal && known(v) {
-				if err := checkHMACKey(v.AsString(), key); err != nil {
-					return fail(err)
-				}
-			}
-		}
-		sum := cty.StringVal(passwordHMAC(key, winUserID(stringOr(planned.GetAttr("ssh").GetAttr("host"), ""), u.Name), wo.AsString()))
-		vals["password_hmac"] = sum
-		// Set only when it's new to Conn3x: Windows can refuse to reuse a
-		// password, and resetting one on every run tells nobody anything.
-		if prior == cty.NilVal || !prior.RawEquals(sum) {
-			s := wo.AsString()
-			password = &s
-		}
+	sum, password, err := passwordAtApply(req, "windows_user", u.Name)
+	if err != nil {
+		return fail(err)
 	}
+	vals["password_hmac"] = sum
 	h, err := winHost(ctx, planned.GetAttr("ssh"))
 	if err != nil {
 		return fail(err)
@@ -265,6 +249,39 @@ func applyWinUser(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	vals["in_sync"] = cty.True
 	resp.NewState = cty.ObjectVal(vals)
 	return resp
+}
+
+// passwordAtApply returns password_hmac for state, null without password_wo,
+// and the password to set: only one that's new to Conn3x, since Windows can
+// refuse to reuse a password, and resetting one on every run tells nobody
+// anything.
+func passwordAtApply(req providers.ApplyResourceChangeRequest, kind, name string) (cty.Value, *string, error) {
+	wo := req.Config.GetAttr("password_wo")
+	if wo.IsNull() {
+		return cty.NullVal(cty.String), nil, nil
+	}
+	// A saved plan applied elsewhere must use the key it was made with.
+	key, err := hmacKey(true)
+	if err != nil {
+		return cty.NilVal, nil, err
+	}
+	var prior cty.Value
+	if !req.PriorState.IsNull() {
+		prior = req.PriorState.GetAttr("password_hmac")
+	}
+	for _, v := range []cty.Value{req.PlannedState.GetAttr("password_hmac"), prior} {
+		if v != cty.NilVal && known(v) {
+			if err := checkHMACKey(v.AsString(), key); err != nil {
+				return cty.NilVal, nil, err
+			}
+		}
+	}
+	sum := cty.StringVal(passwordHMAC(key, passwordID(kind, stringOr(req.PlannedState.GetAttr("ssh").GetAttr("host"), ""), name), wo.AsString()))
+	if prior != cty.NilVal && prior.RawEquals(sum) {
+		return sum, nil, nil
+	}
+	s := wo.AsString()
+	return sum, &s, nil
 }
 
 func winGroupSchema() providers.Schema {

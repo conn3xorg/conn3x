@@ -767,3 +767,154 @@ func winDNSClientModule(in *input) ([]step, string) {
 	}
 	return one("windows_dns_client", []attr{s("interface", adapters[0]), {key: "servers", val: cty.ListVal(vals)}})
 }
+
+// adCommon refuses what the microsoft.ad modules and their community.windows
+// forerunners share and Conn3x doesn't do: removal by state, and reaching
+// another server or using other credentials. Conn3x runs these on a domain
+// controller as its login. A sam_account_name other than name goes to a
+// person too, as Conn3x uses one name for both.
+func (in *input) adCommon(what string) string {
+	if in.state("present", "present", "absent") == "absent" {
+		return fmt.Sprintf("removes a %s; Conn3x deletes one with on_remove = \"delete\" when its step goes, so there's nothing to convert this to yet", what)
+	}
+	for _, k := range []string{"domain_server", "domain_username", "domain_password", "domain_credentials"} {
+		if in.has(k) {
+			return "sets " + k + "; Conn3x runs AD steps on a domain controller as its own login, so run the step there"
+		}
+	}
+	if in.has("identity") {
+		return "finds the object by identity, to rename or move it; Conn3x finds it by name"
+	}
+	if in.has("sam_account_name") && !strings.EqualFold(in.str("sam_account_name"), in.str("name")) {
+		return "gives a sam_account_name other than its name; Conn3x uses one name for both"
+	}
+	return ""
+}
+
+// adPath adds path, unless it's the module's way of saying the default.
+func (in *input) adPath(attrs []attr, from ...string) []attr {
+	for _, f := range from {
+		if in.has(f) {
+			if p := in.str(f); p != "microsoft.ad.default_path" {
+				return append(attrs, s("path", p))
+			}
+		}
+	}
+	return attrs
+}
+
+func (in *input) adBool(attrs []attr, to, from string) []attr {
+	if in.has(from) {
+		return append(attrs, attr{key: to, val: cty.BoolVal(in.bool(from, false))})
+	}
+	return attrs
+}
+
+// winADOUModule converts microsoft.ad.ou.
+func winADOUModule(in *input) ([]step, string) {
+	if why := in.adCommon("OU"); why != "" {
+		return nil, why
+	}
+	attrs := in.adPath([]attr{s("name", in.str("name"))}, "path")
+	attrs = in.optional(attrs, "description", "description")
+	attrs = in.adBool(attrs, "protected", "protect_from_deletion")
+	return one("windows_ad_ou", attrs)
+}
+
+// adMember is a member windows_ad_group can take: a sAMAccountName, not a DN,
+// a UPN, DOMAIN\name, a SID or a GUID.
+var adMember = regexp.MustCompile(`^[^"/\\\[\]:;|=,+*?<>@{}]{1,256}$`)
+
+// winADGroupModule converts microsoft.ad.group and community.windows'
+// win_domain_group.
+func winADGroupModule(in *input) ([]step, string) {
+	if why := in.adCommon("group"); why != "" {
+		return nil, why
+	}
+	attrs := in.adPath([]attr{s("name", in.str("name"))}, "path", "organizational_unit", "ou")
+	if in.has("scope") {
+		attrs = append(attrs, s("scope", strings.ToLower(in.str("scope"))))
+	}
+	if in.has("category") {
+		attrs = append(attrs, s("category", strings.ToLower(in.str("category"))))
+	}
+	attrs = in.optional(attrs, "description", "description")
+	n, ok := in.args["members"]
+	if !ok {
+		return one("windows_ad_group", attrs)
+	}
+	in.used["members"] = true
+	m := mapping(n)
+	if n.Kind != yaml.MappingNode {
+		return nil, "gives members that aren't add, set or remove lists"
+	}
+	if _, ok := m["remove"]; ok {
+		return nil, "takes members out by name; windows_ad_group adds them, or keeps the complete list with authoritative = true"
+	}
+	if a := scalar(m["lookup_failure_action"]); a != "" && a != "fail" {
+		return nil, "sets lookup_failure_action " + a + "; windows_ad_group fails on a member that doesn't exist"
+	}
+	list, auth := m["add"], false
+	if set, ok := m["set"]; ok {
+		if list != nil {
+			return nil, "both adds and sets members; pick one"
+		}
+		list, auth = set, true
+	}
+	for k := range m {
+		if k != "add" && k != "set" && k != "lookup_failure_action" {
+			return nil, "sets " + k + " in members, which windows_ad_group has no setting for"
+		}
+	}
+	vals := []cty.Value{}
+	for _, e := range seq(list) {
+		v := in.render("members", scalar(e))
+		if e.Kind != yaml.ScalarNode || !adMember.MatchString(v) {
+			return nil, "names a member by something other than its sAMAccountName, such as a DN, DOMAIN\\name, a UPN or a SID; windows_ad_group takes names such as alice or web1$"
+		}
+		vals = append(vals, cty.StringVal(v))
+	}
+	if len(vals) == 0 && !auth {
+		return one("windows_ad_group", attrs)
+	}
+	if len(vals) == 0 {
+		attrs = append(attrs, attr{key: "members", val: cty.ListValEmpty(cty.String)})
+	} else {
+		attrs = append(attrs, attr{key: "members", val: cty.ListVal(vals)})
+	}
+	if auth {
+		attrs = append(attrs, attr{key: "authoritative", val: cty.True})
+	}
+	return one("windows_ad_group", attrs)
+}
+
+// winADUserModule converts microsoft.ad.user and community.windows'
+// win_domain_user.
+func winADUserModule(in *input) ([]step, string) {
+	if in.str("state") == "query" {
+		return nil, "only queries a user, which a step doesn't do"
+	}
+	if why := in.adCommon("user"); why != "" {
+		return nil, why
+	}
+	if in.has("groups") {
+		return nil, "sets groups; give each group a windows_ad_group step with this user in its members"
+	}
+	attrs := in.adPath([]attr{s("name", in.str("name"))}, "path")
+	attrs = in.optional(attrs, "upn", "upn")
+	attrs = in.optional(attrs, "given_name", "firstname")
+	attrs = in.optional(attrs, "surname", "surname", "lastname")
+	attrs = in.optional(attrs, "display_name", "display_name")
+	attrs = in.optional(attrs, "description", "description")
+	attrs = in.adBool(attrs, "enabled", "enabled")
+	attrs = in.adBool(attrs, "password_never_expires", "password_never_expires")
+	// Never read, so a password can't end up in the output. Conn3x sets one
+	// when the user is made and when it changes, whatever update_password says.
+	in.ignore("update_password")
+	var notes []string
+	if in.has("password") {
+		in.ignore("password")
+		notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here.")
+	}
+	return one("windows_ad_user", attrs, notes...)
+}

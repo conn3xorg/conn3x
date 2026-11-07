@@ -270,7 +270,9 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_dns_client":        winDNSClientModule,
 	"win_domain":            winDomainModule,
 	"win_domain_controller": winDCModule,
+	"win_domain_group":      winADGroupModule,
 	"win_domain_membership": winMembershipModule,
+	"win_domain_user":       winADUserModule,
 	"win_feature":           winFeatureModule,
 	"win_file":              winFileModule,
 	"win_firewall_rule":     winFirewallRuleModule,
@@ -295,11 +297,17 @@ var modules = map[string]func(*input) ([]step, string){
 	// as plenty of collections have a module called domain.
 	"microsoft.ad.domain":            winDomainModule,
 	"microsoft.ad.domain_controller": winDCModule,
+	"microsoft.ad.group":             winADGroupModule,
 	"microsoft.ad.membership":        winMembershipModule,
+	"microsoft.ad.ou":                winADOUModule,
+	"microsoft.ad.user":              winADUserModule,
 }
 
 // exact lists the modules matched by their full name only.
-var exact = map[string]bool{"microsoft.ad.domain": true, "microsoft.ad.domain_controller": true, "microsoft.ad.membership": true}
+var exact = map[string]bool{
+	"microsoft.ad.domain": true, "microsoft.ad.domain_controller": true, "microsoft.ad.membership": true,
+	"microsoft.ad.group": true, "microsoft.ad.ou": true, "microsoft.ad.user": true,
+}
 
 // fullNameOnly lists collections whose modules are matched only by their full
 // name, as listed in exact: microsoft.ad.user is no Linux user.
