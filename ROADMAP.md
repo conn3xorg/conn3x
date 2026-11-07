@@ -8,8 +8,9 @@ The goal: anything you'd do with Terraform, OpenTofu, Ansible, Chef or Puppet, y
 
 - Linux hosts: Rocky Linux, RHEL, AlmaLinux, Fedora, Debian and Ubuntu, tested on every change.
 - Windows Server 2022 and 2025 over OpenSSH, in preview: files, access rules, registry, services, features, users and groups, firewall rules, MSI packages, scheduled tasks and IIS, with a tested [Azure example](examples/azure-windows-server). A circuit can also build a small Active Directory domain: set a server's DNS servers, make it the first domain controller of a new forest, and, since v0.7.2, join other servers to the domain and promote a member to another domain controller, and since v0.7.3, keep the OUs, groups and users inside it. The [azure-domain example](examples/azure-domain) builds the forest, joins a server to it, and creates an OU, a user and a group with that user in it. Every Windows module is experimental.
-- 125 official circuits, from nginx and PostgreSQL to k3s, Suricata and a private AI stack, in the [catalogue](https://docs.conn3x.org/circuits).
+- 126 official circuits, from nginx and PostgreSQL to k3s, Suricata and a private AI stack, in the [catalogue](https://docs.conn3x.org/circuits).
 - The [Circuit Builder](https://conn3x.org/build), which writes a config from the circuits you pick, with host roles, an optional step that creates the servers too, and a link you can share.
+- Adopting servers you already run, since v0.8.0: `import` on a step takes over the `file`, `template`, `directory`, `link`, `package`, `service`, `user` or `group` a Linux host already has, and steps take OpenTofu's `lifecycle` block, from `prevent_destroy` to preconditions. See [Adopt servers you already run](https://docs.conn3x.org/guides/adopt-servers).
 - `conn3x convert ansible` for bringing playbooks across, and `conn3x drift` for both layers.
 - Any OpenTofu provider. AWS, Azure, Google Cloud and DigitalOcean are tested end to end, each with a [tutorial](https://docs.conn3x.org/tutorials).
 
@@ -33,7 +34,7 @@ More circuits come alongside, when people ask for them.
 
 The rest, in order. The full roadmap says where each one fits among the items above.
 
-- The rest of OpenTofu on host steps: `import` for what a server already has, and `lifecycle` on steps.
+- The rest of OpenTofu on host steps. `import` and `lifecycle` on steps shipped in v0.8.0; what's left is import for the other Linux modules, through a shared circuit called as a module, and on Windows, plus `conn3x generate step` to write a step from what a host already has.
 - Inventory and host data: Ansible inventories with `group_vars` and `host_vars`, and values looked up by host, group and environment, as Hiera does.
 - Rolling updates and orchestration: batches with a failure limit, run-once and delegated steps, tasks and plans like Bolt's.
 - Servers that keep themselves right: scheduled applies from the web UI, run reports and host facts you can search, then a pull mode.
