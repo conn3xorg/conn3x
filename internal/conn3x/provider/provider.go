@@ -143,6 +143,8 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 		}
 		if strings.HasPrefix(req.TypeName, eosTypePrefix) {
 			diags = diags.Append(validateEOSSSH(req.Config))
+		} else {
+			diags = diags.Append(validateNotEOS(req.Config))
 		}
 		return providers.ValidateResourceConfigResponse{Diagnostics: diags}
 	}
@@ -156,7 +158,7 @@ func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.V
 	if req.TypeName != "conn3x_host" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data source " + req.TypeName)}
 	}
-	diags := validateSSH(req.Config)
+	diags := validateSSH(req.Config).Append(validateNotEOS(req.Config))
 	if v := optional(req.Config, "allow_windows"); known(v) && v.True() {
 		diags = diags.Append(validateWindowsSSH(req.Config))
 	}

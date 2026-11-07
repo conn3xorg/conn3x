@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -124,5 +125,26 @@ func TestEOSConfigPlansWithParents(t *testing.T) {
 	})
 	if resp.Diagnostics.HasErrors() || resp.PlannedState.GetAttr("id").IsKnown() {
 		t.Errorf("a parent known only at apply: id %#v, %v", resp.PlannedState.GetAttr("id"), resp.Diagnostics.Err())
+	}
+}
+
+func TestConfirmAfterIsChecked(t *testing.T) {
+	p, _ := New()
+	vlan := map[string]cty.Value{"vlan_id": cty.NumberIntVal(10)}
+	for v, ok := range map[string]bool{"5s": true, "30s": true, "3m": true, "4s": false, "4m": false, "soon": false} {
+		resp := p.ValidateResourceConfig(context.Background(), providers.ValidateResourceConfigRequest{
+			TypeName: "conn3x_eos_vlan", Config: eosStep("conn3x_eos_vlan", vlan, map[string]cty.Value{"confirm_after": cty.StringVal(v)}),
+		})
+		if resp.Diagnostics.HasErrors() == ok {
+			t.Errorf("confirm_after = %q: %v", v, resp.Diagnostics.Err())
+		}
+	}
+	file := eosStep("conn3x_file", map[string]cty.Value{"path": cty.StringVal("/etc/motd"), "content": cty.StringVal("hi")}, map[string]cty.Value{"confirm_after": cty.StringVal("30s")})
+	resp := p.ValidateResourceConfig(context.Background(), providers.ValidateResourceConfigRequest{TypeName: "conn3x_file", Config: file})
+	if !resp.Diagnostics.HasErrors() || !strings.Contains(resp.Diagnostics.Err().Error(), "eos_") {
+		t.Errorf("confirm_after on a file step: %v", resp.Diagnostics.Err())
+	}
+	if got := confirmAfter(eosStep("conn3x_eos_vlan", vlan, nil).GetAttr("ssh")); got != 30*time.Second {
+		t.Errorf("default = %s", got)
 	}
 }

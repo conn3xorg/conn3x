@@ -6,6 +6,9 @@ circuit "eos" {
     user             = "admin"
     private_key_file = "{{.KeyFile}}"
     known_hosts_file = "{{.KnownHosts}}"
+{{- if .ConfirmAfter}}
+    confirm_after    = "{{.ConfirmAfter}}"
+{{- end}}
   }
 
   step "name" {

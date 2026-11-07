@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -45,6 +46,29 @@ func validateEOSSSH(cfg cty.Value) tfdiags.Diagnostics {
 		diags = diags.Append(tfdiags.AttributeValue(tfdiags.Error, "Invalid ssh setting for an EOS switch", why,
 			cty.GetAttrPath("ssh").GetAttr(attr)))
 	}
+	if v := optional(conn, "confirm_after"); known(v) {
+		if d, err := time.ParseDuration(v.AsString()); err == nil {
+			if err := eos.CheckConfirmAfter(d); err != nil {
+				diags = diags.Append(tfdiags.AttributeValue(tfdiags.Error, "Invalid ssh confirm_after", err.Error(),
+					cty.GetAttrPath("ssh").GetAttr("confirm_after")))
+			}
+		}
+	}
+	return diags
+}
+
+// validateNotEOS refuses confirm_after on a step that isn't an EOS step:
+// nothing else commits with a revert timer, so it would do nothing.
+func validateNotEOS(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.Type().HasAttribute("ssh") {
+		return diags
+	}
+	if conn := cfg.GetAttr("ssh"); !conn.IsNull() && conn.IsKnown() && !optional(conn, "confirm_after").IsNull() {
+		diags = diags.Append(tfdiags.AttributeValue(tfdiags.Error, "Invalid ssh setting",
+			"confirm_after only applies to eos_* steps, which commit with a revert timer. Remove it from this ssh block, or put the switches in their own circuit.",
+			cty.GetAttrPath("ssh").GetAttr("confirm_after")))
+	}
 	return diags
 }
 
@@ -52,6 +76,15 @@ func validateEOSSSH(cfg cty.Value) tfdiags.Diagnostics {
 // agent, whatever CONN3X_AGENT says.
 func eosDevice(ctx context.Context, conn cty.Value) (*hostConn, error) {
 	return pooled(ctx, conn, 0)
+}
+
+// confirmAfter is the ssh block's confirm_after, already checked by
+// validateEOSSSH, or the default.
+func confirmAfter(conn cty.Value) time.Duration {
+	if d, err := time.ParseDuration(stringOr(optional(conn, "confirm_after"), "")); err == nil {
+		return d
+	}
+	return eos.DefaultConfirmAfter
 }
 
 // eosReconnect dials a new connection, outside the pool, for confirming a
@@ -136,7 +169,7 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	} else {
 		cmds = k.config(target).Commands(running)
 	}
-	diff, err := eos.Apply(ctx, h.client, eosReconnect(conn), cmds)
+	diff, err := eos.Apply(ctx, h.client, eosReconnect(conn), cmds, confirmAfter(conn))
 	if diff != "" {
 		log.Printf("[INFO] conn3x: eos_%s on %s: session diff:\n%s", k.name, h.host, diff)
 	}

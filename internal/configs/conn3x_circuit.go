@@ -448,7 +448,7 @@ var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "ju
 // sshOnly are the ssh settings a host object can't set. Naming one in a host
 // object is an error, because it would otherwise do nothing; any other field
 // is the user's own data, read with each.value.
-var sshOnly = []string{"host", "ssh_config_file", "known_hosts_file", "become", "become_password_file", "agent", "timeout"}
+var sshOnly = []string{"host", "ssh_config_file", "known_hosts_file", "become", "become_password_file", "agent", "timeout", "confirm_after"}
 
 // Conn3xSSHSettings lists every ssh setting circuits know about, so the
 // provider can check it against its schema.

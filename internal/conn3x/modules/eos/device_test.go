@@ -51,7 +51,7 @@ func reconnectTo(f fakeSwitch, err error) func(context.Context) (Device, error) 
 func TestApplyCommitsConfirmsAndSaves(t *testing.T) {
 	var sent []string
 	d := fakeSwitch{name: "pool", sent: &sent}
-	diff, err := Apply(context.Background(), d, reconnectTo(fakeSwitch{name: "fresh", sent: &sent}, nil), []string{"hostname leaf1"})
+	diff, err := Apply(context.Background(), d, reconnectTo(fakeSwitch{name: "fresh", sent: &sent}, nil), []string{"hostname leaf1"}, time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestApplyCommitsConfirmsAndSaves(t *testing.T) {
 func TestApplyAbortsWhenALineIsRefused(t *testing.T) {
 	var sent []string
 	d := fakeSwitch{name: "pool", sent: &sent, refuse: "bogus"}
-	_, err := Apply(context.Background(), d, reconnectTo(d, nil), []string{"interface Ethernet1", "bogus line"})
+	_, err := Apply(context.Background(), d, reconnectTo(d, nil), []string{"interface Ethernet1", "bogus line"}, time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "% Invalid input") || !strings.Contains(err.Error(), "Nothing was changed") {
 		t.Fatalf("err = %v", err)
 	}
@@ -99,7 +99,7 @@ func TestApplyLeavesTheRevertTimerWhenConfirmFails(t *testing.T) {
 		reconnectTo(fakeSwitch{name: "fresh", sent: &sent, down: true}, nil),
 	} {
 		sent = nil
-		_, err := Apply(context.Background(), d, reconnect, []string{"hostname leaf1"})
+		_, err := Apply(context.Background(), d, reconnect, []string{"hostname leaf1"}, time.Millisecond)
 		if err == nil || !strings.Contains(err.Error(), "roll the change back on its own") {
 			t.Fatalf("err = %v", err)
 		}
@@ -113,7 +113,7 @@ func TestApplyLeavesTheRevertTimerWhenConfirmFails(t *testing.T) {
 
 func TestApplyWithNothingToDoSendsNothing(t *testing.T) {
 	var sent []string
-	if _, err := Apply(context.Background(), fakeSwitch{sent: &sent}, nil, nil); err != nil || len(sent) != 0 {
+	if _, err := Apply(context.Background(), fakeSwitch{sent: &sent}, nil, nil, time.Millisecond); err != nil || len(sent) != 0 {
 		t.Errorf("err %v, sent %q", err, sent)
 	}
 }
@@ -163,4 +163,45 @@ type exitSwitch struct{ out string }
 
 func (e exitSwitch) RunRaw(context.Context, string, []byte) (ssh.Result, error) {
 	return ssh.Result{Stdout: []byte(e.out), ExitCode: 1}, nil
+}
+
+func TestApplyWaitsBeforeConfirming(t *testing.T) {
+	var sent []string
+	var committedAt, confirmedAt time.Time
+	d := fakeSwitch{name: "pool", sent: &sent}
+	reconnect := func(context.Context) (Device, error) {
+		confirmedAt = time.Now()
+		return fakeSwitch{name: "fresh", sent: &sent}, nil
+	}
+	committedAt = time.Now()
+	if _, err := Apply(context.Background(), d, reconnect, []string{"hostname leaf1"}, 200*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if waited := confirmedAt.Sub(committedAt); waited < 200*time.Millisecond {
+		t.Errorf("confirmed after %s, want at least 200ms", waited)
+	}
+
+	sent = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	_, err := Apply(ctx, d, reconnectTo(fakeSwitch{name: "fresh", sent: &sent}, nil), []string{"hostname leaf1"}, time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "roll the change back on its own") {
+		t.Fatalf("cancelled during the wait: %v", err)
+	}
+	for _, s := range sent {
+		if strings.HasPrefix(s, "fresh:") || strings.Contains(s, "copy running-config") {
+			t.Errorf("after a cancel during the wait, sent %q", s)
+		}
+	}
+}
+
+func TestCheckConfirmAfter(t *testing.T) {
+	for d, ok := range map[time.Duration]bool{
+		4 * time.Second: false, 5 * time.Second: true, 30 * time.Second: true,
+		3*time.Minute + 59*time.Second: true, 4 * time.Minute: false, 10 * time.Minute: false,
+	} {
+		if err := CheckConfirmAfter(d); (err == nil) != ok {
+			t.Errorf("CheckConfirmAfter(%s) = %v", d, err)
+		}
+	}
 }

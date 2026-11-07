@@ -2,7 +2,22 @@
 
 Use `eos_config` to own a few lines of an Arista EOS switch's configuration: a description on an interface, a neighbor under BGP, a banner. You write each line the way `show running-config` prints it, without the indent, and Conn3x leaves every other line alone.
 
-Every change goes through a named EOS config session. If the switch refuses any line, the session is aborted and nothing changes. If it takes them all, Conn3x commits with a five-minute revert timer, then confirms the commit over a new SSH login. A change that locks Conn3x out never gets confirmed, so the switch rolls it back by itself. Once confirmed, the running config is saved to startup-config.
+Every change goes through a named EOS config session. If the switch refuses any line, the session is aborted and nothing changes. If it takes them all, Conn3x commits with a five-minute revert timer, waits, and then confirms the commit over a new SSH login. A change that locks Conn3x out never gets confirmed, so the switch rolls it back by itself. Once confirmed, the running config is saved to startup-config.
+
+### Why it waits before confirming
+
+A change doesn't bite the moment it's committed. On cEOS-lab, turning off SSH took 3 to 6 seconds to stop new logins. Confirm inside that gap and the login still works, so Conn3x would keep a change that's about to lock it out. So it waits `confirm_after` first, 30 seconds unless you say otherwise, and only then tries the new login.
+
+That wait is paid once per step today, so a switch with ten steps takes about five minutes longer to apply. Slower changes, such as ACLs, VRF moves, AAA, or anything on real hardware, may need longer than 30 seconds to take effect; set more in the circuit's `ssh` block:
+
+```
+ssh {
+  user          = "ops"
+  confirm_after = "90s"
+}
+```
+
+It takes at least `"5s"` and anything under `"4m"`, so the confirm always lands before the five-minute revert. One session per switch per apply, which pays the wait once, is coming in a later release.
 
 ## Example usage
 

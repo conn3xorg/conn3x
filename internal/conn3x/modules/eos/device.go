@@ -37,6 +37,25 @@ const commandTimeout = 2 * time.Minute
 // back on its own.
 const RevertAfter = 5 * time.Minute
 
+// The wait between commit and confirm. A change takes effect a few seconds
+// after its commit (on cEOS-lab 4.37.0F, management ssh shutdown took 3 to 6
+// seconds), and a confirm sent sooner would keep a change that cuts Conn3x
+// off. The confirm must still land well inside RevertAfter.
+const (
+	DefaultConfirmAfter = 30 * time.Second
+	MinConfirmAfter     = 5 * time.Second
+	MaxConfirmAfter     = RevertAfter - time.Minute // exclusive
+)
+
+// CheckConfirmAfter refuses a wait too short to let a change bite, or too
+// long for the confirm to beat the revert timer.
+func CheckConfirmAfter(d time.Duration) error {
+	if d < MinConfirmAfter || d >= MaxConfirmAfter {
+		return fmt.Errorf("confirm_after must be at least %s and under %s, so a change has time to take effect and the confirm still lands before the %s revert timer; got %s", MinConfirmAfter, MaxConfirmAfter, RevertAfter, d)
+	}
+	return nil
+}
+
 // cliError matches how the EOS CLI explains a command it refused: a line
 // starting with "% ", such as "% Invalid input at line 2".
 var cliError = regexp.MustCompile(`(?m)^% .*$`)
@@ -152,14 +171,14 @@ func timerText(d time.Duration) string {
 //     the switch refuses any of them, the session is aborted and nothing
 //     has changed.
 //  2. The session is committed with a revert timer of RevertAfter.
-//  3. A new SSH connection, from reconnect, commits it again, which
-//     confirms it. That it can log in at all is the check: if the change
-//     cut Conn3x off, the confirm never arrives and EOS rolls the change
-//     back by itself.
+//  3. After confirmAfter, a new SSH connection, from reconnect, commits it
+//     again, which confirms it. That it can log in at all is the check: if
+//     the change cut Conn3x off, the confirm never arrives and EOS rolls
+//     the change back by itself. The wait gives the change time to bite.
 //  4. The running config is copied to startup-config.
 //
 // It returns the session's diff as the switch printed it.
-func Apply(ctx context.Context, d Device, reconnect func(context.Context) (Device, error), cmds []string) (string, error) {
+func Apply(ctx context.Context, d Device, reconnect func(context.Context) (Device, error), cmds []string, confirmAfter time.Duration) (string, error) {
 	if len(cmds) == 0 {
 		return "", nil
 	}
@@ -182,6 +201,13 @@ func Apply(ctx context.Context, d Device, reconnect func(context.Context) (Devic
 	}
 	if _, err := run(ctx, d, session+" commit timer "+timerText(RevertAfter), nil); err != nil {
 		return diff, abort(err)
+	}
+	wait := time.NewTimer(confirmAfter)
+	select {
+	case <-ctx.Done():
+		wait.Stop()
+		return diff, fmt.Errorf("stopped before confirming, so the switch will roll the change back on its own in %s: %w", RevertAfter, ctx.Err())
+	case <-wait.C:
 	}
 	fresh, err := reconnect(ctx)
 	if err == nil {

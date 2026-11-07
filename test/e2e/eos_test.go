@@ -18,6 +18,7 @@ import (
 // eosVars fill testdata/eos.
 type eosVars struct {
 	Host, Port, KeyFile, KnownHosts string
+	ConfirmAfter                    string // empty: the default, 30s
 	Lockout                         bool
 }
 
@@ -64,6 +65,7 @@ func (v eosVars) mustCLI(t *testing.T, input string) string {
 
 func TestEOSApplyDriftAndAbort(t *testing.T) {
 	sw := eosSwitch(t)
+	sw.ConfirmAfter = "5s" // the least allowed; nothing here cuts SSH
 	w := newWorkdir(t, "eos")
 	w.writeAs("main.circuit.hcl", sw)
 	w.mustConn3x("init", "-no-color")
@@ -130,7 +132,8 @@ func TestEOSApplyDriftAndAbort(t *testing.T) {
 
 // TestEOSLockoutRollsBack applies a change that stops new SSH logins. It
 // can't be confirmed, so the switch has to roll it back on its own when the
-// revert timer runs out. Takes about seven minutes.
+// revert timer runs out. It runs with the default confirm_after, 30s, since
+// the lockout here takes 3 to 6 seconds to bite. Takes about seven minutes.
 func TestEOSLockoutRollsBack(t *testing.T) {
 	sw := eosSwitch(t)
 	w := newWorkdir(t, "eos")

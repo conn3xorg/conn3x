@@ -71,6 +71,11 @@ func connectionBlock() *configschema.NestedBlock {
 					Optional:    true,
 					Description: "How long to keep trying while the host isn't answering yet, such as a machine that is still booting. Defaults to \"3m\".",
 				},
+				"confirm_after": {
+					Type:        cty.String,
+					Optional:    true,
+					Description: "Experimental, EOS steps only. How long to wait after committing a change before logging in again to confirm it. A change that cuts off SSH can take a few seconds to bite; confirming too soon would keep it. Defaults to \"30s\"; at least \"5s\" and under \"4m\", so the confirm lands before the switch's 5-minute revert timer.",
+				},
 				"become_password_file": {
 					Type:        cty.String,
 					Optional:    true,
@@ -588,6 +593,13 @@ func validateSSH(cfg cty.Value) tfdiags.Diagnostics {
 	conn := cfg.GetAttr("ssh")
 	if conn.IsNull() || !conn.IsKnown() {
 		return diags
+	}
+	if v := optional(conn, "confirm_after"); known(v) {
+		if _, err := time.ParseDuration(v.AsString()); err != nil {
+			diags = diags.Append(tfdiags.AttributeValue(tfdiags.Error, "Invalid ssh confirm_after",
+				fmt.Sprintf("confirm_after must be a duration such as \"30s\", not %q.", v.AsString()),
+				cty.GetAttrPath("ssh").GetAttr("confirm_after")))
+		}
 	}
 	if v := conn.GetAttr("timeout"); known(v) {
 		if d, err := time.ParseDuration(v.AsString()); err != nil || d < 0 {
