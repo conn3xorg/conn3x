@@ -223,6 +223,27 @@ func TestImportDirectoryAndLink(t *testing.T) {
 	}
 }
 
+// The ID import_id builds is one ImportResourceState reads.
+func TestImportIDFunction(t *testing.T) {
+	p, _ := New()
+	if _, ok := p.GetProviderSchema(ctx).Functions["import_id"]; !ok {
+		t.Fatal("import_id isn't in the provider schema")
+	}
+	ssh := cty.ObjectVal(map[string]cty.Value{"host": cty.StringVal("203.0.113.10"), "port": cty.NumberIntVal(2222), "user": cty.StringVal("root")})
+	args := cty.ObjectVal(map[string]cty.Value{"name": cty.StringVal("nginx")})
+	resp := p.CallFunction(ctx, providers.CallFunctionRequest{Name: "import_id", Arguments: []cty.Value{cty.StringVal("web1"), ssh, args}})
+	if resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if _, v, err := importPrior("conn3x_package", resp.Result.AsString()); err != nil || v.GetAttr("id").AsString() != "203.0.113.10:2222:package:nginx" {
+		t.Fatalf("importPrior(%s) = %v, %v", resp.Result.AsString(), v, err)
+	}
+	bad := p.CallFunction(ctx, providers.CallFunctionRequest{Name: "import_id", Arguments: []cty.Value{cty.StringVal("web1"), cty.StringVal("203.0.113.10"), args}})
+	if bad.Error == nil || !strings.Contains(bad.Error.Error(), "ssh must be an object") {
+		t.Fatalf("err = %v", bad.Error)
+	}
+}
+
 func TestImportUnsupportedType(t *testing.T) {
 	p, _ := New()
 	resp := p.ImportResourceState(ctx, providers.ImportResourceStateRequest{TypeName: "conn3x_command", Target: providers.ImportTarget{ID: "{}"}})
