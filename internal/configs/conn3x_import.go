@@ -44,15 +44,19 @@ var importModules = map[string]string{
 	"conn3x_user":      "user",
 	"conn3x_group":     "group",
 
-	"conn3x_authorized_key": "authorized_key",
-	"conn3x_cron":           "cron",
-	"conn3x_timer":          "timer",
-	"conn3x_sysctl":         "sysctl",
-	"conn3x_mount":          "mount",
-	"conn3x_repository":     "repository",
-	"conn3x_hostname":       "hostname",
-	"conn3x_timezone":       "timezone",
-	"conn3x_locale":         "locale",
+	"conn3x_authorized_key":   "authorized_key",
+	"conn3x_cron":             "cron",
+	"conn3x_timer":            "timer",
+	"conn3x_sysctl":           "sysctl",
+	"conn3x_mount":            "mount",
+	"conn3x_repository":       "repository",
+	"conn3x_hostname":         "hostname",
+	"conn3x_timezone":         "timezone",
+	"conn3x_locale":           "locale",
+	"conn3x_firewalld":        "firewalld",
+	"conn3x_ufw_rule":         "ufw",
+	"conn3x_selinux_boolean":  "selinux_boolean",
+	"conn3x_selinux_fcontext": "selinux_fcontext",
 }
 
 // ImportableType is the resource type a module's step lowers to, when the

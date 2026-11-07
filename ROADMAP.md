@@ -34,7 +34,7 @@ More circuits come alongside, when people ask for them.
 
 The rest, in order. The full roadmap says where each one fits among the items above.
 
-- The rest of OpenTofu on host steps. `import` and `lifecycle` on steps shipped in v0.8.0; what's left is import for `firewalld`, `ufw` and the SELinux modules, and on Windows.
+- The rest of OpenTofu on host steps. `import` and `lifecycle` on steps shipped in v0.8.0; what's left is import on Windows.
 - Inventory and host data: Ansible inventories with `group_vars` and `host_vars`, and values looked up by host, group and environment, as Hiera does.
 - Rolling updates and orchestration: batches with a failure limit, run-once and delegated steps, tasks and plans like Bolt's.
 - Servers that keep themselves right: scheduled applies from the web UI, run reports and host facts you can search, then a pull mode.

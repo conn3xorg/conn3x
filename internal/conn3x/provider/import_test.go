@@ -53,6 +53,10 @@ func TestImportPriorPerModule(t *testing.T) {
 		{"conn3x_hostname", `{"name":"web1"}`, "203.0.113.10:2222:hostname", nil},
 		{"conn3x_timezone", `{"name":"UTC"}`, "203.0.113.10:2222:timezone", nil},
 		{"conn3x_locale", `{"name":"C.UTF-8"}`, "203.0.113.10:2222:locale", nil},
+		{"conn3x_firewalld", `{"service":"http"}`, "203.0.113.10:2222:firewalld::http:", nil},
+		{"conn3x_ufw_rule", `{"action":"allow","port":"22/tcp"}`, "203.0.113.10:2222:ufw:allow:22/tcp:", nil},
+		{"conn3x_selinux_boolean", `{"name":"httpd_can_network_connect","value":true}`, "203.0.113.10:2222:selinux_boolean:httpd_can_network_connect", nil},
+		{"conn3x_selinux_fcontext", `{"target":"/srv/www(/.*)?","setype":"httpd_sys_content_t"}`, "203.0.113.10:2222:selinux_fcontext:/srv/www(/.*)?", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
 			_, v, err := importPrior(tc.typeName, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+tc.args+`}`)
@@ -91,6 +95,7 @@ func TestImportPriorRejectsBadIDs(t *testing.T) {
 		"no ssh":        {"conn3x_file", `{"v":1,"key":"web1","args":{"path":"/x"}}`, "needs key and ssh"},
 		"no path":       {"conn3x_file", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{}}`, "has no path"},
 		"no name":       {"conn3x_user", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{}}`, "has no name"},
+		"no action":     {"conn3x_ufw_rule", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"port":"22"}}`, "has no action"},
 		"no key":        {"conn3x_authorized_key", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"user":"deploy"}}`, "has no key"},
 		"content":       {"conn3x_file", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"path":"/x","content":"s"}}`, "can't hold content"},
 		"bad arg":       {"conn3x_package", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"name":"x","nope":1}}`, "nope"},
