@@ -242,3 +242,17 @@ Remove-ADGroupMember -Identity $A.g -Members $A.u -Confirm:$false`, map[string]a
 		t.Error("user still there")
 	}
 }
+
+// On a host that isn't a DC there's nothing to wait for, so the OU, group and
+// user steps go straight to their own error. On a DC that's up, AD answers
+// through the global catalog in seconds.
+func TestWaitADAnswersQuickly(t *testing.T) {
+	c := connect(t)
+	start := time.Now()
+	if err := windows.WaitAD(context.Background(), c, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 45*time.Second {
+		t.Errorf("took %s", d)
+	}
+}

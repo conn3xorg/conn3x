@@ -26,7 +26,9 @@ step "servers_ou" {
 <!-- reference -->
 ## How it works
 
-**Where it runs.** On a domain controller, after the reboot that finishes its promotion, and after AD answers: follow [`windows_ad_forest`](windows_ad_forest.md) with a reboot and a wait on port 9389. On a member server with the AD tools installed it would still fail, because a key login there has no domain credentials to reach AD with.
+**Where it runs.** On a domain controller, after the reboot that finishes its promotion, so follow [`windows_ad_forest`](windows_ad_forest.md) with a reboot. On a member server with the AD tools installed it would still fail, because a key login there has no domain credentials to reach AD with.
+
+**Waiting for AD.** Straight after a DC reboots, Active Directory can answer for the domain a minute before its global catalog does, and a write made in that minute can hang. So apply first waits until a query through the global catalog works too, for up to 10 minutes, then fails with the reason AD last gave. A write that gets no answer at all runs once more when AD answers again. It reads first, so it only writes what's still missing. A host that isn't a DC isn't waited on.
 
 **Finding it.** The OU is looked up by `name` directly under `path`, or under the top of the domain when `path` is unset. So changing either plans a new OU, and the old one is forgotten, not moved.
 
