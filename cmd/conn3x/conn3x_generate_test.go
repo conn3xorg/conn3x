@@ -34,17 +34,25 @@ func TestGenerateStepName(t *testing.T) {
 }
 
 func TestGenerateArgValue(t *testing.T) {
-	for text, want := range map[string]cty.Value{
-		"1000":     cty.NumberIntVal(1000),
-		"true":     cty.True,
-		`["ops"]`:  cty.TupleVal([]cty.Value{cty.StringVal("ops")}),
-		"nginx":    cty.StringVal("nginx"),
-		"/etc/x":   cty.StringVal("/etc/x"),
-		"a b":      cty.StringVal("a b"),
-		`"quoted"`: cty.StringVal("quoted"),
+	for _, tc := range []struct {
+		text string
+		ty   cty.Type
+		want cty.Value
+	}{
+		{"1000", cty.Number, cty.NumberIntVal(1000)},
+		{"true", cty.Bool, cty.True},
+		{`["ops"]`, cty.List(cty.String), cty.TupleVal([]cty.Value{cty.StringVal("ops")})},
+		{"nginx", cty.String, cty.StringVal("nginx")},
+		{"/etc/x", cty.String, cty.StringVal("/etc/x")},
+		{"a b", cty.String, cty.StringVal("a b")},
+		{`"quoted"`, cty.String, cty.StringVal("quoted")},
+		// A string argument keeps the text: HCL would read these as numbers.
+		{"1.10", cty.String, cty.StringVal("1.10")},
+		{"0640", cty.String, cty.StringVal("0640")},
+		{"true", cty.String, cty.StringVal("true")},
 	} {
-		if got := argValue(text); !got.RawEquals(want) {
-			t.Errorf("argValue(%q) = %#v, want %#v", text, got, want)
+		if got := argValue(tc.text, tc.ty); !got.RawEquals(tc.want) {
+			t.Errorf("argValue(%q, %s) = %#v, want %#v", tc.text, tc.ty.FriendlyName(), got, tc.want)
 		}
 	}
 }
@@ -61,13 +69,14 @@ func TestGenerateContent(t *testing.T) {
 		want      []string
 		not       string
 	}{
-		"text":       {cty.StringVal("a ${b} %{c}\n"), false, []string{"<<EOT\n", "a $${b} %%{c}\n", "EOT"}, ""},
-		"no newline": {cty.StringVal("x"), false, []string{`content = "x"`}, "<<EOT"},
-		"EOT inside": {cty.StringVal("a\nEOT\nb\n"), false, []string{`content = "a\nEOT\nb\n"`}, "<<EOT"},
-		"binary":     {cty.StringVal("\xff\xfe"), false, []string{"isn't UTF-8", `content_wo = "REPLACE ME"`}, "content ="},
-		"large":      {cty.StringVal(strings.Repeat("x", maxContent+1)), false, []string{"over 64 KiB", `content_wo = "REPLACE ME"`}, "xxx"},
-		"write-only": {cty.NullVal(cty.String), true, []string{"stayed on the host", `content_wo = "REPLACE ME"`}, ""},
-		"no content": {cty.NullVal(cty.String), false, nil, "content"},
+		"text":         {cty.StringVal("a ${b} %{c}\n"), false, []string{"<<EOT\n", "a $${b} %%{c}\n", "EOT"}, ""},
+		"no newline":   {cty.StringVal("x"), false, []string{`content = "x"`}, "<<EOT"},
+		"EOT inside":   {cty.StringVal("a\nEOT\nb\n"), false, []string{`content = "a\nEOT\nb\n"`}, "<<EOT"},
+		"indented EOT": {cty.StringVal("a\n  EOT\nb\n"), false, []string{`content = "a\n  EOT\nb\n"`}, "<<EOT"},
+		"binary":       {cty.StringVal("\xff\xfe"), false, []string{"isn't UTF-8", `content_wo = "REPLACE ME"`}, "content ="},
+		"large":        {cty.StringVal(strings.Repeat("x", maxContent+1)), false, []string{"over 64 KiB", `content_wo = "REPLACE ME"`}, "xxx"},
+		"write-only":   {cty.NullVal(cty.String), true, []string{"stayed on the host", `content_wo = "REPLACE ME"`}, ""},
+		"no content":   {cty.NullVal(cty.String), false, nil, "content"},
 	} {
 		got := render(tc.content, tc.writeOnly)
 		for _, w := range tc.want {

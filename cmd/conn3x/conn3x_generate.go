@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -127,7 +128,7 @@ func runGenerateStep(ctx context.Context, o generateOptions, stdout, stderr io.W
 		case generateSkip[name] || importid.LeftOut[name]:
 			return fail("%s isn't read from the host, so generate doesn't take it", name)
 		}
-		v, err := convert.Convert(argValue(text), attr.Type)
+		v, err := convert.Convert(argValue(text, attr.Type), attr.Type)
 		if err != nil {
 			return fail("%s: %s", name, err)
 		}
@@ -178,9 +179,17 @@ func runGenerateStep(ctx context.Context, o generateOptions, stdout, stderr io.W
 	return 0
 }
 
-// argValue reads a command-line value as an HCL literal where it is one,
-// such as 1000, true or ["ops"], and as a string otherwise.
-func argValue(text string) cty.Value {
+// argValue reads a command-line value for an argument of type ty. A string
+// argument takes the text as written, so version=1.10 and mode=0640 stay
+// as they are, unquoting "..." if it's quoted. Anything else is read as an
+// HCL literal where it is one, such as 1000, true or ["ops"].
+func argValue(text string, ty cty.Type) cty.Value {
+	if ty == cty.String {
+		if unq, err := strconv.Unquote(text); err == nil && strings.HasPrefix(text, `"`) {
+			return cty.StringVal(unq)
+		}
+		return cty.StringVal(text)
+	}
 	expr, diags := hclsyntax.ParseExpression([]byte(text), "", hcl.InitialPos)
 	if !diags.HasErrors() {
 		if _, isRef := expr.(*hclsyntax.ScopeTraversalExpr); !isRef {
@@ -287,9 +296,11 @@ func renderContent(body *hclwrite.Body, content cty.Value, writeOnly bool) {
 	})
 }
 
+// hasLine reports whether text has line on a line of its own, ignoring the
+// whitespace around it, as HCL does when it looks for a heredoc's end.
 func hasLine(text, line string) bool {
 	for _, l := range strings.Split(text, "\n") {
-		if l == line {
+		if strings.TrimSpace(l) == line {
 			return true
 		}
 	}
