@@ -12,6 +12,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
+	"github.com/opentofu/opentofu/internal/conn3x/importid"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mount"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
@@ -32,7 +33,7 @@ import (
 // content, and write_only says the content goes to content_wo, so the
 // import must keep it out of state too.
 
-const importVersion = 1
+const importVersion = importid.Version
 
 type importID struct {
 	V         int                        `json:"v"`

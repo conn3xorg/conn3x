@@ -1,0 +1,34 @@
+# Provider functions need their provider in required_providers, as in
+# OpenTofu; conn3x is built in.
+terraform {
+  required_providers {
+    conn3x = { source = "terraform.io/builtin/conn3x" }
+  }
+}
+
+locals {
+  hosts = { box = "127.0.0.1" }
+  ssh = {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
+
+module "site" {
+  source = "./site"
+  hosts  = local.hosts
+  ssh    = local.ssh
+}
+
+# The step is inside a module, where its own import can't reach, so the
+# root adopts it with the ID import_id builds.
+import {
+  for_each = local.hosts
+  to       = module.site.conn3x_file.site__motd[each.key]
+  id = provider::conn3x::import_id(each.key, merge(local.ssh, { host = each.value }), {
+    path = "/etc/motd"
+    mode = "0644"
+  })
+}

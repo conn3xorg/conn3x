@@ -13,6 +13,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/conn3x/importid"
 )
 
 // A step's import argument adopts what is already on its hosts. It lowers
@@ -50,10 +51,6 @@ var importModules = map[string]string{
 	"conn3x_mount":          "mount",
 	"conn3x_repository":     "repository",
 }
-
-// importLeftOut never go into an import ID: the content is read from the
-// host, and write-only arguments must not show in plan output.
-var importLeftOut = map[string]bool{"content": true, "content_wo": true, "validate": true}
 
 func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.Attributes, ssh *hclsyntax.Block) (*Import, hcl.Diagnostics) {
 	rng := attr.SrcRange
@@ -114,12 +111,12 @@ func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.At
 	}
 	args := map[string]hclsyntax.Expression{}
 	for name, a := range moduleAttrs {
-		if !importLeftOut[name] {
+		if !importid.LeftOut[name] {
 			args[name] = a.Expr
 		}
 	}
 	id := map[string]hclsyntax.Expression{
-		"v":    lit(cty.NumberIntVal(1)),
+		"v":    lit(cty.NumberIntVal(importid.Version)),
 		"key":  eachTraversal("key", rng),
 		"ssh":  withoutNulls(object(sshAttrs)),
 		"args": withoutNulls(object(args)),
