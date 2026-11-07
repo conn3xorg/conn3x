@@ -2,6 +2,8 @@
 
 The full roadmap lives at [docs.conn3x.org/roadmap](https://docs.conn3x.org/roadmap). This is the short version. There are no dates, and nothing here works until a [release](https://github.com/conn3xorg/conn3x/releases) says it does.
 
+The goal: anything you'd do with Terraform, OpenTofu, Ansible, Chef or Puppet, you'll be able to do with Conn3x.
+
 ## Today
 
 - Linux hosts: Rocky Linux, RHEL, AlmaLinux, Fedora, Debian and Ubuntu, tested on every change.
@@ -26,6 +28,19 @@ Network devices over their own CLI, starting with Arista EOS: switches, routers 
 - A web UI: a self-hosted, open-source app for teams to run plans and applies, approve them, see history, schedule drift checks and keep credentials per project, in the spirit of [Semaphore UI](https://github.com/semaphoreui/semaphore) and AWX.
 
 More circuits come alongside, when people ask for them.
+
+## Toward full IaCC
+
+The rest, in order. The full roadmap says where each one fits among the items above.
+
+- The rest of OpenTofu on host steps: `import` for what a server already has, and `lifecycle` on steps.
+- Inventory and host data: Ansible inventories with `group_vars` and `host_vars`, and values looked up by host, group and environment, as Hiera does.
+- Rolling updates and orchestration: batches with a failure limit, run-once and delegated steps, tasks and plans like Bolt's.
+- Servers that keep themselves right: scheduled applies from the web UI, run reports and host facts you can search, then a pull mode.
+- Encrypted variable files you can commit, like Ansible Vault.
+- Compliance checks that only report, a test command on containers, and policy on plans.
+- Your own modules, converters for Chef cookbooks and Puppet modules, and a circuit registry.
+- Runs that start on an event, such as an alert or a webhook.
 
 ## Later
 
