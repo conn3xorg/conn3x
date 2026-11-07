@@ -84,9 +84,6 @@ var importable = map[string]struct {
 	"conn3x_selinux_fcontext": {keysID("selinux_fcontext", "target"), notNull, "a local SELinux file context for %s", hasFcontext},
 }
 
-// importLeftOut never come in an import ID; see importPrior.
-var importLeftOut = map[string]bool{"content": true, "content_wo": true, "validate": true}
-
 // importDeletes are the types whose on_remove defaults to delete at plan
 // time (deleteByDefault), so an import must default it the same way.
 var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true, "conn3x_firewalld": true, "conn3x_ufw_rule": true}
@@ -344,7 +341,7 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 	// The step always sets its required arguments; reads and ids rely on them.
 	var missing []string
 	for name, a := range resourceTypes[typeName].schema().Block.Attributes {
-		if a.Required && !importLeftOut[name] && v.GetAttr(name).IsNull() {
+		if a.Required && !importid.LeftOut[name] && v.GetAttr(name).IsNull() {
 			missing = append(missing, name)
 		}
 	}
