@@ -240,7 +240,7 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
 # The whole domain: dc1 makes the forest, dc2 joins and becomes the second
 # DC, srv1 and srv2 join as members, and dc1 fills the directory.
 module "ad" {
-  source = "github.com/conn3xorg/circuit-active-directory?ref=v0.1.0"
+  source = "github.com/conn3xorg/circuit-active-directory?ref=v0.1.1"
 
   # Nothing connects until the extensions have installed the host keys.
   depends_on = [azurerm_virtual_machine_extension.bootstrap]
