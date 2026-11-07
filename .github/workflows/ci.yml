@@ -99,6 +99,7 @@ jobs:
             go test ./...
           else
             go test ./internal/conn3x/... ./cmd/conn3x/... ./internal/dag/... ./internal/configs/... ./internal/addrs/...
+            go test -run Conn3x ./internal/tofu/
           fi
 
   build:

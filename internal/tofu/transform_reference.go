@@ -389,7 +389,7 @@ func (m ReferenceMap) addReference(path addrs.Module, current dag.Vertex, ref *a
 		}
 		key = m.mapKey(path, subject)
 	}
-	vertices := m.refMap[key]
+	vertices := conn3xHostEdges(current, ref, m.refMap[key]) // CONN3X: circuit steps chain per host, see conn3x_chain.go
 	for _, rv := range vertices {
 		// don't include self-references
 		if rv == current {

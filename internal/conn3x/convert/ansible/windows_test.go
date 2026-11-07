@@ -208,6 +208,11 @@ func TestRefusedTasksDontEchoSecrets(t *testing.T) {
 		`microsoft.ad.domain_controller: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller, read_only: true}`,
 		`win_domain_controller: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller, site_name: s}`,
 		`microsoft.ad.domain_controller: {dns_domain_name: lab.test, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller}`,
+		`microsoft.ad.membership: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, state: domain, domain_server: ds.lab.test}`,
+		`microsoft.ad.membership: {dns_domain_name: lab.test, domain_admin_password: ` + secret + `, state: domain}`,
+		`microsoft.ad.domain_controller: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller, install_dns: false}`,
+		`win_domain_controller: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller, install_media_path: 'C:\InstallMedia'}`,
+		`microsoft.ad.domain_controller: {dns_domain_name: lab.test, domain_admin_user: a, domain_admin_password: ` + secret + `, safe_mode_password: ` + secret + `, state: domain_controller, replication_source_dc: dc1.lab.test}`,
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if len(res.Review) != 1 || strings.Contains(string(res.HCL), secret) || !strings.Contains(string(res.HCL), "secret left out") {

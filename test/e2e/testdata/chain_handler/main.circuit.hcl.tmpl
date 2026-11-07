@@ -1,0 +1,53 @@
+circuit "fleet" {
+  hosts = {
+{{- range $name, $port := .Ports}}
+    {{$name}} = { address = "127.0.0.1", port = {{$port}} }
+{{- end}}
+  }
+
+  strategy = "per_host"
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # Every start of the service appends a timestamp to /tmp/starts.
+  step "unit" {
+    file {
+      path    = "/etc/systemd/system/conn3x-demo.service"
+      content = "[Service]\nExecStart=/bin/sh -c 'date +%%s.%%N >> /tmp/starts; exec sleep infinity'\n\n[Install]\nWantedBy=multi-user.target\n"
+    }
+  }
+
+  step "config" {
+    file {
+      path    = "/etc/conn3x-demo.conf"
+      content = "greeting = hello\n"
+    }
+    notify = [handler.restart]
+  }
+
+  step "run" {
+    service {
+      name    = "conn3x-demo"
+      state   = "started"
+      enabled = true
+    }
+  }
+
+  # The last step: slow on one host, failing on another.
+  step "last" {
+    command {
+      command = "${each.key == "{{.Fail}}" ? "false" : each.key == "{{.Slow}}" ? "sleep 15; date +%s.%N > /tmp/last" : "date +%s.%N > /tmp/last"}"
+      creates = "/tmp/last"
+    }
+  }
+
+  handler "restart" {
+    service {
+      name = "conn3x-demo"
+    }
+  }
+}

@@ -126,6 +126,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 		Provider:      providers.Schema{Block: emptyBlock()},
 		ResourceTypes: resourceSchemas(),
 		DataSources:   map[string]providers.Schema{"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema()},
+		Functions:     functions,
 	}
 }
 
@@ -168,10 +169,6 @@ func (p *Provider) ValidateEphemeralConfig(context.Context, providers.ValidateEp
 
 func (p *Provider) MoveResourceState(context.Context, providers.MoveResourceStateRequest) providers.MoveResourceStateResponse {
 	return providers.MoveResourceStateResponse{Diagnostics: unsupported("moving resource state")}
-}
-
-func (p *Provider) CallFunction(context.Context, providers.CallFunctionRequest) providers.CallFunctionResponse {
-	return providers.CallFunctionResponse{Error: fmt.Errorf("the conn3x provider has no functions")}
 }
 
 func (p *Provider) ConfigureProvider(context.Context, providers.ConfigureProviderRequest) providers.ConfigureProviderResponse {
@@ -271,10 +268,6 @@ func (p *Provider) RenewEphemeralResource(context.Context, providers.RenewEpheme
 
 func (p *Provider) CloseEphemeralResource(context.Context, providers.CloseEphemeralResourceRequest) providers.CloseEphemeralResourceResponse {
 	return providers.CloseEphemeralResourceResponse{Diagnostics: unsupported("ephemeral resources")}
-}
-
-func (p *Provider) GetFunctions(context.Context) providers.GetFunctionsResponse {
-	return providers.GetFunctionsResponse{}
 }
 
 func resourceSchemas() map[string]providers.Schema {
