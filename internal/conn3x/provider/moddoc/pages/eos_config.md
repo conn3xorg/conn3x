@@ -26,6 +26,7 @@ From the next release, the steps for a switch share one session per apply. Each 
 The plan shows one more line per switch, `conn3x_eos_commit.<circuit>__commit`, and it changes only when one of the circuit's `eos_*` steps does. A few things follow from sharing:
 
 - If any step fails, the whole session is aborted, the steps before it included, and nothing on that switch changes.
+- A lockout rolls back the whole batch: every step of that apply on the switch, not only the one that cut Conn3x off.
 - EOS commits a session by swapping running-config for the session's copy. So if someone edits the switch by hand while the apply is adding lines, Conn3x refuses to commit rather than undo the edit. Nothing changes; apply again.
 - `-target` on a single `eos_*` step leaves the commit out, and the staged lines are dropped when the run ends. Target `conn3x_eos_commit.<circuit>__commit` instead: it brings every step with it.
 - A removed step still commits on its own, after the circuit's commit. Destroying a circuit pays the wait once per removal.

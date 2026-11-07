@@ -133,7 +133,8 @@ func TestEOSApplyDriftAndAbort(t *testing.T) {
 // TestEOSLockoutRollsBack applies a change that stops new SSH logins. It
 // can't be confirmed, so the switch has to roll it back on its own when the
 // revert timer runs out. It runs with the default confirm_after, 30s, since
-// the lockout here takes 3 to 6 seconds to bite. Takes about seven minutes.
+// the lockout here takes 3 to 6 seconds to bite. The circuit's other steps
+// share the session, so they roll back with it. Takes about seven minutes.
 func TestEOSLockoutRollsBack(t *testing.T) {
 	sw := eosSwitch(t)
 	w := newWorkdir(t, "eos")
@@ -156,12 +157,34 @@ func TestEOSLockoutRollsBack(t *testing.T) {
 		}
 		time.Sleep(15 * time.Second)
 	}
+	// The steps before it shared its session, so they rolled back with it:
+	// the next plan makes them again, and then there's nothing left to do.
 	sw.Lockout = false
 	w.writeAs("main.circuit.hcl", sw)
+	out, code := w.conn3x("plan", "-detailed-exitcode", "-no-color")
+	t.Logf("plan after the rollback exited %d: %s", code, lastLine(out, "Plan:"))
+	if code != 2 || !strings.Contains(out, "conn3x_eos_commit.eos__commit") {
+		t.Fatalf("plan after the rollback should redo the steps and the commit, exited %d:\n%s", code, out)
+	}
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	if out, code := w.conn3x("plan", "-detailed-exitcode", "-no-color"); code != 0 {
-		t.Fatalf("plan after the rollback exited %d:\n%s", code, out)
+		t.Fatalf("plan after re-applying exited %d:\n%s", code, out)
+	}
+	if running := sw.mustCLI(t, "show running-config\n"); !strings.Contains(running, "hostname c3x-leaf1") || strings.Contains(running, "management ssh\n   shutdown") {
+		t.Fatalf("after re-applying:\n%s", running)
 	}
 
+}
+
+// lastLine is the last line of out that starts with prefix, after spaces.
+func lastLine(out, prefix string) string {
+	found := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			found = strings.TrimSpace(line)
+		}
+	}
+	return found
 }
 
 // tenVars fill testdata/eos10: a hostname, a step per VLAN and a loopback.
