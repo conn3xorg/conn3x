@@ -119,8 +119,8 @@ circuit "chain" {
 				if err != nil {
 					t.Fatalf("%s holds %q", name, s)
 				}
-				// .NET ticks are 100 ns since 0001-01-01.
-				return time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(ticks/1e7) * time.Second).Add(time.Duration(ticks%1e7) * 100)
+				// .NET ticks are 100 ns since 0001-01-01, 62135596800 s before 1970.
+				return time.Unix(ticks/1e7-62135596800, ticks%1e7*100).UTC()
 			}
 			end, one, two := at("hold-end"), at("one-after"), at("two-after")
 			t.Logf("hold ended %s; after: one %+.1fs, two %+.1fs", end.Format(time.RFC3339Nano), one.Sub(end).Seconds(), two.Sub(end).Seconds())
