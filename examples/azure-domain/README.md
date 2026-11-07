@@ -20,7 +20,7 @@ conn3x plan -out tfplan
 conn3x apply tfplan
 ```
 
-Run `conn3x plan` again and it reports no changes.
+The first apply takes about 13 minutes. Run `conn3x plan` again and it reports no changes. Windows keeps updating Defender on its own, though, and when that leaves a reboot pending, a later plan shows `dc1`'s reboot step again. That's `only_if_pending` doing its job.
 
 ```sh
 conn3x destroy
