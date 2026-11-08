@@ -32,7 +32,7 @@ in one plan. [Here's why that matters.](https://conn3x.org/blog/why-conn3x)
 
 ## Install
 
-Linux and macOS, amd64 and arm64. Every release is signed and comes with SBOMs;
+Linux, macOS and Windows, amd64 and arm64. Every release is signed and comes with SBOMs;
 [the docs](https://docs.conn3x.org/install) show how to check one.
 
 On macOS, with Homebrew:
@@ -44,10 +44,20 @@ brew install conn3xorg/tap/conn3x
 Or download a release:
 
 ```sh
-VERSION=0.9.0 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.10.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
+
+On Windows, the zip holds `conn3x.exe`. Put it somewhere on your `PATH`:
+
+```powershell
+$v = "0.10.0"
+Invoke-WebRequest "https://github.com/conn3xorg/conn3x/releases/download/v$v/conn3x_${v}_windows_amd64.zip" -OutFile conn3x.zip
+Expand-Archive conn3x.zip -DestinationPath conn3x
+```
+
+It logs in with keys from the Windows OpenSSH agent, like `ssh` does.
 
 ## Quick start
 
@@ -132,22 +142,29 @@ container, in about five.
   walks through it.
 - **Doesn't wait on the slowest host.** Set `strategy = "per_host"` on a circuit and
   each host runs its own steps in order, so one slow server doesn't hold up the rest.
-  The default stays lockstep.
+  The default stays lockstep. A step with `when` runs only on the hosts where it's true,
+  and `run_once` runs it on just one.
 - **Checks a file before it lands.** Give `file` a `validate` command, such as
   `visudo -cf %s`, and a broken `sudoers` or `sshd_config` never replaces the one that
   works. `conn3x convert ansible` carries it over from `copy` tasks.
 - **Reaches Windows Server too, in preview.** Files, access rules, the registry,
-  services, users and groups, firewall rules, MSI packages, scheduled tasks, IIS, and a
-  small Active Directory domain with its OUs, groups and users, on Windows Server 2022
-  and 2025, over OpenSSH. The
+  services, users and groups, firewall rules, MSI packages, scheduled tasks, IIS,
+  Windows Update, and a small Active Directory domain with its OUs, groups and users, on
+  Windows Server 2022 and 2025, over OpenSSH. Seven of those modules take `import`, so
+  a server you already run is adopted rather than set up again. The
   [module pages](https://docs.conn3x.org/modules/windows_file) say what may still change.
-- **Starts on network switches, experimentally.** `eos_config`, `eos_hostname` and
-  `eos_vlan` steps configure an Arista EOS switch over its own CLI, with a revert
-  timer that rolls a change back if it cuts Conn3x off. Tested on cEOS-lab, not yet
+- **Starts on network switches, experimentally.** `eos_config`, `eos_hostname`,
+  `eos_vlan`, `eos_interface` and `eos_user` steps configure an Arista EOS switch over
+  its own CLI. Every step on a switch goes into one config session and one commit, with
+  a revert timer that rolls the change back if it cuts Conn3x off. Tested on cEOS-lab, not yet
   on hardware. See [Network devices](https://docs.conn3x.org/network-devices).
 - **Tells you what changed by hand.** `conn3x drift` reports changes made outside Conn3x,
   in the cloud and on your servers, and exits 2 when it finds some, so a scheduled job
   can alert on it.
+- **Checks your circuits and keeps a record.** `conn3x lint` flags what the circuit
+  grader marks down, such as a download without a checksum. `-report` on `apply` and
+  `drift` writes each run to a JSON file, and `conn3x mcp` lets an AI assistant look up
+  modules and circuits without ever running a plan.
 - **Brings your playbooks.** `conn3x convert ansible -i inventory site.yml` turns a
   playbook into circuits and marks anything it can't translate for you to finish.
   `-role` turns an Ansible role into a circuit directory.
