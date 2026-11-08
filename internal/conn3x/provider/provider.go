@@ -9,9 +9,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
@@ -22,6 +24,7 @@ type Provider struct {
 	// flight to end on Ctrl-C or SIGTERM. Nil in a Provider built bare.
 	stopped context.Context
 	stop    context.CancelFunc
+	closed  atomic.Bool
 }
 
 // resourceType is everything the provider needs to serve one resource type.
@@ -68,6 +71,10 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_mount":            {mountSchema, validateWith("path", func(v cty.Value) error { return mountFrom(v).Validate() }), planMount, readMount, applyMount, upgradeWith(mountSchema)},
 	"conn3x_wait_for":         {waitForSchema, validateWaitFor, planWaitFor, readWaitFor, applyWaitFor, upgradeWith(waitForSchema)},
 	"conn3x_reboot":           {rebootSchema, validateReboot, planReboot, readReboot, applyReboot, upgradeWith(rebootSchema)},
+	"conn3x_eos_config":       eosConfigKind.entry(eosConfigSchema, validateEOSConfig),
+	"conn3x_eos_hostname":     eosHostnameKind.entry(eosHostnameSchema, validateEOSHostname),
+	"conn3x_eos_vlan":         eosVLANKind.entry(eosVLANSchema, validateEOSVLAN),
+	"conn3x_eos_commit":       {eosCommitSchema, func(cty.Value) tfdiags.Diagnostics { return nil }, planEOSCommit, readEOSCommit, applyEOSCommit, upgradeWith(eosCommitSchema)},
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 
 	"conn3x_windows_acl":                  {winACLSchema, validateWinACL, planWinACL, readWinACL, applyWinACL, upgradeWith(winACLSchema)},
@@ -97,6 +104,7 @@ var resourceTypes = map[string]resourceType{
 
 // New returns the built-in conn3x provider.
 func New() (providers.Interface, error) {
+	openProviders.Add(1)
 	ctx, stop := context.WithCancel(context.Background())
 	return &Provider{stopped: ctx, stop: stop}, nil
 }
@@ -122,7 +130,8 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 	return providers.GetProviderSchemaResponse{
 		Provider:      providers.Schema{Block: emptyBlock()},
 		ResourceTypes: resourceSchemas(),
-		DataSources:   map[string]providers.Schema{"conn3x_host": hostDataSchema()},
+		DataSources:   map[string]providers.Schema{"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema()},
+		Functions:     functions,
 	}
 }
 
@@ -137,16 +146,24 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 		if strings.HasPrefix(req.TypeName, windowsTypePrefix) {
 			diags = diags.Append(validateWindowsSSH(req.Config))
 		}
+		if strings.HasPrefix(req.TypeName, eosTypePrefix) {
+			diags = diags.Append(validateEOSSSH(req.Config))
+		} else {
+			diags = diags.Append(validateNotEOS(req.Config))
+		}
 		return providers.ValidateResourceConfigResponse{Diagnostics: diags}
 	}
 	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
 func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
+	if req.TypeName == "conn3x_eos_device" {
+		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateEOSSSH(req.Config))}
+	}
 	if req.TypeName != "conn3x_host" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data source " + req.TypeName)}
 	}
-	diags := validateSSH(req.Config)
+	diags := validateSSH(req.Config).Append(validateNotEOS(req.Config))
 	if v := optional(req.Config, "allow_windows"); known(v) && v.True() {
 		diags = diags.Append(validateWindowsSSH(req.Config))
 	}
@@ -161,15 +178,18 @@ func (p *Provider) MoveResourceState(context.Context, providers.MoveResourceStat
 	return providers.MoveResourceStateResponse{Diagnostics: unsupported("moving resource state")}
 }
 
-func (p *Provider) CallFunction(context.Context, providers.CallFunctionRequest) providers.CallFunctionResponse {
-	return providers.CallFunctionResponse{Error: fmt.Errorf("the conn3x provider has no functions")}
-}
-
 func (p *Provider) ConfigureProvider(context.Context, providers.ConfigureProviderRequest) providers.ConfigureProviderResponse {
 	return providers.ConfigureProviderResponse{}
 }
 
-func (p *Provider) Close(context.Context) error { return nil }
+// Close aborts, with the last open instance, any config session still
+// staged on a switch: a failed or stopped run never committed it.
+func (p *Provider) Close(context.Context) error {
+	if p.stop != nil && !p.closed.Swap(true) && openProviders.Add(-1) == 0 {
+		abortStaged()
+	}
+	return nil
+}
 
 func (p *Provider) Stop(context.Context) error {
 	if p.stop != nil {
@@ -235,18 +255,48 @@ func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyR
 		defer lockForReboot(req.TypeName, priorSSH(req.PlannedState))()
 		resp := rt.apply(ctx, req)
 		resp.NewState = applyRevision(req.PlannedState, resp.NewState)
+		resp.Diagnostics = locateApplyErrors(rt.schema().Block, resp.Diagnostics)
 		return resp
 	}
 	return providers.ApplyResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
+// locateApplyErrors points each apply error that has no place in the
+// configuration at the argument that names the object, such as a command
+// step's command. OpenTofu then prints which step and host failed, as in
+// "with conn3x_command.web__migrate["web2"]", instead of a bare message
+// that, with per_host, isn't even where the run stopped.
+func locateApplyErrors(block *configschema.Block, diags tfdiags.Diagnostics) tfdiags.Diagnostics {
+	attr := ""
+	for _, name := range []string{"command", "path", "name", "target", "user", "key"} {
+		if a := block.Attributes[name]; a != nil && a.Required {
+			attr = name
+			break
+		}
+	}
+	if attr == "" {
+		return diags
+	}
+	out := make(tfdiags.Diagnostics, 0, len(diags))
+	for _, d := range diags {
+		if d.Severity() == tfdiags.Error && d.Source().Subject == nil && tfdiags.GetAttribute(d) == nil {
+			desc := d.Description()
+			d = tfdiags.AttributeValue(tfdiags.Error, desc.Summary, desc.Detail, cty.GetAttrPath(attr))
+		}
+		out = append(out, d)
+	}
+	return out
+}
 
 func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
-	if req.TypeName != "conn3x_host" {
+	if req.TypeName != "conn3x_host" && req.TypeName != "conn3x_eos_device" {
 		return providers.ReadDataSourceResponse{Diagnostics: unsupported("data source " + req.TypeName)}
 	}
 	ctx, done := p.withStop(ctx)
 	defer done()
+	if req.TypeName == "conn3x_eos_device" {
+		return readEOSDevice(ctx, req)
+	}
 	return readHostData(ctx, req)
 }
 
@@ -260,10 +310,6 @@ func (p *Provider) RenewEphemeralResource(context.Context, providers.RenewEpheme
 
 func (p *Provider) CloseEphemeralResource(context.Context, providers.CloseEphemeralResourceRequest) providers.CloseEphemeralResourceResponse {
 	return providers.CloseEphemeralResourceResponse{Diagnostics: unsupported("ephemeral resources")}
-}
-
-func (p *Provider) GetFunctions(context.Context) providers.GetFunctionsResponse {
-	return providers.GetFunctionsResponse{}
 }
 
 func resourceSchemas() map[string]providers.Schema {

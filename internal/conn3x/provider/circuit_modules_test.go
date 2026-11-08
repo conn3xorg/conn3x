@@ -10,14 +10,14 @@ import (
 )
 
 // Every resource type the provider serves must be usable as a circuit step,
-// except the action that handlers lower to.
+// except the action that handlers lower to and the commit circuits add.
 func TestEveryResourceTypeIsAStepModule(t *testing.T) {
 	steps := map[string]bool{}
 	for _, rt := range configs.Conn3xStepResourceTypes() {
 		steps[rt] = true
 	}
 	for _, rt := range ResourceTypeNames() {
-		if rt == "conn3x_service_action" {
+		if rt == "conn3x_service_action" || rt == "conn3x_eos_commit" {
 			continue
 		}
 		if !steps[rt] {

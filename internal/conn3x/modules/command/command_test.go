@@ -76,6 +76,20 @@ func TestRunFailureIsAnError(t *testing.T) {
 	}
 }
 
+// A failure with nothing printed has no dangling colon, and long output is
+// cut to its last lines, where the reason usually is.
+func TestRunFailureMessage(t *testing.T) {
+	_, err := Run(ctx, host, "exit 1")
+	if err == nil || err.Error() != "command failed with exit status 1" {
+		t.Fatalf("err = %q", err)
+	}
+	_, err = Run(ctx, host, "for i in $(seq 1 30); do echo line$i >&2; done; exit 2")
+	msg := err.Error()
+	if !strings.Contains(msg, "(20 earlier lines)") || !strings.Contains(msg, "line21") || !strings.HasSuffix(msg, "line30") || strings.Contains(msg, "line20\n") {
+		t.Fatalf("err = %q", msg)
+	}
+}
+
 func TestValidateGuards(t *testing.T) {
 	for _, bad := range []Guards{{Creates: "relative"}, {Removes: "x/y"}} {
 		if bad.Validate() == nil {

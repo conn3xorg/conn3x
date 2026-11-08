@@ -144,6 +144,38 @@ func TestHandlerThatIsNotAServiceIsLeft(t *testing.T) {
 	}
 }
 
+// Galaxy roles often write a handler as key=value text, as tasks may be.
+func TestHandlerWrittenAsKeyValueText(t *testing.T) {
+	res := convertString(t, `- hosts: all
+  tasks:
+    - copy: {dest: /etc/nginx/nginx.conf, content: x}
+      notify: restart nginx
+  handlers:
+    - name: restart nginx
+      service: name=nginx state=restarted
+    - name: reload nginx
+      systemd: name=nginx state=reloaded
+`)
+	if res.Converted != 1 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	for _, want := range []string{`action = "restart"`, `action = "reload"`} {
+		if !strings.Contains(string(res.HCL), want) {
+			t.Errorf("output lacks %s:\n%s", want, res.HCL)
+		}
+	}
+	// A reason about an argument reads as it does for a task.
+	res = convertString(t, "- hosts: all\n  tasks: []\n  handlers:\n    - name: r\n      service: {name: '{{ svc | lower }}', state: restarted}\n")
+	if len(res.Review) != 1 || !strings.HasPrefix(res.Review[0].Reason, "name uses a Jinja expression") {
+		t.Fatalf("review %+v", res.Review)
+	}
+	// A token that isn't key=value still leaves it for review.
+	res = convertString(t, "- hosts: all\n  tasks: []\n  handlers:\n    - name: r\n      service: nginx restarted\n")
+	if len(res.Review) != 1 {
+		t.Fatalf("review %+v", res.Review)
+	}
+}
+
 func TestConvertsLiteralLoops(t *testing.T) {
 	res := convertString(t, `- hosts: all
   tasks:

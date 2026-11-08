@@ -289,7 +289,12 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 	}
 	mod, args := moduleOf(t)
 	action := map[string]string{"restarted": "restart", "reloaded": "reload"}[scalar(args["state"])]
-	if (mod != "service" && mod != "systemd" && mod != "systemd_service") || action == "" || len(args) != 2 || scalar(args["name"]) == "" {
+	// name=x state=restarted text also carries _raw, which tasks ignore too.
+	n := len(args)
+	if _, raw := args["_raw"]; raw {
+		n--
+	}
+	if (mod != "service" && mod != "systemd" && mod != "systemd_service") || action == "" || n != 2 || scalar(args["name"]) == "" {
 		c.issue(cb, hname, h, "is a handler that doesn't restart or reload a service; Conn3x handlers do only that")
 		return nil, ""
 	}
@@ -301,7 +306,9 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 		reason = resolveMarks(svc)
 	}
 	if reason != "" {
-		c.issue(cb, hname, h, "is a handler that "+reason)
+		// These start with the argument, such as "name uses a Jinja
+		// expression ...", and read as they do for a task.
+		c.issue(cb, hname, h, reason)
 		return nil, ""
 	}
 	return svc[0].attrs, hname
@@ -426,6 +433,18 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, noLogReason)
 		return
 	}
+	if x, ok := c.role.defaultTask(node); ok {
+		body.AppendNewline()
+		comment(body, fmt.Sprintf("Task %q (%s line %d) defaults %s to %s from vars/<family>.yml: it's a variable the caller can set, and the steps below use the family's value when it's null.", name, c.file, node.Line, x, c.role.defaultOf[x]))
+		c.res.Converted++
+		return
+	}
+	if c.role != nil && node == c.role.familyInclude {
+		body.AppendNewline()
+		comment(body, fmt.Sprintf("Task %q (%s line %d) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.", name, c.file, node.Line))
+		c.res.Converted++
+		return
+	}
 	for k := range t {
 		if strings.HasPrefix(k, "with_") {
 			c.issue(body, name, node, "uses "+k+", a loop, which the converter can't translate yet")
@@ -477,21 +496,121 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, "uses the "+mod+" module, which has no Conn3x equivalent yet")
 		return
 	}
-	in := c.input(mod, args, vars, items)
-	in.factsLater = c.factsAfter[node]
-	steps, reason := m(in)
-	if reason == "" && items != nil {
-		reason = loopSteps(in.itemUsed)
+	run := func(vars map[string]string) (*input, []step, string) {
+		in := c.input(mod, args, vars, items)
+		in.factsLater = c.factsAfter[node]
+		steps, reason := m(in)
+		if reason == "" && items != nil {
+			reason = loopSteps(in.itemUsed)
+		}
+		if reason == "" {
+			reason = resolveMarks(steps)
+		}
+		if reason == "" {
+			reason = in.problem
+		}
+		if reason == "" {
+			if extra := in.unused(); len(extra) > 0 {
+				reason = "sets " + strings.Join(extra, ", ") + ", which the converter can't translate yet"
+			}
+		}
+		return in, steps, reason
 	}
-	if reason == "" {
-		reason = resolveMarks(steps)
-	}
-	if reason == "" {
-		reason = in.problem
-	}
-	if reason == "" {
-		if extra := in.unused(); len(extra) > 0 {
-			reason = "sets " + strings.Join(extra, ", ") + ", which the converter can't translate yet"
+	var in *input
+	var steps []step
+	var reason string
+	if names := c.familyNames(args, vars); len(names) == 0 {
+		in, steps, reason = run(vars)
+	} else {
+		// Convert once per family with its values, then join the steps.
+		byFamily := map[string][]step{}
+		for _, f := range osFamilies {
+			fv := map[string]string{}
+			for k, v := range vars {
+				fv[k] = v
+			}
+			for _, n := range names {
+				src := n
+				if y, isDefault := c.role.defaultOf[n]; isDefault {
+					src = y
+				}
+				v, ok := c.role.familyVars[f.conn3x][src]
+				if why, unusable := c.role.familyWhy[f.conn3x][src]; unusable {
+					reason = fmt.Sprintf("refers to %q, which vars/%s.yml sets to %s, which the converter can't use yet", n, f.ansible, why)
+					break
+				}
+				if !ok {
+					reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set, so Ansible would stop on %s hosts", n, f.ansible, f.ansible)
+					break
+				}
+				fv[n] = v
+			}
+			if reason != "" {
+				break
+			}
+			fin, fsteps, freason := run(fv)
+			if freason != "" {
+				reason = freason + " (with the values for " + f.ansible + " hosts)"
+				break
+			}
+			if in == nil {
+				in = fin
+			} else {
+				for p, b := range fin.out {
+					if old, ok := in.out[p]; ok && string(old) != string(b) {
+						reason = "copies a different " + p + " for each family, which the converter can't write as one step yet"
+					}
+					in.out[p] = b
+				}
+			}
+			byFamily[f.conn3x] = fsteps
+		}
+		if reason == "" {
+			steps, reason = mergeFamilies(byFamily)
+		}
+		// A variable the caller can set: convert again with var.X in its
+		// place, and use that where it's set.
+		var callers []string
+		for _, n := range names {
+			if _, ok := c.role.defaultOf[n]; ok {
+				callers = append(callers, n)
+			}
+		}
+		if reason == "" && len(callers) > 0 {
+			reason = callerKeys(mod, args, callers, c.role.defaultOf)
+		}
+		if reason == "" && len(callers) > 0 {
+			callerByFamily := map[string][]step{}
+			for _, f := range osFamilies {
+				fv := map[string]string{}
+				for k, v := range vars {
+					fv[k] = v
+				}
+				for _, n := range names {
+					if _, isDefault := c.role.defaultOf[n]; isDefault {
+						fv[n] = refMark("var." + n)
+					} else {
+						fv[n] = c.role.familyVars[f.conn3x][n]
+					}
+				}
+				_, csteps, creason := run(fv)
+				if creason != "" {
+					reason = creason + " (with a value the caller sets)"
+					break
+				}
+				callerByFamily[f.conn3x] = csteps
+			}
+			if reason == "" {
+				steps, reason = withCaller(steps, callerByFamily, c.role.defaultOf)
+			}
+			if reason == "" {
+				for _, n := range callers {
+					c.role.defaultUsed[n] = true
+				}
+			}
+		}
+		if reason == "" {
+			c.role.familyUsed = true
 		}
 	}
 	if reason == "" && c.otherUser != "" && !sameForAnyUser(mod, args) {

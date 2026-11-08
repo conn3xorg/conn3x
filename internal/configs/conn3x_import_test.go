@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/ext/tryfunc"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/opentofu/opentofu/internal/conn3x/importid"
 	"github.com/zclconf/go-cty/cty/function"
 	"github.com/zclconf/go-cty/cty/function/stdlib"
 )
@@ -99,6 +101,30 @@ func TestStepImportSyncedModules(t *testing.T) {
       src    = "tmpfs"
       fstype = "tmpfs"
     }`,
+		"conn3x_hostname": `hostname {
+      name = "web1"
+    }`,
+		"conn3x_timezone": `timezone {
+      name = "UTC"
+    }`,
+		"conn3x_locale": `locale {
+      name = "C.UTF-8"
+    }`,
+		"conn3x_firewalld": `firewalld {
+      service = "http"
+    }`,
+		"conn3x_ufw_rule": `ufw {
+      action = "allow"
+      port   = "22/tcp"
+    }`,
+		"conn3x_selinux_boolean": `selinux_boolean {
+      name  = "httpd_can_network_connect"
+      value = true
+    }`,
+		"conn3x_selinux_fcontext": `selinux_fcontext {
+      target = "/srv/www(/.*)?"
+      setype = "httpd_sys_content_t"
+    }`,
 		"conn3x_repository": `repository {
       name = "example"
       url  = "https://repo.example.com/"
@@ -123,6 +149,43 @@ func TestStepImportSyncedModules(t *testing.T) {
 	got := importIDFor(t, mod.Import[0], "web1", cty.StringVal("203.0.113.10"))
 	if !strings.Contains(got, `"args":{"key":"ssh-ed25519 AAAA deploy","user":"deploy"}`) {
 		t.Fatalf("ID = %s", got)
+	}
+}
+
+// provider::conn3x::import_id builds the ID with importid.Build, for a root
+// import block aimed at a step inside a module. It must match the lowering.
+func TestImportIDFunctionMatchesTheLowering(t *testing.T) {
+	for _, step := range []string{`step "motd" {
+    import = true
+    file {
+      path    = "/etc/motd"
+      content = "hi"
+      owner   = "root"
+    }
+  }`, `step "motd" {
+    import = true
+    file {
+      path       = "/etc/token"
+      content_wo = "s3cret"
+    }
+  }`} {
+		mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit(step)})
+		if diags.HasErrors() {
+			t.Fatal(diags.Error())
+		}
+		lowered := importIDFor(t, mod.Import[0], "web2", cty.ObjectVal(map[string]cty.Value{"address": cty.StringVal("203.0.113.11"), "port": cty.NumberIntVal(2222)}))
+		ssh := cty.ObjectVal(map[string]cty.Value{"host": cty.StringVal("203.0.113.11"), "port": cty.NumberIntVal(2222), "user": cty.StringVal("root")})
+		args := map[string]cty.Value{"path": cty.StringVal("/etc/motd"), "content": cty.StringVal("hi"), "owner": cty.StringVal("root")}
+		if strings.Contains(step, "content_wo") {
+			args = map[string]cty.Value{"path": cty.StringVal("/etc/token"), "content_wo": cty.StringVal("s3cret")}
+		}
+		built, err := importid.Build("web2", ssh, cty.ObjectVal(args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if built != lowered {
+			t.Errorf("import_id gives\n%s\nthe lowering\n%s", built, lowered)
+		}
 	}
 }
 
