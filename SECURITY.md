@@ -13,6 +13,8 @@ Include what you found, how to reproduce it, and the version you tested
 and we'll keep you posted while we work on a fix. Once a fix ships, we
 publish an advisory and credit you, unless you'd rather stay anonymous.
 
+Please reproduce the problem yourself before you report it. A scanner's or an AI tool's findings, pasted without checking, aren't a report; see [AI_POLICY.md](AI_POLICY.md).
+
 ## Supported versions
 
 Security fixes go to the latest minor version, so upgrade to the newest
