@@ -35,7 +35,7 @@ type Config struct {
 	Host           string
 	Port           int // default 22
 	User           string
-	PrivateKey     []byte // PEM; empty means use the agent at SSH_AUTH_SOCK
+	PrivateKey     []byte // PEM; empty means use the SSH agent (see dialAgent)
 	HostKey        string // optional pinned key, in authorized_keys format
 	KnownHostsFile string // default ~/.ssh/known_hosts when HostKey is empty
 	Timeout        time.Duration
@@ -479,13 +479,9 @@ func authMethod(cfg Config) (gossh.AuthMethod, net.Conn, error) {
 		}
 		return gossh.PublicKeys(signer), nil, nil
 	}
-	sock := os.Getenv("SSH_AUTH_SOCK")
-	if sock == "" {
-		return nil, nil, errors.New("no private_key given and no SSH agent (SSH_AUTH_SOCK is not set)")
-	}
-	conn, err := net.Dial("unix", sock)
+	conn, err := dialAgent(os.Getenv("SSH_AUTH_SOCK"))
 	if err != nil {
-		return nil, nil, fmt.Errorf("connecting to the SSH agent: %w", err)
+		return nil, nil, err
 	}
 	return gossh.PublicKeysCallback(agent.NewClient(conn).Signers), conn, nil
 }
