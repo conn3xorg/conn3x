@@ -8,7 +8,7 @@ Every change goes through a named EOS config session. If the switch refuses any 
 
 A change doesn't bite the moment it's committed. On cEOS-lab, turning off SSH took 3 to 6 seconds to stop new logins. Confirm inside that gap and the login still works, so Conn3x would keep a change that's about to lock it out. So it waits `confirm_after` first, 30 seconds unless you say otherwise, and only then tries the new login.
 
-That wait is paid once per step today, so a switch with ten steps takes about five minutes longer to apply. Slower changes, such as ACLs, VRF moves, AAA, or anything on real hardware, may need longer than 30 seconds to take effect; set more in the circuit's `ssh` block:
+In v0.9.0 that wait is paid once per step, so a switch with ten changed steps takes about five minutes longer to apply. Slower changes, such as ACLs, VRF moves, AAA, or anything on real hardware, may need longer than 30 seconds to take effect; set more in the circuit's `ssh` block:
 
 ```
 ssh {
@@ -17,7 +17,19 @@ ssh {
 }
 ```
 
-It takes at least `"5s"` and anything under `"4m"`, so the confirm always lands before the five-minute revert. One session per switch per apply, which pays the wait once, is coming in a later release.
+It takes at least `"5s"` and anything under `"4m"`, so the confirm always lands before the five-minute revert.
+
+### One commit per switch, arriving in the next release
+
+From the next release, the steps for a switch share one session per apply. Each step adds its lines, nothing goes live until the last one is in, and then one commit, one wait and one confirm make the lot live together. Ten changed steps cost one `confirm_after`, not ten. On cEOS-lab, ten steps with `confirm_after = "10s"` took 13.5 seconds, where one session per step took 97.
+
+The plan shows one more line per switch, `conn3x_eos_commit.<circuit>__commit`, and it changes only when one of the circuit's `eos_*` steps does. A few things follow from sharing:
+
+- If any step fails, the whole session is aborted, the steps before it included, and nothing on that switch changes.
+- A lockout rolls back the whole batch: every step of that apply on the switch, not only the one that cut Conn3x off.
+- EOS commits a session by swapping running-config for the session's copy. So if someone edits the switch by hand while the apply is adding lines, Conn3x refuses to commit rather than undo the edit. Nothing changes; apply again.
+- `-target` on a single `eos_*` step leaves the commit out, and the staged lines are dropped when the run ends. Target `conn3x_eos_commit.<circuit>__commit` instead: it brings every step with it.
+- A removed step still commits on its own, after the circuit's commit. Destroying a circuit pays the wait once per removal.
 
 ## Example usage
 

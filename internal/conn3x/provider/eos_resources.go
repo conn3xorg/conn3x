@@ -7,6 +7,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -136,6 +139,11 @@ func (k eosKind) read(ctx context.Context, req providers.ReadResourceRequest) pr
 	return resp
 }
 
+// apply adds the step's lines to the switch's session for this run, which
+// the circuit's conn3x_eos_commit makes live once every step is in. A step
+// with nothing to change opens no session. A removal goes into the session
+// when one is open; otherwise, as when a whole circuit is destroyed and its
+// commit is gone first, it commits in a session of its own.
 func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	var resp providers.ApplyResourceChangeResponse
 	fail := func(err error) providers.ApplyResourceChangeResponse {
@@ -143,7 +151,8 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 		return resp
 	}
 	target := req.PlannedState
-	if target.IsNull() {
+	removing := target.IsNull()
+	if removing {
 		resp.NewState = target
 		if k.remove == nil || req.PriorState.IsNull() || req.PriorState.GetAttr("on_remove").AsString() != onRemoveDelete {
 			return resp
@@ -156,31 +165,121 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	// One config session per switch at a time: EOS allows several, but two
-	// commit timers waiting on each other's confirm would be hard to reason about.
 	defer lockHost(h, "eos")()
-	running, err := eos.RunningConfig(ctx, h.client)
+	st := stagedOn(h)
+	if st.failed != nil {
+		return fail(fmt.Errorf("not applied: %w", st.failed))
+	}
+	var base string
+	if st.session != nil {
+		base, err = st.session.Config(ctx, h.client)
+	} else {
+		base, err = eos.RunningConfig(ctx, h.client)
+	}
 	if err != nil {
-		return fail(err)
+		return fail(st.abort(ctx, h, err))
 	}
 	var cmds []string
-	if req.PlannedState.IsNull() {
-		cmds = k.remove(target, running)
+	if removing {
+		cmds = k.remove(target, base)
 	} else {
-		cmds = k.config(target).Commands(running)
+		cmds = k.config(target).Commands(base)
 	}
-	diff, err := eos.Apply(ctx, h.client, eosReconnect(conn), cmds, confirmAfter(conn))
-	if diff != "" {
-		log.Printf("[INFO] conn3x: eos_%s on %s: session diff:\n%s", k.name, h.host, diff)
+	switch {
+	case len(cmds) == 0:
+	case removing && st.session == nil:
+		diff, err := eos.Apply(ctx, h.client, eosReconnect(conn), base, cmds, confirmAfter(conn))
+		if diff != "" {
+			log.Printf("[INFO] conn3x: eos_%s on %s: session diff:\n%s", k.name, h.host, diff)
+		}
+		if err != nil {
+			return fail(err)
+		}
+	default:
+		if st.session == nil {
+			if st.session, err = eos.Open(ctx, h.client, base); err != nil {
+				return fail(err)
+			}
+		}
+		if err := st.session.Add(ctx, h.client, cmds); err != nil {
+			return fail(st.abort(ctx, h, err))
+		}
+		if removing {
+			st.removals = append(st.removals, strings.Join(cmds, "; "))
+		}
 	}
-	if err != nil {
-		return fail(err)
-	}
-	if !req.PlannedState.IsNull() {
+	if !removing {
 		resp.NewState = withSync(req.PlannedState, true)
 	}
 	return resp
 }
+
+// staged is the config session one switch's steps are adding to in this
+// run. The built-in provider runs in-process, so every step and commit of
+// a run sees the same one. Callers hold lockHost(h, "eos").
+type staged struct {
+	h        *hostConn
+	session  *eos.Session // nil: nothing staged yet
+	failed   error        // a step's session was aborted: nothing more goes in
+	removals []string     // removals in the session, lost if it is aborted
+}
+
+var stagedSessions = struct {
+	sync.Mutex
+	m map[string]*staged // rootKey
+}{m: map[string]*staged{}}
+
+func stagedOn(h *hostConn) *staged {
+	stagedSessions.Lock()
+	defer stagedSessions.Unlock()
+	st, ok := stagedSessions.m[h.rootKey]
+	if !ok {
+		st = &staged{h: h}
+		stagedSessions.m[h.rootKey] = st
+	}
+	return st
+}
+
+// abort drops the session after err, and every line staged with it, and
+// marks the switch failed for the rest of the run. With nothing staged, it
+// returns err as it is.
+func (st *staged) abort(ctx context.Context, h *hostConn, err error) error {
+	if st.session == nil {
+		return err
+	}
+	if abortErr := st.session.Abort(ctx, h.client); abortErr != nil {
+		err = fmt.Errorf("%w; %v", err, abortErr)
+	} else {
+		err = fmt.Errorf("%w. Nothing was changed on %s: the lines earlier steps added in this apply were dropped too", err, h.host)
+	}
+	if len(st.removals) > 0 {
+		err = fmt.Errorf("%w. Removals in that session were dropped as well, and Conn3x has already forgotten them, so remove these by hand: %s", err, strings.Join(st.removals, " | "))
+	}
+	st.session, st.removals, st.failed = nil, nil, err
+	return err
+}
+
+// abortStaged aborts every session still staged, as when a run fails
+// before a switch's commit. The sessions were never live.
+func abortStaged() {
+	stagedSessions.Lock()
+	defer stagedSessions.Unlock()
+	for key, st := range stagedSessions.m {
+		if st.session != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			log.Printf("[WARN] conn3x: aborting config session %s on %s, which no conn3x_eos_commit made live", st.session.Name, st.h.host)
+			if err := st.session.Abort(ctx, st.h.client); err != nil {
+				log.Printf("[WARN] conn3x: %v", err)
+			}
+			cancel()
+		}
+		delete(stagedSessions.m, key)
+	}
+}
+
+// openProviders counts provider instances not yet closed. The last Close
+// aborts what is still staged.
+var openProviders atomic.Int64
 
 func (k eosKind) entry(schema func() providers.Schema, validate func(cty.Value) tfdiags.Diagnostics) resourceType {
 	return resourceType{schema, validate, k.plan, k.read, k.apply, upgradeWith(schema)}
@@ -322,5 +421,69 @@ func readEOSDevice(ctx context.Context, req providers.ReadDataSourceRequest) pro
 	vals["serial"] = cty.StringVal(f.Serial)
 	vals["system_mac"] = cty.StringVal(f.SystemMAC)
 	resp.State = cty.ObjectVal(vals)
+	return resp
+}
+
+// conn3x_eos_commit makes live what a circuit's eos_* steps staged on one
+// switch. It isn't a step module: the circuit lowering adds one per circuit
+// with eos steps, after all of them, with their revisions as triggers, so it
+// plans a change exactly when one of them does.
+func eosCommitSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: eosExperimental + "Commits the config session a circuit's eos_* steps added their lines to, with a revert timer, waits confirm_after, confirms over a new login and saves. Circuits add it; it isn't a step.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":       {Type: cty.String, Computed: true},
+			"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "The revisions of the circuit's eos steps on this switch; the commit runs when they change."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func planEOSCommit(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	var resp providers.PlanResourceChangeResponse
+	if req.ProposedNewState.IsNull() {
+		resp.PlannedState = req.ProposedNewState
+		return resp
+	}
+	vals := req.ProposedNewState.AsValueMap()
+	vals["id"] = planID(req, "eos-commit")
+	resp.PlannedState = cty.ObjectVal(vals)
+	return resp
+}
+
+// readEOSCommit keeps state as it is: the steps are what drift.
+func readEOSCommit(_ context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return providers.ReadResourceResponse{NewState: req.PriorState}
+}
+
+func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	resp := providers.ApplyResourceChangeResponse{NewState: req.PlannedState}
+	if req.PlannedState.IsNull() {
+		return resp // a destroy: each removal commits on its own
+	}
+	conn := req.PlannedState.GetAttr("ssh")
+	h, err := eosDevice(ctx, conn)
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	defer lockHost(h, "eos")()
+	st := stagedOn(h)
+	if st.failed != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos commit: nothing was committed: %w", st.failed))
+		return resp
+	}
+	if st.session == nil {
+		return resp // no step changed anything on this switch
+	}
+	s := st.session
+	st.session, st.removals = nil, nil // committed or rolling back: either way, gone
+	diff, err := s.Commit(ctx, h.client, eosReconnect(conn), confirmAfter(conn))
+	if diff != "" {
+		log.Printf("[INFO] conn3x: eos commit on %s: session diff:\n%s", h.host, diff)
+	}
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos commit: %w. The steps are recorded as applied, so the next refresh finds them out of sync and the next apply makes them again", err))
+	}
 	return resp
 }

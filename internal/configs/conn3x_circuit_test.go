@@ -1065,3 +1065,71 @@ func TestHandlerSerialPassesThrough(t *testing.T) {
 		t.Fatal("serial not passed to the service action")
 	}
 }
+
+const eosCircuit = `
+circuit "leafs" {
+  hosts = { leaf1 = "10.0.0.1", leaf2 = "10.0.0.2" }
+  ssh {
+    user = "admin"
+  }
+  step "name" {
+    eos_hostname {
+      name = each.key
+    }
+  }
+  step "vlans" {
+    for_each = { users = 10 }
+    eos_vlan {
+      vlan_id = item.value
+    }
+  }
+  step "commit" {
+    eos_config {
+      lines = ["ip routing"]
+    }
+  }
+}
+`
+
+// A circuit with eos steps gets one commit per switch, after every step,
+// watching the eos steps' revisions; one without gets none.
+func TestEOSCircuitLowersOneCommit(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": eosCircuit})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	c, ok := mod.ManagedResources["conn3x_eos_commit.leafs__commit"]
+	if !ok {
+		t.Fatalf("no commit resource; have %v", keys(mod.ManagedResources))
+	}
+	if _, ok := mod.ManagedResources["conn3x_eos_config.leafs__commit"]; !ok {
+		t.Fatal("a step named commit should still lower")
+	}
+	if c.ForEach == nil {
+		t.Fatal("commit not repeated over hosts")
+	}
+	attrs, _ := c.Config.JustAttributes()
+	var refs []string
+	for _, tr := range attrs["triggers"].Expr.Variables() {
+		refs = append(refs, traversalString(tr))
+	}
+	got := strings.Join(refs, ",")
+	for _, want := range []string{"conn3x_eos_hostname.leafs__name", "conn3x_eos_vlan.leafs__vlans", "conn3x_eos_config.leafs__commit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("triggers reference %q, missing %q", got, want)
+		}
+	}
+	if len(c.DependsOn) != 1 || traversalString(c.DependsOn[0]) != "conn3x_eos_config.leafs__commit" {
+		t.Errorf("commit should wait for the circuit's last step, depends_on = %v", c.DependsOn)
+	}
+
+	plain, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": handlerCircuit})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	for addr := range plain.ManagedResources {
+		if strings.HasPrefix(addr, "conn3x_eos_commit.") {
+			t.Errorf("a circuit without eos steps got %s", addr)
+		}
+	}
+}

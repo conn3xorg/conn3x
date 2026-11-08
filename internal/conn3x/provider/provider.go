@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -23,6 +24,7 @@ type Provider struct {
 	// flight to end on Ctrl-C or SIGTERM. Nil in a Provider built bare.
 	stopped context.Context
 	stop    context.CancelFunc
+	closed  atomic.Bool
 }
 
 // resourceType is everything the provider needs to serve one resource type.
@@ -72,6 +74,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_eos_config":       eosConfigKind.entry(eosConfigSchema, validateEOSConfig),
 	"conn3x_eos_hostname":     eosHostnameKind.entry(eosHostnameSchema, validateEOSHostname),
 	"conn3x_eos_vlan":         eosVLANKind.entry(eosVLANSchema, validateEOSVLAN),
+	"conn3x_eos_commit":       {eosCommitSchema, func(cty.Value) tfdiags.Diagnostics { return nil }, planEOSCommit, readEOSCommit, applyEOSCommit, upgradeWith(eosCommitSchema)},
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 
 	"conn3x_windows_acl":                  {winACLSchema, validateWinACL, planWinACL, readWinACL, applyWinACL, upgradeWith(winACLSchema)},
@@ -101,6 +104,7 @@ var resourceTypes = map[string]resourceType{
 
 // New returns the built-in conn3x provider.
 func New() (providers.Interface, error) {
+	openProviders.Add(1)
 	ctx, stop := context.WithCancel(context.Background())
 	return &Provider{stopped: ctx, stop: stop}, nil
 }
@@ -178,7 +182,14 @@ func (p *Provider) ConfigureProvider(context.Context, providers.ConfigureProvide
 	return providers.ConfigureProviderResponse{}
 }
 
-func (p *Provider) Close(context.Context) error { return nil }
+// Close aborts, with the last open instance, any config session still
+// staged on a switch: a failed or stopped run never committed it.
+func (p *Provider) Close(context.Context) error {
+	if p.stop != nil && !p.closed.Swap(true) && openProviders.Add(-1) == 0 {
+		abortStaged()
+	}
+	return nil
+}
 
 func (p *Provider) Stop(context.Context) error {
 	if p.stop != nil {
