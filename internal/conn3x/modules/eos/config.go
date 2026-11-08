@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -207,9 +208,57 @@ func (v VLAN) Config() Config {
 	return c
 }
 
+// exists reports whether config has the VLAN, and whether it has a block of
+// its own. EOS prints VLANs with nothing set under them together on one
+// line, as in "vlan 10,20-22", and a VLAN with a name as its own block.
+func (v VLAN) exists(config string) (found, own bool) {
+	if _, ok := Section(config, v.Config().Parents); ok {
+		return true, true
+	}
+	for _, k := range parse(config).kids {
+		if list, ok := strings.CutPrefix(k.text, "vlan "); ok && len(k.kids) == 0 && inVLANList(list, v.ID) {
+			return true, false
+		}
+	}
+	return false, false
+}
+
+// inVLANList reports whether a list such as 10,20-22 holds id.
+func inVLANList(list string, id int) bool {
+	for _, part := range strings.Split(list, ",") {
+		lo, hi, isRange := strings.Cut(part, "-")
+		a, errA := strconv.Atoi(lo)
+		b, errB := a, error(nil)
+		if isRange {
+			b, errB = strconv.Atoi(hi)
+		}
+		if errA == nil && errB == nil && a <= id && id <= b {
+			return true
+		}
+	}
+	return false
+}
+
+// InSync reports whether config has the VLAN with this name, or with none.
+func (v VLAN) InSync(config string) bool {
+	found, own := v.exists(config)
+	if !own {
+		return found && v.Name == ""
+	}
+	return v.Config().InSync(config)
+}
+
+// Commands are what makes config have the VLAN as v wants it, or nil.
+func (v VLAN) Commands(config string) []string {
+	if v.InSync(config) {
+		return nil
+	}
+	return v.Config().Commands(config)
+}
+
 // RemoveCommands delete the VLAN, when it's there.
 func (v VLAN) RemoveCommands(config string) []string {
-	if _, found := Section(config, v.Config().Parents); !found {
+	if found, _ := v.exists(config); !found {
 		return nil
 	}
 	return []string{fmt.Sprintf("no vlan %d", v.ID)}

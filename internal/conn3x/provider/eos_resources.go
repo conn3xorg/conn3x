@@ -109,8 +109,14 @@ type eosKind struct {
 	keys     []string // changing one of these is a new resource
 	settings []string // changing one of these is an update
 	deletes  bool     // on_remove defaults to "delete"
-	config   func(cty.Value) eos.Config
+	config   func(cty.Value) eosWant
 	remove   func(cty.Value, string) []string // nil: removing only forgets
+}
+
+// eosWant is what a step wants of a switch's config, such as eos.Config.
+type eosWant interface {
+	InSync(config string) bool
+	Commands(config string) []string
 }
 
 func (k eosKind) plan(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
@@ -306,7 +312,7 @@ var eosConfigKind = eosKind{
 	name:     "config",
 	keys:     []string{"parents"},
 	settings: []string{"lines", "match"},
-	config:   eosConfigFrom,
+	config:   func(v cty.Value) eosWant { return eosConfigFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return eosConfigFrom(v).RemoveCommands(running) },
 }
 
@@ -341,7 +347,7 @@ func validateEOSConfig(cfg cty.Value) tfdiags.Diagnostics {
 var eosHostnameKind = eosKind{
 	name:     "hostname",
 	settings: []string{"name"},
-	config:   func(v cty.Value) eos.Config { return eos.Hostname(v.GetAttr("name").AsString()) },
+	config:   func(v cty.Value) eosWant { return eos.Hostname(v.GetAttr("name").AsString()) },
 }
 
 func eosHostnameSchema() providers.Schema {
@@ -365,7 +371,7 @@ var eosVLANKind = eosKind{
 	keys:     []string{"vlan_id"},
 	settings: []string{"name"},
 	deletes:  true,
-	config:   func(v cty.Value) eos.Config { return eosVLANFrom(v).Config() },
+	config:   func(v cty.Value) eosWant { return eosVLANFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return eosVLANFrom(v).RemoveCommands(running) },
 }
 

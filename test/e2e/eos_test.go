@@ -347,3 +347,24 @@ func TestEOSCleansUpACrashedRun(t *testing.T) {
 	}
 	w.mustConn3x("destroy", "-auto-approve", "-no-color")
 }
+
+// TestEOSUnnamedVLANs: EOS prints VLANs with no name on one line, as in
+// "vlan 201-202,205", so each step has to find its VLAN in that list.
+func TestEOSUnnamedVLANs(t *testing.T) {
+	sw := eosSwitch(t)
+	w := newWorkdir(t, "eosvl")
+	w.writeAs("main.circuit.hcl", sw)
+	w.mustConn3x("init", "-no-color")
+	t.Cleanup(func() { w.conn3x("destroy", "-auto-approve", "-no-color") })
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := sw.mustCLI(t, "show running-config | section vlan\n"); !strings.Contains(got, "201-202,205") {
+		t.Logf("running-config shows them as:\n%s", got)
+	}
+	if out, code := w.conn3x("plan", "-detailed-exitcode", "-no-color"); code != 0 {
+		t.Fatalf("second plan exited %d:\n%s", code, out)
+	}
+	w.mustConn3x("destroy", "-auto-approve", "-no-color")
+	if got := sw.mustCLI(t, "show vlan brief\n"); strings.Contains(got, "201") || strings.Contains(got, "205") {
+		t.Fatalf("destroy left VLANs:\n%s", got)
+	}
+}

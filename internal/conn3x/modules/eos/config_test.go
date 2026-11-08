@@ -4,6 +4,7 @@
 package eos
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -129,19 +130,32 @@ func TestConfigValidate(t *testing.T) {
 
 func TestVLAN(t *testing.T) {
 	v := VLAN{ID: 10, Name: "users"}
-	if !v.Config().InSync(running) {
+	if !v.InSync(running) {
 		t.Error("vlan 10 named users is there")
 	}
 	renamed := VLAN{ID: 10}
-	if renamed.Config().InSync(running) {
+	if renamed.InSync(running) {
 		t.Error("an unnamed vlan 10 should drop the hand-set name")
 	}
-	if got := renamed.Config().Commands(running); !slices.Equal(got, []string{"vlan 10", "no name users"}) {
+	if got := renamed.Commands(running); !slices.Equal(got, []string{"vlan 10", "no name users"}) {
 		t.Errorf("commands %q", got)
 	}
 	added := VLAN{ID: 20}
-	if got := added.Config().Commands(running); !slices.Equal(got, []string{"vlan 20"}) {
+	if got := added.Commands(running); !slices.Equal(got, []string{"vlan 20"}) {
 		t.Errorf("a new unnamed vlan: %q", got)
+	}
+	// EOS prints VLANs with nothing under them on one line.
+	grouped := running + "vlan 30,40-42\n!\n"
+	for _, id := range []int{30, 41, 42} {
+		if u := (VLAN{ID: id}); !u.InSync(grouped) || u.Commands(grouped) != nil || !slices.Equal(u.RemoveCommands(grouped), []string{fmt.Sprintf("no vlan %d", id)}) {
+			t.Errorf("vlan %d in %q: in sync %v, commands %q, remove %q", id, "vlan 30,40-42", u.InSync(grouped), u.Commands(grouped), u.RemoveCommands(grouped))
+		}
+	}
+	if named := (VLAN{ID: 41, Name: "web"}); named.InSync(grouped) || !slices.Equal(named.Commands(grouped), []string{"vlan 41", "name web"}) {
+		t.Errorf("naming a grouped vlan: %q", named.Commands(grouped))
+	}
+	if (VLAN{ID: 35}).InSync(grouped) || (VLAN{ID: 35}).RemoveCommands(grouped) != nil {
+		t.Error("vlan 35 isn't in 30,40-42")
 	}
 	if got := v.RemoveCommands(running); !slices.Equal(got, []string{"no vlan 10"}) {
 		t.Errorf("remove: %q", got)

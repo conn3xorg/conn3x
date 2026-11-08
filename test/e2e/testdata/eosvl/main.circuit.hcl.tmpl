@@ -1,0 +1,18 @@
+circuit "plain" {
+  hosts = { leaf1 = "{{.Host}}" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "admin"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+    confirm_after    = "5s"
+  }
+
+  step "vlans" {
+    for_each = toset(["201", "202", "205"])
+    eos_vlan {
+      vlan_id = tonumber(item.value)
+    }
+  }
+}
