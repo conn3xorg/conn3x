@@ -56,6 +56,7 @@ type Server struct {
 	mu       sync.Mutex
 	commands []string
 	delay    time.Duration
+	exec     func(command string, stdin []byte) (stdout string, code int)
 
 	accepts    atomic.Int64
 	forwards   atomic.Int64
@@ -71,6 +72,15 @@ func (s *Server) SetDelay(d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.delay = d
+}
+
+// SetExec answers every command with f instead of running it in sh, as a
+// device with its own CLI would: f gets the command and all of its stdin,
+// and returns what to print and the exit status.
+func (s *Server) SetExec(f func(command string, stdin []byte) (stdout string, code int)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.exec = f
 }
 
 // Rejections is how many sessions the server has refused.
@@ -379,7 +389,18 @@ func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request, exited, f
 		_ = req.Reply(true, nil)
 		s.mu.Lock()
 		s.commands = append(s.commands, command)
+		fake := s.exec
 		s.mu.Unlock()
+
+		if fake != nil {
+			in, _ := io.ReadAll(ch)
+			out, code := fake(command, in)
+			_, _ = io.WriteString(ch, out)
+			status := make([]byte, 4)
+			binary.BigEndian.PutUint32(status, uint32(code))
+			_, _ = ch.SendRequest("exit-status", false, status)
+			return
+		}
 
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = s.Dir

@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -206,7 +207,7 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 			return fail(st.abort(ctx, h, err))
 		}
 		if removing {
-			st.removals = append(st.removals, strings.Join(cmds, "; "))
+			st.removals, st.conn = append(st.removals, cmds), conn
 		}
 	}
 	if !removing {
@@ -222,7 +223,8 @@ type staged struct {
 	h        *hostConn
 	session  *eos.Session // nil: nothing staged yet
 	failed   error        // a step's session was aborted: nothing more goes in
-	removals []string     // removals in the session, lost if it is aborted
+	removals [][]string   // removals in the session: their steps are already forgotten
+	conn     cty.Value    // the ssh block they came with, to commit them again
 	batch    bool         // destroying: removals stage for conn3x_eos_removals
 }
 
@@ -244,7 +246,8 @@ func stagedOn(h *hostConn) *staged {
 
 // abort drops the session after err, and every line staged with it, and
 // marks the switch failed for the rest of the run. With nothing staged, it
-// returns err as it is.
+// returns err as it is. Removals in it are made live on their own, since
+// their steps are already gone from state.
 func (st *staged) abort(ctx context.Context, h *hostConn, err error) error {
 	if st.session == nil {
 		return err
@@ -253,12 +256,50 @@ func (st *staged) abort(ctx context.Context, h *hostConn, err error) error {
 		err = fmt.Errorf("%w; %v", err, abortErr)
 	} else {
 		err = fmt.Errorf("%w. Nothing was changed on %s: the lines earlier steps added in this apply were dropped too", err, h.host)
-	}
-	if len(st.removals) > 0 {
-		err = fmt.Errorf("%w. Removals in that session were dropped as well, and Conn3x has already forgotten them, so remove these by hand: %s", err, strings.Join(st.removals, " | "))
+		err = st.salvage(ctx, h, st.removals, err)
 	}
 	st.session, st.removals, st.failed = nil, nil, err
 	return err
+}
+
+// salvage commits removed, the removals of a session that went nowhere, in
+// a session of their own: OpenTofu has already forgotten their steps, so
+// the switch must lose those lines too. It returns err, saying what became
+// of them.
+func (st *staged) salvage(ctx context.Context, h *hostConn, removed [][]string, err error) error {
+	if len(removed) == 0 {
+		return err
+	}
+	var lines []string
+	for _, cmds := range removed {
+		lines = append(lines, strings.Join(cmds, "; "))
+	}
+	if errors.As(err, new(eos.SessionGoneError)) {
+		// Another run has the switch; a session of ours would abort its.
+		return fmt.Errorf("%w. Removals in that session were dropped as well, and Conn3x has already forgotten them, so once the other run is done, remove these by hand: %s", err, strings.Join(lines, " | "))
+	}
+	again := func() error {
+		running, err := eos.RunningConfig(ctx, h.client)
+		if err != nil {
+			return err
+		}
+		s, err := eos.Open(ctx, h.client, running)
+		if err != nil {
+			return err
+		}
+		for _, cmds := range removed {
+			if err := s.Add(ctx, h.client, cmds); err != nil {
+				_ = s.Abort(ctx, h.client)
+				return err
+			}
+		}
+		_, err = s.Commit(ctx, h.client, eosReconnect(st.conn), confirmAfter(st.conn))
+		return err
+	}
+	if againErr := again(); againErr != nil {
+		return fmt.Errorf("%w. Removals in that session were dropped as well, and committing them on their own failed too (%v). Conn3x has already forgotten them, so remove these by hand: %s", err, againErr, strings.Join(lines, " | "))
+	}
+	return fmt.Errorf("%w. The removals in that session were committed on their own, so the switch no longer has them: %s", err, strings.Join(lines, " | "))
 }
 
 // abortStaged aborts every session still staged, as when a run fails
@@ -272,6 +313,11 @@ func abortStaged() {
 			log.Printf("[WARN] conn3x: aborting config session %s on %s, which no conn3x_eos_commit made live", st.session.Name, st.h.host)
 			if err := st.session.Abort(ctx, st.h.client); err != nil {
 				log.Printf("[WARN] conn3x: %v", err)
+			} else if len(st.removals) > 0 {
+				// Up to five minutes: a commit, its wait and the confirm.
+				cancel()
+				ctx, cancel = context.WithTimeout(context.Background(), eos.RevertAfter)
+				log.Printf("[WARN] conn3x: %v", st.salvage(ctx, st.h, st.removals, fmt.Errorf("the run stopped before the commit")))
 			}
 			cancel()
 		}
@@ -489,11 +535,14 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 	if st.session == nil {
 		return resp // no step changed anything on this switch
 	}
-	s := st.session
+	s, removed := st.session, st.removals
 	st.session, st.removals = nil, nil // committed or rolling back: either way, gone
 	diff, err := s.Commit(ctx, h.client, eosReconnect(conn), confirmAfter(conn))
 	if diff != "" {
 		log.Printf("[INFO] conn3x: eos commit on %s: session diff:\n%s", h.host, diff)
+	}
+	if errors.As(err, new(eos.NotLiveError)) {
+		err = st.salvage(ctx, h, removed, err)
 	}
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos commit: %w. The steps are recorded as applied, so the next refresh finds them out of sync and the next apply makes them again", err))
@@ -551,8 +600,15 @@ func applyEOSRemovals(ctx context.Context, req providers.ApplyResourceChangeRequ
 	if diff != "" {
 		log.Printf("[INFO] conn3x: eos removals on %s: session diff:\n%s", h.host, diff)
 	}
-	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos removals: %w. Conn3x has already forgotten the removed steps, so remove these from %s by hand: %s", err, h.host, strings.Join(removed, " | ")))
+	switch {
+	case errors.As(err, new(eos.NotLiveError)):
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos removals: %w", st.salvage(ctx, h, removed, err)))
+	case err != nil:
+		var lines []string
+		for _, cmds := range removed {
+			lines = append(lines, strings.Join(cmds, "; "))
+		}
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos removals: %w. Conn3x has already forgotten the removed steps, so if the switch rolls the change back, remove these from %s by hand: %s", err, h.host, strings.Join(lines, " | ")))
 	}
 	return resp
 }
