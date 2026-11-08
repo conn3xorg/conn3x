@@ -305,3 +305,122 @@ func familyWhen(n *yaml.Node) (allowed []osFamily, reason string, ok bool) {
 	}
 	return allowed, "", true
 }
+
+// familyFile matches an include_tasks of a file named by the host's family,
+// such as setup-{{ ansible_os_family }}.yml.
+var familyFile = regexp.MustCompile(`^([\w./-]*)\{\{\s*` + familyFact + `\s*\}\}([\w./-]*)$`)
+
+// familyInclude inlines the two ways roles include tasks by family. The
+// family is the same for the whole run, so including once and giving each
+// task the condition mean the same:
+//
+//   - include_tasks: setup-{{ ansible_os_family }}.yml, as each Conn3x
+//     family's file, its tasks given that family as a when;
+//   - include_tasks: setup-RedHat.yml with a when that only tests the
+//     family, its tasks given that when.
+//
+// ok is false when the include isn't one of those; a file that is missing,
+// or can't be inlined, goes to review in its place.
+func (c *converter) familyInclude(n *yaml.Node, args map[string]*yaml.Node, file string, stack []string) ([]taskAt, bool) {
+	if c.role == nil {
+		return nil, false
+	}
+	t := mapping(n)
+	for _, k := range sortedKeys(t) {
+		if keywords[k] && !importKeys[k] && k != "when" {
+			return nil, false
+		}
+	}
+	name := scalar(args["file"])
+	if raw := scalar(args["_raw"]); raw != "" && len(args) == 1 {
+		name = raw
+	} else if len(args) != 1 {
+		return nil, false
+	}
+	if w := t["when"]; w != nil {
+		// A fixed file, with a when that only tests the family.
+		allowed, _, ok := familyWhen(w)
+		if !ok || strings.Contains(name, "{{") {
+			return nil, false
+		}
+		if len(allowed) == 0 {
+			return []taskAt{{node: n, file: file, reason: "includes " + name + " with a when no Debian or Red Hat family host meets, so none of it would run"}}, true
+		}
+		conds := []*yaml.Node{w}
+		if w.Kind == yaml.SequenceNode {
+			conds = w.Content
+		}
+		sub, tasks, why := c.importFile(withoutWhen(n), map[string]*yaml.Node{"_raw": {Kind: yaml.ScalarNode, Value: name}}, file, stack)
+		if why != "" {
+			return []taskAt{{node: n, file: file, reason: why}}, true
+		}
+		var out []taskAt
+		for _, ta := range c.flatten(tasks, sub, append(stack, sub)) {
+			if ta.reason == "" {
+				for _, cnd := range conds {
+					ta.node = withWhen(ta.node, cnd.Value)
+				}
+			}
+			out = append(out, ta)
+		}
+		return out, true
+	}
+	m := familyFile.FindStringSubmatch(name)
+	if m == nil {
+		return nil, false
+	}
+	var out []taskAt
+	for _, f := range osFamilies {
+		fname := m[1] + f.ansible + m[2]
+		sub, tasks, why := c.importFile(n, map[string]*yaml.Node{"_raw": {Kind: yaml.ScalarNode, Value: fname}}, file, stack)
+		if why != "" {
+			return []taskAt{{node: n, file: file, reason: fmt.Sprintf("includes a file per family, and for %s hosts it %s", f.ansible, why)}}, true
+		}
+		cond := fmt.Sprintf("ansible_os_family == '%s'", f.ansible)
+		for _, t := range c.flatten(tasks, sub, append(stack, sub)) {
+			if t.reason == "" {
+				t.node = withWhen(t.node, cond)
+			}
+			out = append(out, t)
+		}
+	}
+	return out, true
+}
+
+// withWhen is a copy of a task with cond added to its when.
+func withWhen(task *yaml.Node, cond string) *yaml.Node {
+	c := &yaml.Node{Kind: yaml.ScalarNode, Value: cond}
+	out := *task
+	out.Content = nil
+	added := false
+	for i := 0; i+1 < len(task.Content); i += 2 {
+		k, v := task.Content[i], task.Content[i+1]
+		if k.Value == "when" {
+			list := &yaml.Node{Kind: yaml.SequenceNode, Line: v.Line}
+			if v.Kind == yaml.SequenceNode {
+				list.Content = append(list.Content, v.Content...)
+			} else {
+				list.Content = append(list.Content, v)
+			}
+			list.Content = append(list.Content, c)
+			v, added = list, true
+		}
+		out.Content = append(out.Content, k, v)
+	}
+	if !added {
+		out.Content = append(out.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "when"}, c)
+	}
+	return &out
+}
+
+// withoutWhen is a copy of a task without its when.
+func withoutWhen(task *yaml.Node) *yaml.Node {
+	out := *task
+	out.Content = nil
+	for i := 0; i+1 < len(task.Content); i += 2 {
+		if task.Content[i].Value != "when" {
+			out.Content = append(out.Content, task.Content[i], task.Content[i+1])
+		}
+	}
+	return &out
+}
