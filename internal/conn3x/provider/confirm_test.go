@@ -45,3 +45,35 @@ func TestValidateFileConfirmAfter(t *testing.T) {
 		t.Errorf("a valid confirm_after: %v", ok.Err())
 	}
 }
+
+// Mode and ownership changes are guarded as well as content: the copy the
+// revert puts back keeps all three. Only the guard's own arguments changing
+// isn't a change to the file.
+func TestFileChanging(t *testing.T) {
+	f := newFileTest(t)
+	base := map[string]cty.Value{"content": cty.StringVal("x"), "mode": cty.StringVal("0600"), "sha256": cty.StringVal("h")}
+	prior := f.config(base)
+	for name, change := range map[string]map[string]cty.Value{
+		"mode":  {"mode": cty.StringVal("0666")},
+		"owner": {"owner": cty.StringVal("deploy")},
+		"group": {"group": cty.StringVal("deploy")},
+	} {
+		attrs := map[string]cty.Value{}
+		for k, v := range base {
+			attrs[k] = v
+		}
+		for k, v := range change {
+			attrs[k] = v
+		}
+		if !fileChanging(prior, f.config(attrs)) {
+			t.Errorf("a %s change isn't guarded", name)
+		}
+	}
+	only := map[string]cty.Value{"confirm_after": cty.StringVal("60s")}
+	for k, v := range base {
+		only[k] = v
+	}
+	if fileChanging(prior, f.config(only)) {
+		t.Error("adding confirm_after alone counts as changing the file")
+	}
+}

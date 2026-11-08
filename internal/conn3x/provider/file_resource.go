@@ -357,8 +357,10 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	}
 	write := func() error { return file.Apply(ctx, client, desired) }
 	var err2 error
-	if after, _ := parseConfirmAfter(planned.GetAttr("confirm_after")); after > 0 && contentChanging(req.PriorState, planned) {
+	if after, _ := parseConfirmAfter(planned.GetAttr("confirm_after")); after > 0 && fileChanging(req.PriorState, planned) {
 		g := confirm.Guard{ID: newGuardID(), Files: []string{desired.Path}, Reload: stringOr(planned.GetAttr("reload"), ""), After: after}
+		// A guarded write that fails, the host's own revert included, returns
+		// an error, so OpenTofu keeps the prior state: the file that was put back.
 		err2 = guarded(ctx, client, planned.GetAttr("ssh"), g, write)
 	} else {
 		err2 = write()
@@ -383,6 +385,21 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	}
 	resp.NewState = stateFrom(planned, actual, key)
 	return resp
+}
+
+// fileChanging reports whether apply changes the file at all: its content,
+// mode or ownership. Any of them can lock you out, as an authorized_keys
+// that sshd's StrictModes refuses does, and the revert's copy keeps all three.
+func fileChanging(prior, planned cty.Value) bool {
+	if contentChanging(prior, planned) {
+		return true
+	}
+	for _, attr := range []string{"mode", "owner", "group"} {
+		if was, will := prior.GetAttr(attr), planned.GetAttr(attr); !will.IsNull() && (!was.IsKnown() || !will.IsKnown() || !was.RawEquals(will)) {
+			return true
+		}
+	}
+	return false
 }
 
 // contentChanging reports whether apply writes new content, rather than only

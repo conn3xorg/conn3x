@@ -26,13 +26,17 @@ func TestConfirmAfterRevertsALockout(t *testing.T) {
 	w.writeAs("main.circuit.hcl", vars)
 	w.mustConn3x("init", "-no-color")
 
+	// The drop-in starts as a link. Writing replaces the link, not the file
+	// it points to, so the revert has to put the link back as it was.
+	h.exec("", "sh", "-c", "printf '# kept\\n' > /root/kept.conf && ln -s /root/kept.conf /etc/ssh/sshd_config.d/99-conn3x.conf")
+
 	out, code := w.conn3x("apply", "-auto-approve", "-no-color")
 	t.Logf("apply of the lockout:\n%s", out)
 	if code == 0 || !strings.Contains(out, "the host put the old state back by itself; it answers again now") {
 		t.Fatalf("the lockout should fail and be reverted by the host (exit %d):\n%s", code, out)
 	}
-	if got := h.exec("", "sh", "-c", "test -e /etc/ssh/sshd_config.d/99-conn3x.conf && echo present || echo gone"); got != "gone\n" {
-		t.Errorf("the drop-in is %s after the revert", strings.TrimSpace(got))
+	if got := h.exec("", "sh", "-c", "readlink /etc/ssh/sshd_config.d/99-conn3x.conf; cat /root/kept.conf"); got != "/root/kept.conf\n# kept\n" {
+		t.Errorf("after the revert, the drop-in's link and what it points to = %q", got)
 	}
 	// Conn3x can log in again: a plan reads the host.
 	if out, code := w.conn3x("plan", "-no-color"); code != 0 {
