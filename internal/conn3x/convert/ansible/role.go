@@ -36,6 +36,12 @@ type role struct {
 	familyVars    map[string]map[string]string
 	familyWhy     map[string]map[string]string // why a value can't be used, such as a list
 	familyUsed    bool
+	// defaultTasks are the set_fact tasks that default a variable to a
+	// per-family one, and defaultOf maps each such variable to that one;
+	// defaultUsed are those a step reads, which become variables.
+	defaultTasks map[*yaml.Node]string
+	defaultOf    map[string]string
+	defaultUsed  map[string]bool
 }
 
 type roleDefault struct {
@@ -122,6 +128,8 @@ func ConvertRole(dir string) (Result, error) {
 	}
 	c.file = tasksFile
 	r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
+	r.defaultTasks, r.defaultOf = c.familyDefaults(seq(tasks), vars)
+	r.defaultUsed = map[string]bool{}
 	c.steps(cb, seq(tasks), seq(handlers), handlersFile, false, vars)
 	if r.familyUsed {
 		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
@@ -147,6 +155,20 @@ func ConvertRole(dir string) (Result, error) {
 		vb.AppendBlock(b)
 	}
 
+	used := make([]string, 0, len(r.defaultUsed))
+	for x := range r.defaultUsed {
+		used = append(used, x)
+	}
+	sort.Strings(used)
+	for _, x := range used {
+		b := hclwrite.NewBlock("variable", []string{x})
+		b.Body().SetAttributeRaw("type", rawTokens("string"))
+		b.Body().SetAttributeRaw("default", rawTokens("null"))
+		b.Body().SetAttributeValue("description", cty.StringVal(fmt.Sprintf("Set by the caller; otherwise %s from vars/<family>.yml, for each host's family.", r.defaultOf[x])))
+		vb.AppendNewline()
+		vb.AppendBlock(b)
+	}
+
 	files := r.files
 	files["main.circuit.hcl"] = hclwrite.Format(f.Bytes())
 	variables := circuitVariables
@@ -161,6 +183,15 @@ func ConvertRole(dir string) (Result, error) {
 	files["variables.tf"] = append([]byte(variables), hclwrite.Format(vf.Bytes())...)
 	files["outputs.tf"] = []byte("# An Ansible role has no outputs. Add any you want callers to read here.\n")
 	files["README.md"] = readme(base, name, len(c.res.Review), order, r.defaults)
+	if len(used) > 0 {
+		var b strings.Builder
+		b.WriteString("\nThese take each host's OS family's value from the role's `vars/` unless you set them:\n\n| Name | Debian and Ubuntu | Red Hat family |\n| --- | --- | --- |\n")
+		for _, x := range used {
+			y := r.defaultOf[x]
+			fmt.Fprintf(&b, "| `%s` | `%s` | `%s` |\n", x, r.familyVars["debian"][y], r.familyVars["redhat"][y])
+		}
+		files["README.md"] = append(files["README.md"], b.String()...)
+	}
 	c.res.Files = files
 	return c.res, nil
 }

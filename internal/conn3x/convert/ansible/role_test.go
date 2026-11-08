@@ -224,6 +224,22 @@ func TestRoleFamilyVars(t *testing.T) {
 	}
 }
 
+// set_fact: X: "{{ __X }}" when X is not defined becomes a variable the
+// caller can set, with the family's value when it's null.
+func TestRoleFamilyDefaults(t *testing.T) {
+	res := goldenRole(t, "svc")
+	if res.Converted != 3 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	if !strings.Contains(hcl, `owner = var.svc_user != null ? var.svc_user : { debian = "www-data", redhat = "nobody" }[local.os_family[each.key]]`) {
+		t.Errorf("owner isn't the caller's value or the family's:\n%s", hcl)
+	}
+	if v := string(res.Files["variables.tf"]); !strings.Contains(v, `variable "svc_user"`) || !strings.Contains(v, "default     = null") {
+		t.Errorf("no svc_user variable:\n%s", v)
+	}
+}
+
 func TestRoleFamilyVarsRefusals(t *testing.T) {
 	include := "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n"
 	for want, files := range map[string]map[string]string{
@@ -244,6 +260,12 @@ func TestRoleFamilyVarsRefusals(t *testing.T) {
 			"tasks/main.yml":  include + "- name: P\n  package: {name: '{{ pkg }}'}\n",
 			"vars/Debian.yml": "pkg: cron\n",
 			"vars/RedHat.yml": "pkg: [cronie, cronie-anacron]\n",
+		},
+		// A caller's value where Conn3x would have to check it first.
+		`dest refers to "conf", which the caller can set`: {
+			"tasks/main.yml":  include + "- name: D\n  set_fact: {conf: '{{ __conf }}'}\n  when: conf is not defined\n- name: C\n  copy: {dest: '{{ conf }}', content: x}\n",
+			"vars/Debian.yml": "__conf: /etc/a.conf\n",
+			"vars/RedHat.yml": "__conf: /etc/b.conf\n",
 		},
 		// No RedHat file: the include isn't the family pattern Conn3x reads.
 		"uses the include_vars module": {

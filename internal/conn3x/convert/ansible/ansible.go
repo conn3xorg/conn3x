@@ -433,6 +433,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, noLogReason)
 		return
 	}
+	if x, ok := c.role.defaultTask(node); ok {
+		body.AppendNewline()
+		comment(body, fmt.Sprintf("Task %q (%s line %d) defaults %s to %s from vars/<family>.yml: it's a variable the caller can set, and the steps below use the family's value when it's null.", name, c.file, node.Line, x, c.role.defaultOf[x]))
+		c.res.Converted++
+		return
+	}
 	if c.role != nil && node == c.role.familyInclude {
 		body.AppendNewline()
 		comment(body, fmt.Sprintf("Task %q (%s line %d) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.", name, c.file, node.Line))
@@ -524,8 +530,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				fv[k] = v
 			}
 			for _, n := range names {
-				v, ok := c.role.familyVars[f.conn3x][n]
-				if why, unusable := c.role.familyWhy[f.conn3x][n]; unusable {
+				src := n
+				if y, isDefault := c.role.defaultOf[n]; isDefault {
+					src = y
+				}
+				v, ok := c.role.familyVars[f.conn3x][src]
+				if why, unusable := c.role.familyWhy[f.conn3x][src]; unusable {
 					reason = fmt.Sprintf("refers to %q, which vars/%s.yml sets to %s, which the converter can't use yet", n, f.ansible, why)
 					break
 				}
@@ -557,6 +567,47 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		if reason == "" {
 			steps, reason = mergeFamilies(byFamily)
+		}
+		// A variable the caller can set: convert again with var.X in its
+		// place, and use that where it's set.
+		var callers []string
+		for _, n := range names {
+			if _, ok := c.role.defaultOf[n]; ok {
+				callers = append(callers, n)
+			}
+		}
+		if reason == "" && len(callers) > 0 {
+			reason = callerKeys(mod, args, callers, c.role.defaultOf)
+		}
+		if reason == "" && len(callers) > 0 {
+			callerByFamily := map[string][]step{}
+			for _, f := range osFamilies {
+				fv := map[string]string{}
+				for k, v := range vars {
+					fv[k] = v
+				}
+				for _, n := range names {
+					if _, isDefault := c.role.defaultOf[n]; isDefault {
+						fv[n] = refMark("var." + n)
+					} else {
+						fv[n] = c.role.familyVars[f.conn3x][n]
+					}
+				}
+				_, csteps, creason := run(fv)
+				if creason != "" {
+					reason = creason + " (with a value the caller sets)"
+					break
+				}
+				callerByFamily[f.conn3x] = csteps
+			}
+			if reason == "" {
+				steps, reason = withCaller(steps, callerByFamily, c.role.defaultOf)
+			}
+			if reason == "" {
+				for _, n := range callers {
+					c.role.defaultUsed[n] = true
+				}
+			}
 		}
 		if reason == "" {
 			c.role.familyUsed = true
