@@ -82,7 +82,7 @@ func (c *converter) importFile(n *yaml.Node, args map[string]*yaml.Node, file st
 		if filepath.IsAbs(name) {
 			p = name
 		}
-		if _, err := os.Stat(c.path(p)); err == nil && !slices.Contains(found, p) {
+		if exactlyNamed(c.path(p)) && !slices.Contains(found, p) {
 			found = append(found, p)
 		}
 	}
@@ -117,4 +117,20 @@ func (c *converter) path(rel string) string {
 		return rel
 	}
 	return filepath.Join(c.dir, rel)
+}
+
+// exactlyNamed reports whether path exists with exactly that name. On a
+// case-insensitive disk, as macOS and Windows have by default, Debian.yml
+// would also find debian.yml, which Ansible on a Linux controller wouldn't,
+// and the conversion would depend on where it ran.
+func exactlyNamed(path string) bool {
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return false
+	}
+	base := filepath.Base(path)
+	return slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == base })
 }
