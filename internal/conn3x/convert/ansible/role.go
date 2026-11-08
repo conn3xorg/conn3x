@@ -147,8 +147,6 @@ func ConvertRole(dir string) (Result, error) {
 
 var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// main reads a role's sub/main.yml, or .yaml, or main, as Ansible does,
-// returning the document and the file it read.
 // otherVarFiles reads the top-level names set in vars/*.yml besides main,
 // so a reason can say a variable comes from one of them. A file that can't
 // be read is left out; it only makes the reason less specific.
@@ -174,6 +172,8 @@ func (c *converter) otherVarFiles() map[string][]string {
 	return out
 }
 
+// main reads a role's sub/main.yml, or .yaml, or main, as Ansible does,
+// returning the document and the file it read.
 func (c *converter) main(body *hclwrite.Body, sub string) (*yaml.Node, string) {
 	for _, n := range []string{"main.yml", "main.yaml", "main"} {
 		rel := filepath.ToSlash(filepath.Join(sub, n))

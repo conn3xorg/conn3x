@@ -167,8 +167,6 @@ func TestPlaybookImportTasks(t *testing.T) {
 	}
 }
 
-// A handler's service name fills in play vars, and anything but a service
-// restart or reload, or a when, stays for review.
 // A variable set per OS under vars/ says where it comes from, until the
 // converter can translate the include_vars that loads it.
 func TestRoleVariableFromAnIncludeVarsFile(t *testing.T) {
@@ -194,6 +192,8 @@ func TestRoleVariableFromAnIncludeVarsFile(t *testing.T) {
 	}
 }
 
+// A handler's service name fills in play vars, and anything but a service
+// restart or reload, or a when, stays for review.
 func TestHandlerNameFromAVarAndKeywords(t *testing.T) {
 	res := convertString(t, `- hosts: all
   vars: {svc: nginx}
