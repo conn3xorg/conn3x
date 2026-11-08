@@ -20,10 +20,10 @@ $readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'Microsoft.PowerShe
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
 $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter::ToUInt32', 'BitConverter::ToUInt64', 'Convert::ToBase64String',
-  'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
+  'IO.File::ReadAllBytes', 'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
   'Security.Cryptography.SHA256::Create', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
   'string::Join'
-$readInstance = 'Close', 'ComputeHash', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
+$readInstance = 'Close', 'ComputeHash', 'CreateUpdateSearcher', 'Search', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
   'Replace', 'ToLowerInvariant', 'ToString', 'Translate'
 # Cmdlets that treat a positional argument as a -Path, with their usual aliases.
 $pathCommands = 'Add-Content', 'Clear-Content', 'Clear-Item', 'Copy-Item', 'Get-Acl', 'Get-ChildItem', 'Get-Content', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Invoke-Item',
@@ -85,6 +85,11 @@ foreach ($file in $Files) {
           elseif ($name -eq 'Install-WindowsFeature') {
             $whatIf = $a.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ieq 'WhatIf' -and -not $_.Argument }
             if (-not $whatIf) { Report $file $a 'a read script may run Install-WindowsFeature only with -WhatIf' }
+          }
+          elseif ($name -eq 'New-Object') {
+            # Only Windows Update's session, whose searcher reads and changes nothing.
+            $parts = @($a.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.Extent.Text })
+            if (($parts -join ' ') -ne '-ComObject Microsoft.Update.Session') { Report $file $a 'a read script may use New-Object only as New-Object -ComObject Microsoft.Update.Session' }
           }
           elseif ($name -notin $readCommands) { Report $file $a "$name isn't on the list of read commands" }
           elseif ($name -eq 'Import-Module') {
