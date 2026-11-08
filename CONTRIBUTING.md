@@ -126,6 +126,10 @@ upstream code is imported as-is and kept in sync with OpenTofu releases by
 - `cmd/conn3x/`, the CLI entry point
 - `internal/conn3x/`, everything else that's ours
 
+To add a host module, the most common first PR, follow
+[docs/adding-a-module.md](docs/adding-a-module.md). It walks through `sysctl`
+from the host up.
+
 Keep changes to upstream files to a minimum, since every one of them has to
 be carried through each sync. If you really need to touch one, mark the
 change with a `// CONN3X:` comment that explains why.
@@ -157,6 +161,7 @@ just what you did.
 - Update the docs in the same PR when you change behavior.
 - CI has to pass: `lint`, `test`, `build`, and `DCO`.
 - PRs are squash-merged, so the PR title becomes the commit subject.
+- AI tools are welcome. You're responsible for every line, and you need to have run it; [AI_POLICY.md](AI_POLICY.md) has the details.
 
 ## When a pull request goes quiet
 
