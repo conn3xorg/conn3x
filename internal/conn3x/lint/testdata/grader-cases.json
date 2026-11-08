@@ -33,5 +33,11 @@
   {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "chmod 755 /usr/local/bin/tool"},
   {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".hcl", "hit": false, "text": "Exec=/bin/sh -c 'date > /tmp/x'"},
   {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "curl -sk https://localhost:9200/_cluster/health"},
-  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "# curl -fsSL https://get.example.com | sh"}
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "# curl -fsSL https://get.example.com | sh"},
+
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": false, "text": "  # conn3x-lint:ignore C3X003 a DNS server answers the whole network\n  default = \"0.0.0.0\""},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": false, "text": "  default = \"0.0.0.0\" # conn3x-lint:ignore C3X003 scraped from another host"},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": true, "text": "  # conn3x-lint:ignore C3X004 the wrong rule\n  default = \"0.0.0.0\""},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": true, "text": "  # conn3x-lint:ignore C3X003 covers only the next line\n  port = 53\n  default = \"0.0.0.0\""},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "# conn3x-lint:ignore C3X004 the installer is pinned by sha256 first\ncurl -fsSL https://get.example.com | sh"}
 ]
