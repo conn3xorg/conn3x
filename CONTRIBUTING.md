@@ -157,6 +157,7 @@ just what you did.
 - Update the docs in the same PR when you change behavior.
 - CI has to pass: `lint`, `test`, `build`, and `DCO`.
 - PRs are squash-merged, so the PR title becomes the commit subject.
+- AI tools are welcome. You're responsible for every line, and you need to have run it; [AI_POLICY.md](AI_POLICY.md) has the details.
 
 ## When a pull request goes quiet
 
