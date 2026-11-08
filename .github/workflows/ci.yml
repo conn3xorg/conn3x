@@ -171,6 +171,15 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # The examples' init downloads every provider. With their lock files and
+      # a cache kept between runs, a package already here isn't fetched
+      # again, so a slow or failing github.com doesn't fail the run.
+      - name: Provider plugin cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/conn3x-plugins
+          key: providers-${{ runner.os }}-${{ hashFiles('examples/**/.terraform.lock.hcl') }}
+          restore-keys: providers-${{ runner.os }}-
       # "require" fails an apply that can't use the agent, so the on leg
       # proves every non-become host ran its commands through it.
       - name: End-to-end tests against Podman hosts
@@ -178,6 +187,8 @@ jobs:
           CONN3X_AGENT: ${{ matrix.agent }}
         run: |
           podman --version
+          mkdir -p ~/.cache/conn3x-plugins
+          export TF_PLUGIN_CACHE_DIR=~/.cache/conn3x-plugins
           go test -tags e2e -count=1 -timeout 30m -v ./test/e2e/...
 
   # The required check: both agent modes passed.
