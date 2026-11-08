@@ -271,7 +271,15 @@ func (s *Session) stillPending(ctx context.Context, d Device) error {
 		return nil
 	}
 	s.started = false // nothing left to abort
-	return fmt.Errorf("config session %s was aborted before this apply committed it, most likely by another Conn3x run against the same switch, or by hand, so none of this apply's lines are live. Let one run at a time change a switch, then apply again", s.Name)
+	return SessionGoneError{s.Name}
+}
+
+// SessionGoneError is a session aborted from outside before its commit,
+// most likely by another run against the same switch.
+type SessionGoneError struct{ Name string }
+
+func (e SessionGoneError) Error() string {
+	return fmt.Sprintf("config session %s was aborted before this apply committed it, most likely by another Conn3x run against the same switch, or by hand, so none of this apply's lines are live. Let one run at a time change a switch, then apply again", e.Name)
 }
 
 // Abort drops the session and every line in it. Nothing was live.
@@ -285,12 +293,19 @@ func (s *Session) Abort(ctx context.Context, d Device) error {
 	return nil
 }
 
+// NotLiveError is a failure that left nothing of a session live: the switch
+// is as it was before the session started.
+type NotLiveError struct{ Err error }
+
+func (e NotLiveError) Error() string { return e.Err.Error() + ". Nothing was changed" }
+func (e NotLiveError) Unwrap() error { return e.Err }
+
 // aborted is err after an abort of s, saying whether the abort worked.
 func (s *Session) aborted(ctx context.Context, d Device, err error) error {
 	if abortErr := s.Abort(ctx, d); abortErr != nil {
 		return fmt.Errorf("%w; %v", err, abortErr)
 	}
-	return fmt.Errorf("%w. Nothing was changed", err)
+	return NotLiveError{err}
 }
 
 // Commit makes the session live, all or nothing:
