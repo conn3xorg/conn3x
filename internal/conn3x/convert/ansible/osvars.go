@@ -99,6 +99,10 @@ func (c *converter) familyNames(args map[string]*yaml.Node, vars map[string]stri
 				if _, set := vars[name]; set || c.role.defaults[name] != nil {
 					continue
 				}
+				if _, isDefault := c.role.defaultOf[name]; isDefault {
+					seen[name] = true
+					continue
+				}
 				for _, f := range osFamilies {
 					_, ok := c.role.familyVars[f.conn3x][name]
 					_, unusable := c.role.familyWhy[f.conn3x][name]
@@ -219,3 +223,13 @@ locals {
   os_family = { for name, h in var.hosts : name => try(local.os_families[h.os], data.conn3x_host.facts[name].os_family) }
 }
 `
+
+// defaultTask reports whether node is a set_fact that defaults a variable
+// to a per-family one, and which variable.
+func (r *role) defaultTask(node *yaml.Node) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	x, ok := r.defaultTasks[node]
+	return x, ok
+}

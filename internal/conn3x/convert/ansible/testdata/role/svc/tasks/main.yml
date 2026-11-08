@@ -1,0 +1,15 @@
+---
+- name: Include OS-specific variables.
+  include_vars: "{{ ansible_os_family }}.yml"
+
+- name: Define svc_user.
+  set_fact:
+    svc_user: "{{ __svc_user }}"
+  when: svc_user is not defined
+
+- name: Make the service directory.
+  file:
+    path: /srv/svc
+    state: directory
+    owner: "{{ svc_user }}"
+    mode: "0755"
