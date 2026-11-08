@@ -1,0 +1,3 @@
+cron_package: cron
+cron_service: cron
+cron_defaults_file: /etc/default/cron-role

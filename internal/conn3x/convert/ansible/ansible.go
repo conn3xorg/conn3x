@@ -433,6 +433,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, noLogReason)
 		return
 	}
+	if c.role != nil && node == c.role.familyInclude {
+		body.AppendNewline()
+		comment(body, fmt.Sprintf("Task %q (%s line %d) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.", name, c.file, node.Line))
+		c.res.Converted++
+		return
+	}
 	for k := range t {
 		if strings.HasPrefix(k, "with_") {
 			c.issue(body, name, node, "uses "+k+", a loop, which the converter can't translate yet")
@@ -484,21 +490,72 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, "uses the "+mod+" module, which has no Conn3x equivalent yet")
 		return
 	}
-	in := c.input(mod, args, vars, items)
-	in.factsLater = c.factsAfter[node]
-	steps, reason := m(in)
-	if reason == "" && items != nil {
-		reason = loopSteps(in.itemUsed)
+	run := func(vars map[string]string) (*input, []step, string) {
+		in := c.input(mod, args, vars, items)
+		in.factsLater = c.factsAfter[node]
+		steps, reason := m(in)
+		if reason == "" && items != nil {
+			reason = loopSteps(in.itemUsed)
+		}
+		if reason == "" {
+			reason = resolveMarks(steps)
+		}
+		if reason == "" {
+			reason = in.problem
+		}
+		if reason == "" {
+			if extra := in.unused(); len(extra) > 0 {
+				reason = "sets " + strings.Join(extra, ", ") + ", which the converter can't translate yet"
+			}
+		}
+		return in, steps, reason
 	}
-	if reason == "" {
-		reason = resolveMarks(steps)
-	}
-	if reason == "" {
-		reason = in.problem
-	}
-	if reason == "" {
-		if extra := in.unused(); len(extra) > 0 {
-			reason = "sets " + strings.Join(extra, ", ") + ", which the converter can't translate yet"
+	var in *input
+	var steps []step
+	var reason string
+	if names := c.familyNames(args, vars); len(names) == 0 {
+		in, steps, reason = run(vars)
+	} else {
+		// Convert once per family with its values, then join the steps.
+		byFamily := map[string][]step{}
+		for _, f := range osFamilies {
+			fv := map[string]string{}
+			for k, v := range vars {
+				fv[k] = v
+			}
+			for _, n := range names {
+				v, ok := c.role.familyVars[f.conn3x][n]
+				if !ok {
+					reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set, so Ansible would stop on %s hosts", n, f.ansible, f.ansible)
+					break
+				}
+				fv[n] = v
+			}
+			if reason != "" {
+				break
+			}
+			fin, fsteps, freason := run(fv)
+			if freason != "" {
+				reason = freason + " (with the values for " + f.ansible + " hosts)"
+				break
+			}
+			if in == nil {
+				in = fin
+			} else {
+				for p, b := range fin.out {
+					if old, ok := in.out[p]; ok && string(old) != string(b) {
+						reason = "copies a different " + p + " for each family, which the converter can't write as one step yet"
+					}
+					in.out[p] = b
+				}
+			}
+			byFamily[f.conn3x] = fsteps
+		}
+		if reason == "" {
+			steps, reason = mergeFamilies(byFamily)
+		}
+		if reason == "" {
+			c.role.familyUsed = true
 		}
 	}
 	if reason == "" && c.otherUser != "" && !sameForAnyUser(mod, args) {

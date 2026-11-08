@@ -29,6 +29,12 @@ type role struct {
 	// varFiles are the files under vars/ other than main that set each
 	// variable, such as vars/Debian.yml: what an include_vars loads.
 	varFiles map[string][]string
+	// familyInclude is the include_vars of vars/<family>.yml, and
+	// familyVars what Debian's and Red Hat's files set; familyUsed is set
+	// once a step looks one up.
+	familyInclude *yaml.Node
+	familyVars    map[string]map[string]string
+	familyUsed    bool
 }
 
 type roleDefault struct {
@@ -114,7 +120,11 @@ func ConvertRole(dir string) (Result, error) {
 		ssh.SetAttributeRaw(a, rawTokens("var.ssh_"+a))
 	}
 	c.file = tasksFile
+	r.familyInclude, r.familyVars = c.familyVars(seq(tasks))
 	c.steps(cb, seq(tasks), seq(handlers), handlersFile, false, vars)
+	if r.familyUsed {
+		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
+	}
 
 	for _, k := range order {
 		d := r.defaults[k]

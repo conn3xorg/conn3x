@@ -1,0 +1,3 @@
+cron_package: cronie
+cron_service: cronie
+cron_defaults_file: /etc/conf.d/cron-role

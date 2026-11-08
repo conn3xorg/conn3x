@@ -212,6 +212,50 @@ func TestHandlerNameFromAVarAndKeywords(t *testing.T) {
 	}
 }
 
+// A role that loads vars/<family>.yml becomes steps whose values are looked
+// up by each host's family, read from conn3x_host.
+func TestRoleFamilyVars(t *testing.T) {
+	res := goldenRole(t, "cron")
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}
+
+func TestRoleFamilyVarsRefusals(t *testing.T) {
+	include := "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n"
+	for want, files := range map[string]map[string]string{
+		// A family whose file doesn't set the variable.
+		`which vars/RedHat.yml doesn't set, so Ansible would stop on RedHat hosts`: {
+			"tasks/main.yml":  include + "- name: P\n  package: {name: '{{ pkg }}'}\n",
+			"vars/Debian.yml": "pkg: cron\n",
+			"vars/RedHat.yml": "other: x\n",
+		},
+		// A value one family's checks refuse.
+		"(with the values for RedHat hosts)": {
+			"tasks/main.yml":  include + "- name: C\n  copy: {dest: /etc/a.conf, content: x, mode: '{{ m }}'}\n",
+			"vars/Debian.yml": "m: \"0644\"\n",
+			"vars/RedHat.yml": "m: u+rw\n",
+		},
+		// No RedHat file: the include isn't the family pattern Conn3x reads.
+		"uses the include_vars module": {
+			"tasks/main.yml":  include,
+			"vars/Debian.yml": "pkg: cron\n",
+		},
+	} {
+		res, err := ConvertRole(writeRole(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, r := range res.Review {
+			found = found || strings.Contains(r.Reason, want)
+		}
+		if !found {
+			t.Errorf("%s: review %+v", want, res.Review)
+		}
+	}
+}
+
 // writeRole writes a role's files into a new directory.
 func writeRole(t *testing.T, files map[string]string) string {
 	t.Helper()
