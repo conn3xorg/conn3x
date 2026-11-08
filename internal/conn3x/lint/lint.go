@@ -93,6 +93,7 @@ var (
 		{regexp.MustCompile(`--allow-root\b`), "tells a tool that refuses root to run as root anyway"},
 		{regexp.MustCompile(`--no-check-certificate|--allow-unauthenticated|\[trusted=yes\]`), "installs or downloads without checking the source"},
 	}
+	commandSep = regexp.MustCompile(`[|;&]`)
 	curl       = regexp.MustCompile(`\bcurl\b`)
 	insecure   = regexp.MustCompile(`\s(?:-[a-zA-Z]*k[a-zA-Z]*|--insecure)(\s|$)`)
 	credential = regexp.MustCompile(`\s(?:-[a-zA-Z]*K|--config\b|-u\s|--user\b|-H\s*["']?(?:Authorization|X-[A-Za-z-]*(?:Token|Key))|--cert\b|--cookie\b|--oauth2-bearer\b)`)
@@ -107,7 +108,7 @@ var (
 // insecureCredential is the grader's INSECURE_CREDENTIAL: on one command,
 // curl, an insecure flag and a credential.
 func insecureCredential(line string) bool {
-	for _, cmd := range regexp.MustCompile(`[|;&]`).Split(line, -1) {
+	for _, cmd := range commandSep.Split(line, -1) {
 		if curl.MatchString(cmd) && insecure.MatchString(cmd) && credential.MatchString(cmd) {
 			return true
 		}
