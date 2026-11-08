@@ -106,11 +106,16 @@ func TestStepRunOnceImportOnAnotherHost(t *testing.T) {
 	}
 }
 
-// Under per_host the steps after a run_once step, and the handlers, wait for
-// all of it rather than for their own host's instance, which only one host
-// has.
+// Under per_host a run_once step is a sync point: it waits for the step
+// before it on every host, and the step after it waits for all of it rather
+// than for its own host's instance, which only one host has.
 func TestStepRunOnceWaitsOnEveryHost(t *testing.T) {
-	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": onceCircuit(`  strategy = "per_host"`, `step "migrate" {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": onceCircuit(`  strategy = "per_host"`, `step "code" {
+    command {
+      command = "deploy"
+    }
+  }
+  step "migrate" {
     run_once = true
     command {
       command = "migrate"
@@ -136,6 +141,7 @@ func TestStepRunOnceWaitsOnEveryHost(t *testing.T) {
 		t.Fatal(diags.Error())
 	}
 	for addr, wantWhole := range map[string]map[string]bool{
+		"conn3x_command.app__migrate": {"app__code": true},
 		"conn3x_command.app__restart": {"app__migrate": true},
 		"conn3x_command.app__after":   {"app__restart": false}, // and so, through restart, on migrate
 	} {

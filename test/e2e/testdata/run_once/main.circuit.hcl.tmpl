@@ -13,6 +13,14 @@ circuit "app" {
     known_hosts_file = "{{.KnownHosts}}"
   }
 
+  # Slow on web2, which migrate has to wait for even though it runs on db1.
+  step "code" {
+    command {
+      command = "${each.key == "web2" ? "sleep 6; " : ""}date +%s.%N > /tmp/code"
+      creates = "/tmp/code"
+    }
+  }
+
   # db1 sorts first, so it's the host without on.
   step "migrate" {
     run_once = true

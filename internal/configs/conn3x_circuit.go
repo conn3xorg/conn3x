@@ -463,8 +463,10 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	}
 	for _, previous := range chain {
 		rng := chainRange(step, perHost)
-		if stepOnce(previous.ForEach) {
-			rng = step.TypeRange // a whole-resource edge: every host waits for the one
+		if stepOnce(previous.ForEach) || stepOnce(forEach) {
+			// A whole-resource edge: every host waits for a run_once step,
+			// and it waits for every host, as Ansible's does.
+			rng = step.TypeRange
 		}
 		r.DependsOn = append(r.DependsOn, hcl.Traversal{
 			hcl.TraverseRoot{Name: previous.Type, SrcRange: rng},

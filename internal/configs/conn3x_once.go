@@ -19,8 +19,9 @@ import (
 //	  ...
 //	}
 //
-// It filters the step's for_each to that host's instances, and the steps
-// after it wait for it on every host, per_host included.
+// It filters the step's for_each to that host's instances. Even under
+// per_host it's a sync point, as in Ansible: it waits for the steps before
+// it on every host, and the steps after it wait for it on every host.
 
 // onceFilter is a run_once step's for_each: the instances on one host.
 type onceFilter struct {
