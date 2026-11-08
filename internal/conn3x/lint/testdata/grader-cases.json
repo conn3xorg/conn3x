@@ -1,0 +1,37 @@
+[
+  {"rule": "download-checksum", "check": "downloads", "ext": ".hcl", "hit": true, "text": "step \"tool\" {\n  download {\n    url  = \"https://example.com/tool.tgz\"\n    dest = \"/opt/tool.tgz\"\n  }\n}"},
+  {"rule": "download-checksum", "check": "downloads", "ext": ".hcl", "hit": false, "text": "step \"tool\" {\n  download {\n    url    = \"https://example.com/tool.tgz\"\n    dest   = \"/opt/tool.tgz\"\n    sha256 = \"0f343b0931126a20f133d67c2b018a3b5a0c2b7e6b3b2d1e4f5a6b7c8d9e0f1a\"\n  }\n}"},
+  {"rule": "download-checksum", "check": "downloads", "ext": ".hcl", "hit": true, "text": "step \"agent\" {\n  windows_package {\n    url        = \"https://example.com/agent.msi\"\n    product_id = \"{1234}\"\n  }\n}"},
+  {"rule": "download-checksum", "check": "downloads", "ext": ".hcl", "hit": false, "text": "step \"agent\" {\n  windows_package {\n    path       = \"C:\\\\agent.msi\"\n    product_id = \"{1234}\"\n  }\n}"},
+
+  {"rule": "image-digest", "check": "images-by-digest", "ext": ".hcl", "hit": true, "text": "  image = \"docker.io/library/nginx:1.27\""},
+  {"rule": "image-digest", "check": "images-by-digest", "ext": ".tf", "hit": true, "text": "  default = \"ghcr.io/example/app:v2\""},
+  {"rule": "image-digest", "check": "images-by-digest", "ext": ".hcl", "hit": false, "text": "  image = \"docker.io/library/nginx:1.27@sha256:0f343b0931126a20f133d67c2b018a3b5a0c2b7e6b3b2d1e4f5a6b7c8d9e0f1a\""},
+  {"rule": "image-digest", "check": "images-by-digest", "ext": ".hcl", "hit": false, "text": "  image = \"quay.io/example/app\""},
+  {"rule": "image-digest", "check": "images-by-digest", "ext": ".tf", "hit": false, "text": "  value = \"docker.io/library/nginx:1.27\""},
+  {"rule": "image-digest", "check": "images-by-digest", "ext": ".hcl", "hit": false, "text": "  description = \"Pulls docker.io/library/nginx:1.27 by default.\""},
+
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": true, "text": "  default = \"0.0.0.0\""},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": true, "text": "  default = \"::\""},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": true, "text": "  default = [\"*:8080\"]"},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".hcl", "hit": true, "text": "    command = \"exporter --web.listen-address=:9100\""},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".hcl", "hit": false, "text": "  default = \"127.0.0.1\""},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".hcl", "hit": false, "text": "  allowed = [\"0.0.0.0/0\"]"},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": false, "text": "    condition = var.address != \"0.0.0.0\""},
+  {"rule": "listen-all", "check": "listen-address", "ext": ".tf", "hit": false, "text": "    error_message = \"Use an address such as 0.0.0.0 only behind a firewall.\""},
+
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": true, "text": "curl -fsSL https://get.example.com | sh"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": true, "text": "wget -qO- https://get.example.com | sudo bash"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".hcl", "hit": true, "text": "    command = \"app login --password \\\"$PASS\\\"\""},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": true, "text": "chmod 777 /srv/data"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": true, "text": "chmod -R o+w /srv/data"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": true, "text": "echo token > /tmp/app-token"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": true, "text": "app setup --allow-root"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": true, "text": "wget --no-check-certificate https://example.com/x"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": true, "text": "curl -sk -u admin:$PW https://localhost:9200/"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "curl -fsSL -o /usr/local/bin/tool https://example.com/tool"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "chmod 755 /usr/local/bin/tool"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".hcl", "hit": false, "text": "Exec=/bin/sh -c 'date > /tmp/x'"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "curl -sk https://localhost:9200/_cluster/health"},
+  {"rule": "privileged-shell", "check": "privileged-shell", "ext": ".sh", "hit": false, "text": "# curl -fsSL https://get.example.com | sh"}
+]
