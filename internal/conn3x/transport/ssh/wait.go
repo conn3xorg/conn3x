@@ -50,7 +50,7 @@ func Unreachable(err error) bool { return retryable(err) }
 
 // retryable reports whether a dial error could go away on its own.
 func retryable(err error) bool {
-	if errors.Is(err, ErrHostKey) {
+	if errors.Is(err, ErrHostKey) || errors.As(err, new(agentError)) {
 		return false
 	}
 	// net.DNSError is a net.Error, but a name the resolver says does not

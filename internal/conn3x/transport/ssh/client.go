@@ -479,12 +479,19 @@ func authMethod(cfg Config) (gossh.AuthMethod, net.Conn, error) {
 		}
 		return gossh.PublicKeys(signer), nil, nil
 	}
-	conn, err := dialAgent(os.Getenv("SSH_AUTH_SOCK"))
+	conn, err := dialAgent(strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK")))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, agentError{err}
 	}
 	return gossh.PublicKeysCallback(agent.NewClient(conn).Signers), conn, nil
 }
+
+// agentError is a failure to reach the SSH agent. It can wrap a net.Error,
+// but waiting for the host won't start an agent, so DialWait doesn't retry it.
+type agentError struct{ err error }
+
+func (e agentError) Error() string { return e.err.Error() }
+func (e agentError) Unwrap() error { return e.err }
 
 // Prelude starts every command Run and Become.Run hand to /bin/sh. The C
 // locale keeps output parseable. umask 022 keeps the login umask out of
