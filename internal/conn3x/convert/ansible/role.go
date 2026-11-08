@@ -26,6 +26,9 @@ type role struct {
 	defaults  map[string]*roleDefault
 	files     map[string][]byte // files for the circuit directory besides the HCL
 	commaFree map[string]bool   // defaults used as package names
+	// varFiles are the files under vars/ other than main that set each
+	// variable, such as vars/Debian.yml: what an include_vars loads.
+	varFiles map[string][]string
 }
 
 type roleDefault struct {
@@ -55,6 +58,7 @@ func ConvertRole(dir string) (Result, error) {
 	name := slug(base[strings.LastIndex(base, ".")+1:])
 	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}}
 	c := &converter{dir: dir, role: r}
+	r.varFiles = c.otherVarFiles()
 
 	f := hclwrite.NewEmptyFile()
 	body := f.Body()
@@ -145,6 +149,31 @@ var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // main reads a role's sub/main.yml, or .yaml, or main, as Ansible does,
 // returning the document and the file it read.
+// otherVarFiles reads the top-level names set in vars/*.yml besides main,
+// so a reason can say a variable comes from one of them. A file that can't
+// be read is left out; it only makes the reason less specific.
+func (c *converter) otherVarFiles() map[string][]string {
+	out := map[string][]string{}
+	matches, _ := filepath.Glob(c.path("vars/*"))
+	sort.Strings(matches)
+	for _, m := range matches {
+		base := filepath.Base(m)
+		ext := filepath.Ext(base)
+		if (ext != ".yml" && ext != ".yaml") || strings.TrimSuffix(base, ext) == "main" {
+			continue
+		}
+		src, err := os.ReadFile(m)
+		var doc yaml.Node
+		if err != nil || yaml.Unmarshal(src, &doc) != nil || len(doc.Content) == 0 {
+			continue
+		}
+		for _, kv := range pairs(doc.Content[0]) {
+			out[kv[0].Value] = append(out[kv[0].Value], "vars/"+base)
+		}
+	}
+	return out
+}
+
 func (c *converter) main(body *hclwrite.Body, sub string) (*yaml.Node, string) {
 	for _, n := range []string{"main.yml", "main.yaml", "main"} {
 		rel := filepath.ToSlash(filepath.Join(sub, n))

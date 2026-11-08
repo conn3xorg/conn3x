@@ -169,6 +169,31 @@ func TestPlaybookImportTasks(t *testing.T) {
 
 // A handler's service name fills in play vars, and anything but a service
 // restart or reload, or a when, stays for review.
+// A variable set per OS under vars/ says where it comes from, until the
+// converter can translate the include_vars that loads it.
+func TestRoleVariableFromAnIncludeVarsFile(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"vars/Debian.yml": "nginx_user: www-data\n",
+		"vars/RedHat.yml": "nginx_user: nginx\n",
+		"vars/main.yml":   "unrelated: x\n",
+		"tasks/main.yml":  "- name: Owner\n  file: {path: /srv/www, state: directory, owner: '{{ nginx_user }}'}\n- name: Other\n  file: {path: /srv/x, state: directory, owner: '{{ nope }}'}\n",
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Review) != 2 {
+		t.Fatalf("review %+v", res.Review)
+	}
+	want := `refers to "nginx_user", which is set in vars/Debian.yml and vars/RedHat.yml, loaded by an include_vars`
+	if !strings.Contains(res.Review[0].Reason, want) {
+		t.Errorf("reason = %q, want it to contain %q", res.Review[0].Reason, want)
+	}
+	if !strings.Contains(res.Review[1].Reason, `which isn't a role variable the converter can fill in`) {
+		t.Errorf("a variable from nowhere kept the old reason: %q", res.Review[1].Reason)
+	}
+}
+
 func TestHandlerNameFromAVarAndKeywords(t *testing.T) {
 	res := convertString(t, `- hosts: all
   vars: {svc: nginx}
@@ -185,4 +210,20 @@ func TestHandlerNameFromAVarAndKeywords(t *testing.T) {
 	if !strings.Contains(string(res.HCL), `name   = "nginx"`) || len(res.Review) != 2 || !strings.Contains(res.Review[0].Reason, "uses when") {
 		t.Fatalf("review %+v\n%s", res.Review, res.HCL)
 	}
+}
+
+// writeRole writes a role's files into a new directory.
+func writeRole(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, src := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
