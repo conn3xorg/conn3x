@@ -126,6 +126,10 @@ upstream code is imported as-is and kept in sync with OpenTofu releases by
 - `cmd/conn3x/`, the CLI entry point
 - `internal/conn3x/`, everything else that's ours
 
+To add a host module, the most common first PR, follow
+[docs/adding-a-module.md](docs/adding-a-module.md). It walks through `sysctl`
+from the host up.
+
 Keep changes to upstream files to a minimum, since every one of them has to
 be carried through each sync. If you really need to touch one, mark the
 change with a `// CONN3X:` comment that explains why.
