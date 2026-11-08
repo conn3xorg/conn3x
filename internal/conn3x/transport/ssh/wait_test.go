@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,5 +92,20 @@ func TestDialWaitDoesNotRetryUnknownHosts(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("an unknown host was retried for %s", d)
+	}
+}
+
+// An SSH agent that isn't there won't appear by waiting for the host, so
+// the dial fails at once rather than at the timeout.
+func TestDialWaitDoesNotRetryAMissingAgent(t *testing.T) {
+	s := sshtest.New(t)
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "no-agent.sock"))
+	start := time.Now()
+	_, err := DialWait(context.Background(), Config{Host: s.Host, Port: s.Port, User: "test", KnownHostsFile: s.KnownHosts(t)}, 30*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "SSH agent") {
+		t.Fatalf("err = %v, want one about the SSH agent", err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("a missing agent was retried for %s", d)
 	}
 }
