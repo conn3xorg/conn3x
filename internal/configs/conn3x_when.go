@@ -108,20 +108,28 @@ func stepLoops(forEach hcl.Expression) bool {
 		return true
 	case *whenFilter:
 		return stepLoops(e.instances)
+	case *onceFilter:
+		return stepLoops(e.instances)
 	}
 	return false
 }
 
 // stepFiltered reports whether a step may have no instance on some host.
 func stepFiltered(forEach hcl.Expression) bool {
-	_, ok := forEach.(*whenFilter)
-	return ok
+	switch forEach.(type) {
+	case *whenFilter, *onceFilter:
+		return true
+	}
+	return false
 }
 
 // unfiltered is a step's instances before its when.
 func unfiltered(forEach hcl.Expression) hcl.Expression {
-	if w, ok := forEach.(*whenFilter); ok {
-		return w.instances
+	switch e := forEach.(type) {
+	case *whenFilter:
+		return e.instances
+	case *onceFilter:
+		return e.instances
 	}
 	return forEach
 }

@@ -213,6 +213,9 @@ func (h *importHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 		}
 		if !found {
 			if h.hosts != h.all && h.leftOut(ctx, name) {
+				if _, once := h.all.(*onceFilter); once {
+					return bad(fmt.Sprintf("import names %q, but the step has run_once and runs on another host, so it has nothing to adopt there.", name))
+				}
 				return bad(fmt.Sprintf("import names %q, but the step's when is false there, so the step doesn't run on it and has nothing to adopt.", name))
 			}
 			return bad(fmt.Sprintf("import names %q, which isn't one of this step's hosts.", name))

@@ -342,12 +342,12 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		return nil, nil, append(diags, nativeSyntaxRequired(step.DefRange))
 	}
 	for attrName, attr := range body.Attributes {
-		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" && attrName != "import" && attrName != "when" {
+		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" && attrName != "import" && attrName != "when" && attrName != "run_once" && attrName != "on" {
 			rng := attr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported argument in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, when, depends_on, notify, import, one module block and a lifecycle block, not %q.", attrName),
+				Detail:   fmt.Sprintf("A step takes only for_each, when, run_once, on, depends_on, notify, import, one module block and a lifecycle block, not %q.", attrName),
 				Subject:  &rng,
 			})
 		}
@@ -371,7 +371,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported block in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, when, depends_on, notify, import, one module block and a lifecycle block, not %q.", block.Type),
+				Detail:   fmt.Sprintf("A step takes only for_each, when, run_once, on, depends_on, notify, import, one module block and a lifecycle block, not %q.", block.Type),
 				Subject:  &rng,
 			})
 		}
@@ -425,6 +425,18 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		}
 		forEach = &whenFilter{instances: forEach, cond: when.Expr}
 	}
+	once, onceDiags := stepRunOnce(body)
+	diags = append(diags, onceDiags...)
+	if onceDiags.HasErrors() {
+		return nil, nil, diags
+	}
+	if once {
+		var on hcl.Expression
+		if a, ok := body.Attributes["on"]; ok {
+			on = a.Expr
+		}
+		forEach = &onceFilter{instances: forEach, on: on, looping: looping}
+	}
 
 	ssh := sshBlockFor(sshAttrs, sshRange, hostPath)
 	config := &hclsyntax.Body{
@@ -451,6 +463,9 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	}
 	for _, previous := range chain {
 		rng := chainRange(step, perHost)
+		if stepOnce(previous.ForEach) {
+			rng = step.TypeRange // a whole-resource edge: every host waits for the one
+		}
 		r.DependsOn = append(r.DependsOn, hcl.Traversal{
 			hcl.TraverseRoot{Name: previous.Type, SrcRange: rng},
 			hcl.TraverseAttr{Name: previous.Name, SrcRange: rng},
@@ -628,9 +643,13 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 	}
 	// Like Ansible, handlers run after every step in the circuit.
 	for _, last := range chain {
+		lrng := rng
+		if stepOnce(last.ForEach) {
+			lrng = h.TypeRange // every host's handler waits for the one
+		}
 		r.DependsOn = append(r.DependsOn, hcl.Traversal{
-			hcl.TraverseRoot{Name: last.Type, SrcRange: rng},
-			hcl.TraverseAttr{Name: last.Name, SrcRange: rng},
+			hcl.TraverseRoot{Name: last.Type, SrcRange: lrng},
+			hcl.TraverseAttr{Name: last.Name, SrcRange: lrng},
 		})
 	}
 	return r, diags
@@ -956,4 +975,36 @@ func nativeSyntaxRequired(rng hcl.Range) *hcl.Diagnostic {
 		Detail:   "Circuits can be written in .circuit.hcl or .tf files, but not in JSON.",
 		Subject:  &rng,
 	}
+}
+
+// stepRunOnce reads a step's run_once and checks on goes with it. run_once
+// is written as true or false; with when it's an error for now, since it's
+// unclear which should pick first.
+func stepRunOnce(body *hclsyntax.Body) (bool, hcl.Diagnostics) {
+	a, ok := body.Attributes["run_once"]
+	on, hasOn := body.Attributes["on"]
+	if !ok {
+		if hasOn {
+			return false, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "on without run_once",
+				Detail: "on names the host a run_once step runs on; set run_once = true with it.", Subject: on.NameRange.Ptr()}}
+		}
+		return false, nil
+	}
+	v, diags := a.Expr.Value(nil)
+	if diags.HasErrors() || v.Type() != cty.Bool || v.IsNull() {
+		return false, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "Invalid run_once in step",
+			Detail: "run_once is written as true or false.", Subject: a.Expr.Range().Ptr()}}
+	}
+	if v.False() {
+		if hasOn {
+			return false, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "on without run_once",
+				Detail: "on names the host a run_once step runs on; it does nothing with run_once = false.", Subject: on.NameRange.Ptr()}}
+		}
+		return false, nil
+	}
+	if w, ok := body.Attributes["when"]; ok {
+		return false, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "run_once with when",
+			Detail: "A step takes run_once or when, not both, for now: it isn't settled whether when should pick the host or decide whether the one host runs it.", Subject: w.NameRange.Ptr()}}
+	}
+	return true, nil
 }

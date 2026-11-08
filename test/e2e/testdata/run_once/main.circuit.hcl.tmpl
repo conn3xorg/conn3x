@@ -1,0 +1,31 @@
+circuit "app" {
+  hosts = {
+{{- range $name, $port := .Ports}}
+    {{$name}} = { address = "127.0.0.1", port = {{$port}} }
+{{- end}}
+  }
+
+  strategy = "per_host"
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # db1 sorts first, so it's the host without on.
+  step "migrate" {
+    run_once = true
+    command {
+      command = "sleep 8; date +%s.%N > /tmp/migrated"
+      creates = "/tmp/migrated"
+    }
+  }
+
+  step "after" {
+    command {
+      command = "date +%s.%N > /tmp/after"
+      creates = "/tmp/after"
+    }
+  }
+}
