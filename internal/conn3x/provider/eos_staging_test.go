@@ -317,3 +317,74 @@ func TestEOSDestroyBeforeRemovalsCommitsEach(t *testing.T) {
 		t.Errorf("%d commits, %d pending, running:\n%s", commits, pending, running)
 	}
 }
+
+// A removal staged with other changes is forgotten as soon as it's in the
+// session. When a later step's line is refused and the session goes, the
+// removal is committed on its own, so the switch matches state.
+func TestEOSRefusalStillCommitsStagedRemovals(t *testing.T) {
+	f, ssh := newFakeEOS(t, block{head: "vlan 10"}, block{head: "vlan 20"})
+	f.refuse = "vlan 40"
+	if err := create(vlanApply, vlanStep(30, "", ssh)); err != nil {
+		t.Fatal(err)
+	}
+	if err := destroy(vlanApply, vlanStep(10, "", ssh)); err != nil {
+		t.Fatal(err)
+	}
+	err := create(vlanApply, vlanStep(40, "", ssh))
+	if err == nil || !strings.Contains(err.Error(), "committed on their own") || !strings.Contains(err.Error(), "no vlan 10") {
+		t.Fatalf("err = %v", err)
+	}
+	running, commits, _, pending := f.state()
+	if commits != 1 || pending != 0 || strings.Contains(running, "vlan 10") || strings.Contains(running, "vlan 30") || !strings.Contains(running, "vlan 20") {
+		t.Errorf("%d commits, %d pending, running:\n%s", commits, pending, running)
+	}
+}
+
+// A destroy's final commit finds running-config changed by hand and aborts
+// without making anything live. The removals are committed again on the
+// changed config, which keeps the hand edit.
+func TestEOSRemovalsCommitAgainAfterAHandEdit(t *testing.T) {
+	f, ssh := newFakeEOS(t, block{head: "vlan 10"}, block{head: "vlan 20"})
+	removals := onSwitch(eosStep("conn3x_eos_removals", map[string]cty.Value{"id": cty.StringVal("eos-removals")}, nil), ssh)
+	if err := destroy(commitApply, commitFor(ssh, true)); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []cty.Value{vlanStep(10, "", ssh), vlanStep(20, "", ssh)} {
+		if err := destroy(vlanApply, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.mu.Lock()
+	f.running = append(f.running, block{head: "vlan 99", kids: []string{"name by-hand"}})
+	f.mu.Unlock()
+	err := destroy(removalsApply, removals)
+	if err == nil || !strings.Contains(err.Error(), "undo that change") || !strings.Contains(err.Error(), "committed on their own") {
+		t.Fatalf("err = %v", err)
+	}
+	running, commits, _, _ := f.state()
+	if commits != 1 || strings.Contains(running, "vlan 10") || strings.Contains(running, "vlan 20") || !strings.Contains(running, "vlan 99\n   name by-hand") {
+		t.Errorf("%d commits, running:\n%s", commits, running)
+	}
+}
+
+// When another run took the session, committing the removals in a session
+// of ours would abort that run's in turn, so they're listed instead.
+func TestEOSRemovalsLostToAnotherRunAreListed(t *testing.T) {
+	f, ssh := newFakeEOS(t, block{head: "vlan 10"})
+	if err := create(vlanApply, vlanStep(30, "", ssh)); err != nil {
+		t.Fatal(err)
+	}
+	if err := destroy(vlanApply, vlanStep(10, "", ssh)); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	clear(f.sessions) // the other run's Open aborts ours
+	f.mu.Unlock()
+	err := create(vlanApply, vlanStep(40, "", ssh))
+	if err == nil || !strings.Contains(err.Error(), "another Conn3x run") || !strings.Contains(err.Error(), "remove these by hand: no vlan 10") {
+		t.Fatalf("err = %v", err)
+	}
+	if running, commits, _, _ := f.state(); commits != 0 || !strings.Contains(running, "vlan 10") {
+		t.Errorf("%d commits, running:\n%s", commits, running)
+	}
+}
