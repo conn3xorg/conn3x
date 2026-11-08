@@ -14,7 +14,7 @@ import (
 	runreport "github.com/opentofu/opentofu/internal/conn3x/report"
 )
 
-const reportFlagHelp = "Write a JSON report of the run to this file: each host's steps and what happened to them, and the errors as printed. See the run report reference for the format."
+const reportFlagHelp = "Write a JSON report of the run to this file: each host's steps and what happened to them, and the errors as printed. The format: https://docs.conn3x.org/reference/cli/apply/#-report"
 
 // withReport gives apply a -report flag. The apply runs as before, with its
 // -json stream also sent to a temporary file through -json-into (or to the
