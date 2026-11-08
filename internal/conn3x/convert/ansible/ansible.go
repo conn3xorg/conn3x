@@ -459,9 +459,30 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			return
 		}
 	}
+	// A when that only tests the family becomes the step's when, and the
+	// task converts for the families it allows.
+	fams := osFamilies
+	familyCond := false
+	if w := t["when"]; w != nil && c.role != nil {
+		allowed, why, ok := familyWhen(w)
+		if why != "" {
+			c.issue(body, name, node, why)
+			return
+		}
+		if ok && len(allowed) == 0 {
+			c.issue(body, name, node, "uses a when no Debian or Red Hat family host meets, so it would never run")
+			return
+		}
+		if ok {
+			fams, familyCond = allowed, true
+		}
+	}
 	module := ""
 	for _, k := range sortedKeys(t) {
 		if k == "loop" && items != nil {
+			continue
+		}
+		if k == "when" && familyCond {
 			continue
 		}
 		if keywords[k] && !harmless[k] {
@@ -524,7 +545,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	} else {
 		// Convert once per family with its values, then join the steps.
 		byFamily := map[string][]step{}
-		for _, f := range osFamilies {
+		for _, f := range fams {
 			fv := map[string]string{}
 			for k, v := range vars {
 				fv[k] = v
@@ -566,7 +587,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			byFamily[f.conn3x] = fsteps
 		}
 		if reason == "" {
-			steps, reason = mergeFamilies(byFamily)
+			steps, reason = mergeFamilies(byFamily, fams)
 		}
 		// A variable the caller can set: convert again with var.X in its
 		// place, and use that where it's set.
@@ -581,7 +602,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		if reason == "" && len(callers) > 0 {
 			callerByFamily := map[string][]step{}
-			for _, f := range osFamilies {
+			for _, f := range fams {
 				fv := map[string]string{}
 				for k, v := range vars {
 					fv[k] = v
@@ -601,7 +622,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				callerByFamily[f.conn3x] = csteps
 			}
 			if reason == "" {
-				steps, reason = withCaller(steps, callerByFamily, c.role.defaultOf)
+				steps, reason = withCaller(steps, callerByFamily, c.role.defaultOf, fams)
 			}
 			if reason == "" {
 				for _, n := range callers {
@@ -662,6 +683,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				vals[i] = cty.StringVal(it)
 			}
 			sb.SetAttributeValue("for_each", cty.TupleVal(vals))
+		}
+		if familyCond && len(fams) < len(osFamilies) {
+			sb.SetAttributeRaw("when", rawTokens(fmt.Sprintf("local.os_family[each.key] == %q", fams[0].conn3x)))
+			c.role.familyUsed = true
 		}
 		mb := sb.AppendNewBlock(s.module, nil).Body()
 		for _, a := range s.attrs {

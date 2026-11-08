@@ -201,7 +201,7 @@ type sessionsJSON struct {
 // would be refused anyway. It aborts the pending sessions a Conn3x run left
 // when it stopped before committing: they were never live, and EOS keeps
 // only five pending sessions. A second run still adding lines to the same
-// switch would lose its session that way, and its commit then fails, with
+// switch loses its session that way, and its next Add or Commit fails, with
 // nothing of it live: two runs at one switch would undo each other anyway.
 func Open(ctx context.Context, d Device, running string) (*Session, error) {
 	var st sessionsJSON
@@ -247,11 +247,31 @@ func (s *Session) Add(ctx context.Context, d Device, cmds []string) error {
 	if len(cmds) == 0 {
 		return nil
 	}
+	if s.started {
+		if err := s.stillPending(ctx, d); err != nil {
+			return err
+		}
+	}
 	// The CLI reads the script from stdin; "end" leaves the session pending.
 	script := "configure session " + s.Name + "\n" + strings.Join(cmds, "\n") + "\nend\n"
 	s.started = true
 	_, err := run(ctx, d, "", []byte(script))
 	return err
+}
+
+// stillPending fails when the session is gone: another run opening a session
+// on this switch aborts pending ones, and so can someone by hand. Entering a
+// gone session would start a new one, quietly, holding only later lines.
+func (s *Session) stillPending(ctx context.Context, d Device) error {
+	var st sessionsJSON
+	if err := ShowJSON(ctx, d, "show configuration sessions", &st); err != nil {
+		return err
+	}
+	if st.Sessions[s.Name].State == "pending" {
+		return nil
+	}
+	s.started = false // nothing left to abort
+	return fmt.Errorf("config session %s was aborted before this apply committed it, most likely by another Conn3x run against the same switch, or by hand, so none of this apply's lines are live. Let one run at a time change a switch, then apply again", s.Name)
 }
 
 // Abort drops the session and every line in it. Nothing was live.
@@ -275,9 +295,9 @@ func (s *Session) aborted(ctx context.Context, d Device, err error) error {
 
 // Commit makes the session live, all or nothing:
 //
-//  1. Running-config must still be what the session started from, or the
-//     commit would undo whatever changed it; if not, the session is
-//     aborted and nothing changes.
+//  1. The session must still be pending, and running-config still what the
+//     session started from, or the commit would undo whatever changed it;
+//     if not, the session is aborted and nothing changes.
 //  2. The session is committed with a revert timer of RevertAfter.
 //  3. After confirmAfter, a new SSH connection, from reconnect, commits it
 //     again, which confirms it. That it can log in at all is the check: if
@@ -291,6 +311,9 @@ func (s *Session) Commit(ctx context.Context, d Device, reconnect func(context.C
 		return "", nil
 	}
 	session := "configure session " + s.Name
+	if err := s.stillPending(ctx, d); err != nil {
+		return "", s.aborted(ctx, d, err)
+	}
 	running, err := RunningConfig(ctx, d)
 	if err != nil {
 		return "", s.aborted(ctx, d, err)

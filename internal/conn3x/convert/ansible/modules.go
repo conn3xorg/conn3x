@@ -558,6 +558,10 @@ func packageModule(in *input) ([]step, string) {
 		steps = append(steps, step{module: "package", attrs: attrs, notes: notes, suffix: n})
 		notes = nil
 	}
+	if len(steps) == 0 && notes != nil && !in.has("state") {
+		// Only update_cache: nothing for a step to do.
+		return []step{{notes: notes}}, ""
+	}
 	if len(steps) == 0 {
 		return nil, "names no package"
 	}

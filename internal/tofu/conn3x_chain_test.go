@@ -100,7 +100,9 @@ func newChainProvider() *chainProvider {
 			}),
 			"conn3x_eos_commit": block(map[string]*configschema.Attribute{
 				"triggers": {Type: cty.DynamicPseudoType, Optional: true},
+				"removals": {Type: cty.String, Optional: true},
 			}),
+			"conn3x_eos_removals": block(map[string]*configschema.Attribute{}),
 			"conn3x_service_action": block(map[string]*configschema.Attribute{
 				"name":     {Type: cty.String, Optional: true},
 				"action":   {Type: cty.String, Optional: true},
@@ -201,7 +203,8 @@ func TestConn3xChainPerHostEmptyLoop(t *testing.T) {
 }
 
 // A switch's EOS commit waits for that switch's eos steps only per host,
-// and for every switch's in lockstep.
+// and for every switch's in lockstep. The steps wait for the switch's
+// conn3x_eos_removals the same way, so a destroy reaches it last.
 func TestConn3xChainEOSCommit(t *testing.T) {
 	src := `
 circuit "sw" {
@@ -228,7 +231,13 @@ circuit "sw" {
 		checkChainDeps(t, deps, `conn3x_eos_commit.sw__commit["a"]`, map[string]bool{
 			`conn3x_eos_vlan.sw__one["a"]`: true, `conn3x_eos_vlan.sw__many["a/x"]`: true, `conn3x_eos_vlan.sw__many["a/y"]`: true,
 			`conn3x_eos_vlan.sw__one["b"]`: other, `conn3x_eos_vlan.sw__many["b/x"]`: other,
+			`conn3x_eos_removals.sw__removals["a"]`: true,
 		})
+		for _, step := range []string{`conn3x_eos_vlan.sw__one["a"]`, `conn3x_eos_vlan.sw__many["a/x"]`} {
+			checkChainDeps(t, deps, step, map[string]bool{
+				`conn3x_eos_removals.sw__removals["a"]`: true, `conn3x_eos_removals.sw__removals["b"]`: other,
+			})
+		}
 	}
 }
 

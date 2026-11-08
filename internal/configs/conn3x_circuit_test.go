@@ -5,6 +5,7 @@ package configs
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1121,6 +1122,24 @@ func TestEOSCircuitLowersOneCommit(t *testing.T) {
 	}
 	if len(c.DependsOn) != 1 || traversalString(c.DependsOn[0]) != "conn3x_eos_config.leafs__commit" {
 		t.Errorf("commit should wait for the circuit's last step, depends_on = %v", c.DependsOn)
+	}
+	var removalsRef []string
+	for _, tr := range attrs["removals"].Expr.Variables() {
+		removalsRef = append(removalsRef, traversalString(tr))
+	}
+	if strings.Join(removalsRef, ",") != "conn3x_eos_removals.leafs__removals,each.key" {
+		t.Errorf("commit removals = %v, want the circuit's conn3x_eos_removals", removalsRef)
+	}
+	rm, ok := mod.ManagedResources["conn3x_eos_removals.leafs__removals"]
+	if !ok || rm.ForEach == nil {
+		t.Fatal("no conn3x_eos_removals repeated over hosts")
+	}
+	// Every eos step waits for it, so a destroy removes it after them all.
+	for _, step := range []string{"conn3x_eos_hostname.leafs__name", "conn3x_eos_vlan.leafs__vlans", "conn3x_eos_config.leafs__commit"} {
+		r := mod.ManagedResources[step]
+		if !slices.ContainsFunc(r.DependsOn, func(tr hcl.Traversal) bool { return traversalString(tr) == "conn3x_eos_removals.leafs__removals" }) {
+			t.Errorf("%s doesn't wait for the removals commit, depends_on = %v", step, r.DependsOn)
+		}
 	}
 
 	plain, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": handlerCircuit})
