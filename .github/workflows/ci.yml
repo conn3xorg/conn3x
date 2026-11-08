@@ -135,9 +135,27 @@ jobs:
           [ $((c - a)) -lt "$t" ] || { echo "conn3x without its agents has grown past the tofu it is built from" >&2; exit 1; }
       - name: Cross-compile for the release targets
         run: |
-          for target in linux/arm64 darwin/arm64 windows/amd64; do
+          for target in linux/arm64 darwin/arm64 windows/amd64 windows/arm64; do
             GOOS=${target%/*} GOARCH=${target#*/} scripts/build-conn3x.sh "dist/conn3x-${target%/*}-${target#*/}" -ldflags='-s -w'
           done
+
+  # conn3x.exe runs on a Windows machine and reaches the SSH agent there,
+  # which listens on a named pipe rather than a Unix socket.
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build and run conn3x.exe
+        run: |
+          go build -trimpath -o conn3x.exe ./cmd/conn3x
+          ./conn3x.exe version
+      - name: SSH agent over a named pipe
+        run: go test -count=1 -run TestDialAgent ./internal/conn3x/transport/ssh/
 
   e2e-hosts:
     runs-on: ubuntu-24.04
