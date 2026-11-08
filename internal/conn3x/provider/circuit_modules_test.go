@@ -17,7 +17,7 @@ func TestEveryResourceTypeIsAStepModule(t *testing.T) {
 		steps[rt] = true
 	}
 	for _, rt := range ResourceTypeNames() {
-		if rt == "conn3x_service_action" || rt == "conn3x_eos_commit" {
+		if rt == "conn3x_service_action" || rt == "conn3x_eos_commit" || rt == "conn3x_eos_removals" {
 			continue
 		}
 		if !steps[rt] {

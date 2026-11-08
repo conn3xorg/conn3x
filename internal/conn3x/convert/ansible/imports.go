@@ -41,6 +41,10 @@ func (c *converter) flatten(nodes []*yaml.Node, file string, stack []string) []t
 			}
 			out = append(out, c.flatten(tasks, sub, append(stack, sub))...)
 		case "include_tasks", "include":
+			if tasks, ok := c.familyInclude(n, args, file, stack); ok {
+				out = append(out, tasks...)
+				continue
+			}
 			out = append(out, taskAt{node: n, file: file, reason: "uses " + mod + ", which Ansible reads only when the play reaches it, so its file, loop and when can change from run to run; the converter can't translate that yet. If it names one file and has no loop or when, change it to import_tasks and convert again"})
 		case "include_role", "import_role":
 			out = append(out, taskAt{node: n, file: file, reason: "uses " + mod + ", which runs another role here; convert that role with -role and call its circuit as a module"})

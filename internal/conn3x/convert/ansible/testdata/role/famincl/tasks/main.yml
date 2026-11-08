@@ -1,0 +1,9 @@
+---
+- name: Set up for the family.
+  include_tasks: "setup-{{ ansible_os_family }}.yml"
+
+- include_tasks: extra.yml
+  when: ansible_facts.os_family == 'Debian'
+
+- include_tasks: setup-Archlinux.yml
+  when: ansible_facts.os_family == 'Archlinux'
