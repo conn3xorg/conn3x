@@ -30,7 +30,9 @@ import (
 // so a path is proved to be a path on both.
 
 // osFamilies are the families conn3x_host reports, by Ansible's name.
-var osFamilies = []struct{ ansible, conn3x string }{{"Debian", "debian"}, {"RedHat", "redhat"}}
+type osFamily struct{ ansible, conn3x string }
+
+var osFamilies = []osFamily{{"Debian", "debian"}, {"RedHat", "redhat"}}
 
 // osFamilyInclude matches include_vars of the host's family's file.
 var osFamilyInclude = regexp.MustCompile(`^\{\{\s*ansible_(?:facts\.os_family|facts\[["']os_family["']\]|os_family)\s*\}\}\.(ya?ml)$`)
@@ -127,13 +129,13 @@ func (c *converter) familyNames(args map[string]*yaml.Node, vars map[string]stri
 	return names
 }
 
-// mergeFamilies joins one task's steps converted for each family into steps
-// whose differing string values are looked up by the host's family. It
-// returns a reason when they differ in anything else.
-func mergeFamilies(byFamily map[string][]step) ([]step, string) {
-	first := byFamily[osFamilies[0].conn3x]
+// mergeFamilies joins one task's steps converted for each of fams into
+// steps whose differing string values are looked up by the host's family.
+// It returns a reason when they differ in anything else.
+func mergeFamilies(byFamily map[string][]step, fams []osFamily) ([]step, string) {
+	first := byFamily[fams[0].conn3x]
 	differs := "converts to different steps on Debian and Red Hat hosts, which the converter can't write as one step yet"
-	for _, f := range osFamilies[1:] {
+	for _, f := range fams[1:] {
 		if len(byFamily[f.conn3x]) != len(first) {
 			return nil, differs
 		}
@@ -142,7 +144,7 @@ func mergeFamilies(byFamily map[string][]step) ([]step, string) {
 	for i, s := range first {
 		out[i] = s
 		out[i].attrs = append([]attr(nil), s.attrs...)
-		for _, f := range osFamilies[1:] {
+		for _, f := range fams[1:] {
 			o := byFamily[f.conn3x][i]
 			// suffix only tells several steps of one task apart.
 			if o.module != s.module || (o.suffix != s.suffix && len(first) > 1) || len(o.attrs) != len(s.attrs) ||
@@ -153,7 +155,7 @@ func mergeFamilies(byFamily map[string][]step) ([]step, string) {
 		for j, a := range s.attrs {
 			vals := map[string]cty.Value{}
 			same := true
-			for _, f := range osFamilies {
+			for _, f := range fams {
 				o := byFamily[f.conn3x][i].attrs[j]
 				if o.key != a.key || o.raw != a.raw {
 					return nil, differs
@@ -168,7 +170,7 @@ func mergeFamilies(byFamily map[string][]step) ([]step, string) {
 				return nil, differs
 			}
 			var parts []string
-			for _, f := range osFamilies {
+			for _, f := range fams {
 				parts = append(parts, f.conn3x+" = "+string(hclwrite.TokensForValue(vals[f.conn3x]).Bytes()))
 			}
 			out[i].attrs[j] = attr{key: a.key, raw: "{ " + strings.Join(parts, ", ") + " }[local.os_family[each.key]]"}
@@ -232,4 +234,75 @@ func (r *role) defaultTask(node *yaml.Node) (string, bool) {
 	}
 	x, ok := r.defaultTasks[node]
 	return x, ok
+}
+
+// familyFact matches Ansible's ways of naming the host's family.
+const familyFact = `ansible_(?:facts\.os_family|facts\[["']os_family["']\]|os_family)`
+
+var (
+	familyCompare = regexp.MustCompile(`^` + familyFact + `\s*(==|!=)\s*["'](\w+)["']$`)
+	familyIn      = regexp.MustCompile(`^` + familyFact + `\s+(in|not in)\s+\[([^\]]*)\]$`)
+	quotedWord    = regexp.MustCompile(`^\s*["'](\w+)["']\s*$`)
+)
+
+// familyWhen reads a when that only tests the host's family, as a string or
+// a list whose items all must hold. It returns the families it allows, or
+// a reason when it names a family Conn3x doesn't run on, and ok false when
+// the when tests anything else.
+func familyWhen(n *yaml.Node) (allowed []osFamily, reason string, ok bool) {
+	conds := []string{scalar(n)}
+	if n.Kind == yaml.SequenceNode {
+		conds = nil
+		for _, e := range n.Content {
+			if e.Kind != yaml.ScalarNode {
+				return nil, "", false
+			}
+			conds = append(conds, e.Value)
+		}
+	} else if n.Kind != yaml.ScalarNode {
+		return nil, "", false
+	}
+	in := map[string]bool{"debian": true, "redhat": true}
+	known := map[string]string{}
+	for _, f := range osFamilies {
+		known[f.ansible] = f.conn3x
+	}
+	for _, c := range conds {
+		c = strings.Join(strings.Fields(c), " ")
+		var op string
+		var names []string
+		if m := familyCompare.FindStringSubmatch(c); m != nil {
+			op, names = map[string]string{"==": "in", "!=": "not in"}[m[1]], []string{m[2]}
+		} else if m := familyIn.FindStringSubmatch(c); m != nil {
+			op = m[1]
+			for _, item := range strings.Split(m[2], ",") {
+				w := quotedWord.FindStringSubmatch(item)
+				if w == nil {
+					return nil, "", false
+				}
+				names = append(names, w[1])
+			}
+		} else {
+			return nil, "", false
+		}
+		set := map[string]bool{}
+		for _, name := range names {
+			f, ok := known[name]
+			if !ok {
+				return nil, fmt.Sprintf("uses when on the %s family, which Conn3x doesn't run on; Conn3x hosts are Debian or Red Hat family", name), true
+			}
+			set[f] = true
+		}
+		for f := range in {
+			if set[f] != (op == "in") {
+				delete(in, f)
+			}
+		}
+	}
+	for _, f := range osFamilies {
+		if in[f.conn3x] {
+			allowed = append(allowed, f)
+		}
+	}
+	return allowed, "", true
 }

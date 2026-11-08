@@ -176,6 +176,15 @@ func TestHandlerWrittenAsKeyValueText(t *testing.T) {
 	}
 }
 
+// A task that only refreshes the package lists has nothing to do in a
+// circuit: Conn3x refreshes them when a package isn't found.
+func TestUpdateCacheAloneIsANote(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  tasks:\n    - apt: update_cache=yes cache_valid_time=86400\n")
+	if res.Converted != 1 || len(res.Review) != 0 || !strings.Contains(string(res.HCL), "update_cache dropped") || strings.Contains(string(res.HCL), "step ") {
+		t.Fatalf("converted %d, review %+v\n%s", res.Converted, res.Review, res.HCL)
+	}
+}
+
 func TestConvertsLiteralLoops(t *testing.T) {
 	res := convertString(t, `- hosts: all
   tasks:

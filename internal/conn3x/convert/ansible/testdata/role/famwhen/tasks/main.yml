@@ -1,0 +1,21 @@
+---
+- name: Include OS-specific variables.
+  include_vars: "{{ ansible_facts.os_family }}.yml"
+
+- name: Debian only.
+  copy:
+    dest: /etc/famwhen-debian
+    content: "debian\n"
+  when: ansible_os_family == 'Debian'
+
+- name: Red Hat only.
+  file:
+    path: "{{ famwhen_rh_dir }}"
+    state: directory
+  when: ansible_facts['os_family'] in ['RedHat']
+
+- name: Everywhere.
+  copy:
+    dest: /etc/famwhen-all
+    content: "all\n"
+  when: ansible_facts.os_family != "Suse_never_named"
