@@ -142,8 +142,9 @@ func (k eosKind) read(ctx context.Context, req providers.ReadResourceRequest) pr
 // apply adds the step's lines to the switch's session for this run, which
 // the circuit's conn3x_eos_commit makes live once every step is in. A step
 // with nothing to change opens no session. A removal goes into the session
-// when one is open; otherwise, as when a whole circuit is destroyed and its
-// commit is gone first, it commits in a session of its own.
+// when one is open, or when the circuit is being destroyed and its
+// conn3x_eos_removals is still to come; otherwise, as for a step dropped
+// from a circuit that stays, it commits in a session of its own.
 func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	var resp providers.ApplyResourceChangeResponse
 	fail := func(err error) providers.ApplyResourceChangeResponse {
@@ -187,7 +188,7 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	}
 	switch {
 	case len(cmds) == 0:
-	case removing && st.session == nil:
+	case removing && st.session == nil && !st.batch:
 		diff, err := eos.Apply(ctx, h.client, eosReconnect(conn), base, cmds, confirmAfter(conn))
 		if diff != "" {
 			log.Printf("[INFO] conn3x: eos_%s on %s: session diff:\n%s", k.name, h.host, diff)
@@ -222,6 +223,7 @@ type staged struct {
 	session  *eos.Session // nil: nothing staged yet
 	failed   error        // a step's session was aborted: nothing more goes in
 	removals []string     // removals in the session, lost if it is aborted
+	batch    bool         // destroying: removals stage for conn3x_eos_removals
 }
 
 var stagedSessions = struct {
@@ -434,6 +436,7 @@ func eosCommitSchema() providers.Schema {
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "The revisions of the circuit's eos steps on this switch; the commit runs when they change."},
+			"removals": {Type: cty.String, Optional: true, Description: "The id of the circuit's conn3x_eos_removals on this switch. With one, destroying the circuit stages the steps' removals for it to commit once."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -458,10 +461,15 @@ func readEOSCommit(_ context.Context, req providers.ReadResourceRequest) provide
 
 func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	resp := providers.ApplyResourceChangeResponse{NewState: req.PlannedState}
-	if req.PlannedState.IsNull() {
-		return resp // a destroy: each removal commits on its own
+	destroying := req.PlannedState.IsNull()
+	if destroying && req.PriorState.GetAttr("removals").IsNull() {
+		return resp // lowered before conn3x_eos_removals: each removal commits on its own
 	}
-	conn := req.PlannedState.GetAttr("ssh")
+	obj := req.PlannedState
+	if destroying {
+		obj = req.PriorState
+	}
+	conn := obj.GetAttr("ssh")
 	h, err := eosDevice(ctx, conn)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
@@ -469,6 +477,11 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 	}
 	defer lockHost(h, "eos")()
 	st := stagedOn(h)
+	if destroying {
+		// The steps' removals come next, then conn3x_eos_removals commits them.
+		st.batch = true
+		return resp
+	}
 	if st.failed != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos commit: nothing was committed: %w", st.failed))
 		return resp
@@ -484,6 +497,62 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 	}
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos commit: %w. The steps are recorded as applied, so the next refresh finds them out of sync and the next apply makes them again", err))
+	}
+	return resp
+}
+
+// conn3x_eos_removals commits, once per switch, what a destroyed circuit's
+// steps removed. The circuit lowering puts one before every eos step, so a
+// destroy reaches it after all of them. Creating or updating it does nothing.
+func eosRemovalsSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: eosExperimental + "Commits, once, the removals a destroyed circuit's eos_* steps added to the switch's config session. Circuits add it; it isn't a step.",
+		Attributes:  map[string]*configschema.Attribute{"id": {Type: cty.String, Computed: true}},
+		BlockTypes:  map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func planEOSRemovals(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	var resp providers.PlanResourceChangeResponse
+	if req.ProposedNewState.IsNull() {
+		resp.PlannedState = req.ProposedNewState
+		return resp
+	}
+	vals := req.ProposedNewState.AsValueMap()
+	vals["id"] = planID(req, "eos-removals")
+	resp.PlannedState = cty.ObjectVal(vals)
+	return resp
+}
+
+func applyEOSRemovals(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	resp := providers.ApplyResourceChangeResponse{NewState: req.PlannedState}
+	if !req.PlannedState.IsNull() {
+		return resp
+	}
+	conn := req.PriorState.GetAttr("ssh")
+	h, err := eosDevice(ctx, conn)
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	defer lockHost(h, "eos")()
+	st := stagedOn(h)
+	st.batch = false // a removal after this, out of order, commits on its own
+	if st.failed != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos removals: nothing was committed: %w", st.failed))
+		return resp
+	}
+	if st.session == nil {
+		return resp
+	}
+	s, removed := st.session, st.removals
+	st.session, st.removals = nil, nil
+	diff, err := s.Commit(ctx, h.client, eosReconnect(conn), confirmAfter(conn))
+	if diff != "" {
+		log.Printf("[INFO] conn3x: eos removals on %s: session diff:\n%s", h.host, diff)
+	}
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos removals: %w. Conn3x has already forgotten the removed steps, so remove these from %s by hand: %s", err, h.host, strings.Join(removed, " | ")))
 	}
 	return resp
 }
