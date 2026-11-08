@@ -2,7 +2,7 @@
 
 A [Conn3x](https://conn3x.org) circuit converted from the Ansible role `famwhen` by `conn3x convert ansible -role`.
 
-One thing still needs you. It's marked `TODO(convert)` in `main.circuit.hcl`, with the reason.
+Every task converted.
 
 ## Usage
 

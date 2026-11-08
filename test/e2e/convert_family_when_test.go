@@ -14,7 +14,8 @@ import (
 
 // A role's when on the family becomes the step's when: on a Red Hat host
 // and a Debian-family host together, each runs only its own family's
-// steps, and the next plan is empty.
+// steps, a when against a family Conn3x doesn't run on runs on both, and
+// the next plan is empty.
 func TestConvertRoleFamilyWhen(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
 	role := filepath.Join(filepath.Dir(here), "..", "..", "internal", "conn3x", "convert", "ansible", "testdata", "role", "famwhen")
@@ -23,18 +24,18 @@ func TestConvertRoleFamilyWhen(t *testing.T) {
 
 	w := newWorkdir(t, "convert_family_when")
 	out, _ := w.conn3x("convert", "ansible", "-role", role, "-out", "circuit-famwhen")
-	if !strings.Contains(out, "Converted 3 tasks.") {
+	if !strings.Contains(out, "Converted all 4 tasks.") {
 		t.Fatalf("convert:\n%s", out)
 	}
 	w.writeAs("main.tf", struct{ RHPort, DebPort, Key, KnownHosts string }{rh.port, deb.port, rh.keyFile, known})
 	w.mustConn3x("init", "-no-color")
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
-	check := "for p in /etc/famwhen-debian /srv/famwhen-redhat; do test -e $p && echo $p; done; true"
-	if got := rh.exec("", "sh", "-c", check); got != "/srv/famwhen-redhat\n" {
-		t.Errorf("rocky has %q, want only the Red Hat step's directory", got)
+	check := "for p in /etc/famwhen-debian /srv/famwhen-redhat /etc/famwhen-all; do test -e $p && echo $p; done; true"
+	if got := rh.exec("", "sh", "-c", check); got != "/srv/famwhen-redhat\n/etc/famwhen-all\n" {
+		t.Errorf("rocky has %q, want the Red Hat step and the one for every host", got)
 	}
-	if got := deb.exec("", "sh", "-c", check); got != "/etc/famwhen-debian\n" {
-		t.Errorf("ubuntu has %q, want only the Debian step's file", got)
+	if got := deb.exec("", "sh", "-c", check); got != "/etc/famwhen-debian\n/etc/famwhen-all\n" {
+		t.Errorf("ubuntu has %q, want the Debian step and the one for every host", got)
 	}
 	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 		t.Fatalf("plan after apply:\n%s", out)

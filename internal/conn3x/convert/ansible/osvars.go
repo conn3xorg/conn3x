@@ -246,9 +246,10 @@ var (
 )
 
 // familyWhen reads a when that only tests the host's family, as a string or
-// a list whose items all must hold. It returns the families it allows, or
-// a reason when it names a family Conn3x doesn't run on, and ok false when
-// the when tests anything else.
+// a list whose items all must hold. It returns the families it allows, and
+// ok false when the when tests anything else. A family Conn3x doesn't run
+// on is never a Conn3x host's, so != 'Archlinux' allows both families and
+// == 'Archlinux' neither.
 func familyWhen(n *yaml.Node) (allowed []osFamily, reason string, ok bool) {
 	conds := []string{scalar(n)}
 	if n.Kind == yaml.SequenceNode {
@@ -287,11 +288,9 @@ func familyWhen(n *yaml.Node) (allowed []osFamily, reason string, ok bool) {
 		}
 		set := map[string]bool{}
 		for _, name := range names {
-			f, ok := known[name]
-			if !ok {
-				return nil, fmt.Sprintf("uses when on the %s family, which Conn3x doesn't run on; Conn3x hosts are Debian or Red Hat family", name), true
+			if f, ok := known[name]; ok {
+				set[f] = true
 			}
-			set[f] = true
 		}
 		for f := range in {
 			if set[f] != (op == "in") {
