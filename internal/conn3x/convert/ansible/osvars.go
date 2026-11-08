@@ -36,10 +36,11 @@ var osFamilies = []struct{ ansible, conn3x string }{{"Debian", "debian"}, {"RedH
 var osFamilyInclude = regexp.MustCompile(`^\{\{\s*ansible_(?:facts\.os_family|facts\[["']os_family["']\]|os_family)\s*\}\}\.(ya?ml)$`)
 
 // familyVars finds a role's include_vars of vars/<family>.yml among its
-// tasks and reads Debian's and Red Hat's files. It returns the task and the
-// values by family and name, or a nil task when there's no such include or
-// a file is missing, and the include then goes to review as before.
-func (c *converter) familyVars(tasks []*yaml.Node) (*yaml.Node, map[string]map[string]string) {
+// tasks and reads Debian's and Red Hat's files. It returns the task, the
+// values by family and name, and for a value it can't use, such as a list,
+// why; or a nil task when there's no such include or a file is missing, and
+// the include then goes to review as before.
+func (c *converter) familyVars(tasks []*yaml.Node) (*yaml.Node, map[string]map[string]string, map[string]map[string]string) {
 	for _, n := range tasks {
 		t := mapping(n)
 		arg, ok := t["include_vars"]
@@ -60,23 +61,25 @@ func (c *converter) familyVars(tasks []*yaml.Node) (*yaml.Node, map[string]map[s
 		if arg.Kind != yaml.ScalarNode || m == nil {
 			continue
 		}
-		vals := map[string]map[string]string{}
+		vals, whys := map[string]map[string]string{}, map[string]map[string]string{}
 		for _, f := range osFamilies {
 			src, err := os.ReadFile(c.path("vars/" + f.ansible + "." + m[1]))
 			var doc yaml.Node
 			if err != nil || yaml.Unmarshal(src, &doc) != nil || len(doc.Content) == 0 {
-				return nil, nil
+				return nil, nil, nil
 			}
-			vals[f.conn3x] = map[string]string{}
+			vals[f.conn3x], whys[f.conn3x] = map[string]string{}, map[string]string{}
 			for _, kv := range pairs(doc.Content[0]) {
 				if v, _, why := plainValue(kv[1]); why == "" {
 					vals[f.conn3x][kv[0].Value] = v
+				} else {
+					whys[f.conn3x][kv[0].Value] = why
 				}
 			}
 		}
-		return n, vals
+		return n, vals, whys
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 // familyNames lists the per-family variables a task's arguments mention.
@@ -96,8 +99,10 @@ func (c *converter) familyNames(args map[string]*yaml.Node, vars map[string]stri
 				if _, set := vars[name]; set || c.role.defaults[name] != nil {
 					continue
 				}
-				for _, fam := range c.role.familyVars {
-					if _, ok := fam[name]; ok {
+				for _, f := range osFamilies {
+					_, ok := c.role.familyVars[f.conn3x][name]
+					_, unusable := c.role.familyWhy[f.conn3x][name]
+					if ok || unusable {
 						seen[name] = true
 					}
 				}
@@ -168,6 +173,16 @@ func mergeFamilies(byFamily map[string][]step) ([]step, string) {
 	return out, ""
 }
 
+// familyHostsValidation checks os in host objects, as the official
+// circuits do, for a circuit that reads it.
+const familyHostsValidation = `
+  validation {
+    condition     = alltrue([for h in var.hosts : contains(["debian", "ubuntu", "rocky", "almalinux", "rhel", "fedora"], try(h.os, "debian"))])
+    error_message = "A host object's os must be one of debian, ubuntu, rocky, almalinux, rhel or fedora. CentOS Linux reached end of life on 30 June 2024: use Rocky Linux."
+  }
+}
+`
+
 // familyBlocks are what a circuit using per-family values needs: each
 // host's facts, and its family, from os in its host object when the caller
 // gives one, as for a host that doesn't exist yet.
@@ -199,7 +214,7 @@ data "conn3x_host" "facts" {
 locals {
   os_families = {
     debian = "debian", ubuntu = "debian",
-    rhel = "redhat", rocky = "redhat", almalinux = "redhat", centos = "redhat", fedora = "redhat",
+    rhel = "redhat", rocky = "redhat", almalinux = "redhat", fedora = "redhat",
   }
   os_family = { for name, h in var.hosts : name => try(local.os_families[h.os], data.conn3x_host.facts[name].os_family) }
 }

@@ -64,7 +64,7 @@ data "conn3x_host" "facts" {
 locals {
   os_families = {
     debian = "debian", ubuntu = "debian",
-    rhel   = "redhat", rocky = "redhat", almalinux = "redhat", centos = "redhat", fedora = "redhat",
+    rhel   = "redhat", rocky = "redhat", almalinux = "redhat", fedora = "redhat",
   }
   os_family = { for name, h in var.hosts : name => try(local.os_families[h.os], data.conn3x_host.facts[name].os_family) }
 }

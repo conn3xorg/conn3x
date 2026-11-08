@@ -34,6 +34,7 @@ type role struct {
 	// once a step looks one up.
 	familyInclude *yaml.Node
 	familyVars    map[string]map[string]string
+	familyWhy     map[string]map[string]string // why a value can't be used, such as a list
 	familyUsed    bool
 }
 
@@ -120,7 +121,7 @@ func ConvertRole(dir string) (Result, error) {
 		ssh.SetAttributeRaw(a, rawTokens("var.ssh_"+a))
 	}
 	c.file = tasksFile
-	r.familyInclude, r.familyVars = c.familyVars(seq(tasks))
+	r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
 	c.steps(cb, seq(tasks), seq(handlers), handlersFile, false, vars)
 	if r.familyUsed {
 		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
@@ -148,7 +149,16 @@ func ConvertRole(dir string) (Result, error) {
 
 	files := r.files
 	files["main.circuit.hcl"] = hclwrite.Format(f.Bytes())
-	files["variables.tf"] = append([]byte(circuitVariables), hclwrite.Format(vf.Bytes())...)
+	variables := circuitVariables
+	if r.familyUsed {
+		// The circuit reads os from host objects; check it as the official
+		// circuits do.
+		hostsEnd := "\n  }\n}\n"
+		i := strings.Index(variables, hostsEnd)
+		variables = variables[:i] + "\n  }\n" + familyHostsValidation + variables[i+len(hostsEnd):]
+		variables = strings.Replace(variables, "settings such as host_key.", "settings such as host_key, and os (debian, ubuntu, rocky, almalinux, rhel or fedora) for a host whose facts can't be read yet.", 1)
+	}
+	files["variables.tf"] = append([]byte(variables), hclwrite.Format(vf.Bytes())...)
 	files["outputs.tf"] = []byte("# An Ansible role has no outputs. Add any you want callers to read here.\n")
 	files["README.md"] = readme(base, name, len(c.res.Review), order, r.defaults)
 	c.res.Files = files

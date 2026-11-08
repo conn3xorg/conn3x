@@ -219,6 +219,9 @@ func TestRoleFamilyVars(t *testing.T) {
 	if res.Converted != 4 || len(res.Review) != 0 {
 		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
 	}
+	if v := string(res.Files["variables.tf"]); !strings.Contains(v, "CentOS Linux reached end of life") || strings.Contains(string(res.Files["main.circuit.hcl"]), "centos") {
+		t.Errorf("hosts should refuse centos as an os, as the official circuits do:\n%s", v)
+	}
 }
 
 func TestRoleFamilyVarsRefusals(t *testing.T) {
@@ -235,6 +238,12 @@ func TestRoleFamilyVarsRefusals(t *testing.T) {
 			"tasks/main.yml":  include + "- name: C\n  copy: {dest: /etc/a.conf, content: x, mode: '{{ m }}'}\n",
 			"vars/Debian.yml": "m: \"0644\"\n",
 			"vars/RedHat.yml": "m: u+rw\n",
+		},
+		// Set, but to something the converter can't use.
+		"which vars/RedHat.yml sets to a list, a map or an alias, which the converter can't use yet": {
+			"tasks/main.yml":  include + "- name: P\n  package: {name: '{{ pkg }}'}\n",
+			"vars/Debian.yml": "pkg: cron\n",
+			"vars/RedHat.yml": "pkg: [cronie, cronie-anacron]\n",
 		},
 		// No RedHat file: the include isn't the family pattern Conn3x reads.
 		"uses the include_vars module": {

@@ -525,6 +525,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			}
 			for _, n := range names {
 				v, ok := c.role.familyVars[f.conn3x][n]
+				if why, unusable := c.role.familyWhy[f.conn3x][n]; unusable {
+					reason = fmt.Sprintf("refers to %q, which vars/%s.yml sets to %s, which the converter can't use yet", n, f.ansible, why)
+					break
+				}
 				if !ok {
 					reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set, so Ansible would stop on %s hosts", n, f.ansible, f.ansible)
 					break
