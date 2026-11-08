@@ -12,6 +12,7 @@ package importid
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
@@ -20,9 +21,12 @@ import (
 // Version is the format's version, "v" in the ID.
 const Version = 1
 
-// LeftOut never go into an ID: the content is read from the host, and
-// write-only arguments must not show in plan output.
-var LeftOut = map[string]bool{"content": true, "content_wo": true, "validate": true}
+// LeftOut reports whether an argument stays out of an ID: the content is
+// read from the host, and write-only arguments, such as a Windows user's
+// password_wo, must not show in plan output.
+func LeftOut(name string) bool {
+	return name == "content" || name == "validate" || strings.HasSuffix(name, "_wo")
+}
 
 // Build returns the ID for one host of a step: key is the host's key in
 // the circuit, ssh the circuit's ssh settings and args the step's module
@@ -44,8 +48,10 @@ func Build(key string, ssh, args cty.Value) (string, error) {
 	if wo, ok := argAttrs["content_wo"]; ok && !wo.IsNull() {
 		id["write_only"] = cty.True
 	}
-	for name := range LeftOut {
-		delete(argAttrs, name)
+	for name := range argAttrs {
+		if LeftOut(name) {
+			delete(argAttrs, name)
+		}
 	}
 	id["args"] = cty.ObjectVal(argAttrs)
 	obj := cty.ObjectVal(id)

@@ -21,6 +21,10 @@ func TestBuild(t *testing.T) {
 			`{"args":{"path":"/etc/motd"},"key":"web1","ssh":{"host":"203.0.113.10","port":2222,"user":"root"},"v":1}`},
 		"write-only": {cty.ObjectVal(map[string]cty.Value{"path": cty.StringVal("/etc/token"), "content_wo": cty.StringVal("s3cret"), "validate": cty.StringVal("true %s")}),
 			`{"args":{"path":"/etc/token"},"key":"web1","ssh":{"host":"203.0.113.10","port":2222,"user":"root"},"v":1,"write_only":true}`},
+		"windows password": {cty.ObjectVal(map[string]cty.Value{"name": cty.StringVal("svc"), "password_wo": cty.StringVal("s3cret")}),
+			`{"args":{"name":"svc"},"key":"web1","ssh":{"host":"203.0.113.10","port":2222,"user":"root"},"v":1}`},
+		"registry data": {cty.ObjectVal(map[string]cty.Value{"key": cty.StringVal(`HKLM\SOFTWARE\App`), "name": cty.StringVal("Token"), "type": cty.StringVal("string"), "data_wo": cty.StringVal("s3cret")}),
+			`{"args":{"key":"HKLM\\SOFTWARE\\App","name":"Token","type":"string"},"key":"web1","ssh":{"host":"203.0.113.10","port":2222,"user":"root"},"v":1}`},
 		"map": {cty.MapVal(map[string]cty.Value{"name": cty.StringVal("nginx")}),
 			`{"args":{"name":"nginx"},"key":"web1","ssh":{"host":"203.0.113.10","port":2222,"user":"root"},"v":1}`},
 	} {

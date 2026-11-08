@@ -71,6 +71,13 @@ var importable = map[string]struct {
 	"conn3x_mount":          {pathID("mount"), notNull, "mount %s", hasMount},
 	"conn3x_repository":     {nameID("repository", nil), notNull, "repository %s", hasRepository},
 
+	"conn3x_windows_directory":      {pathID("windows_directory"), notNull, "directory %s", nil},
+	"conn3x_windows_service":        {nameID("windows_service", nil), notNull, "service %s", hasWinService},
+	"conn3x_windows_registry_value": {keysID("windows_registry_value", "key", "name"), notNull, "registry value %s", hasWinRegistry},
+	"conn3x_windows_feature":        {nameID("windows_feature", nil), notNull, "feature %s", hasWinFeature},
+	"conn3x_windows_user":           {nameID("windows_user", nil), notNull, "local user %s", hasWinUser},
+	"conn3x_windows_group":          {nameID("windows_group", nil), notNull, "local group %s", hasWinGroup},
+
 	// A host always has a hostname, time zone and locale, so there's
 	// nothing to find first: a different one imports and plans an update.
 	"conn3x_hostname": {singleID("hostname"), notNull, "%s", nil},
@@ -323,7 +330,7 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 	}
 	attrs := map[string]json.RawMessage{"ssh": id.SSH}
 	for k, v := range id.Args {
-		if k == "ssh" || k == "content" || k == "content_wo" || k == "validate" {
+		if k == "ssh" || importid.LeftOut(k) {
 			return id, cty.NilVal, fmt.Errorf("import ID args can't hold %s", k)
 		}
 		attrs[k] = v
@@ -341,7 +348,7 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 	// The step always sets its required arguments; reads and ids rely on them.
 	var missing []string
 	for name, a := range resourceTypes[typeName].schema().Block.Attributes {
-		if a.Required && !importid.LeftOut[name] && v.GetAttr(name).IsNull() {
+		if a.Required && !importid.LeftOut(name) && v.GetAttr(name).IsNull() {
 			missing = append(missing, name)
 		}
 	}

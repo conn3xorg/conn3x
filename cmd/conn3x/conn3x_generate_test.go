@@ -98,6 +98,7 @@ func TestGenerateRefusesBeforeReadingTheHost(t *testing.T) {
 		`file has no argument "nope"`:  {host: "h", module: "file", args: []string{"nope=1"}},
 		"content isn't read":           {host: "h", module: "file", args: []string{"content=x"}},
 		`"path" isn't NAME=VALUE`:      {host: "h", module: "file", args: []string{"path"}},
+		"doesn't read Windows hosts":   {host: "h", module: "windows_service", args: []string{"name=Spooler"}},
 	} {
 		var out, errOut bytes.Buffer
 		if code := runGenerateStep(context.Background(), o, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), want) {

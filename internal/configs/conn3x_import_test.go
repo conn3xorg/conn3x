@@ -130,6 +130,29 @@ func TestStepImportSyncedModules(t *testing.T) {
       url  = "https://repo.example.com/"
       key  = "k"
     }`,
+		"conn3x_windows_directory": `windows_directory {
+      path = "C:/app"
+    }`,
+		"conn3x_windows_service": `windows_service {
+      name       = "Spooler"
+      start_mode = "manual"
+    }`,
+		"conn3x_windows_registry_value": `windows_registry_value {
+      key  = "HKLM\\SOFTWARE\\App"
+      name = "Mode"
+      type = "string"
+      data = "on"
+    }`,
+		"conn3x_windows_feature": `windows_feature {
+      name = "Web-Server"
+    }`,
+		"conn3x_windows_user": `windows_user {
+      name        = "svc"
+      password_wo = "s3cret"
+    }`,
+		"conn3x_windows_group": `windows_group {
+      name = "AppOps"
+    }`,
 	} {
 		mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit("step \"s\" {\n    import = true\n    " + step + "\n  }")})
 		if diags.HasErrors() {
@@ -148,6 +171,17 @@ func TestStepImportSyncedModules(t *testing.T) {
   }`)})
 	got := importIDFor(t, mod.Import[0], "web1", cty.StringVal("203.0.113.10"))
 	if !strings.Contains(got, `"args":{"key":"ssh-ed25519 AAAA deploy","user":"deploy"}`) {
+		t.Fatalf("ID = %s", got)
+	}
+	// A write-only password must not reach the ID, which plans print.
+	mod, _ = loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit(`step "s" {
+    import = true
+    windows_user {
+      name        = "svc"
+      password_wo = "s3cret"
+    }
+  }`)})
+	if got := importIDFor(t, mod.Import[0], "web1", cty.StringVal("203.0.113.10")); strings.Contains(got, "s3cret") || !strings.Contains(got, `"args":{"name":"svc"}`) {
 		t.Fatalf("ID = %s", got)
 	}
 }

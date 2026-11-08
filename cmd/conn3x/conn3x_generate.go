@@ -110,6 +110,11 @@ func runGenerateStep(ctx context.Context, o generateOptions, stdout, stderr io.W
 	if !ok {
 		return fail("%q can't be generated: generate covers the modules a step can import", o.module)
 	}
+	if strings.HasPrefix(typ, "conn3x_windows_") {
+		// A Windows read only says whether the host matches, so there'd be
+		// nothing of the host's in the step.
+		return fail("%q can't be generated: generate doesn't read Windows hosts yet. Write the step and set import on it instead", o.module)
+	}
 	if o.writeOnly && o.module != "file" {
 		return fail("-write-only is for file steps")
 	}
@@ -125,7 +130,7 @@ func runGenerateStep(ctx context.Context, o generateOptions, stdout, stderr io.W
 			return fail("%q isn't NAME=VALUE", arg)
 		case attr == nil || (attr.Computed && !attr.Optional):
 			return fail("%s has no argument %q", o.module, name)
-		case generateSkip[name] || importid.LeftOut[name]:
+		case generateSkip[name] || importid.LeftOut(name):
 			return fail("%s isn't read from the host, so generate doesn't take it", name)
 		}
 		v, err := convert.Convert(argValue(text, attr.Type), attr.Type)

@@ -57,6 +57,13 @@ var importModules = map[string]string{
 	"conn3x_ufw_rule":         "ufw",
 	"conn3x_selinux_boolean":  "selinux_boolean",
 	"conn3x_selinux_fcontext": "selinux_fcontext",
+
+	"conn3x_windows_directory":      "windows_directory",
+	"conn3x_windows_service":        "windows_service",
+	"conn3x_windows_registry_value": "windows_registry_value",
+	"conn3x_windows_feature":        "windows_feature",
+	"conn3x_windows_user":           "windows_user",
+	"conn3x_windows_group":          "windows_group",
 }
 
 // ImportableType is the resource type a module's step lowers to, when the
@@ -129,7 +136,7 @@ func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.At
 	}
 	args := map[string]hclsyntax.Expression{}
 	for name, a := range moduleAttrs {
-		if !importid.LeftOut[name] {
+		if !importid.LeftOut(name) {
 			args[name] = a.Expr
 		}
 	}
