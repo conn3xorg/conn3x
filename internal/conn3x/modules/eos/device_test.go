@@ -393,3 +393,18 @@ func TestSessionTakenByAnotherRun(t *testing.T) {
 		t.Errorf("sent %q, want nothing committed or aborted", got)
 	}
 }
+
+func TestMask(t *testing.T) {
+	for in, want := range map[string]string{
+		"+username bob secret sha512 $6$abc$def":                    "+username bob secret <hidden>",
+		"> username bob secret Sup3r!":                              "> username bob secret <hidden>",
+		"tacacs-server host 10.0.0.1 key 7 0207165218120E":          "tacacs-server host 10.0.0.1 key <hidden>",
+		"username bob privilege 15 role network-admin nopassword":   "username bob privilege 15 role network-admin nopassword",
+		"username carol ssh-key ssh-ed25519 AAAAC3Nza carol@laptop": "username carol ssh-key ssh-ed25519 AAAAC3Nza carol@laptop",
+		"enable password 0 letmein":                                 "enable password <hidden>",
+	} {
+		if got := Mask(in); got != want {
+			t.Errorf("Mask(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

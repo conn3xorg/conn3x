@@ -1,0 +1,35 @@
+variable "password" {
+  type      = string
+  sensitive = true
+  ephemeral = true
+}
+
+circuit "people" {
+  hosts = { leaf1 = "{{.Host}}" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "admin"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+    confirm_after    = "5s"
+  }
+
+  step "ops" {
+    eos_user {
+      name        = "c3xops"
+      role        = "{{.Role}}"
+      password_wo = var.password
+      ssh_key     = "{{.Key}}"
+    }
+  }
+{{- if .DemoteLogin}}
+
+  step "login" {
+    eos_user {
+      name      = "admin"
+      privilege = 1
+    }
+  }
+{{- end}}
+}

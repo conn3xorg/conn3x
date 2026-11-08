@@ -432,3 +432,78 @@ func TestEOSInterface(t *testing.T) {
 		t.Fatalf("plan after the change exited %d:\n%s", code, out)
 	}
 }
+
+type userVars struct {
+	eosVars
+	Role, Key   string
+	DemoteLogin bool
+}
+
+// TestEOSUser makes an account with a password and a key, changes its role
+// without touching the password, then rotates the password. No log line
+// carries the password or its hash, and Conn3x won't demote its own login.
+func TestEOSUser(t *testing.T) {
+	sw := eosSwitch(t)
+	v := userVars{eosVars: sw, Role: "network-operator", Key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPqYlxRpTzmq5d0Xgq9Fh0oQn0vMZ8b7T5w1P8kJZx2Q ops@laptop"}
+	w := newWorkdir(t, "eosuser")
+	w.writeAs("main.circuit.hcl", v)
+	w.mustConn3x("init", "-no-color")
+	t.Cleanup(func() { w.conn3x("destroy", "-auto-approve", "-no-color", "-var", "password=x") })
+	hash := func() string {
+		for _, l := range strings.Split(sw.mustCLI(t, "show running-config | include username c3xops\n"), "\n") {
+			if f := strings.Fields(l); len(f) > 2 && strings.Contains(l, " secret sha512 ") {
+				return f[len(f)-1]
+			}
+		}
+		return ""
+	}
+
+	// In the environment: OpenTofu logs its command line, -var values too.
+	w.env = append(w.env, "TF_LOG=INFO", "TF_VAR_password=Init1al!")
+	out := w.mustConn3x("apply", "-auto-approve", "-no-color")
+	w.env = w.env[:len(w.env)-2]
+	first := hash()
+	if first == "" {
+		t.Fatalf("no secret on the account:\n%s", sw.mustCLI(t, "show running-config | include username c3xops\n"))
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "Init1al!") || strings.Contains(l, first) || strings.Contains(l, "$6$") {
+			l = strings.NewReplacer("Init1al!", "<password>", first, "<hash>").Replace(l)
+			t.Fatalf("the password or its hash reached the log: %s", l)
+		}
+	}
+	if got := sw.mustCLI(t, "show running-config | include username c3xops\n"); !strings.Contains(got, "role network-operator") || !strings.Contains(got, "ssh-key "+v.Key) {
+		t.Fatalf("account:\n%s", got)
+	}
+	if out, code := w.conn3x("plan", "-detailed-exitcode", "-no-color", "-var", "password=Init1al!"); code != 0 {
+		t.Fatalf("second plan exited %d:\n%s", code, out)
+	}
+
+	v.Role = "network-admin"
+	w.writeAs("main.circuit.hcl", v)
+	w.mustConn3x("apply", "-auto-approve", "-no-color", "-var", "password=Init1al!")
+	if hash() != first {
+		t.Fatal("changing the role changed the password")
+	}
+
+	w.mustConn3x("apply", "-auto-approve", "-no-color", "-var", "password=R0tated!")
+	if h := hash(); h == "" || h == first {
+		t.Fatal("a new password didn't change the secret")
+	}
+
+	v.DemoteLogin = true
+	w.writeAs("main.circuit.hcl", v)
+	if out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var", "password=R0tated!"); code == 0 || !strings.Contains(out, "needs privilege 15") {
+		t.Fatalf("demoting the login exited %d:\n%s", code, out)
+	}
+	if got := sw.mustCLI(t, "show running-config | include username admin\n"); !strings.Contains(got, "privilege 15") {
+		t.Fatalf("the login was demoted:\n%s", got)
+	}
+	v.DemoteLogin = false
+	w.writeAs("main.circuit.hcl", v)
+	w.mustConn3x("destroy", "-auto-approve", "-no-color", "-var", "password=R0tated!")
+	// The CLI echoes the command, so look for the line itself.
+	if got := sw.mustCLI(t, "show running-config | include username c3xops\n"); strings.Contains(got, "\nusername c3xops ") {
+		t.Fatalf("destroy left the account:\n%s", got)
+	}
+}

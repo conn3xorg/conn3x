@@ -206,7 +206,7 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	case removing && st.session == nil && !st.batch:
 		diff, err := eos.Apply(ctx, h.client, eosReconnect(conn), base, cmds, confirmAfter(conn))
 		if diff != "" {
-			log.Printf("[INFO] conn3x: eos_%s on %s: session diff:\n%s", k.name, h.host, diff)
+			log.Printf("[INFO] conn3x: eos_%s on %s: session diff:\n%s", k.name, h.host, eos.Mask(diff))
 		}
 		if err != nil {
 			return fail(err)
@@ -553,7 +553,7 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 	st.session, st.removals = nil, nil // committed or rolling back: either way, gone
 	diff, err := s.Commit(ctx, h.client, eosReconnect(conn), confirmAfter(conn))
 	if diff != "" {
-		log.Printf("[INFO] conn3x: eos commit on %s: session diff:\n%s", h.host, diff)
+		log.Printf("[INFO] conn3x: eos commit on %s: session diff:\n%s", h.host, eos.Mask(diff))
 	}
 	if errors.As(err, new(eos.NotLiveError)) {
 		err = st.salvage(ctx, h, removed, err)
@@ -612,7 +612,7 @@ func applyEOSRemovals(ctx context.Context, req providers.ApplyResourceChangeRequ
 	st.session, st.removals = nil, nil
 	diff, err := s.Commit(ctx, h.client, eosReconnect(conn), confirmAfter(conn))
 	if diff != "" {
-		log.Printf("[INFO] conn3x: eos removals on %s: session diff:\n%s", h.host, diff)
+		log.Printf("[INFO] conn3x: eos removals on %s: session diff:\n%s", h.host, eos.Mask(diff))
 	}
 	switch {
 	case errors.As(err, new(eos.NotLiveError)):
@@ -691,4 +691,99 @@ func validateEOSInterface(cfg cty.Value) tfdiags.Diagnostics {
 		diags = diags.Append(attrError("name", err.Error()))
 	}
 	return diags
+}
+
+func eosUserFrom(v cty.Value) eos.User {
+	u := eos.User{Name: stringOr(v.GetAttr("name"), ""), Privilege: -1, Role: stringOr(v.GetAttr("role"), ""), SSHKey: optString(v.GetAttr("ssh_key"))}
+	if p := v.GetAttr("privilege"); known(p) {
+		n, _ := p.AsBigFloat().Int64()
+		u.Privilege = int(n)
+	}
+	// password_hmac is unknown while a new password is planned.
+	u.WantSecret = !v.GetAttr("password_hmac").IsNull()
+	return u
+}
+
+var eosUserKind = eosKind{
+	name:     "user",
+	keys:     []string{"name"},
+	settings: []string{"privilege", "role", "ssh_key", "password_hmac"},
+	deletes:  true,
+	config:   func(v cty.Value) eosWant { return eosUserFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return eosUserFrom(v).RemoveCommands(running) },
+	guard: func(v cty.Value, _, _ string) error {
+		return eosUserFrom(v).Guard(stringOr(v.GetAttr("ssh").GetAttr("user"), ""))
+	},
+}
+
+func eosUserSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: eosExperimental + "A local account on an Arista EOS switch: its privilege, role, password and SSH key. Settings left unset are left alone. Conn3x won't demote or delete the account it logs in as.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"name":          {Type: cty.String, Required: true, Description: "The user name."},
+			"privilege":     {Type: cty.Number, Optional: true, Description: "0 to 15. Conn3x's own login needs 15."},
+			"role":          {Type: cty.String, Optional: true, Description: "A role, such as network-admin or network-operator."},
+			"password_wo":   {Type: cty.String, Optional: true, Sensitive: true, WriteOnly: true, Description: "Write-only: the password, sent to the switch and never kept in state. The switch stores it as a salted hash, so Conn3x can only tell that a password is set; a new value plans a change through password_hmac. Unset leaves the account's password alone, and a new account gets none (nopassword), for SSH keys only."},
+			"password_hmac": {Type: cty.String, Computed: true, Description: "An HMAC of password_wo, keyed outside state, so a new password plans a change."},
+			"ssh_key":       {Type: cty.String, Optional: true, Description: "One public key line, such as \"ssh-ed25519 AAAA... alice@laptop\". \"\" removes the account's key."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) removes the account when the step goes, as with every step that grants access; \"forget\" leaves it."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the account matched at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateEOSUser(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	u := eosUserFrom(cfg)
+	u.Secret = stringOr(cfg.GetAttr("password_wo"), "")
+	if err := u.Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func planEOSUser(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planWithPassword(deleteByDefault(req), "eos_user", eosUserKind.settings)
+}
+
+// applyEOSUser hands the step's password, which only the config holds, to
+// the commands, and says whether it changed since the last apply.
+func applyEOSUser(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	if req.PlannedState.IsNull() && !req.PriorState.IsNull() && req.PriorState.GetAttr("on_remove").AsString() == onRemoveDelete {
+		if name := req.PriorState.GetAttr("name").AsString(); name == stringOr(req.PriorState.GetAttr("ssh").GetAttr("user"), "") {
+			var resp providers.ApplyResourceChangeResponse
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos_user: Conn3x logs in as %s, so it won't delete that account; set on_remove = \"forget\" to drop the step", name))
+			return resp
+		}
+	}
+	var secret string
+	if !req.Config.IsNull() {
+		secret = stringOr(req.Config.GetAttr("password_wo"), "")
+	}
+	rotate := !req.PlannedState.IsNull() && !req.PriorState.IsNull() && !req.PriorState.GetAttr("password_hmac").RawEquals(req.PlannedState.GetAttr("password_hmac"))
+	k := eosUserKind
+	k.config = func(v cty.Value) eosWant {
+		u := eosUserFrom(v)
+		u.Secret, u.Rotate = secret, rotate
+		return u
+	}
+	if !req.PlannedState.IsNull() && eosUserFrom(req.PlannedState).WantSecret && secret == "" {
+		var resp providers.ApplyResourceChangeResponse
+		resp.Diagnostics = resp.Diagnostics.Append(errors.New("eos_user: password_wo didn't reach the apply; it's write-only, so set it in the step's config"))
+		return resp
+	}
+	resp := k.apply(ctx, req)
+	if !resp.NewState.IsNull() {
+		vals := resp.NewState.AsValueMap()
+		vals["password_wo"] = cty.NullVal(cty.String)
+		resp.NewState = cty.ObjectVal(vals)
+	}
+	return resp
 }

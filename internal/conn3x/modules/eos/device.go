@@ -58,6 +58,18 @@ func CheckConfirmAfter(d time.Duration) error {
 	return nil
 }
 
+// secretWord matches what follows a secret-bearing keyword on a CLI line,
+// such as "secret sha512 $6$..." or "secret hunter2": the hash or the
+// password, and its encryption type when there is one.
+var secretWord = regexp.MustCompile(`(?m)(^|\s)(secret|password|key)( (?:sha512|[0-9]))? \S+`)
+
+// Mask hides passwords and their hashes in CLI text before it's logged or
+// put in an error: a session diff prints a user's secret hash, and an
+// echoed script line the password itself.
+func Mask(text string) string {
+	return secretWord.ReplaceAllString(text, "$1$2 <hidden>")
+}
+
 // cliError matches how the EOS CLI explains a command it refused: a line
 // starting with "% ", such as "% Invalid input at line 2".
 var cliError = regexp.MustCompile(`(?m)^% .*$`)
@@ -89,7 +101,7 @@ func run(ctx context.Context, d Device, cmd string, stdin []byte) (string, error
 		return out, ErrNotPrivileged
 	}
 	if msg == "" {
-		msg = fmt.Sprintf("exit status %d: %s", res.ExitCode, strings.TrimSpace(string(res.Stdout)+string(res.Stderr)))
+		msg = Mask(fmt.Sprintf("exit status %d: %s", res.ExitCode, strings.TrimSpace(string(res.Stdout)+string(res.Stderr))))
 	}
 	return out, fmt.Errorf("the switch refused %s: %s", describe(cmd), msg)
 }
