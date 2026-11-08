@@ -58,3 +58,20 @@ func TestFirewallValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestFirewallConfirmAfter(t *testing.T) {
+	for rt, cfg := range map[string]map[string]cty.Value{
+		"conn3x_firewalld": {"service": cty.StringVal("ssh")},
+		"conn3x_ufw_rule":  {"action": cty.StringVal("allow"), "port": cty.StringVal("22/tcp")},
+	} {
+		r := resourceTypes[rt]
+		cfg["confirm_after"] = cty.StringVal("60s")
+		if diags := r.validate(objFor(r.schema(), cfg)); diags.HasErrors() {
+			t.Errorf("%s refused confirm_after 60s: %v", rt, diags.Err())
+		}
+		cfg["confirm_after"] = cty.StringVal("1s")
+		if diags := r.validate(objFor(r.schema(), cfg)); !diags.HasErrors() {
+			t.Errorf("%s accepted confirm_after 1s", rt)
+		}
+	}
+}

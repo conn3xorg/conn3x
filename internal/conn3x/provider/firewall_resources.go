@@ -10,10 +10,47 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/confirm"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/firewall"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
+
+// ruleConfirmAfter guards a rule change, in either direction: a deny on
+// the SSH port and removing the rule that allows it lock you out alike.
+func ruleConfirmAfter() *configschema.Attribute {
+	return &configschema.Attribute{
+		Type: cty.String, Optional: true,
+		Description: "For a rule change that could lock Conn3x out, such as a deny on the SSH port or removing the rule that allows it: before the change, the host schedules its own undo after this long, such as \"60s\"; after it, Conn3x logs in again over a new connection and cancels it. If that login doesn't come, the host takes the change back by itself, even if Conn3x has gone away. Needs systemd.",
+	}
+}
+
+// validateRuleConfirmAfter checks confirm_after on a firewall rule.
+func validateRuleConfirmAfter(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if _, err := parseConfirmAfter(cfg.GetAttr("confirm_after")); err != nil {
+		diags = diags.Append(attrError("confirm_after", err.Error()))
+	}
+	return diags
+}
+
+// guardRule runs change under confirm_after, from the rule's own state (the
+// prior one when removing), with undo as the commands that take it back.
+// Without confirm_after, or with nothing to undo, it just runs change.
+func guardRule(ctx context.Context, h *hostConn, v cty.Value, undo func() ([]string, error), change func() error) error {
+	after, _ := parseConfirmAfter(v.GetAttr("confirm_after"))
+	if after == 0 {
+		return change()
+	}
+	cmds, err := undo()
+	if err != nil {
+		return err
+	}
+	if len(cmds) == 0 {
+		return change()
+	}
+	return guarded(ctx, h, v.GetAttr("ssh"), confirm.Guard{ID: newGuardID(), Undo: cmds, After: after}, change)
+}
 
 const ruleOnRemove = "\"delete\" (default) closes the port again when the rule is removed or replaced, \"forget\" leaves it open."
 
@@ -40,13 +77,14 @@ func firewalldSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "A service or port allowed through firewalld, now and after reboots.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":        {Type: cty.String, Computed: true},
-			"revision":  revisionAttr(),
-			"zone":      {Type: cty.String, Optional: true, Description: "Zone. Defaults to firewalld's default zone."},
-			"service":   {Type: cty.String, Optional: true, Description: "firewalld service name, such as http. Set this or port."},
-			"port":      {Type: cty.String, Optional: true, Description: "Port and protocol, such as 8080/tcp or 60000-61000/udp. Set this or service."},
-			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: ruleOnRemove},
-			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the running and permanent firewall both allow it."},
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"zone":          {Type: cty.String, Optional: true, Description: "Zone. Defaults to firewalld's default zone."},
+			"service":       {Type: cty.String, Optional: true, Description: "firewalld service name, such as http. Set this or port."},
+			"port":          {Type: cty.String, Optional: true, Description: "Port and protocol, such as 8080/tcp or 60000-61000/udp. Set this or service."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: ruleOnRemove},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the running and permanent firewall both allow it."},
+			"confirm_after": ruleConfirmAfter(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -62,6 +100,7 @@ func validateFirewalld(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
+	diags = diags.Append(validateRuleConfirmAfter(cfg))
 	if err := firewalldFrom(cfg).Validate(); err != nil {
 		diags = diags.Append(attrError("port", err.Error()))
 	}
@@ -82,7 +121,11 @@ func applyFirewalld(ctx context.Context, req providers.ApplyResourceChangeReques
 	set := func(present bool) func(context.Context, *hostConn, cty.Value) error {
 		return func(ctx context.Context, h *hostConn, v cty.Value) error {
 			f := firewalldFrom(v)
-			if err := firewall.ApplyFirewalld(ctx, h, f, present); err != nil {
+			undo := func() ([]string, error) {
+				runtime, permanent, err := firewall.ReadFirewalld(ctx, h, f)
+				return f.Undo(present, runtime, permanent), err
+			}
+			if err := guardRule(ctx, h, v, undo, func() error { return firewall.ApplyFirewalld(ctx, h, f, present) }); err != nil {
 				return fmt.Errorf("firewalld %s%s: %w", f.Service, f.Port, err)
 			}
 			return nil
@@ -101,13 +144,14 @@ func ufwRuleSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "A ufw rule for a port. Rules take effect once ufw is enabled; allow SSH before enabling it.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":        {Type: cty.String, Computed: true},
-			"revision":  revisionAttr(),
-			"action":    {Type: cty.String, Required: true, Description: "allow, deny, reject or limit."},
-			"port":      {Type: cty.String, Required: true, Description: "Port, optionally with a protocol: 22, 22/tcp or 6000:6007/tcp."},
-			"from":      {Type: cty.String, Optional: true, Description: "Address or CIDR the rule applies to. Defaults to anywhere."},
-			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: ruleOnRemove},
-			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether ufw has the rule."},
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"action":        {Type: cty.String, Required: true, Description: "allow, deny, reject or limit."},
+			"port":          {Type: cty.String, Required: true, Description: "Port, optionally with a protocol: 22, 22/tcp or 6000:6007/tcp."},
+			"from":          {Type: cty.String, Optional: true, Description: "Address or CIDR the rule applies to. Defaults to anywhere."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: ruleOnRemove},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether ufw has the rule."},
+			"confirm_after": ruleConfirmAfter(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -123,6 +167,7 @@ func validateUFWRule(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
+	diags = diags.Append(validateRuleConfirmAfter(cfg))
 	if err := ufwRuleFrom(cfg).Validate(); err != nil {
 		diags = diags.Append(attrError("port", err.Error()))
 	}
@@ -143,7 +188,14 @@ func applyUFWRule(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	set := func(present bool) func(context.Context, *hostConn, cty.Value) error {
 		return func(ctx context.Context, h *hostConn, v cty.Value) error {
 			u := ufwRuleFrom(v)
-			if err := firewall.ApplyUFW(ctx, h, u, present); err != nil {
+			undo := func() ([]string, error) {
+				had, err := firewall.ReadUFW(ctx, h, u)
+				if err != nil || had == present {
+					return nil, err
+				}
+				return []string{u.Undo(present)}, nil
+			}
+			if err := guardRule(ctx, h, v, undo, func() error { return firewall.ApplyUFW(ctx, h, u, present) }); err != nil {
 				return fmt.Errorf("ufw %s: %w", u.Spec(), err)
 			}
 			return nil

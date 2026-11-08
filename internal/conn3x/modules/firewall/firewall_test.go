@@ -119,3 +119,23 @@ func TestApplyUFWTakesTurnsAndChecksTheRuleLanded(t *testing.T) {
 		t.Errorf("apply = %v, want it to fail when the rule didn't land", err)
 	}
 }
+
+func TestUndo(t *testing.T) {
+	u := UFWRule{Action: "deny", Port: "22/tcp"}
+	if got := u.Undo(true); got != "flock /run/conn3x-ufw.lock ufw delete deny 22/tcp" {
+		t.Errorf("ufw undo of an add: %q", got)
+	}
+	if got := u.Undo(false); got != "flock /run/conn3x-ufw.lock ufw deny 22/tcp" {
+		t.Errorf("ufw undo of a delete: %q", got)
+	}
+	f := Firewalld{Zone: "public", Service: "ssh"}
+	if got := strings.Join(f.Undo(true, true, false), "; "); got != "firewall-cmd --permanent --zone='public' --remove-service='ssh'" {
+		t.Errorf("an add that only changed the permanent layer: %q", got)
+	}
+	if got := strings.Join(f.Undo(false, true, true), "; "); got != "firewall-cmd --zone='public' --add-service='ssh'; firewall-cmd --permanent --zone='public' --add-service='ssh'" {
+		t.Errorf("a remove of both layers: %q", got)
+	}
+	if got := f.Undo(true, true, true); len(got) != 0 {
+		t.Errorf("an add that changed nothing: %q", got)
+	}
+}

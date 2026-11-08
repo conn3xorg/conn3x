@@ -105,6 +105,25 @@ func ApplyFirewalld(ctx context.Context, r modules.Runner, f Firewalld, present 
 	return check(res, err)
 }
 
+// Undo is what takes back ApplyFirewalld(f, present), given whether the
+// running and permanent firewall had the rule before: only the layers that
+// change are put back.
+func (f Firewalld) Undo(present, hadRuntime, hadPermanent bool) []string {
+	verb := "add"
+	if present {
+		verb = "remove"
+	}
+	o := f.option(verb)
+	var cmds []string
+	if hadRuntime != present {
+		cmds = append(cmds, "firewall-cmd "+o)
+	}
+	if hadPermanent != present {
+		cmds = append(cmds, "firewall-cmd --permanent "+o)
+	}
+	return cmds
+}
+
 // UFWRule is one ufw rule for a port, optionally from one address or network.
 type UFWRule struct {
 	Action string // allow, deny, reject or limit
@@ -179,11 +198,7 @@ func ApplyUFW(ctx context.Context, r modules.Runner, u UFWRule, present bool) er
 	if err := u.Validate(); err != nil {
 		return err
 	}
-	cmd := "ufw " + u.Spec()
-	if !present {
-		cmd = "ufw delete " + u.Spec()
-	}
-	res, err := r.Run(ctx, "flock /run/conn3x-ufw.lock "+cmd, nil)
+	res, err := r.Run(ctx, u.command(present), nil)
 	if err := check(res, err); err != nil {
 		return err
 	}
@@ -195,6 +210,18 @@ func ApplyUFW(ctx context.Context, r modules.Runner, u UFWRule, present bool) er
 		return fmt.Errorf("ufw %s ran, but ufw show added doesn't agree", u.Spec())
 	}
 	return nil
+}
+
+func (u UFWRule) command(present bool) string {
+	if present {
+		return "flock /run/conn3x-ufw.lock ufw " + u.Spec()
+	}
+	return "flock /run/conn3x-ufw.lock ufw delete " + u.Spec()
+}
+
+// Undo is what takes back ApplyUFW(u, present).
+func (u UFWRule) Undo(present bool) string {
+	return u.command(!present)
 }
 
 func check(res ssh.Result, err error) error {
