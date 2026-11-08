@@ -1,0 +1,10 @@
+module "cron" {
+  source = "./circuit-cron"
+
+  hosts = {
+    rh  = { address = "127.0.0.1", port = {{.RHPort}} }
+    deb = { address = "127.0.0.1", port = {{.DebPort}} }
+  }
+  ssh_private_key_file = "{{.Key}}"
+  ssh_known_hosts_file = "{{.KnownHosts}}"
+}

@@ -190,6 +190,10 @@ func (in *input) render(key, s string) string {
 			}
 			return refMark("var." + name)
 		}
+		if in.role != nil && len(in.role.varFiles[name]) > 0 {
+			in.fail(fmt.Sprintf("%s refers to %q, which is set in %s, loaded by an include_vars the converter can't translate yet; it's usually set per OS", key, name, joinAnd(in.role.varFiles[name])))
+			return m
+		}
 		what := "a play variable"
 		if in.role != nil {
 			what = "a role variable"
@@ -944,3 +948,15 @@ func localeGenModule(*input) ([]step, string) {
 var inlineArgs = map[string]bool{"chdir": true, "creates": true, "removes": true, "executable": true, "stdin": true, "stdin_add_newline": true, "strip_empty_ends": true, "warn": true}
 
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
+
+// joinAnd lists names as "a", "a and b" or "a, b and c", and past three
+// as "5 files under vars/, such as a and b".
+func joinAnd(names []string) string {
+	if len(names) > 3 {
+		return fmt.Sprintf("%d files under vars/, such as %s and %s", len(names), names[0], names[1])
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}

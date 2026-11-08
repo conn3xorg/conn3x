@@ -95,6 +95,12 @@ func newChainProvider() *chainProvider {
 				"command": {Type: cty.String, Optional: true},
 				"creates": {Type: cty.String, Optional: true},
 			}),
+			"conn3x_eos_vlan": block(map[string]*configschema.Attribute{
+				"vlan_id": {Type: cty.Number, Optional: true},
+			}),
+			"conn3x_eos_commit": block(map[string]*configschema.Attribute{
+				"triggers": {Type: cty.DynamicPseudoType, Optional: true},
+			}),
 			"conn3x_service_action": block(map[string]*configschema.Attribute{
 				"name":     {Type: cty.String, Optional: true},
 				"action":   {Type: cty.String, Optional: true},
@@ -178,6 +184,50 @@ func TestConn3xChainLockstepGraph(t *testing.T) {
 			deps := chainDeps(t, chainModule(t, strategy, ""))
 			checkChainDeps(t, deps, `conn3x_command.web__two["a"]`, map[string]bool{`conn3x_command.web__items["b/y"]`: true, `conn3x_command.web__one["b"]`: true})
 			checkChainDeps(t, deps, `conn3x_service_action.web__restart["a"]`, map[string]bool{`conn3x_command.web__two["b"]`: true})
+		})
+	}
+}
+
+// A looping step with no items has no instance on a host to carry the
+// wait, so the step after it still waits for the one before it, and so
+// does a handler after an empty last step. Seen on Azure: circuit-iis's
+// app_pool started with IIS's install when url_rewrite was off.
+func TestConn3xChainPerHostEmptyLoop(t *testing.T) {
+	src := strings.NewReplacer("STRATEGY", `strategy = "per_host"`, "EXTRA", "", `for_each = ["x", "y"]`, "for_each = []",
+		"    notify = [handler.restart]\n  }", "    notify = [handler.restart]\n  }\n  step \"tail\" {\n    for_each = []\n    command {\n      command = \"tail\"\n    }\n  }").Replace(chainCircuit)
+	deps := chainDeps(t, testModuleInline(t, map[string]string{"main.circuit.hcl": src}))
+	checkChainDeps(t, deps, `conn3x_command.web__two["a"]`, map[string]bool{`conn3x_command.web__one["a"]`: true, `conn3x_command.web__one["b"]`: false})
+	checkChainDeps(t, deps, `conn3x_service_action.web__restart["a"]`, map[string]bool{`conn3x_command.web__two["a"]`: true, `conn3x_command.web__two["b"]`: false})
+}
+
+// A switch's EOS commit waits for that switch's eos steps only per host,
+// and for every switch's in lockstep.
+func TestConn3xChainEOSCommit(t *testing.T) {
+	src := `
+circuit "sw" {
+  hosts = { a = "10.0.0.1", b = "10.0.0.2" }
+  STRATEGY
+  ssh {
+    user = "admin"
+  }
+  step "one" {
+    eos_vlan {
+      vlan_id = 10
+    }
+  }
+  step "many" {
+    for_each = { x = 20, y = 30 }
+    eos_vlan {
+      vlan_id = item.value
+    }
+  }
+}
+`
+	for strategy, other := range map[string]bool{`strategy = "per_host"`: false, "": true} {
+		deps := chainDeps(t, testModuleInline(t, map[string]string{"main.circuit.hcl": strings.Replace(src, "STRATEGY", strategy, 1)}))
+		checkChainDeps(t, deps, `conn3x_eos_commit.sw__commit["a"]`, map[string]bool{
+			`conn3x_eos_vlan.sw__one["a"]`: true, `conn3x_eos_vlan.sw__many["a/x"]`: true, `conn3x_eos_vlan.sw__many["a/y"]`: true,
+			`conn3x_eos_vlan.sw__one["b"]`: other, `conn3x_eos_vlan.sw__many["b/x"]`: other,
 		})
 	}
 }

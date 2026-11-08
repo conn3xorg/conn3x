@@ -26,6 +26,22 @@ type role struct {
 	defaults  map[string]*roleDefault
 	files     map[string][]byte // files for the circuit directory besides the HCL
 	commaFree map[string]bool   // defaults used as package names
+	// varFiles are the files under vars/ other than main that set each
+	// variable, such as vars/Debian.yml: what an include_vars loads.
+	varFiles map[string][]string
+	// familyInclude is the include_vars of vars/<family>.yml, and
+	// familyVars what Debian's and Red Hat's files set; familyUsed is set
+	// once a step looks one up.
+	familyInclude *yaml.Node
+	familyVars    map[string]map[string]string
+	familyWhy     map[string]map[string]string // why a value can't be used, such as a list
+	familyUsed    bool
+	// defaultTasks are the set_fact tasks that default a variable to a
+	// per-family one, and defaultOf maps each such variable to that one;
+	// defaultUsed are those a step reads, which become variables.
+	defaultTasks map[*yaml.Node]string
+	defaultOf    map[string]string
+	defaultUsed  map[string]bool
 }
 
 type roleDefault struct {
@@ -55,6 +71,7 @@ func ConvertRole(dir string) (Result, error) {
 	name := slug(base[strings.LastIndex(base, ".")+1:])
 	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}}
 	c := &converter{dir: dir, role: r}
+	r.varFiles = c.otherVarFiles()
 
 	f := hclwrite.NewEmptyFile()
 	body := f.Body()
@@ -110,7 +127,13 @@ func ConvertRole(dir string) (Result, error) {
 		ssh.SetAttributeRaw(a, rawTokens("var.ssh_"+a))
 	}
 	c.file = tasksFile
+	r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
+	r.defaultTasks, r.defaultOf = c.familyDefaults(seq(tasks), vars)
+	r.defaultUsed = map[string]bool{}
 	c.steps(cb, seq(tasks), seq(handlers), handlersFile, false, vars)
+	if r.familyUsed {
+		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
+	}
 
 	for _, k := range order {
 		d := r.defaults[k]
@@ -132,16 +155,73 @@ func ConvertRole(dir string) (Result, error) {
 		vb.AppendBlock(b)
 	}
 
+	used := make([]string, 0, len(r.defaultUsed))
+	for x := range r.defaultUsed {
+		used = append(used, x)
+	}
+	sort.Strings(used)
+	for _, x := range used {
+		b := hclwrite.NewBlock("variable", []string{x})
+		b.Body().SetAttributeRaw("type", rawTokens("string"))
+		b.Body().SetAttributeRaw("default", rawTokens("null"))
+		b.Body().SetAttributeValue("description", cty.StringVal(fmt.Sprintf("Set by the caller; otherwise %s from vars/<family>.yml, for each host's family.", r.defaultOf[x])))
+		vb.AppendNewline()
+		vb.AppendBlock(b)
+	}
+
 	files := r.files
 	files["main.circuit.hcl"] = hclwrite.Format(f.Bytes())
-	files["variables.tf"] = append([]byte(circuitVariables), hclwrite.Format(vf.Bytes())...)
+	variables := circuitVariables
+	if r.familyUsed {
+		// The circuit reads os from host objects; check it as the official
+		// circuits do.
+		hostsEnd := "\n  }\n}\n"
+		i := strings.Index(variables, hostsEnd)
+		variables = variables[:i] + "\n  }\n" + familyHostsValidation + variables[i+len(hostsEnd):]
+		variables = strings.Replace(variables, "settings such as host_key.", "settings such as host_key, and os (debian, ubuntu, rocky, almalinux, rhel or fedora) for a host whose facts can't be read yet.", 1)
+	}
+	files["variables.tf"] = append([]byte(variables), hclwrite.Format(vf.Bytes())...)
 	files["outputs.tf"] = []byte("# An Ansible role has no outputs. Add any you want callers to read here.\n")
 	files["README.md"] = readme(base, name, len(c.res.Review), order, r.defaults)
+	if len(used) > 0 {
+		var b strings.Builder
+		b.WriteString("\nThese take each host's OS family's value from the role's `vars/` unless you set them:\n\n| Name | Debian and Ubuntu | Red Hat family |\n| --- | --- | --- |\n")
+		for _, x := range used {
+			y := r.defaultOf[x]
+			fmt.Fprintf(&b, "| `%s` | `%s` | `%s` |\n", x, r.familyVars["debian"][y], r.familyVars["redhat"][y])
+		}
+		files["README.md"] = append(files["README.md"], b.String()...)
+	}
 	c.res.Files = files
 	return c.res, nil
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// otherVarFiles reads the top-level names set in vars/*.yml besides main,
+// so a reason can say a variable comes from one of them. A file that can't
+// be read is left out; it only makes the reason less specific.
+func (c *converter) otherVarFiles() map[string][]string {
+	out := map[string][]string{}
+	matches, _ := filepath.Glob(c.path("vars/*"))
+	sort.Strings(matches)
+	for _, m := range matches {
+		base := filepath.Base(m)
+		ext := filepath.Ext(base)
+		if (ext != ".yml" && ext != ".yaml") || strings.TrimSuffix(base, ext) == "main" {
+			continue
+		}
+		src, err := os.ReadFile(m)
+		var doc yaml.Node
+		if err != nil || yaml.Unmarshal(src, &doc) != nil || len(doc.Content) == 0 {
+			continue
+		}
+		for _, kv := range pairs(doc.Content[0]) {
+			out[kv[0].Value] = append(out[kv[0].Value], "vars/"+base)
+		}
+	}
+	return out
+}
 
 // main reads a role's sub/main.yml, or .yaml, or main, as Ansible does,
 // returning the document and the file it read.

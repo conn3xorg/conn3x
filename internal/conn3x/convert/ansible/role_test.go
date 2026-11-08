@@ -167,6 +167,31 @@ func TestPlaybookImportTasks(t *testing.T) {
 	}
 }
 
+// A variable set per OS under vars/ says where it comes from, until the
+// converter can translate the include_vars that loads it.
+func TestRoleVariableFromAnIncludeVarsFile(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"vars/Debian.yml": "nginx_user: www-data\n",
+		"vars/RedHat.yml": "nginx_user: nginx\n",
+		"vars/main.yml":   "unrelated: x\n",
+		"tasks/main.yml":  "- name: Owner\n  file: {path: /srv/www, state: directory, owner: '{{ nginx_user }}'}\n- name: Other\n  file: {path: /srv/x, state: directory, owner: '{{ nope }}'}\n",
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Review) != 2 {
+		t.Fatalf("review %+v", res.Review)
+	}
+	want := `refers to "nginx_user", which is set in vars/Debian.yml and vars/RedHat.yml, loaded by an include_vars`
+	if !strings.Contains(res.Review[0].Reason, want) {
+		t.Errorf("reason = %q, want it to contain %q", res.Review[0].Reason, want)
+	}
+	if !strings.Contains(res.Review[1].Reason, `which isn't a role variable the converter can fill in`) {
+		t.Errorf("a variable from nowhere kept the old reason: %q", res.Review[1].Reason)
+	}
+}
+
 // A handler's service name fills in play vars, and anything but a service
 // restart or reload, or a when, stays for review.
 func TestHandlerNameFromAVarAndKeywords(t *testing.T) {
@@ -185,4 +210,95 @@ func TestHandlerNameFromAVarAndKeywords(t *testing.T) {
 	if !strings.Contains(string(res.HCL), `name   = "nginx"`) || len(res.Review) != 2 || !strings.Contains(res.Review[0].Reason, "uses when") {
 		t.Fatalf("review %+v\n%s", res.Review, res.HCL)
 	}
+}
+
+// A role that loads vars/<family>.yml becomes steps whose values are looked
+// up by each host's family, read from conn3x_host.
+func TestRoleFamilyVars(t *testing.T) {
+	res := goldenRole(t, "cron")
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	if v := string(res.Files["variables.tf"]); !strings.Contains(v, "CentOS Linux reached end of life") || strings.Contains(string(res.Files["main.circuit.hcl"]), "centos") {
+		t.Errorf("hosts should refuse centos as an os, as the official circuits do:\n%s", v)
+	}
+}
+
+// set_fact: X: "{{ __X }}" when X is not defined becomes a variable the
+// caller can set, with the family's value when it's null.
+func TestRoleFamilyDefaults(t *testing.T) {
+	res := goldenRole(t, "svc")
+	if res.Converted != 3 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	if !strings.Contains(hcl, `owner = var.svc_user != null ? var.svc_user : { debian = "www-data", redhat = "nobody" }[local.os_family[each.key]]`) {
+		t.Errorf("owner isn't the caller's value or the family's:\n%s", hcl)
+	}
+	if v := string(res.Files["variables.tf"]); !strings.Contains(v, `variable "svc_user"`) || !strings.Contains(v, "default     = null") {
+		t.Errorf("no svc_user variable:\n%s", v)
+	}
+}
+
+func TestRoleFamilyVarsRefusals(t *testing.T) {
+	include := "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n"
+	for want, files := range map[string]map[string]string{
+		// A family whose file doesn't set the variable.
+		`which vars/RedHat.yml doesn't set, so Ansible would stop on RedHat hosts`: {
+			"tasks/main.yml":  include + "- name: P\n  package: {name: '{{ pkg }}'}\n",
+			"vars/Debian.yml": "pkg: cron\n",
+			"vars/RedHat.yml": "other: x\n",
+		},
+		// A value one family's checks refuse.
+		"(with the values for RedHat hosts)": {
+			"tasks/main.yml":  include + "- name: C\n  copy: {dest: /etc/a.conf, content: x, mode: '{{ m }}'}\n",
+			"vars/Debian.yml": "m: \"0644\"\n",
+			"vars/RedHat.yml": "m: u+rw\n",
+		},
+		// Set, but to something the converter can't use.
+		"which vars/RedHat.yml sets to a list, a map or an alias, which the converter can't use yet": {
+			"tasks/main.yml":  include + "- name: P\n  package: {name: '{{ pkg }}'}\n",
+			"vars/Debian.yml": "pkg: cron\n",
+			"vars/RedHat.yml": "pkg: [cronie, cronie-anacron]\n",
+		},
+		// A caller's value where Conn3x would have to check it first.
+		`dest refers to "conf", which the caller can set`: {
+			"tasks/main.yml":  include + "- name: D\n  set_fact: {conf: '{{ __conf }}'}\n  when: conf is not defined\n- name: C\n  copy: {dest: '{{ conf }}', content: x}\n",
+			"vars/Debian.yml": "__conf: /etc/a.conf\n",
+			"vars/RedHat.yml": "__conf: /etc/b.conf\n",
+		},
+		// No RedHat file: the include isn't the family pattern Conn3x reads.
+		"uses the include_vars module": {
+			"tasks/main.yml":  include,
+			"vars/Debian.yml": "pkg: cron\n",
+		},
+	} {
+		res, err := ConvertRole(writeRole(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, r := range res.Review {
+			found = found || strings.Contains(r.Reason, want)
+		}
+		if !found {
+			t.Errorf("%s: review %+v", want, res.Review)
+		}
+	}
+}
+
+// writeRole writes a role's files into a new directory.
+func writeRole(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, src := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }

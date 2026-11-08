@@ -7,14 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
+	"github.com/opentofu/opentofu/internal/conn3x/importid"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/firewall"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mount"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/selinux"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/service"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
@@ -32,7 +36,7 @@ import (
 // content, and write_only says the content goes to content_wo, so the
 // import must keep it out of state too.
 
-const importVersion = 1
+const importVersion = importid.Version
 
 type importID struct {
 	V         int                        `json:"v"`
@@ -66,11 +70,83 @@ var importable = map[string]struct {
 	"conn3x_sysctl":         {nameID("sysctl", nil), notNull, "kernel parameter %s", hasSysctl},
 	"conn3x_mount":          {pathID("mount"), notNull, "mount %s", hasMount},
 	"conn3x_repository":     {nameID("repository", nil), notNull, "repository %s", hasRepository},
+
+	// A host always has a hostname, time zone and locale, so there's
+	// nothing to find first: a different one imports and plans an update.
+	"conn3x_hostname": {singleID("hostname"), notNull, "%s", nil},
+	"conn3x_timezone": {singleID("timezone"), notNull, "%s", nil},
+	"conn3x_locale":   {singleID("locale"), notNull, "%s", nil},
+
+	// A rule's id is all its fields, as planRule writes it.
+	"conn3x_firewalld":        {keysID("firewalld", "zone", "service", "port"), notNull, "", hasFirewalld},
+	"conn3x_ufw_rule":         {keysID("ufw", "action", "port", "from"), notNull, "", hasUFWRule},
+	"conn3x_selinux_boolean":  {keysID("selinux_boolean", "name"), notNull, "SELinux boolean %s", hasSELinuxBoolean},
+	"conn3x_selinux_fcontext": {keysID("selinux_fcontext", "target"), notNull, "a local SELinux file context for %s", hasFcontext},
 }
 
 // importDeletes are the types whose on_remove defaults to delete at plan
 // time (deleteByDefault), so an import must default it the same way.
-var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true}
+var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true, "conn3x_firewalld": true, "conn3x_ufw_rule": true}
+
+// ruleWhat says which rule a missing-object error is about, since no one
+// part of a rule's id names it.
+var ruleWhat = map[string]func(cty.Value) string{
+	"conn3x_firewalld": func(v cty.Value) string {
+		what := "the firewalld rule allowing " + stringOr(v.GetAttr("service"), "") + stringOr(v.GetAttr("port"), "")
+		if z := stringOr(v.GetAttr("zone"), ""); z != "" {
+			what += " in zone " + z
+		}
+		return what
+	},
+	"conn3x_ufw_rule": func(v cty.Value) string {
+		what := "the ufw rule " + v.GetAttr("action").AsString() + " " + v.GetAttr("port").AsString()
+		if from := stringOr(v.GetAttr("from"), ""); from != "" {
+			what += " from " + from
+		}
+		return what
+	},
+}
+
+// keysID is the id planSynced writes for these key attributes.
+func keysID(kind string, keys ...string) func(cty.Value) []string {
+	return func(v cty.Value) []string {
+		id := []string{kind}
+		for _, k := range keys {
+			id = append(id, keyString(v.GetAttr(k)))
+		}
+		return id
+	}
+}
+
+// hasFirewalld: the running or the permanent firewall allows it; allowed
+// in only one, it imports and plans an update.
+func hasFirewalld(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	runtime, permanent, err := firewall.ReadFirewalld(ctx, h, firewalldFrom(v))
+	return runtime || permanent, err
+}
+
+func hasUFWRule(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	return firewall.ReadUFW(ctx, h, ufwRuleFrom(v))
+}
+
+// hasSELinuxBoolean: the policy has the boolean. With SELinux off there is
+// no /sys/fs/selinux, and the read that follows says so.
+func hasSELinuxBoolean(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	f := "/sys/fs/selinux/booleans/" + v.GetAttr("name").AsString()
+	res, err := h.Run(ctx, "test ! -d /sys/fs/selinux || test -e "+ssh.Quote(f), nil)
+	return err == nil && res.ExitCode == 0, err
+}
+
+func hasFcontext(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	ty, err := selinux.ReadFcontext(ctx, h, fcontextFrom(v))
+	return ty != "", err
+}
+
+// singleID names one-per-host settings by kind alone, as planSynced does
+// with no keys.
+func singleID(kind string) func(cty.Value) []string {
+	return func(cty.Value) []string { return []string{kind} }
+}
 
 func authorizedKeyID(v cty.Value) []string {
 	return []string{"authorized_key", v.GetAttr("user").AsString()}
@@ -155,55 +231,80 @@ func observed(attr string) func(cty.Value) bool {
 
 func (p *Provider) ImportResourceState(ctx context.Context, req providers.ImportResourceStateRequest) providers.ImportResourceStateResponse {
 	var resp providers.ImportResourceStateResponse
-	kind, ok := importable[req.TypeName]
-	if !ok {
-		resp.Diagnostics = unsupported("importing " + req.TypeName)
+	state, key, what, diags := p.readExisting(ctx, req.TypeName, req.Target.ID)
+	resp.Diagnostics = diags
+	if what != "" {
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(tfdiags.Error,
+			fmt.Sprintf("Nothing to import on %s", key),
+			fmt.Sprintf("The step imports %s on %s, but %s doesn't have it, so there's nothing to adopt. "+
+				"Remove %s from the step's import, or set import to the hosts that already have it; "+
+				"Conn3x then creates it on the rest.", what, key, key, key)))
+	}
+	if resp.Diagnostics.HasErrors() {
 		return resp
 	}
-	id, prior, err := importPrior(req.TypeName, req.Target.ID)
+	resp.ImportedResources = []providers.ImportedResource{{TypeName: req.TypeName, State: state}}
+	return resp
+}
+
+// ReadExisting reads what an import ID names on its host, the way an import
+// does, for conn3x generate step: the state an import would adopt, or an
+// error naming what the host doesn't have.
+func ReadExisting(ctx context.Context, typeName, rawID string) (cty.Value, error) {
+	state, key, what, diags := (&Provider{}).readExisting(ctx, typeName, rawID)
+	if what != "" {
+		return cty.NilVal, fmt.Errorf("%s doesn't have %s", key, what)
+	}
+	if err := diags.Err(); err != nil {
+		return cty.NilVal, err
+	}
+	return state, nil
+}
+
+// readExisting reads the object an import ID names. When the host doesn't
+// have it, what describes the object and the state is empty.
+func (p *Provider) readExisting(ctx context.Context, typeName, rawID string) (state cty.Value, key, what string, diags tfdiags.Diagnostics) {
+	kind, ok := importable[typeName]
+	if !ok {
+		return cty.NilVal, "", "", unsupported("importing " + typeName)
+	}
+	id, prior, err := importPrior(typeName, rawID)
 	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(tfdiags.Error, "Invalid import ID", err.Error()))
-		return resp
+		return cty.NilVal, "", "", diags.Append(tfdiags.Sourceless(tfdiags.Error, "Invalid import ID", err.Error()))
+	}
+	missing := func() (cty.Value, string, string, tfdiags.Diagnostics) {
+		if describe, ok := ruleWhat[typeName]; ok {
+			return cty.NilVal, id.Key, describe(prior), diags
+		}
+		return cty.NilVal, id.Key, fmt.Sprintf(kind.what, kind.id(prior)[len(kind.id(prior))-1]), diags
 	}
 
 	// Read here rather than leave it to the refresh that follows, so a
 	// missing object gets an error that says what to do about it.
 	ctx, done := p.withStop(ctx)
 	defer done()
-	missing := func() providers.ImportResourceStateResponse {
-		what := fmt.Sprintf(kind.what, kind.id(prior)[len(kind.id(prior))-1])
-		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(tfdiags.Error,
-			fmt.Sprintf("Nothing to import on %s", id.Key),
-			fmt.Sprintf("The step imports %s on %s, but %s doesn't have it, so there's nothing to adopt. "+
-				"Remove %s from the step's import, or set import to the hosts that already have it; "+
-				"Conn3x then creates it on the rest.", what, id.Key, id.Key, id.Key)))
-		return resp
-	}
 	if kind.probe != nil {
 		h, err := dialConnection(ctx, prior.GetAttr("ssh"))
 		if err != nil {
-			resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
-			return resp
+			return cty.NilVal, id.Key, "", diags.Append(attrError("ssh", err.Error()))
 		}
 		found, err := kind.probe(ctx, h, prior)
 		if err != nil {
-			resp.Diagnostics = resp.Diagnostics.Append(err)
-			return resp
+			return cty.NilVal, id.Key, "", diags.Append(err)
 		}
 		if !found {
 			return missing()
 		}
 	}
-	read := resourceTypes[req.TypeName].read(ctx, providers.ReadResourceRequest{TypeName: req.TypeName, PriorState: prior})
-	resp.Diagnostics = resp.Diagnostics.Append(read.Diagnostics)
-	if resp.Diagnostics.HasErrors() {
-		return resp
+	read := resourceTypes[typeName].read(ctx, providers.ReadResourceRequest{TypeName: typeName, PriorState: prior})
+	diags = diags.Append(read.Diagnostics)
+	if diags.HasErrors() {
+		return cty.NilVal, id.Key, "", diags
 	}
 	if !kind.exists(read.NewState) {
 		return missing()
 	}
-	resp.ImportedResources = []providers.ImportedResource{{TypeName: req.TypeName, State: adopted(req.TypeName, read.NewState)}}
-	return resp
+	return adopted(typeName, read.NewState), id.Key, "", diags
 }
 
 // importPrior decodes an import ID into the state a read starts from.
@@ -237,17 +338,22 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 	if err != nil {
 		return id, cty.NilVal, fmt.Errorf("import ID for %s: %w", typeName, err)
 	}
-	// Every importable type requires what names its object.
-	for _, need := range []string{"path", "name", "user", "key"} {
-		if a := resourceTypes[typeName].schema().Block.Attributes[need]; a != nil && a.Required && v.GetAttr(need).IsNull() {
-			return id, cty.NilVal, fmt.Errorf("import ID for %s has no %s", typeName, need)
+	// The step always sets its required arguments; reads and ids rely on them.
+	var missing []string
+	for name, a := range resourceTypes[typeName].schema().Block.Attributes {
+		if a.Required && !importid.LeftOut[name] && v.GetAttr(name).IsNull() {
+			missing = append(missing, name)
 		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return id, cty.NilVal, fmt.Errorf("import ID for %s has no %s", typeName, strings.Join(missing, " or "))
 	}
 	if v.GetAttr("ssh").GetAttr("host").IsNull() {
 		return id, cty.NilVal, fmt.Errorf("import ID has no ssh host")
 	}
 	vals := v.AsValueMap()
-	if vals["on_remove"].IsNull() {
+	if ty.HasAttribute("on_remove") && vals["on_remove"].IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 		if importDeletes[typeName] {
 			vals["on_remove"] = cty.StringVal(onRemoveDelete)

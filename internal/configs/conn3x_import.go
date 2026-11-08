@@ -13,6 +13,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/conn3x/importid"
 )
 
 // A step's import argument adopts what is already on its hosts. It lowers
@@ -43,17 +44,31 @@ var importModules = map[string]string{
 	"conn3x_user":      "user",
 	"conn3x_group":     "group",
 
-	"conn3x_authorized_key": "authorized_key",
-	"conn3x_cron":           "cron",
-	"conn3x_timer":          "timer",
-	"conn3x_sysctl":         "sysctl",
-	"conn3x_mount":          "mount",
-	"conn3x_repository":     "repository",
+	"conn3x_authorized_key":   "authorized_key",
+	"conn3x_cron":             "cron",
+	"conn3x_timer":            "timer",
+	"conn3x_sysctl":           "sysctl",
+	"conn3x_mount":            "mount",
+	"conn3x_repository":       "repository",
+	"conn3x_hostname":         "hostname",
+	"conn3x_timezone":         "timezone",
+	"conn3x_locale":           "locale",
+	"conn3x_firewalld":        "firewalld",
+	"conn3x_ufw_rule":         "ufw",
+	"conn3x_selinux_boolean":  "selinux_boolean",
+	"conn3x_selinux_fcontext": "selinux_fcontext",
 }
 
-// importLeftOut never go into an import ID: the content is read from the
-// host, and write-only arguments must not show in plan output.
-var importLeftOut = map[string]bool{"content": true, "content_wo": true, "validate": true}
+// ImportableType is the resource type a module's step lowers to, when the
+// module can import; conn3x generate step takes the same modules.
+func ImportableType(module string) (string, bool) {
+	for typ, m := range importModules {
+		if m == module {
+			return typ, true
+		}
+	}
+	return "", false
+}
 
 func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.Attributes, ssh *hclsyntax.Block) (*Import, hcl.Diagnostics) {
 	rng := attr.SrcRange
@@ -78,7 +93,7 @@ func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.At
 			return nil, nil
 		}
 	} else {
-		forEach = &importHosts{all: r.ForEach, keys: attr.Expr}
+		forEach = &importHosts{all: r.ForEach, hosts: unfiltered(r.ForEach), keys: attr.Expr}
 	}
 
 	lit := func(v cty.Value) *hclsyntax.LiteralValueExpr {
@@ -114,12 +129,12 @@ func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.At
 	}
 	args := map[string]hclsyntax.Expression{}
 	for name, a := range moduleAttrs {
-		if !importLeftOut[name] {
+		if !importid.LeftOut[name] {
 			args[name] = a.Expr
 		}
 	}
 	id := map[string]hclsyntax.Expression{
-		"v":    lit(cty.NumberIntVal(1)),
+		"v":    lit(cty.NumberIntVal(importid.Version)),
 		"key":  eachTraversal("key", rng),
 		"ssh":  withoutNulls(object(sshAttrs)),
 		"args": withoutNulls(object(args)),
@@ -152,7 +167,8 @@ func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.At
 // can't quietly turn an adopt into a create. In a looping step a host name
 // stands for all of that host's instances.
 type importHosts struct {
-	all, keys hcl.Expression
+	// all is the step's instances, hosts the same before its when.
+	all, hosts, keys hcl.Expression
 }
 
 var _ hcl.Expression = (*importHosts)(nil)
@@ -196,6 +212,9 @@ func (h *importHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 			}
 		}
 		if !found {
+			if h.hosts != h.all && h.leftOut(ctx, name) {
+				return bad(fmt.Sprintf("import names %q, but the step's when is false there, so the step doesn't run on it and has nothing to adopt.", name))
+			}
 			return bad(fmt.Sprintf("import names %q, which isn't one of this step's hosts.", name))
 		}
 	}
@@ -203,6 +222,23 @@ func (h *importHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 		return cty.EmptyObjectVal.WithMarks(marks), diags
 	}
 	return cty.ObjectVal(picked).WithMarks(marks), diags
+}
+
+// leftOut reports whether name is one of the step's hosts that its when
+// skips.
+func (h *importHosts) leftOut(ctx *hcl.EvalContext, name string) bool {
+	hosts, diags := h.hosts.Value(ctx)
+	hosts, _ = hosts.Unmark()
+	if diags.HasErrors() || !hosts.IsKnown() || hosts.IsNull() {
+		return false
+	}
+	for it := hosts.ElementIterator(); it.Next(); {
+		k, _ := it.Element()
+		if key := k.AsString(); key == name || strings.HasPrefix(key, name+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *importHosts) Variables() []hcl.Traversal {

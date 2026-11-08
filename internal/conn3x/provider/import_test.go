@@ -50,6 +50,13 @@ func TestImportPriorPerModule(t *testing.T) {
 		{"conn3x_sysctl", `{"name":"vm.swappiness","value":"10"}`, "203.0.113.10:2222:sysctl:vm.swappiness", nil},
 		{"conn3x_mount", `{"path":"/mnt/scratch","src":"tmpfs","fstype":"tmpfs"}`, "203.0.113.10:2222:mount:/mnt/scratch", nil},
 		{"conn3x_repository", `{"name":"example","url":"https://repo.example.com/","key":"k"}`, "203.0.113.10:2222:repository:example", nil},
+		{"conn3x_hostname", `{"name":"web1"}`, "203.0.113.10:2222:hostname", nil},
+		{"conn3x_timezone", `{"name":"UTC"}`, "203.0.113.10:2222:timezone", nil},
+		{"conn3x_locale", `{"name":"C.UTF-8"}`, "203.0.113.10:2222:locale", nil},
+		{"conn3x_firewalld", `{"service":"http"}`, "203.0.113.10:2222:firewalld::http:", nil},
+		{"conn3x_ufw_rule", `{"action":"allow","port":"22/tcp"}`, "203.0.113.10:2222:ufw:allow:22/tcp:", nil},
+		{"conn3x_selinux_boolean", `{"name":"httpd_can_network_connect","value":true}`, "203.0.113.10:2222:selinux_boolean:httpd_can_network_connect", nil},
+		{"conn3x_selinux_fcontext", `{"target":"/srv/www(/.*)?","setype":"httpd_sys_content_t"}`, "203.0.113.10:2222:selinux_fcontext:/srv/www(/.*)?", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
 			_, v, err := importPrior(tc.typeName, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+tc.args+`}`)
@@ -65,6 +72,9 @@ func TestImportPriorPerModule(t *testing.T) {
 			// The default plan gives on_remove, so the plan after an import
 			// doesn't change it.
 			want := map[bool]string{false: "forget", true: "delete"}[importDeletes[tc.typeName]]
+			if !v.Type().HasAttribute("on_remove") {
+				return // a hostname, time zone or locale is never removed
+			}
 			if tc.typeName != "conn3x_group" && !v.GetAttr("on_remove").RawEquals(cty.StringVal(want)) {
 				t.Errorf("on_remove = %#v, want %s", v.GetAttr("on_remove"), want)
 			}
@@ -85,6 +95,7 @@ func TestImportPriorRejectsBadIDs(t *testing.T) {
 		"no ssh":        {"conn3x_file", `{"v":1,"key":"web1","args":{"path":"/x"}}`, "needs key and ssh"},
 		"no path":       {"conn3x_file", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{}}`, "has no path"},
 		"no name":       {"conn3x_user", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{}}`, "has no name"},
+		"no action":     {"conn3x_ufw_rule", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"port":"22"}}`, "has no action"},
 		"no key":        {"conn3x_authorized_key", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"user":"deploy"}}`, "has no key"},
 		"content":       {"conn3x_file", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"path":"/x","content":"s"}}`, "can't hold content"},
 		"bad arg":       {"conn3x_package", `{"v":1,"key":"web1","ssh":` + testSSH + `,"args":{"name":"x","nope":1}}`, "nope"},
@@ -220,6 +231,27 @@ func TestImportDirectoryAndLink(t *testing.T) {
 	}
 	if got := l.ImportedResources[0].State.GetAttr("target"); !got.RawEquals(cty.StringVal(dir)) {
 		t.Fatalf("link target = %#v", got)
+	}
+}
+
+// The ID import_id builds is one ImportResourceState reads.
+func TestImportIDFunction(t *testing.T) {
+	p, _ := New()
+	if _, ok := p.GetProviderSchema(ctx).Functions["import_id"]; !ok {
+		t.Fatal("import_id isn't in the provider schema")
+	}
+	ssh := cty.ObjectVal(map[string]cty.Value{"host": cty.StringVal("203.0.113.10"), "port": cty.NumberIntVal(2222), "user": cty.StringVal("root")})
+	args := cty.ObjectVal(map[string]cty.Value{"name": cty.StringVal("nginx")})
+	resp := p.CallFunction(ctx, providers.CallFunctionRequest{Name: "import_id", Arguments: []cty.Value{cty.StringVal("web1"), ssh, args}})
+	if resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if _, v, err := importPrior("conn3x_package", resp.Result.AsString()); err != nil || v.GetAttr("id").AsString() != "203.0.113.10:2222:package:nginx" {
+		t.Fatalf("importPrior(%s) = %v, %v", resp.Result.AsString(), v, err)
+	}
+	bad := p.CallFunction(ctx, providers.CallFunctionRequest{Name: "import_id", Arguments: []cty.Value{cty.StringVal("web1"), cty.StringVal("203.0.113.10"), args}})
+	if bad.Error == nil || !strings.Contains(bad.Error.Error(), "ssh must be an object") {
+		t.Fatalf("err = %v", bad.Error)
 	}
 }
 
