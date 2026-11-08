@@ -166,6 +166,9 @@ func brandTree(cmd *command.Command) {
 			return (&conn3xVersionCommand{Out: stdout}).Run(nil)
 		}
 	}
+	if cmd.Name == "apply" && cmd.Run != nil {
+		withReport(cmd)
+	}
 	if cmd.Name == "init" && cmd.Run != nil {
 		cmd.Run = suggestEncryption(cmd.Run, cmd.CommandLine.View)
 	}

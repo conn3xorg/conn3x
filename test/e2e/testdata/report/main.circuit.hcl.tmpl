@@ -1,0 +1,29 @@
+circuit "r" {
+  hosts = {
+{{- range $name, $port := .Ports}}
+    {{$name}} = { address = "127.0.0.1", port = {{$port}} }
+{{- end}}
+  }
+
+  strategy = "per_host"
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "first" {
+    command {
+      command = "${each.key == "{{.Fail}}" ? "false" : "true"} && touch /tmp/report-first"
+      creates = "/tmp/report-first"
+    }
+  }
+
+  step "second" {
+    file {
+      path    = "/etc/report-second"
+      content = "managed\n"
+    }
+  }
+}
