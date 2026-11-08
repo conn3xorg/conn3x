@@ -240,6 +240,52 @@ func TestRoleFamilyDefaults(t *testing.T) {
 	}
 }
 
+// A when on the family becomes the step's when, and the task converts
+// only for the families it allows: famwhen_rh_dir is only in RedHat.yml.
+func TestRoleFamilyWhen(t *testing.T) {
+	res, err := ConvertRole(filepath.Join("testdata", "role", "famwhen"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The last task names a family Conn3x doesn't run on.
+	if res.Converted != 3 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "the Suse_never_named family, which Conn3x doesn't run on") {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	goldenRole(t, "famwhen")
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		`when = local.os_family[each.key] == "debian"`,
+		`when = local.os_family[each.key] == "redhat"`,
+		`path = "/srv/famwhen-redhat"`,
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %s in\n%s", want, hcl)
+		}
+	}
+}
+
+func TestRoleFamilyWhenRefusals(t *testing.T) {
+	include := "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n"
+	vars := map[string]string{"vars/Debian.yml": "a: x\n", "vars/RedHat.yml": "a: y\n"}
+	for want, task := range map[string]string{
+		"which Conn3x doesn't run on":      "  when: ansible_os_family == 'Archlinux'\n",
+		"no Debian or Red Hat family host": "  when: [ansible_os_family == 'Debian', ansible_os_family == 'RedHat']\n",
+		"uses when":                        "  when: ansible_os_family == 'Debian' and x\n",
+	} {
+		files := map[string]string{"tasks/main.yml": include + "- name: T\n  copy: {dest: /etc/t, content: x}\n" + task}
+		for k, v := range vars {
+			files[k] = v
+		}
+		res, err := ConvertRole(writeRole(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, want) {
+			t.Errorf("%s: review %+v", want, res.Review)
+		}
+	}
+}
+
 func TestRoleFamilyVarsRefusals(t *testing.T) {
 	include := "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n"
 	for want, files := range map[string]map[string]string{
