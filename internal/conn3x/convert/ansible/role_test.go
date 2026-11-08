@@ -247,8 +247,9 @@ func TestRoleFamilyWhen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The last task names a family Conn3x doesn't run on.
-	if res.Converted != 3 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "the Suse_never_named family, which Conn3x doesn't run on") {
+	// The last task's != names a family Conn3x doesn't run on, which is
+	// always true on a Conn3x host: no when.
+	if res.Converted != 4 || len(res.Review) != 0 {
 		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
 	}
 	goldenRole(t, "famwhen")
@@ -256,6 +257,7 @@ func TestRoleFamilyWhen(t *testing.T) {
 	for _, want := range []string{
 		`when = local.os_family[each.key] == "debian"`,
 		`when = local.os_family[each.key] == "redhat"`,
+		`path    = "/etc/famwhen-all"`,
 		`path = "/srv/famwhen-redhat"`,
 	} {
 		if !strings.Contains(hcl, want) {
@@ -264,13 +266,27 @@ func TestRoleFamilyWhen(t *testing.T) {
 	}
 }
 
+// An in list with a family Conn3x doesn't run on means just the others.
+func TestRoleFamilyWhenUnknownFamilyInList(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml":  "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n- name: T\n  copy: {dest: /etc/t, content: x}\n  when: ansible_os_family in ['Debian', 'Archlinux']\n",
+		"vars/Debian.yml": "a: x\n", "vars/RedHat.yml": "a: y\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Review) != 0 || !strings.Contains(string(res.Files["main.circuit.hcl"]), `when = local.os_family[each.key] == "debian"`) {
+		t.Fatalf("review %+v\n%s", res.Review, res.Files["main.circuit.hcl"])
+	}
+}
+
 func TestRoleFamilyWhenRefusals(t *testing.T) {
 	include := "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n"
 	vars := map[string]string{"vars/Debian.yml": "a: x\n", "vars/RedHat.yml": "a: y\n"}
 	for want, task := range map[string]string{
-		"which Conn3x doesn't run on":      "  when: ansible_os_family == 'Archlinux'\n",
-		"no Debian or Red Hat family host": "  when: [ansible_os_family == 'Debian', ansible_os_family == 'RedHat']\n",
-		"uses when":                        "  when: ansible_os_family == 'Debian' and x\n",
+		"no Debian or Red Hat family host meets": "  when: ansible_os_family == 'Archlinux'\n",
+		"would never run":                        "  when: [ansible_os_family == 'Debian', ansible_os_family == 'RedHat']\n",
+		"uses when":                              "  when: ansible_os_family == 'Debian' and x\n",
 	} {
 		files := map[string]string{"tasks/main.yml": include + "- name: T\n  copy: {dest: /etc/t, content: x}\n" + task}
 		for k, v := range vars {

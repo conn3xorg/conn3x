@@ -29,12 +29,12 @@ circuit "famwhen" {
     }
   }
 
-  # TODO(convert): Task "Everywhere." (tasks/main.yml line 17) uses when on the Suse_never_named family, which Conn3x doesn't run on; Conn3x hosts are Debian or Red Hat family.
-  #   - name: Everywhere.
-  #     copy:
-  #       dest: /etc/famwhen-all
-  #       content: "all\n"
-  #     when: ansible_facts.os_family != "Suse_never_named"
+  step "everywhere" {
+    file {
+      path    = "/etc/famwhen-all"
+      content = "all\n"
+    }
+  }
 }
 
 # Each host's OS family, for the values the role loads per family. A host
