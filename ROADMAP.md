@@ -51,4 +51,6 @@ macOS hosts.
 
 ## Help shape it
 
+Every item above is broken into issues on the [Road to full IaCC](https://github.com/orgs/conn3xorg/projects/1) board, one [milestone](https://github.com/conn3xorg/conn3x/milestones) per theme. Comment on one to take it; if nobody has by the time we reach it, we'll take it ourselves, so nothing sits waiting.
+
 Tell us what you'd want first in [Discussions](https://github.com/conn3xorg/conn3x/discussions), or pick up a [good first issue](https://github.com/search?q=org%3Aconn3xorg+label%3A%22good+first+issue%22+state%3Aopen&type=issues). [CONTRIBUTING.md](CONTRIBUTING.md) covers the rest.

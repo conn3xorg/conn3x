@@ -15,7 +15,7 @@ circuit "mixed" {
     become           = var.ssh_become
   }
 
-  # TODO(convert): Task "Pick the OS tasks" (tasks/main.yml line 1) uses include_tasks, which Ansible reads only when the play reaches it, so its file, loop and when can change from run to run; the converter can't translate that yet. If it names one file and has no loop or when, change it to import_tasks and convert again.
+  # TODO(convert): Task "Pick the OS tasks" (tasks/main.yml line 1) includes a file per family, and for Debian hosts it imports Debian.yml, which wasn't found beside tasks/main.yml.
   #   - name: Pick the OS tasks
   #     include_tasks: "{{ ansible_os_family }}.yml"
 

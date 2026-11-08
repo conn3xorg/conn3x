@@ -205,7 +205,7 @@ func vlanRange(from, to int) []int {
 
 // TestEOSTenStepsOneCommit applies ten changed steps to one switch. They
 // share one config session, so the apply waits confirm_after once, where
-// slice 1 waited once per step.
+// slice 1 waited once per step. Destroying the circuit waits once too.
 func TestEOSTenStepsOneCommit(t *testing.T) {
 	sw := eosSwitch(t)
 	sw.ConfirmAfter = "10s"
@@ -216,8 +216,8 @@ func TestEOSTenStepsOneCommit(t *testing.T) {
 	t.Cleanup(func() { w.conn3x("destroy", "-auto-approve", "-no-color") })
 
 	out := w.mustConn3x("plan", "-no-color")
-	if !strings.Contains(out, `conn3x_eos_commit.ten__commit["leaf1"] will be created`) || !strings.Contains(out, "11 to add") {
-		t.Fatalf("plan should add ten steps and one commit:\n%s", out)
+	if !strings.Contains(out, `conn3x_eos_commit.ten__commit["leaf1"] will be created`) || !strings.Contains(out, "12 to add") {
+		t.Fatalf("plan should add ten steps, the commit and the removals commit:\n%s", out)
 	}
 	start := time.Now()
 	out = w.mustConn3x("apply", "-auto-approve", "-no-color")
@@ -262,6 +262,27 @@ func TestEOSTenStepsOneCommit(t *testing.T) {
 	}
 	if out, code := w.conn3x("plan", "-detailed-exitcode", "-no-color"); code != 0 {
 		t.Fatalf("plan after the second apply exited %d:\n%s", code, out)
+	}
+
+	// Seven VLAN steps remove their VLAN on destroy, in one session.
+	start = time.Now()
+	w.mustConn3x("destroy", "-auto-approve", "-no-color")
+	took = time.Since(start)
+	t.Logf("destroy took %s with confirm_after %s", took.Round(100*time.Millisecond), sw.ConfirmAfter)
+	if took >= 30*time.Second { // a session per removal would wait 70 s
+		t.Errorf("destroy took %s: more than one confirm wait", took)
+	}
+	running = sw.mustCLI(t, "show running-config\n")
+	for _, gone := range []string{"vlan 101", "vlan 107"} {
+		if strings.Contains(running, gone) {
+			t.Errorf("%s still on the switch after destroy", gone)
+		}
+	}
+	if startup := sw.mustCLI(t, "show startup-config\n"); strings.Contains(startup, "vlan 101") {
+		t.Errorf("removal not saved to startup-config")
+	}
+	if pending := sw.mustCLI(t, "show configuration sessions\n"); strings.Contains(pending, "conn3x-") && strings.Contains(pending, "pending") {
+		t.Errorf("a conn3x session is left pending:\n%s", pending)
 	}
 }
 
