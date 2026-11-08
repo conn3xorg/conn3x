@@ -24,9 +24,23 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # The action downloads golangci-lint from GitHub releases on every run,
+      # and those downloads failed for hours on 8 Nov. Keep the binary in the
+      # Actions cache instead, and on a miss build it through the Go module
+      # proxy rather than github.com (#575).
+      - name: Restore golangci-lint
+        id: golangci
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/golangci-lint
+          key: golangci-lint-v2.14.0-${{ runner.os }}-${{ runner.arch }}
+      - name: Build golangci-lint
+        if: steps.golangci.outputs.cache-hit != 'true'
+        run: GOBIN=$HOME/.local/golangci-lint go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+      - run: echo "$HOME/.local/golangci-lint" >> "$GITHUB_PATH"
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.14.0
+          install-mode: none
           args: ./internal/conn3x/... ./cmd/conn3x/... ./cmd/conn3x-agent/...
       - name: Upstream edits stay marked and within budget
         run: bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 5
