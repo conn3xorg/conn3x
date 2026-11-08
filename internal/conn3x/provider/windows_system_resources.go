@@ -6,6 +6,8 @@ package provider
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -467,4 +469,134 @@ func applyWinFeature(ctx context.Context, req providers.ApplyResourceChangeReque
 	vals["reboot_required"] = cty.BoolVal(restart)
 	resp.NewState = cty.ObjectVal(vals)
 	return resp
+}
+
+const defaultUpdateTimeout = 2 * time.Hour
+
+func winUpdateSchema() providers.Schema {
+	list := cty.List(cty.String)
+	return providers.Schema{Block: &configschema.Block{
+		Description: "Experimental. The Windows updates a host should have installed, such as this month's security updates. It never reboots: reboot_required says whether Windows wants one, and windows_reboot does it.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":              {Type: cty.String, Computed: true},
+			"revision":        revisionAttr(),
+			"categories":      {Type: list, Optional: true, Description: "Windows Update categories to install, such as SecurityUpdates and CriticalUpdates (the default). Also: Applications, Connectors, DefinitionUpdates, DeveloperKits, Drivers, FeaturePacks, Guidance, ServicePacks, Tools, UpdateRollups, Updates, Upgrades."},
+			"accept_list":     {Type: list, Optional: true, Description: "Only these KB numbers, such as KB5034441, from those categories."},
+			"reject_list":     {Type: list, Optional: true, Description: "Never these KB numbers."},
+			"timeout":         {Type: cty.String, Optional: true, Description: "How long downloading and installing may take. Defaults to \"2h\"."},
+			"pending":         {Type: list, Computed: true, Description: "The updates waiting at the last refresh, each as its KB number and title. A plan to install shows them here."},
+			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether Windows reported wanting a reboot after the last install."},
+			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether nothing was waiting at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func winUpdateFrom(v cty.Value) windows.Update {
+	return windows.Update{Categories: stringList(v.GetAttr("categories")), Accept: stringList(v.GetAttr("accept_list")), Reject: stringList(v.GetAttr("reject_list"))}
+}
+
+func validateWinUpdate(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	if _, err := durationOr(cfg.GetAttr("timeout"), defaultUpdateTimeout); err != nil {
+		diags = diags.Append(attrError("timeout", err.Error()))
+	}
+	if err := winUpdateFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("categories", err.Error()))
+	}
+	return diags
+}
+
+// planWinUpdate plans an install when the last refresh found updates
+// waiting. pending goes to empty, so the plan lists each update leaving it:
+// what will install.
+func planWinUpdate(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	resp := planSynced(req, "windows_update", nil, []string{"categories", "accept_list", "reject_list"})
+	if resp.PlannedState.IsNull() {
+		return resp
+	}
+	vals := resp.PlannedState.AsValueMap()
+	if req.PriorState.IsNull() {
+		vals["pending"], vals["reboot_required"] = cty.UnknownVal(cty.List(cty.String)), cty.UnknownVal(cty.Bool)
+	} else {
+		vals["pending"] = req.PriorState.GetAttr("pending")
+		if vals["in_sync"].IsKnown() {
+			vals["reboot_required"] = req.PriorState.GetAttr("reboot_required")
+		} else {
+			vals["pending"] = cty.ListValEmpty(cty.String)
+			vals["reboot_required"] = cty.UnknownVal(cty.Bool)
+		}
+	}
+	resp.PlannedState = cty.ObjectVal(vals)
+	return resp
+}
+
+func readWinUpdate(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	resp := providers.ReadResourceResponse{NewState: req.PriorState}
+	if req.PriorState.IsNull() {
+		return resp
+	}
+	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	pending, err := windows.PendingUpdates(ctx, h.client, winUpdateFrom(req.PriorState))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_update: %w", err))
+		return resp
+	}
+	vals := withSync(req.PriorState, len(pending) == 0).AsValueMap()
+	vals["pending"] = stringListVal(pending)
+	resp.NewState = cty.ObjectVal(vals)
+	return resp
+}
+
+func applyWinUpdate(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	var resp providers.ApplyResourceChangeResponse
+	if req.PlannedState.IsNull() {
+		resp.NewState = req.PlannedState // removing the step installs and removes nothing
+		return resp
+	}
+	fail := func(err error) providers.ApplyResourceChangeResponse {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_update: %w", err))
+		return resp
+	}
+	u := winUpdateFrom(req.PlannedState)
+	timeout, err := durationOr(req.PlannedState.GetAttr("timeout"), defaultUpdateTimeout)
+	if err != nil {
+		return fail(err)
+	}
+	h, err := winHost(ctx, req.PlannedState.GetAttr("ssh"))
+	if err != nil {
+		return fail(err)
+	}
+	// Windows servicing takes one change at a time.
+	defer lockHost(h, "windows_feature")()
+	installed, restart, err := windows.ApplyUpdates(ctx, h.client, u, timeout)
+	if len(installed) > 0 {
+		log.Printf("[INFO] conn3x: windows_update on %s installed: %s", h.host, strings.Join(installed, "; "))
+	}
+	if err != nil {
+		return fail(err)
+	}
+	vals := withSync(req.PlannedState, true).AsValueMap()
+	vals["pending"] = cty.ListValEmpty(cty.String)
+	vals["reboot_required"] = cty.BoolVal(restart)
+	resp.NewState = cty.ObjectVal(vals)
+	return resp
+}
+
+func stringListVal(s []string) cty.Value {
+	if len(s) == 0 {
+		return cty.ListValEmpty(cty.String)
+	}
+	vals := make([]cty.Value, len(s))
+	for i, v := range s {
+		vals[i] = cty.StringVal(v)
+	}
+	return cty.ListVal(vals)
 }

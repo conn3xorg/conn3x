@@ -96,6 +96,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_package":              {winPackageSchema, validateWinPackage, planWinPackage, readWinPackage, applyWinPackage, upgradeWith(winPackageSchema)},
 	"conn3x_windows_powershell":           {winPowershellSchema, validateWinPowershell, planWinPowershell, readWinPowershell, applyWinPowershell, upgradeWith(winPowershellSchema)},
 	"conn3x_windows_registry_value":       {winRegistrySchema, validateWinRegistry, planWinRegistry, readWinRegistry, applyWinRegistry, upgradeWith(winRegistrySchema)},
+	"conn3x_windows_update":               {winUpdateSchema, validateWinUpdate, planWinUpdate, readWinUpdate, applyWinUpdate, upgradeWith(winUpdateSchema)},
 	"conn3x_windows_reboot":               {winRebootSchema, validateReboot, planWinReboot, readWinReboot, applyWinReboot, upgradeWith(winRebootSchema)},
 	"conn3x_windows_scheduled_task":       {winTaskSchema, validateWinTask, planWinTask, readWinTask, applyWinTask, upgradeWith(winTaskSchema)},
 	"conn3x_windows_service":              {winServiceSchema, validateWinService, planWinService, readWinService, applyWinService, upgradeWith(winServiceSchema)},
