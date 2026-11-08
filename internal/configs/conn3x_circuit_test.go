@@ -401,6 +401,8 @@ circuit "web" {
       vars        = { server_name = each.key }
       mode        = "0640"
       validate    = "nginx -t -c %s"
+      reload        = "systemctl reload nginx"
+      confirm_after = "60s"
     }
   }
   step "motd" {
@@ -420,7 +422,7 @@ circuit "web" {
 		t.Fatalf("no conn3x_file.web__nginx_conf; have %v", keys(mod.ManagedResources))
 	}
 	content, diags := r.Config.Content(&hcl.BodySchema{
-		Attributes: []hcl.AttributeSchema{{Name: "path", Required: true}, {Name: "content", Required: true}, {Name: "mode"}, {Name: "validate"}},
+		Attributes: []hcl.AttributeSchema{{Name: "path", Required: true}, {Name: "content", Required: true}, {Name: "mode"}, {Name: "validate"}, {Name: "reload"}, {Name: "confirm_after"}},
 		Blocks:     []hcl.BlockHeaderSchema{{Type: "ssh"}},
 	})
 	if diags.HasErrors() {
@@ -435,6 +437,11 @@ circuit "web" {
 	}
 	if _, ok := content.Attributes["validate"]; !ok {
 		t.Fatal("validate not carried over")
+	}
+	for _, name := range []string{"reload", "confirm_after"} {
+		if _, ok := content.Attributes[name]; !ok {
+			t.Fatalf("%s not carried over", name)
+		}
 	}
 
 	motd := mod.ManagedResources["conn3x_file.web__motd"]

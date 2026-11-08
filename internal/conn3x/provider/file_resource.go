@@ -14,6 +14,7 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/confirm"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
@@ -49,6 +50,14 @@ func fileSchema() providers.Schema {
 				"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded."},
 				"state":        {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which removes the file and keeps it gone."},
 				"in_sync":      {Type: cty.Bool, Computed: true, Description: "With state \"absent\", whether the file is already gone. Null otherwise."},
+				"confirm_after": {
+					Type: cty.String, Optional: true,
+					Description: "For a change that could lock Conn3x out, such as sshd_config: before writing, the host keeps a copy and schedules its own revert after this long, such as \"60s\"; after writing and running reload, Conn3x logs in again over a new connection and cancels it. If that login doesn't come, the host puts the old file back by itself, even if Conn3x has gone away. Needs systemd.",
+				},
+				"reload": {
+					Type: cty.String, Optional: true,
+					Description: "With confirm_after: a command that makes the new file take effect, such as \"systemctl reload sshd\", run after writing and again after a revert. A reload that fails reverts at once.",
+				},
 				"validate": {
 					Type: cty.String, Optional: true, WriteOnly: true,
 					Description: "A command that checks new content before it replaces the file, such as \"visudo -cf %s\". %s stands for the temporary file. Runs only when the content changes, and is kept out of state.",
@@ -67,7 +76,15 @@ func validateFile(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	diags = diags.Append(validateState(cfg, "content", "content_wo", "mode", "owner", "group", "validate"))
+	diags = diags.Append(validateState(cfg, "content", "content_wo", "mode", "owner", "group", "validate", "confirm_after", "reload"))
+	if ca := cfg.GetAttr("confirm_after"); ca.IsKnown() {
+		if _, err := parseConfirmAfter(ca); err != nil {
+			diags = diags.Append(attrError("confirm_after", err.Error()))
+		}
+	}
+	if r := cfg.GetAttr("reload"); r.IsKnown() && !r.IsNull() && cfg.GetAttr("confirm_after").IsNull() {
+		diags = diags.Append(attrError("reload", "reload goes with confirm_after: it's run between writing the file and confirming the change over a new login"))
+	}
 	if v := cfg.GetAttr("validate"); v.IsKnown() && !v.IsNull() {
 		d := file.Desired{Path: "/", Mode: defaultMode, ValidateCommand: v.AsString()}
 		if err := d.Validate(); err != nil {
@@ -338,7 +355,15 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	if contentChanging(req.PriorState, planned) {
 		desired.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")
 	}
-	if err := file.Apply(ctx, client, desired); err != nil {
+	write := func() error { return file.Apply(ctx, client, desired) }
+	var err2 error
+	if after, _ := parseConfirmAfter(planned.GetAttr("confirm_after")); after > 0 && contentChanging(req.PriorState, planned) {
+		g := confirm.Guard{ID: newGuardID(), Files: []string{desired.Path}, Reload: stringOr(planned.GetAttr("reload"), ""), After: after}
+		err2 = guarded(ctx, client, planned.GetAttr("ssh"), g, write)
+	} else {
+		err2 = write()
+	}
+	if err := err2; err != nil {
 		var rejected *file.ValidateError
 		if key != nil && errors.As(err, &rejected) {
 			// The command may have printed the secret it was checking.

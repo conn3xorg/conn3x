@@ -1,0 +1,20 @@
+circuit "box" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "sshd" {
+    file {
+      path          = "/etc/ssh/sshd_config.d/99-conn3x.conf"
+      content       = "{{.Content}}"
+      mode          = "0600"
+      reload        = "systemctl reload sshd"
+      confirm_after = "20s"
+    }
+  }
+}
