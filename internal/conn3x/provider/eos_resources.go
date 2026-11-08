@@ -112,6 +112,9 @@ type eosKind struct {
 	deletes  bool     // on_remove defaults to "delete"
 	config   func(cty.Value) eosWant
 	remove   func(cty.Value, string) []string // nil: removing only forgets
+	// guard, when set, refuses a change that would cut Conn3x off from the
+	// switch at address, given the config it's computed from.
+	guard func(v cty.Value, config, address string) error
 }
 
 // eosWant is what a step wants of a switch's config, such as eos.Config.
@@ -191,6 +194,11 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	if removing {
 		cmds = k.remove(target, base)
 	} else {
+		if k.guard != nil {
+			if err := k.guard(target, base, h.host); err != nil {
+				return fail(st.abort(ctx, h, err))
+			}
+		}
 		cmds = k.config(target).Commands(base)
 	}
 	switch {
@@ -617,4 +625,70 @@ func applyEOSRemovals(ctx context.Context, req providers.ApplyResourceChangeRequ
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos removals: %w. Conn3x has already forgotten the removed steps, so if the switch rolls the change back, remove these from %s by hand: %s", err, h.host, strings.Join(lines, " | ")))
 	}
 	return resp
+}
+
+func eosInterfaceFrom(v cty.Value) eos.Interface {
+	i := eos.Interface{Name: stringOr(v.GetAttr("name"), ""), Description: optString(v.GetAttr("description")), Mode: stringOr(v.GetAttr("mode"), "")}
+	if e := v.GetAttr("enabled"); known(e) {
+		b := e.True()
+		i.Enabled = &b
+	}
+	num := func(attr string) int {
+		n := v.GetAttr(attr)
+		if !known(n) {
+			return 0
+		}
+		x, _ := n.AsBigFloat().Int64()
+		return int(x)
+	}
+	i.AccessVLAN, i.MTU = num("access_vlan"), num("mtu")
+	if l := v.GetAttr("allowed_vlans"); known(l) {
+		i.AllowedVLANs = []int{}
+		for _, e := range l.AsValueSlice() {
+			x, _ := e.AsBigFloat().Int64()
+			i.AllowedVLANs = append(i.AllowedVLANs, int(x))
+		}
+	}
+	return i
+}
+
+var eosInterfaceKind = eosKind{
+	name:     "interface",
+	keys:     []string{"name"},
+	settings: []string{"description", "enabled", "mode", "access_vlan", "allowed_vlans", "mtu"},
+	config:   func(v cty.Value) eosWant { return eosInterfaceFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return eosInterfaceFrom(v).RemoveCommands(running) },
+	guard:    func(v cty.Value, config, address string) error { return eosInterfaceFrom(v).Guard(config, address) },
+}
+
+func eosInterfaceSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: eosExperimental + "The settings Conn3x owns on one interface of an Arista EOS switch: description, enabled, switchport mode and VLANs, MTU. Each one left unset is left alone, and so is every other line under the interface.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"name":          {Type: cty.String, Required: true, Description: "The interface, as running-config names it, such as Ethernet1, Ethernet1/1, Port-Channel10, Vlan20 or Loopback0."},
+			"description":   {Type: cty.String, Optional: true, Description: "Its description."},
+			"enabled":       {Type: cty.Bool, Optional: true, Description: "false shuts it down, true brings it up. Shutting down the interface whose address Conn3x connects to is refused."},
+			"mode":          {Type: cty.String, Optional: true, Description: "\"access\" or \"trunk\". Ethernet and Port-Channel interfaces only."},
+			"access_vlan":   {Type: cty.Number, Optional: true, Description: "The VLAN of an access port, 1 to 4094."},
+			"allowed_vlans": {Type: cty.List(cty.Number), Optional: true, Description: "The VLANs a trunk carries. Conn3x writes them the way EOS prints them, as in 10,20-22."},
+			"mtu":           {Type: cty.Number, Optional: true, Description: "MTU, 68 to 9214."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens when this resource is removed: \"forget\" (default) leaves the interface as it is, \"delete\" takes the settings it owns back to EOS's defaults. The interface itself stays."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the interface had these settings at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateEOSInterface(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := eosInterfaceFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
 }

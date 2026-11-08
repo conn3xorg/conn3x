@@ -1,0 +1,33 @@
+circuit "uplink" {
+  hosts = { leaf1 = "{{.Host}}" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "admin"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+    confirm_after    = "{{.ConfirmAfter}}"
+  }
+
+  step "vlans" {
+    for_each = toset(["10", "20", "30"])
+    eos_vlan {
+      vlan_id = tonumber(item.value)
+    }
+  }
+
+  step "et1" {
+    eos_interface {
+      name = "Ethernet1"
+      description = "{{.Description}}"
+{{- if .Trunk}}
+      mode          = "trunk"
+      allowed_vlans = [10, 20]
+{{- else}}
+      mode        = "access"
+      access_vlan = 30
+{{- end}}
+      mtu = 9000
+    }
+  }
+}

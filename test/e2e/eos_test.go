@@ -368,3 +368,67 @@ func TestEOSUnnamedVLANs(t *testing.T) {
 		t.Fatalf("destroy left VLANs:\n%s", got)
 	}
 }
+
+type ifVars struct {
+	eosVars
+	Description string
+	Trunk       bool
+}
+
+// TestEOSInterface needs the switch to have an Ethernet1 (give the cEOS
+// container a second network). It sets Ethernet1 as a trunk, then turns it into an access
+// port, and sees a hand change as drift. The other lines under the
+// interface stay as they were.
+func TestEOSInterface(t *testing.T) {
+	sw := eosSwitch(t)
+	sw.ConfirmAfter = "5s"
+	v := ifVars{eosVars: sw, Description: "to spine1", Trunk: true}
+	w := newWorkdir(t, "eosif")
+	w.writeAs("main.circuit.hcl", v)
+	w.mustConn3x("init", "-no-color")
+	t.Cleanup(func() {
+		w.conn3x("destroy", "-auto-approve", "-no-color")
+		sw.cli(t, "configure\ndefault interface Ethernet1\nend\n")
+	})
+	sw.mustCLI(t, "configure\ninterface Ethernet1\n   load-interval 10\nend\n") // not the step's: must survive
+
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	section := func() string {
+		return sw.mustCLI(t, "show running-config interfaces Ethernet1\n")
+	}
+	got := section()
+	for _, want := range []string{"description to spine1", "switchport mode trunk", "switchport trunk allowed vlan 10,20", "mtu 9000", "load-interval 10"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("trunk: missing %q:\n%s", want, got)
+		}
+	}
+	if out, code := w.conn3x("plan", "-detailed-exitcode", "-no-color"); code != 0 {
+		t.Fatalf("second plan exited %d:\n%s", code, out)
+	}
+
+	sw.mustCLI(t, "configure\ninterface Ethernet1\n   description by-hand\nend\n")
+	if out, code := w.conn3x("drift", "-no-color"); code != 2 || !strings.Contains(out, "conn3x_eos_interface.uplink__et1") {
+		t.Fatalf("drift after a hand change exited %d:\n%s", code, out)
+	}
+
+	v.Trunk = false
+	w.writeAs("main.circuit.hcl", v)
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	got = section()
+	for _, want := range []string{"description to spine1", "switchport access vlan 30", "mtu 9000", "load-interval 10"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("access: missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "switchport mode trunk") {
+		t.Fatalf("access: still a trunk:\n%s", got)
+	}
+	// allowed_vlans is no longer set, so the trunk's list is left as it
+	// was, like any setting a step stops naming.
+	if !strings.Contains(got, "switchport trunk allowed vlan 10,20") {
+		t.Fatalf("access: the trunk's allowed list was touched:\n%s", got)
+	}
+	if out, code := w.conn3x("plan", "-detailed-exitcode", "-no-color"); code != 0 {
+		t.Fatalf("plan after the change exited %d:\n%s", code, out)
+	}
+}

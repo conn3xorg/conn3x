@@ -74,6 +74,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_eos_config":       eosConfigKind.entry(eosConfigSchema, validateEOSConfig),
 	"conn3x_eos_hostname":     eosHostnameKind.entry(eosHostnameSchema, validateEOSHostname),
 	"conn3x_eos_vlan":         eosVLANKind.entry(eosVLANSchema, validateEOSVLAN),
+	"conn3x_eos_interface":    eosInterfaceKind.entry(eosInterfaceSchema, validateEOSInterface),
 	"conn3x_eos_commit":       {eosCommitSchema, func(cty.Value) tfdiags.Diagnostics { return nil }, planEOSCommit, readEOSCommit, applyEOSCommit, upgradeWith(eosCommitSchema)},
 	"conn3x_eos_removals":     {eosRemovalsSchema, func(cty.Value) tfdiags.Diagnostics { return nil }, planEOSRemovals, readEOSCommit, applyEOSRemovals, upgradeWith(eosRemovalsSchema)},
 	"conn3x_group":            {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
