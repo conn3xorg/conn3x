@@ -30,7 +30,7 @@ func Conn3xStepOnHost(r *Resource, key addrs.InstanceKey, host string) bool {
 	if !ok {
 		return true // not a circuit instance: keep the edge
 	}
-	if _, looping := r.ForEach.(*hostItemProduct); looping {
+	if stepLoops(r.ForEach) {
 		return strings.HasPrefix(string(k), host+"/")
 	}
 	return string(k) == host
@@ -44,7 +44,7 @@ func Conn3xStepHosts(r *Resource, key addrs.InstanceKey) []string {
 	if !ok {
 		return nil
 	}
-	if _, looping := r.ForEach.(*hostItemProduct); !looping {
+	if !stepLoops(r.ForEach) {
 		return []string{string(k)}
 	}
 	var hosts []string
@@ -91,11 +91,12 @@ func chainRange(b *hcl.Block, perHost bool) hcl.Range {
 }
 
 // chainAfter is what the step after r waits for. In lockstep that's r. Per
-// host, a looping r may have no items on a host, and then nothing of r on
-// that host would carry the wait for the steps before it: so the next step
-// also waits for those, back to the last step that doesn't loop.
+// host, a looping r may have no items on a host, and an r with when may
+// skip it, and then nothing of r on that host would carry the wait for the
+// steps before it: so the next step also waits for those, back to the last
+// step that always runs there.
 func chainAfter(chain []*Resource, r *Resource, perHost bool) []*Resource {
-	if _, looping := r.ForEach.(*hostItemProduct); perHost && looping {
+	if perHost && (stepLoops(r.ForEach) || stepFiltered(r.ForEach)) {
 		return append(slices.Clip(chain), r)
 	}
 	return []*Resource{r}

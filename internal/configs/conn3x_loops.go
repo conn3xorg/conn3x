@@ -159,6 +159,21 @@ func hostInstances(step hclsyntax.Expression, rng hcl.Range) hclsyntax.Expressio
 	}
 }
 
+// hostInstance is a handler's trigger for a step with when: the step's
+// revision on the handler's host, or nothing where when skipped it.
+//
+//	{ for k, v in STEP : k => v.revision if k == each.key }
+func hostInstance(step hclsyntax.Expression, rng hcl.Range) hclsyntax.Expression {
+	e := hostInstances(step, rng).(*hclsyntax.ForExpr)
+	e.CondExpr = &hclsyntax.BinaryOpExpr{
+		LHS:      &hclsyntax.ScopeTraversalExpr{Traversal: hcl.Traversal{hcl.TraverseRoot{Name: "k", SrcRange: rng}}, SrcRange: rng},
+		Op:       hclsyntax.OpEqual,
+		RHS:      eachTraversal("key", rng),
+		SrcRange: rng,
+	}
+	return e
+}
+
 // loopRefs walks a step's module attributes and blocks. In a looping step
 // it rewrites each.* and item.* onto the instance object; in any other step
 // it reports item, which only means something with for_each.

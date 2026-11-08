@@ -321,12 +321,12 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		return nil, nil, append(diags, nativeSyntaxRequired(step.DefRange))
 	}
 	for attrName, attr := range body.Attributes {
-		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" && attrName != "import" {
+		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" && attrName != "import" && attrName != "when" {
 			rng := attr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported argument in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify, import, one module block and a lifecycle block, not %q.", attrName),
+				Detail:   fmt.Sprintf("A step takes only for_each, when, depends_on, notify, import, one module block and a lifecycle block, not %q.", attrName),
 				Subject:  &rng,
 			})
 		}
@@ -350,7 +350,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported block in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, depends_on, notify, import, one module block and a lifecycle block, not %q.", block.Type),
+				Detail:   fmt.Sprintf("A step takes only for_each, when, depends_on, notify, import, one module block and a lifecycle block, not %q.", block.Type),
 				Subject:  &rng,
 			})
 		}
@@ -395,6 +395,14 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	forEach, hostPath := hosts, []string{"value"}
 	if looping {
 		forEach, hostPath = &hostItemProduct{hosts: hosts, items: items.Expr}, []string{"value", "host"}
+	}
+	if when, ok := body.Attributes["when"]; ok {
+		// each and item mean in when what they mean in the module's arguments.
+		diags = append(diags, loopRefs(hclsyntax.Attributes{"when": when}, nil, looping)...)
+		if diags.HasErrors() {
+			return nil, nil, diags
+		}
+		forEach = &whenFilter{instances: forEach, cond: when.Expr}
 	}
 
 	ssh := sshBlockFor(sshAttrs, sshRange, hostPath)
@@ -578,12 +586,18 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 	rng := chainRange(h, perHost)
 	var triggers []hclsyntax.Expression
 	for _, n := range notifiers {
-		if _, looping := n.ForEach.(*hostItemProduct); looping {
+		if stepLoops(n.ForEach) || stepFiltered(n.ForEach) {
+			// The step may have no instance on this host, so it's read
+			// through a filter rather than indexed by the host.
 			step := &hclsyntax.ScopeTraversalExpr{
 				Traversal: hcl.Traversal{hcl.TraverseRoot{Name: n.Type, SrcRange: rng}, hcl.TraverseAttr{Name: n.Name, SrcRange: rng}},
 				SrcRange:  rng,
 			}
-			triggers = append(triggers, hostInstances(step, rng))
+			if stepLoops(n.ForEach) {
+				triggers = append(triggers, hostInstances(step, rng))
+			} else {
+				triggers = append(triggers, hostInstance(step, rng))
+			}
 			continue
 		}
 		// Watch the step's revision on this host, which changes whenever
