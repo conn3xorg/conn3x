@@ -70,8 +70,10 @@ func writeApplyReport(path, stream string, started time.Time, success bool) erro
 	return writeReport(path, r)
 }
 
+// writeReport writes r to path, readable by its owner only: its errors can
+// carry what a failed command printed, and reports get copied about.
 func writeReport(path string, r *runreport.Report) error {
-	out, err := os.Create(path)
+	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
