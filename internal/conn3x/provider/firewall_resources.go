@@ -21,7 +21,7 @@ import (
 func ruleConfirmAfter() *configschema.Attribute {
 	return &configschema.Attribute{
 		Type: cty.String, Optional: true,
-		Description: "For a rule change that could lock Conn3x out, such as a deny on the SSH port or removing the rule that allows it: before the change, the host schedules its own undo after this long, such as \"60s\"; after it, Conn3x logs in again over a new connection and cancels it. If that login doesn't come, the host takes the change back by itself, even if Conn3x has gone away. Needs systemd.",
+		Description: "For a rule change that could lock Conn3x out, such as removing the rule that lets SSH in, or a ufw deny on its port: before the change, the host schedules its own undo after this long, such as \"60s\"; after it, Conn3x logs in again over a new connection and cancels it. If that login doesn't come, the host takes the change back by itself, even if Conn3x has gone away. Needs systemd.",
 	}
 }
 
