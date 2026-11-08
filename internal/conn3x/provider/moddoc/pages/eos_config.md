@@ -30,7 +30,7 @@ The plan shows two more lines per switch. `conn3x_eos_commit.<circuit>__commit` 
 - EOS commits a session by swapping running-config for the session's copy. So if someone edits the switch by hand while the apply is adding lines, Conn3x refuses to commit rather than undo the edit. Nothing changes; apply again.
 - `-target` on a single `eos_*` step leaves the commit out, and the staged lines are dropped when the run ends. Target `conn3x_eos_commit.<circuit>__commit` instead: it brings every step with it.
 - A step you take out of a circuit that stays still commits its removal on its own, after the circuit's commit.
-- On destroy, Conn3x forgets each step as its removal goes into the session. If that last commit fails, the error lists the lines it couldn't remove, and you take them off by hand.
+- Conn3x forgets a removed step as soon as its removal is in the session. So if that session goes nowhere, because a later line was refused or someone changed the switch mid-apply, Conn3x commits the removals again in a session of their own, and the error says it did. Only if that fails too, or another run holds the switch, does the error list lines for you to take off by hand.
 - A circuit applied by an older Conn3x has no `__removals` yet. The next apply adds it; until then, destroy pays the wait once per removal.
 - Two runs at one switch at once can't both win. The second one aborts the first one's session, and the first run stops with an error saying so, with nothing of it live.
 
