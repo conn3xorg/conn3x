@@ -268,7 +268,18 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 		}
 	}
 	if len(eosSteps) > 0 {
-		resources = append(resources, lowerEOSCommit(name, block, hosts, sshAttrs, sshRange, eosSteps, chain, perHost))
+		removals := lowerEOSRemovals(name, block, hosts, sshAttrs, sshRange)
+		for _, r := range eosSteps {
+			rng := block.TypeRange
+			if perHost {
+				rng = r.DeclRange // so Conn3xHostEdge keeps it to the step's host
+			}
+			r.DependsOn = append(r.DependsOn, hcl.Traversal{
+				hcl.TraverseRoot{Name: removals.Type, SrcRange: rng},
+				hcl.TraverseAttr{Name: removals.Name, SrcRange: rng},
+			})
+		}
+		resources = append(resources, removals, lowerEOSCommit(name, block, hosts, sshAttrs, sshRange, eosSteps, chain, removals, perHost))
 	}
 
 	handlers := map[string]bool{}
@@ -664,17 +675,37 @@ func hostRevisions(steps []*Resource, rng hcl.Range) *hclsyntax.TupleConsExpr {
 // every step on it, watching the eos steps' revisions. The eos steps only
 // stage their lines in a config session; this commits that session once,
 // so a switch waits confirm_after once per apply, not once per step.
-func lowerEOSCommit(circuit string, block *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, eosSteps, chain []*Resource, perHost bool) *Resource {
+//
+// It also reads removals' id: a commit with one has a conn3x_eos_removals
+// after it on destroy, which commits what the steps' removals staged.
+func lowerEOSCommit(circuit string, block *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, eosSteps, chain []*Resource, removals *Resource, perHost bool) *Resource {
 	rng := chainRange(block, perHost)
+	removalsID := &hclsyntax.RelativeTraversalExpr{
+		Source: &hclsyntax.IndexExpr{
+			Collection: &hclsyntax.ScopeTraversalExpr{
+				Traversal: hcl.Traversal{hcl.TraverseRoot{Name: removals.Type, SrcRange: rng}, hcl.TraverseAttr{Name: removals.Name, SrcRange: rng}},
+				SrcRange:  rng,
+			},
+			Key:          eachTraversal("key", rng),
+			SrcRange:     rng,
+			OpenRange:    rng,
+			BracketRange: rng,
+		},
+		Traversal: hcl.Traversal{hcl.TraverseAttr{Name: "id", SrcRange: rng}},
+		SrcRange:  rng,
+	}
 	r := &Resource{
 		Mode: addrs.ManagedResourceMode,
 		Type: "conn3x_eos_commit",
 		Name: circuit + "__commit", // the type keeps it apart from a step named commit
 		Config: &hclsyntax.Body{
-			Attributes: hclsyntax.Attributes{"triggers": {Name: "triggers", Expr: hostRevisions(eosSteps, rng), SrcRange: rng, NameRange: rng}},
-			Blocks:     hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})},
-			SrcRange:   block.DefRange,
-			EndRange:   block.DefRange,
+			Attributes: hclsyntax.Attributes{
+				"triggers": {Name: "triggers", Expr: hostRevisions(eosSteps, rng), SrcRange: rng, NameRange: rng},
+				"removals": {Name: "removals", Expr: removalsID, SrcRange: rng, NameRange: rng},
+			},
+			Blocks:   hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})},
+			SrcRange: block.DefRange,
+			EndRange: block.DefRange,
 		},
 		ForEach:   hosts,
 		DeclRange: block.DefRange,
@@ -688,6 +719,28 @@ func lowerEOSCommit(circuit string, block *hcl.Block, hosts hcl.Expression, sshA
 		})
 	}
 	return r
+}
+
+// lowerEOSRemovals adds a circuit's conn3x_eos_removals: one per switch,
+// before every eos step, so that destroying the circuit removes it last.
+// Destroy runs the commit first, and each step's removal after it, so the
+// removals stage into one session that this commits: a switch waits
+// confirm_after once, not once per removed step.
+func lowerEOSRemovals(circuit string, block *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *Resource {
+	return &Resource{
+		Mode: addrs.ManagedResourceMode,
+		Type: "conn3x_eos_removals",
+		Name: circuit + "__removals",
+		Config: &hclsyntax.Body{
+			Blocks:   hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})},
+			SrcRange: block.DefRange,
+			EndRange: block.DefRange,
+		},
+		ForEach:   hosts,
+		DeclRange: block.DefRange,
+		TypeRange: block.TypeRange,
+		Managed:   &ManagedResource{},
+	}
 }
 
 var templateSchema = &hcl.BodySchema{

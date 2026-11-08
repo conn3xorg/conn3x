@@ -76,7 +76,7 @@ func TestConvertRoleRefuses(t *testing.T) {
 	for _, want := range []string{
 		"runs the roles common, geerlingguy.firewall first",
 		"checks the role's arguments",
-		"uses include_tasks, which Ansible reads only when the play reaches it",
+		"includes a file per family, and for Debian hosts it imports Debian.yml, which wasn't found",
 		"sets when on import_tasks",
 		"imports nowhere.yml, which wasn't found",
 		"which is already being imported",
@@ -237,6 +237,104 @@ func TestRoleFamilyDefaults(t *testing.T) {
 	}
 	if v := string(res.Files["variables.tf"]); !strings.Contains(v, `variable "svc_user"`) || !strings.Contains(v, "default     = null") {
 		t.Errorf("no svc_user variable:\n%s", v)
+	}
+}
+
+// A when on the family becomes the step's when, and the task converts
+// only for the families it allows: famwhen_rh_dir is only in RedHat.yml.
+func TestRoleFamilyWhen(t *testing.T) {
+	res, err := ConvertRole(filepath.Join("testdata", "role", "famwhen"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The last task's != names a family Conn3x doesn't run on, which is
+	// always true on a Conn3x host: no when.
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	goldenRole(t, "famwhen")
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		`when = local.os_family[each.key] == "debian"`,
+		`when = local.os_family[each.key] == "redhat"`,
+		`path    = "/etc/famwhen-all"`,
+		`path = "/srv/famwhen-redhat"`,
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %s in\n%s", want, hcl)
+		}
+	}
+}
+
+// An in list with a family Conn3x doesn't run on means just the others.
+func TestRoleFamilyWhenUnknownFamilyInList(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml":  "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n- name: T\n  copy: {dest: /etc/t, content: x}\n  when: ansible_os_family in ['Debian', 'Archlinux']\n",
+		"vars/Debian.yml": "a: x\n", "vars/RedHat.yml": "a: y\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Review) != 0 || !strings.Contains(string(res.Files["main.circuit.hcl"]), `when = local.os_family[each.key] == "debian"`) {
+		t.Fatalf("review %+v\n%s", res.Review, res.Files["main.circuit.hcl"])
+	}
+}
+
+// include_tasks by family inlines each family's tasks with that family as
+// their when: by a file named by the family, or a fixed file whose include
+// has a when on the family. An include only for a family Conn3x doesn't run
+// on is one review item.
+func TestRoleFamilyInclude(t *testing.T) {
+	res, err := ConvertRole(filepath.Join("testdata", "role", "famincl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Converted != 3 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "includes setup-Archlinux.yml with a when no Debian or Red Hat family host meets") {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	goldenRole(t, "famincl")
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		"step \"debian_setup\" {\n    when = local.os_family[each.key] == \"debian\"",
+		"step \"red_hat_setup\" {\n    when = local.os_family[each.key] == \"redhat\"",
+		"step \"debian_extra\" {\n    when = local.os_family[each.key] == \"debian\"",
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %q in\n%s", want, hcl)
+		}
+	}
+	// A family's file that's missing goes to review, naming it.
+	res, err = ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml":         "- name: Setup\n  include_tasks: \"setup-{{ ansible_os_family }}.yml\"\n",
+		"tasks/setup-Debian.yml": "- name: D\n  copy: {dest: /etc/d, content: x}\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "for RedHat hosts it imports setup-RedHat.yml, which wasn't found") {
+		t.Fatalf("review %+v", res.Review)
+	}
+}
+
+func TestRoleFamilyWhenRefusals(t *testing.T) {
+	include := "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n"
+	vars := map[string]string{"vars/Debian.yml": "a: x\n", "vars/RedHat.yml": "a: y\n"}
+	for want, task := range map[string]string{
+		"no Debian or Red Hat family host meets": "  when: ansible_os_family == 'Archlinux'\n",
+		"would never run":                        "  when: [ansible_os_family == 'Debian', ansible_os_family == 'RedHat']\n",
+		"uses when":                              "  when: ansible_os_family == 'Debian' and x\n",
+	} {
+		files := map[string]string{"tasks/main.yml": include + "- name: T\n  copy: {dest: /etc/t, content: x}\n" + task}
+		for k, v := range vars {
+			files[k] = v
+		}
+		res, err := ConvertRole(writeRole(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, want) {
+			t.Errorf("%s: review %+v", want, res.Review)
+		}
 	}
 }
 
