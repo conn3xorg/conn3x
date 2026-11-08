@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/opentofu/opentofu/internal/command"
 	"github.com/opentofu/opentofu/internal/command/arguments"
@@ -37,6 +38,8 @@ Exits 0 when nothing drifted, 2 when something did, and 1 on errors. It takes th
 	// Declaring plan's options lets the CLI accept them; the refresh-only
 	// plan run below parses them for real.
 	view := arguments.BindPlan(&cmd.CommandLine).View
+	var reportPath string
+	cmd.CommandLine.StringVar(&reportPath, "report", "", reportFlagHelp).SetDisplay("=run.json")
 	cmd.Run = func(m command.Meta) int {
 		if view.ViewType == arguments.ViewJSON {
 			fmt.Fprintln(stderr, "Error: drift has no -json output. For machine-readable drift, run conn3x plan -refresh-only -json.")
@@ -44,7 +47,15 @@ Exits 0 when nothing drifted, 2 when something did, and 1 on errors. It takes th
 		}
 		// -chdir has already moved conn3x; the plan starts where conn3x did
 		// and applies the same -chdir itself.
-		return runDrift(os.Args[1:], m.WorkingDir.OriginalWorkingDir(), stdout, stderr)
+		started := time.Now()
+		code, rep := runDrift(withoutReport(os.Args[1:]), m.WorkingDir.OriginalWorkingDir(), stdout, stderr)
+		if reportPath != "" && rep != nil {
+			if err := writeReport(reportPath, driftToReport(*rep, code, started)); err != nil {
+				fmt.Fprintf(stderr, "Error: writing the report: %s\n", err)
+				return 1
+			}
+		}
+		return code
 	}
 	return cmd
 }
@@ -105,30 +116,30 @@ func runPlan(plan *exec.Cmd, errOut io.Writer) (driftReport, int, error) {
 	return r, code, nil
 }
 
-func runDrift(args []string, dir string, out, errOut io.Writer) int {
+func runDrift(args []string, dir string, out, errOut io.Writer) (int, *driftReport) {
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(errOut, "Error: finding the conn3x binary: %s\n", err)
-		return 1
+		return 1, nil
 	}
 	r, planCode, err := runPlan(driftPlan(self, dir, args), errOut)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error: %s\n", err)
-		return 1
+		return 1, nil
 	}
 	if len(r.changedCloud) > 0 && planCode != 1 && len(r.errors) == 0 {
 		confirm, confirmCode, err := runPlan(driftConfirmPlan(self, dir, args), errOut)
 		if err != nil {
 			fmt.Fprintf(errOut, "Error: %s\n", err)
-			return 1
+			return 1, nil
 		}
 		if confirmCode == 1 || len(confirm.errors) > 0 {
 			r.errors = append(r.errors, confirm.errors...)
-			return reportDrift(r, 1, out)
+			return reportDrift(r, 1, out), &r
 		}
 		r, planCode = r.confirmed(confirm.planned, planCode)
 	}
-	return reportDrift(r, planCode, out)
+	return reportDrift(r, planCode, out), &r
 }
 
 // reportDrift writes the report for a finished plan and returns the exit code.

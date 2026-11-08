@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.conn3x.org/schemas/report-1.json",
+  "title": "Conn3x run report, format version 1",
+  "description": "What conn3x apply -report and conn3x drift -report write. Fields are only added within a format version. No attribute values are included.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "conn3x_version", "command", "started", "finished", "success", "hosts", "cloud", "drift", "errors"],
+  "properties": {
+    "format_version": {"type": "string", "enum": ["1"]},
+    "conn3x_version": {"type": "string", "description": "The Conn3x release that wrote it, such as v0.9.1."},
+    "command": {"type": "string", "enum": ["apply", "drift"]},
+    "started": {"type": "string", "format": "date-time"},
+    "finished": {"type": "string", "format": "date-time"},
+    "success": {"type": "boolean", "description": "Whether the command exited without an error."},
+    "hosts": {
+      "type": "object",
+      "description": "Each host's steps, by the host's key in the circuit's hosts.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["steps"],
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["step", "address", "module", "action", "changed", "status"],
+              "properties": {
+                "step": {"type": "string", "description": "circuit.step, after any module path."},
+                "item": {"type": "string", "description": "The for_each key, in a looping step."},
+                "address": {"type": "string"},
+                "module": {"type": "string", "description": "The step's module, such as file or package."},
+                "action": {"type": "string", "enum": ["create", "update", "delete", "replace", "move", "import", "remove"]},
+                "changed": {"type": "boolean"},
+                "status": {"type": "string", "enum": ["ok", "failed", "skipped"]},
+                "reason": {"type": "string", "description": "Why it was skipped."},
+                "seconds": {"type": "number"},
+                "error": {"type": "string", "description": "The error as the terminal printed it."}
+              }
+            }
+          }
+        }
+      }
+    },
+    "cloud": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["address", "action", "status"],
+        "properties": {
+          "address": {"type": "string"},
+          "action": {"type": "string", "enum": ["create", "update", "delete", "replace", "move", "import", "remove"]},
+          "status": {"type": "string", "enum": ["ok", "failed", "skipped"]},
+          "reason": {"type": "string"},
+          "seconds": {"type": "number"},
+          "error": {"type": "string"}
+        }
+      }
+    },
+    "drift": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["address", "kind"],
+        "properties": {
+          "address": {"type": "string"},
+          "host": {"type": "string"},
+          "kind": {"type": "string", "enum": ["changed", "gone"]}
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "description": "Every error, as the terminal printed it.",
+      "items": {"type": "string"}
+    }
+  }
+}
