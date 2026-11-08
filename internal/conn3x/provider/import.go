@@ -71,6 +71,7 @@ var importable = map[string]struct {
 	"conn3x_mount":          {pathID("mount"), notNull, "mount %s", hasMount},
 	"conn3x_repository":     {nameID("repository", nil), notNull, "repository %s", hasRepository},
 
+	"conn3x_windows_file":           {pathID(""), notNull, "file %s", nil},
 	"conn3x_windows_directory":      {pathID("windows_directory"), notNull, "directory %s", nil},
 	"conn3x_windows_service":        {nameID("windows_service", nil), notNull, "service %s", hasWinService},
 	"conn3x_windows_registry_value": {keysID("windows_registry_value", "key", "name"), notNull, "registry value %s", hasWinRegistry},
@@ -311,7 +312,17 @@ func (p *Provider) readExisting(ctx context.Context, typeName, rawID string) (st
 	if !kind.exists(read.NewState) {
 		return missing()
 	}
-	return adopted(typeName, read.NewState), id.Key, "", diags
+	state = adopted(typeName, read.NewState)
+	if fill, ok := importFill[typeName]; ok {
+		h, err := dialConnection(ctx, prior.GetAttr("ssh"))
+		if err == nil {
+			state, err = fill(ctx, h, state)
+		}
+		if err != nil {
+			return cty.NilVal, id.Key, "", diags.Append(err)
+		}
+	}
+	return state, id.Key, "", diags
 }
 
 // importPrior decodes an import ID into the state a read starts from.
@@ -370,6 +381,9 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 		vals["state"] = cty.StringVal(string(pkg.Present)) // what planPackage defaults it to
 	}
 	if id.WriteOnly {
+		if typeName == "conn3x_windows_file" {
+			return id, cty.NilVal, fmt.Errorf("a windows_file step with content_wo can't import yet; import it with content, or leave import off and let the step write it")
+		}
 		if typeName != "conn3x_file" {
 			return id, cty.NilVal, fmt.Errorf("write_only applies to files only")
 		}

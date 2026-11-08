@@ -1452,3 +1452,31 @@ func TestSystemReadsChangeNothing(t *testing.T) {
 		t.Error("a read made a key")
 	}
 }
+
+// An import reads a file's text, and only that: no binary, nothing too big,
+// nothing through a link.
+func TestReadFileContentForImport(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := tempDir(t, c)
+	run(t, c, `param($A)
+[IO.File]::WriteAllText((Join-Path $A.d 'text.ini'), "mode=on`+"`"+`n")
+[IO.File]::WriteAllBytes((Join-Path $A.d 'blob.bin'), [byte[]](0xff, 0xfe, 0x00))
+$f = [IO.File]::Create((Join-Path $A.d 'big.txt')); $f.SetLength(2MB); $f.Close()
+[void][IO.Directory]::CreateDirectory((Join-Path $A.d 'real'))
+[IO.File]::WriteAllText((Join-Path $A.d 'real\inside.txt'), 'x')
+cmd /c mklink /J (Join-Path $A.d 'junction') (Join-Path $A.d 'real') | Out-Null`, map[string]any{"d": dir})
+	if got, err := windows.ReadFileContent(ctx, c, dir+`\text.ini`); err != nil || got != "mode=on\n" {
+		t.Errorf("text: %q, %v", got, err)
+	}
+	for name, want := range map[string]string{
+		`\blob.bin`:            "isn't UTF-8 text",
+		`\big.txt`:             "over the 1048576",
+		`\junction\inside.txt`: "a folder on the way to it is a link",
+		`\real`:                "it is a folder",
+	} {
+		if _, err := windows.ReadFileContent(ctx, c, dir+name); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", name, err, want)
+		}
+	}
+}

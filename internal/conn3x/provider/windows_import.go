@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -41,4 +42,27 @@ func hasWinUser(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 func hasWinGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	a, err := windows.ReadGroup(ctx, h.client, winGroupFrom(v))
 	return a.Exists, err
+}
+
+// importFill adds to an import's state what the read leaves out but the
+// step sets, so the first plan compares the host with the step.
+var importFill = map[string]func(context.Context, *hostConn, cty.Value) (cty.Value, error){
+	"conn3x_windows_file": fillWinFile,
+}
+
+// fillWinFile reads the file's content, which a windows_file read never
+// does: without it, an adopted file plans an update that changes nothing
+// but still fires its handlers. The read's hash must match what it got.
+func fillWinFile(ctx context.Context, h *hostConn, v cty.Value) (cty.Value, error) {
+	path := v.GetAttr("path").AsString()
+	content, err := windows.ReadFileContent(ctx, h.client, path)
+	if err != nil {
+		return cty.NilVal, err
+	}
+	if sum := v.GetAttr("sha256"); known(sum) && sum.AsString() != digest(content) {
+		return cty.NilVal, fmt.Errorf("%s changed while it was being imported; plan again", path)
+	}
+	vals := v.AsValueMap()
+	vals["content"] = cty.StringVal(content)
+	return cty.ObjectVal(vals), nil
 }

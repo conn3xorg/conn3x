@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/windows/ps"
 )
@@ -358,4 +359,37 @@ func ValidateEntries(entries []Entry) error {
 		}
 	}
 	return nil
+}
+
+// maxImportContent caps what an import reads of a file: content goes into
+// state, as with a Linux file step.
+const maxImportContent = 1 << 20
+
+// ReadFileContent reads a file's text, for import. Everywhere else Conn3x
+// reads only a file's hash. It refuses links, binary content and files over
+// 1 MiB, saying why.
+func ReadFileContent(ctx context.Context, r ps.Runner, path string) (string, error) {
+	res, err := ps.Read(ctx, r, script("read_file_content.ps1"), map[string]any{"path": path, "max": maxImportContent})
+	if err != nil {
+		return "", err
+	}
+	var a struct {
+		OK      bool   `json:"ok"`
+		Why     string `json:"why"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(res.Value, &a); err != nil {
+		return "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	if !a.OK {
+		return "", fmt.Errorf("%s can't be imported as content: %s", path, a.Why)
+	}
+	b, err := base64.StdEncoding.DecodeString(a.Content)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	if !utf8.Valid(b) {
+		return "", fmt.Errorf("%s can't be imported as content: it isn't UTF-8 text", path)
+	}
+	return string(b), nil
 }

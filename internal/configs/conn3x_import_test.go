@@ -130,6 +130,10 @@ func TestStepImportSyncedModules(t *testing.T) {
       url  = "https://repo.example.com/"
       key  = "k"
     }`,
+		"conn3x_windows_file": `windows_file {
+      path    = "C:/app/app.ini"
+      content = "x"
+    }`,
 		"conn3x_windows_directory": `windows_directory {
       path = "C:/app"
     }`,
