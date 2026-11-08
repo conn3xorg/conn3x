@@ -23,13 +23,16 @@ It takes at least `"5s"` and anything under `"4m"`, so the confirm always lands 
 
 From the next release, the steps for a switch share one session per apply. Each step adds its lines, nothing goes live until the last one is in, and then one commit, one wait and one confirm make the lot live together. Ten changed steps cost one `confirm_after`, not ten. On cEOS-lab, ten steps with `confirm_after = "10s"` took 13.5 seconds, where one session per step took 97.
 
-The plan shows one more line per switch, `conn3x_eos_commit.<circuit>__commit`, and it changes only when one of the circuit's `eos_*` steps does. A few things follow from sharing:
+The plan shows two more lines per switch. `conn3x_eos_commit.<circuit>__commit` changes only when one of the circuit's `eos_*` steps does. `conn3x_eos_removals.<circuit>__removals` does nothing until you destroy the circuit, and then it commits every removal in one go: seven VLAN steps came off cEOS-lab in 13.2 seconds instead of about 70. A few things follow from sharing:
 
 - If any step fails, the whole session is aborted, the steps before it included, and nothing on that switch changes.
 - A lockout rolls back the whole batch: every step of that apply on the switch, not only the one that cut Conn3x off.
 - EOS commits a session by swapping running-config for the session's copy. So if someone edits the switch by hand while the apply is adding lines, Conn3x refuses to commit rather than undo the edit. Nothing changes; apply again.
 - `-target` on a single `eos_*` step leaves the commit out, and the staged lines are dropped when the run ends. Target `conn3x_eos_commit.<circuit>__commit` instead: it brings every step with it.
-- A removed step still commits on its own, after the circuit's commit. Destroying a circuit pays the wait once per removal.
+- A step you take out of a circuit that stays still commits its removal on its own, after the circuit's commit.
+- On destroy, Conn3x forgets each step as its removal goes into the session. If that last commit fails, the error lists the lines it couldn't remove, and you take them off by hand.
+- A circuit applied by an older Conn3x has no `__removals` yet. The next apply adds it; until then, destroy pays the wait once per removal.
+- Two runs at one switch at once can't both win. The second one aborts the first one's session, and the first run stops with an error saying so, with nothing of it live.
 
 ## Example usage
 

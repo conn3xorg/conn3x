@@ -5,6 +5,7 @@ package eos
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -22,7 +23,27 @@ type fakeSwitch struct {
 	refuse   string
 	down     bool    // every command fails, as on a connection that's gone
 	running  *string // show running-config; nil is ""
-	sessions string  // show configuration sessions | json; "" is none
+	sessions string  // show configuration sessions | json; "" is the conn3x sessions it was sent
+}
+
+// opened is, per test's sent, the sessions entered and not yet aborted or
+// committed: show configuration sessions | json when sessions is "". It
+// outlives a test's sent = nil.
+var opened = map[*[]string]map[string]any{}
+
+func track(sent *[]string, what string) {
+	f := strings.Fields(what)
+	if len(f) < 3 || f[0] != "configure" || f[1] != "session" {
+		return
+	}
+	if opened[sent] == nil {
+		opened[sent] = map[string]any{}
+	}
+	if len(f) > 3 && (f[3] == "abort" || f[3] == "commit") {
+		delete(opened[sent], f[2])
+	} else {
+		opened[sent][f[2]] = map[string]string{"state": "pending"}
+	}
 }
 
 func (f fakeSwitch) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
@@ -34,6 +55,7 @@ func (f fakeSwitch) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.R
 		what = strings.TrimSpace(string(stdin))
 	}
 	*f.sent = append(*f.sent, f.name+": "+strings.ReplaceAll(what, "\n", " / "))
+	track(f.sent, what)
 	if f.down {
 		return ssh.Result{}, errors.New("connection lost")
 	}
@@ -45,7 +67,8 @@ func (f fakeSwitch) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.R
 		return ssh.Result{Stdout: []byte("+hostname leaf1\n")}, nil
 	case cmd == "show configuration sessions | json":
 		if f.sessions == "" {
-			return ssh.Result{Stdout: []byte(`{"sessions": {}, "maxOpenSessions": 5}`)}, nil
+			b, _ := json.Marshal(map[string]any{"sessions": opened[f.sent], "maxOpenSessions": 5})
+			return ssh.Result{Stdout: b}, nil
 		}
 		return ssh.Result{Stdout: []byte(f.sessions)}, nil
 	case cmd == "show running-config" && f.running != nil:
@@ -79,13 +102,14 @@ func TestApplyCommitsConfirmsAndSaves(t *testing.T) {
 	if diff != "+hostname leaf1\n" {
 		t.Errorf("diff = %q", diff)
 	}
-	if len(sent) != 7 {
+	if len(sent) != 8 {
 		t.Fatalf("sent %d commands: %q", len(sent), sent)
 	}
 	name := strings.Fields(sent[1])[3]
 	want := []string{
 		"pool: show configuration sessions | json",
 		"pool: configure session " + name + " / hostname leaf1 / end",
+		"pool: show configuration sessions | json",
 		"pool: show running-config",
 		"pool: show session-config named " + name + " diffs",
 		"pool: configure session " + name + " commit timer 00:05:00",
@@ -329,5 +353,43 @@ func TestOpenChecksOtherSessions(t *testing.T) {
 	}
 	if got := quiet(sent); len(got) != 1 || got[0] != "pool: configure session conn3x-bbbb abort" {
 		t.Errorf("sent %q, want only the leftover conn3x session aborted", got)
+	}
+}
+
+// A second run opening a session aborts the first run's pending one. The
+// first run must then fail, not enter the gone session again, which would
+// start a new one holding only its later lines.
+func TestSessionTakenByAnotherRun(t *testing.T) {
+	var sent []string
+	d := fakeSwitch{name: "pool", sent: &sent}
+	a, _ := Open(context.Background(), d, "")
+	if err := a.Add(context.Background(), d, []string{"vlan 10"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(context.Background(), d, ""); err != nil { // the other run
+		t.Fatal(err)
+	}
+	err := a.Add(context.Background(), d, []string{"vlan 20"})
+	if err == nil || !strings.Contains(err.Error(), "another Conn3x run") {
+		t.Fatalf("Add: err = %v", err)
+	}
+	sent = nil
+	if _, err := a.Commit(context.Background(), d, reconnectTo(d, nil), time.Millisecond); err != nil {
+		t.Fatalf("Commit after the failed Add: %v", err) // nothing left to commit
+	}
+	if len(sent) != 0 {
+		t.Errorf("sent %q after the session was gone", sent)
+	}
+
+	b, _ := Open(context.Background(), d, "")
+	_ = b.Add(context.Background(), d, []string{"vlan 30"})
+	_, _ = Open(context.Background(), d, "")
+	sent = nil
+	_, err = b.Commit(context.Background(), d, reconnectTo(d, nil), time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "another Conn3x run") {
+		t.Fatalf("Commit: err = %v", err)
+	}
+	if got := quiet(sent); len(got) != 0 {
+		t.Errorf("sent %q, want nothing committed or aborted", got)
 	}
 }
