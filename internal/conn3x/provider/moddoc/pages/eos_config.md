@@ -19,9 +19,9 @@ ssh {
 
 It takes at least `"5s"` and anything under `"4m"`, so the confirm always lands before the five-minute revert.
 
-### One commit per switch, arriving in the next release
+### One commit per switch
 
-From the next release, the steps for a switch share one session per apply. Each step adds its lines, nothing goes live until the last one is in, and then one commit, one wait and one confirm make the lot live together. Ten changed steps cost one `confirm_after`, not ten. On cEOS-lab, ten steps with `confirm_after = "10s"` took 13.5 seconds, where one session per step took 97.
+Since v0.10.0, the steps for a switch share one session per apply. Each step adds its lines, nothing goes live until the last one is in, and then one commit, one wait and one confirm make the lot live together. Ten changed steps cost one `confirm_after`, not ten. On cEOS-lab, ten steps with `confirm_after = "10s"` took 13.5 seconds, where one session per step took 97.
 
 The plan shows two more lines per switch. `conn3x_eos_commit.<circuit>__commit` changes only when one of the circuit's `eos_*` steps does. `conn3x_eos_removals.<circuit>__removals` does nothing until you destroy the circuit, and then it commits every removal in one go: seven VLAN steps came off cEOS-lab in 13.2 seconds instead of about 70. A few things follow from sharing:
 
