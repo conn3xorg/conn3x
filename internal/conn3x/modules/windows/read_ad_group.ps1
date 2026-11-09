@@ -68,10 +68,13 @@ foreach ($m in @($all | Where-Object { $_ -match '[\\@]' })) {
     throw
   }
   $p = @{ dn = ''; sid = $sid }
-  # objectSid is binary, so a filter on the SID's text may not match; binding
-  # by SID asks the global catalog for the object itself. One outside the
-  # forest isn't there, and keeps only its SID.
-  try { $p.dn = [string]([adsi]"GC://localhost/<SID=$sid>").distinguishedName } catch { $p.dn = '' }
+  # AD takes a SID's text in an objectSid filter. Seen on Azure on Server
+  # 2025: this search found a child-domain user, where binding GC:// to
+  # <SID=...> returned nothing. One outside the forest isn't in the global
+  # catalog, and keeps only its SID.
+  $gc.Filter = "(objectSid=$sid)"
+  $found = $gc.FindAll()
+  try { foreach ($r in $found) { $p.dn = [string]$r.Properties['distinguishedname'][0] } } finally { $found.Dispose() }
   $out.wanted[$m] = $p
 }
 if (-not $g.Count) { return $out }
