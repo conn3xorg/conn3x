@@ -157,6 +157,14 @@ func TestStepImportSyncedModules(t *testing.T) {
 		"conn3x_windows_group": `windows_group {
       name = "AppOps"
     }`,
+		"conn3x_postgresql_database": `postgresql_database {
+      name  = "app"
+      owner = "app"
+    }`,
+		"conn3x_postgresql_role": `postgresql_role {
+      name        = "app"
+      password_wo = "s3cret"
+    }`,
 		"conn3x_windows_package": `windows_package {
       product_code = "{23170F69-40C1-2702-2501-000001000000}"
       source       = "C:/install/7z.msi"

@@ -149,6 +149,10 @@ func run(ctx context.Context, r modules.Runner, sql string) (string, error) {
 	if res.ExitCode != 0 {
 		msg := strings.TrimSpace(string(res.Stderr) + string(res.Stdout))
 		switch {
+		// runuser is in /usr/sbin, which a login other than root doesn't
+		// have on its PATH on Debian and Ubuntu, so the shell can't find it.
+		case strings.Contains(msg, "runuser: not found") || strings.Contains(msg, "runuser: command not found"):
+			return "", errors.New("running psql as the postgres user needs root; set become = true in the ssh block")
 		case res.ExitCode == 127 || strings.Contains(msg, "psql: command not found") || strings.Contains(msg, "No such file or directory") && strings.Contains(msg, "psql"):
 			return "", errors.New("psql isn't installed on the host; install PostgreSQL before this step")
 		case strings.Contains(msg, "may not be used by non-root users") || strings.Contains(msg, "cannot set groups"):

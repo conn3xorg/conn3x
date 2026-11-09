@@ -18,6 +18,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/firewall"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mount"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/postgresql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/selinux"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/service"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
@@ -70,6 +71,9 @@ var importable = map[string]struct {
 	"conn3x_sysctl":         {nameID("sysctl", nil), notNull, "kernel parameter %s", hasSysctl},
 	"conn3x_mount":          {pathID("mount"), notNull, "mount %s", hasMount},
 	"conn3x_repository":     {nameID("repository", nil), notNull, "repository %s", hasRepository},
+
+	"conn3x_postgresql_database": {nameID("postgresql_database", nil), notNull, "PostgreSQL database %s", hasPgDatabase},
+	"conn3x_postgresql_role":     {nameID("postgresql_role", nil), notNull, "PostgreSQL role %s", hasPgRole},
 
 	"conn3x_windows_file":           {pathID(""), notNull, "file %s", nil},
 	"conn3x_windows_directory":      {pathID("windows_directory"), notNull, "directory %s", nil},
@@ -190,6 +194,22 @@ func hasTimer(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 func hasSysctl(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	res, err := h.Run(ctx, "sysctl -n -- "+ssh.Quote(v.GetAttr("name").AsString()), nil)
 	return err == nil && res.ExitCode == 0, err
+}
+
+// hasPgDatabase: the server has a database of that name. Its owner and
+// encoding are what the step then manages. Reading it runs psql as the
+// postgres user, so it needs become = true, and says so without it.
+func hasPgDatabase(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	s, err := postgresql.ReadDatabase(ctx, h, v.GetAttr("name").AsString())
+	return s.Exists, err
+}
+
+// hasPgRole: the server has a role of that name. Its password stays as it
+// is: password_wo never goes into an import ID, so the role keeps the one
+// it has until a step sets one.
+func hasPgRole(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	s, err := postgresql.ReadRole(ctx, h, v.GetAttr("name").AsString())
+	return s.Exists, err
 }
 
 // hasMount: fstab has an entry for the path, or something is mounted there.

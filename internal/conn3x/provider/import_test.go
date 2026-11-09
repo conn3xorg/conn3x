@@ -57,6 +57,8 @@ func TestImportPriorPerModule(t *testing.T) {
 		{"conn3x_ufw_rule", `{"action":"allow","port":"22/tcp"}`, "203.0.113.10:2222:ufw:allow:22/tcp:", nil},
 		{"conn3x_selinux_boolean", `{"name":"httpd_can_network_connect","value":true}`, "203.0.113.10:2222:selinux_boolean:httpd_can_network_connect", nil},
 		{"conn3x_selinux_fcontext", `{"target":"/srv/www(/.*)?","setype":"httpd_sys_content_t"}`, "203.0.113.10:2222:selinux_fcontext:/srv/www(/.*)?", nil},
+		{"conn3x_postgresql_database", `{"name":"app","owner":"app","encoding":"UTF8"}`, "203.0.113.10:2222:postgresql_database:app", nil},
+		{"conn3x_postgresql_role", `{"name":"App","attributes":["CREATEDB"]}`, "203.0.113.10:2222:postgresql_role:App", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
 			_, v, err := importPrior(tc.typeName, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+tc.args+`}`)

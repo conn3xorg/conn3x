@@ -1,0 +1,31 @@
+circuit "db" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "deploy"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+    become           = {{.Become}}
+  }
+
+  step "role" {
+    import = true
+    postgresql_role {
+      name       = "app"
+      attributes = ["CREATEDB"]
+{{- if .Password}}
+      password_wo = "{{.Password}}"
+{{- end}}
+    }
+  }
+
+  step "database" {
+    import = true
+    postgresql_database {
+      name     = "{{.Database}}"
+      owner    = "app"
+      encoding = "UTF8"
+    }
+  }
+}

@@ -58,6 +58,9 @@ var importModules = map[string]string{
 	"conn3x_selinux_boolean":  "selinux_boolean",
 	"conn3x_selinux_fcontext": "selinux_fcontext",
 
+	"conn3x_postgresql_database": "postgresql_database",
+	"conn3x_postgresql_role":     "postgresql_role",
+
 	"conn3x_windows_file":           "windows_file",
 	"conn3x_windows_directory":      "windows_directory",
 	"conn3x_windows_service":        "windows_service",

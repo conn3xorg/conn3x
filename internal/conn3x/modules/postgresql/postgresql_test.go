@@ -123,14 +123,21 @@ func TestApplyDatabaseEncoding(t *testing.T) {
 
 // What psql says when it can't run is turned into what to do about it.
 func TestRunExplainsFailures(t *testing.T) {
-	for stderr, want := range map[string]string{
-		"runuser: may not be used by non-root users": "set become = true",
-		"runuser: user postgres does not exist":      "install the PostgreSQL server",
-		`psql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed`: "psql: error: connection",
+	for _, tc := range []struct {
+		stderr string
+		code   int
+		want   string
+	}{
+		{"runuser: may not be used by non-root users", 1, "set become = true"},
+		// Debian's PATH for a login other than root has no /usr/sbin.
+		{"sh: 1: runuser: not found", 127, "set become = true"},
+		{"runuser: failed to execute psql: No such file or directory", 127, "psql isn't installed"},
+		{"runuser: user postgres does not exist", 1, "install the PostgreSQL server"},
+		{`psql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed`, 2, "psql: error: connection"},
 	} {
-		s := &server{reply: func(string) (string, string, int) { return "", stderr, 1 }}
-		if _, err := ReadRole(context.Background(), s, "app"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: got %v", stderr, err)
+		s := &server{reply: func(string) (string, string, int) { return "", tc.stderr, tc.code }}
+		if _, err := ReadRole(context.Background(), s, "app"); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v", tc.stderr, err)
 		}
 	}
 }
