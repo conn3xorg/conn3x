@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -74,7 +75,7 @@ func ConvertWith(path string, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("%s: a playbook is a list of plays", path)
 	}
 	c := &converter{dir: filepath.Dir(path), file: filepath.Base(path), inv: opts.Inventory, roleCalls: opts.Roles,
-		roles: map[string]*convertedRole{}, roleDirs: map[string]int{}, converting: map[string]bool{}, modules: map[string]int{}, callWhy: map[*yaml.Node]string{}}
+		roles: map[string]*convertedRole{}, roleDirs: map[string]int{}, converting: map[string]bool{}, called: map[string]bool{}, modules: map[string]int{}, callWhy: map[*yaml.Node]string{}}
 	return c.run(doc.Content[0]), nil
 }
 
@@ -96,7 +97,8 @@ type converter struct {
 	// those being converted, to catch a role that depends on itself.
 	ran        map[string]bool
 	converting map[string]bool
-	depsCalled bool // set on a role's converter when its caller calls its dependencies
+	called     map[string]bool // role directories a module calls
+	depsCalled bool            // set on a role's converter when its caller calls its dependencies
 	res        Result
 	hostVars   map[string]bool // groups that still need a hosts variable
 	needUser   bool
@@ -154,6 +156,21 @@ func (c *converter) run(plays *yaml.Node) Result {
 		}
 	}
 	c.res.HCL = hclwrite.Format(f.Bytes())
+	// A dependency converted for a role that then couldn't be called has no
+	// module calling it, so neither it nor what it left for review is kept.
+	for _, r := range c.roles {
+		if c.called[r.dir] {
+			continue
+		}
+		for p := range c.res.Files {
+			if strings.HasPrefix(p, r.dir+"/") {
+				delete(c.res.Files, p)
+			}
+		}
+		c.res.Review = slices.DeleteFunc(c.res.Review, func(i Issue) bool { return strings.HasPrefix(i.File, r.from) })
+		c.res.Notes = slices.DeleteFunc(c.res.Notes, func(i Issue) bool { return strings.HasPrefix(i.File, r.from) })
+		c.res.Converted -= r.converted
+	}
 	return c.res
 }
 

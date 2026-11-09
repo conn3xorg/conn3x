@@ -224,3 +224,48 @@ func TestConvertPlayRolesDependenciesRefused(t *testing.T) {
 		}
 	}
 }
+
+// A role whose meta/ sets allow_duplicates runs each time it's listed, and
+// two calls that pass different lists aren't the same call.
+func TestConvertPlayRolesRunsAgain(t *testing.T) {
+	res := convertWithMeta(t, "- hosts: web\n  roles:\n    - common\n    - common\n    - role: web\n      vars:\n        ports: [80]\n    - role: web\n      vars:\n        ports: [443]\n", map[string]string{
+		"common": "allow_duplicates: true\n",
+		"web":    "",
+	})
+	hcl := string(res.HCL)
+	if strings.Count(hcl, `source = "./circuit-common"`) != 2 || strings.Count(hcl, `source = "./circuit-web"`) != 2 {
+		t.Errorf("runs:\n%s", hcl)
+	}
+}
+
+// What a dependency in meta/ passes is reported against meta/, and a
+// dependency of a role that can't be called isn't written.
+func TestConvertPlayRolesDependencyFiles(t *testing.T) {
+	res := convertWithMeta(t, "- hosts: web\n  roles:\n    - app\n    - db\n", map[string]string{
+		"common": "",
+		"app":    "dependencies:\n  - role: common\n    vars:\n      web_port: \"{{ p }}\"\n",
+		"db":     "dependencies:\n  - other\n  - gone\n",
+		"other":  "",
+	})
+	if len(res.Review) != 2 || res.Review[0].File != "roles/app/meta/main.yml" || !strings.Contains(res.Review[1].Reason, "runs the role gone") {
+		t.Errorf("review: %+v", res.Review)
+	}
+	if res.Files["circuit-other/main.circuit.hcl"] != nil || res.Files["circuit-common/main.circuit.hcl"] == nil {
+		t.Errorf("files: %v", len(res.Files))
+	}
+}
+
+// A role beside the playbook, not in roles/, is found as Ansible finds it.
+func TestConvertPlayRolesBesideThePlaybook(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(filepath.Join(dir, "web"), os.DirFS(filepath.Join("testdata", "playroles", "roles", "web"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "p.yml"), []byte("- hosts: web\n  roles:\n    - web\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ConvertWith(filepath.Join(dir, "p.yml"), Options{Roles: true})
+	if err != nil || len(res.Review) != 0 || !strings.Contains(string(res.HCL), `module "web"`) {
+		t.Fatalf("%v %+v\n%s", err, res.Review, res.HCL)
+	}
+}
