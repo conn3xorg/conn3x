@@ -218,6 +218,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	var imports []*Import
 	steps := map[string]hcl.Range{}
 	var chain []*Resource                 // the steps the next step waits for
+	var earlier []*Resource               // every step so far, for a reboot that watches them
 	notifiers := map[string][]*Resource{} // handler name => steps that notify it
 	notifyRefs := map[string][]hcl.Range{}
 	for _, step := range content.Blocks.OfType("step") {
@@ -253,6 +254,14 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			imports = append(imports, imp)
 		}
 		if r != nil {
+			// A reboot that only runs when one is pending learns when an
+			// earlier step is about to change, since that step can leave a
+			// reboot pending after the plan read the marker.
+			if body, ok := r.Config.(*hclsyntax.Body); ok && r.Type == "conn3x_windows_reboot" && len(earlier) > 0 {
+				rng := step.DefRange
+				body.Attributes["earlier_revisions"] = &hclsyntax.Attribute{Name: "earlier_revisions", Expr: hostRevisions(earlier, rng), SrcRange: rng, NameRange: rng, EqualsRange: rng}
+			}
+			earlier = append(earlier, r)
 			resources = append(resources, r)
 			chain = chainAfter(chain, r, perHost)
 			notified, notifyDiags := stepNotify(step)

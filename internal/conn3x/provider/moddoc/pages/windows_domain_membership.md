@@ -44,7 +44,7 @@ step "joined" {
 
 **The OU.** `ou` is the distinguished name of the OU the computer's account goes in, such as `OU=Servers,OU=Lab,DC=lab,DC=example,DC=com`. Unset, it goes in `CN=Computers`. Make the OU first, with a [`windows_ad_ou`](windows_ad_ou.md) step: a missing one fails the join before anything changes on the host, with an error naming the OU. Joining into an OU doesn't need rights on it as long as the domain's defaults stand: any domain user may add up to 10 computers anywhere, through the "Add workstations to domain" right and `ms-DS-MachineAccountQuota`. Where the quota is 0, an account without rights on the OU fails with AD's "You have exceeded the maximum number of computer accounts you are allowed to create in this domain".
 
-**Joining again.** If the host leaves the domain behind Conn3x's back, the next plan joins it again. When the reboot step after it is already in state, it plans from what the refresh saw, before the join, so the reboot comes in the apply after: run `conn3x plan` again and it lists it.
+**Joining again.** If the host leaves the domain behind Conn3x's back, the next plan joins it again, and a `windows_reboot` step after it with `only_if_pending` plans a check: the join leaves a reboot pending that the refresh couldn't see yet, so apply looks for it and reboots in the same run.
 
 **Tested.** On Azure, Windows Server 2022 Datacenter (Desktop Experience, build 20348.5773) joined a Windows Server 2025 domain into an OU, and the second plan was clean.
 

@@ -1159,3 +1159,60 @@ func TestEOSCircuitLowersOneCommit(t *testing.T) {
 		}
 	}
 }
+
+// A windows_reboot step watches the revisions of every step before it in
+// its circuit, so it can check for a reboot one of them leaves pending. A
+// reboot that comes first has nothing to watch.
+func TestWindowsRebootWatchesEarlierSteps(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": `
+circuit "win" {
+  hosts = { w1 = "203.0.113.10" }
+  ssh {
+    user = "azadmin"
+  }
+
+  step "first" {
+    windows_reboot {
+      only_if_pending = true
+    }
+  }
+
+  step "join" {
+    windows_feature {
+      name = "Web-Server"
+    }
+  }
+
+  step "dir" {
+    windows_directory {
+      path = "C:/app"
+    }
+  }
+
+  step "after" {
+    windows_reboot {
+      only_if_pending = true
+    }
+  }
+}
+`})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	if _, ok := mod.ManagedResources["conn3x_windows_reboot.win__first"].Config.(*hclsyntax.Body).Attributes["earlier_revisions"]; ok {
+		t.Error("the first step watches earlier steps")
+	}
+	a, ok := mod.ManagedResources["conn3x_windows_reboot.win__after"].Config.(*hclsyntax.Body).Attributes["earlier_revisions"]
+	if !ok {
+		t.Fatal("the reboot after two steps watches nothing")
+	}
+	var refs []string
+	for _, tr := range a.Expr.Variables() {
+		if tr.RootName() != "each" {
+			refs = append(refs, tr.RootName()+"."+tr[1].(hcl.TraverseAttr).Name)
+		}
+	}
+	if got := strings.Join(refs, " "); got != "conn3x_windows_reboot.win__first conn3x_windows_feature.win__join conn3x_windows_directory.win__dir" {
+		t.Errorf("watches %s", got)
+	}
+}

@@ -218,13 +218,14 @@ func winRebootSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "Experimental. Reboots a Windows host when created and whenever triggers change, then waits for it to come back. With only_if_pending it reboots only when Windows is waiting for one. Removing it does nothing.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":              {Type: cty.String, Computed: true},
-			"revision":        revisionAttr(),
-			"triggers":        {Type: cty.Map(cty.String), Optional: true, Description: "Reboot again whenever any of these values change."},
-			"timeout":         {Type: cty.String, Optional: true, Description: "How long to wait for the host to come back. Defaults to \"10m\"."},
-			"only_if_pending": {Type: cty.Bool, Optional: true, Description: "Reboot only when Windows reports a reboot is pending, and plan one whenever a refresh finds that, so a reboot a failed run missed still happens."},
-			"pending":         {Type: cty.Bool, Computed: true, Description: "With only_if_pending, whether a reboot was pending at the last refresh."},
-			"boot_id":         {Type: cty.String, Computed: true, Description: "The host's boot ID after the last apply."},
+			"id":                {Type: cty.String, Computed: true},
+			"revision":          revisionAttr(),
+			"triggers":          {Type: cty.Map(cty.String), Optional: true, Description: "Reboot again whenever any of these values change."},
+			"timeout":           {Type: cty.String, Optional: true, Description: "How long to wait for the host to come back. Defaults to \"10m\"."},
+			"only_if_pending":   {Type: cty.Bool, Optional: true, Description: "Reboot only when Windows reports a reboot is pending, and plan one whenever a refresh finds that, so a reboot a failed run missed still happens."},
+			"pending":           {Type: cty.Bool, Computed: true, Description: "With only_if_pending, whether a reboot was pending at the last refresh."},
+			"earlier_revisions": {Type: cty.DynamicPseudoType, Optional: true, Description: "Set by the circuit, so leave it unset: the revisions of the steps before this one. With only_if_pending, a plan that changes any of them checks for a pending reboot at apply time, so a reboot an earlier step leaves pending comes in the same apply."},
+			"boot_id":           {Type: cty.String, Computed: true, Description: "The host's boot ID after the last apply."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -254,8 +255,11 @@ func planWinReboot(req providers.PlanResourceChangeRequest) providers.PlanResour
 		resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("host"))
 		reboot = true
 	case onlyIfPending(req.ProposedNewState):
-		p := req.PriorState.GetAttr("pending")
-		reboot = known(p) && p.True()
+		// An earlier step about to change can leave a reboot pending that
+		// the refresh couldn't see yet; apply checks the marker either way.
+		// State from before earlier_revisions has none, which isn't a change.
+		p, earlier, was := req.PriorState.GetAttr("pending"), vals["earlier_revisions"], req.PriorState.GetAttr("earlier_revisions")
+		reboot = known(p) && p.True() || !earlier.IsWhollyKnown() || !was.IsNull() && !was.RawEquals(earlier)
 	}
 	if reboot {
 		vals["boot_id"] = cty.UnknownVal(cty.String)

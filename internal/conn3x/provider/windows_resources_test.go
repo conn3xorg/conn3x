@@ -71,6 +71,37 @@ func TestWinRebootPlan(t *testing.T) {
 	if p.PlannedState.GetAttr("boot_id").IsKnown() || len(p.RequiresReplace) != 0 {
 		t.Errorf("a pending reboot must plan an update: %#v %v", p.PlannedState, p.RequiresReplace)
 	}
+	// An earlier step about to change, which can leave a reboot pending
+	// after the refresh, plans a check at apply time. State from before
+	// earlier_revisions has none, and that alone plans nothing.
+	vals["pending"] = cty.False
+	revs := func(rs ...string) cty.Value {
+		var vs []cty.Value
+		for _, r := range rs {
+			vs = append(vs, cty.StringVal(r))
+		}
+		return cty.TupleVal(vs)
+	}
+	vals["earlier_revisions"] = revs("a")
+	before := cty.ObjectVal(vals)
+	for name, next := range map[string]cty.Value{"changed": revs("b"), "about to change": cty.TupleVal([]cty.Value{cty.UnknownVal(cty.String)})} {
+		v := before.AsValueMap()
+		v["earlier_revisions"] = next
+		n := cty.ObjectVal(v)
+		if p := r.plan(providers.PlanResourceChangeRequest{PriorState: before, ProposedNewState: n, Config: n}).PlannedState; p.GetAttr("boot_id").IsKnown() {
+			t.Errorf("%s: no check planned", name)
+		}
+	}
+	if p := r.plan(providers.PlanResourceChangeRequest{PriorState: before, ProposedNewState: before, Config: before}).PlannedState; !p.GetAttr("boot_id").IsKnown() {
+		t.Error("unchanged earlier steps planned a check")
+	}
+	old := before.AsValueMap()
+	old["earlier_revisions"] = cty.NullVal(cty.DynamicPseudoType)
+	if p := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.ObjectVal(old), ProposedNewState: before, Config: before}).PlannedState; !p.GetAttr("boot_id").IsKnown() {
+		t.Error("state from before earlier_revisions planned a check")
+	}
+	vals["pending"] = cty.True
+
 	// Without only_if_pending, pending doesn't drive anything.
 	vals["only_if_pending"] = cty.NullVal(cty.Bool)
 	off := cty.ObjectVal(vals)
