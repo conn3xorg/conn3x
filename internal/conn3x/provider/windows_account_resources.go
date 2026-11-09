@@ -126,7 +126,14 @@ func planWinUser(req providers.PlanResourceChangeRequest) providers.PlanResource
 
 // planWithPassword plans a step with a write-only password_wo: null in plan
 // and state, which keep only password_hmac, so a new password plans a change.
+// Names compare without case, as Windows and EOS read them.
 func planWithPassword(req providers.PlanResourceChangeRequest, kind string, settings []string) providers.PlanResourceChangeResponse {
+	return planPassword(req, kind, settings, planSyncedFold)
+}
+
+// planPassword is planWithPassword, planning the rest with plan.
+func planPassword(req providers.PlanResourceChangeRequest, kind string, settings []string,
+	plan func(providers.PlanResourceChangeRequest, string, []string, []string) providers.PlanResourceChangeResponse) providers.PlanResourceChangeResponse {
 	if req.ProposedNewState.IsNull() {
 		return providers.PlanResourceChangeResponse{PlannedState: req.ProposedNewState}
 	}
@@ -157,7 +164,7 @@ func planWithPassword(req providers.PlanResourceChangeRequest, kind string, sett
 		}
 	}
 	req.ProposedNewState = cty.ObjectVal(vals)
-	resp = planSyncedFold(req, kind, []string{"name"}, settings)
+	resp = plan(req, kind, []string{"name"}, settings)
 	if warn != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(warn.Error()))
 	}
