@@ -39,3 +39,19 @@ func TestConvertRoleWritesANewDirectory(t *testing.T) {
 		}
 	}
 }
+
+// A note on a converted step, such as the crontab entry Ansible left, is
+// listed in the summary but doesn't make the run exit 3: convert writes it
+// every time, so a CI loop could never reach zero.
+func TestConvertListsNotesOnConvertedSteps(t *testing.T) {
+	playbook := filepath.Join(t.TempDir(), "p.yml")
+	if err := os.WriteFile(playbook, []byte("- hosts: all\n  tasks:\n    - name: Nightly\n      cron:\n        name: x\n        minute: \"0\"\n        job: \"true\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := runConvert(playbook, "", "", &out, &errOut)
+	want := "Converted the 1 task.\n1 converted step has a note to act on once, also marked TODO(convert):\n  line 3, Nightly: Delete the \"#Ansible: x\" job Ansible left in the user's crontab, or it runs twice.\n"
+	if code != 0 || errOut.String() != want {
+		t.Fatalf("exited %d:\n%s", code, errOut.String())
+	}
+}

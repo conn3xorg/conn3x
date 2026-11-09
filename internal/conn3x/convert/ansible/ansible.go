@@ -32,6 +32,10 @@ type Result struct {
 	HCL       []byte // the circuits, as a .tf file meant to sit beside the playbook
 	Converted int    // tasks translated in full
 	Review    []Issue
+	// Notes are TODO(convert) lines on steps that did convert: one-off work
+	// such as deleting what Ansible left behind. They don't count as left to
+	// do, since the converter writes them on every run.
+	Notes []Issue
 	// Files is a converted role: each file of the circuit directory, by its
 	// path in it. HCL is empty then.
 	Files map[string][]byte
@@ -675,6 +679,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		body.AppendNewline()
 		for _, note := range s.notes {
 			comment(body, note)
+			if r, ok := strings.CutPrefix(note, "TODO(convert): "); ok {
+				c.res.Notes = append(c.res.Notes, Issue{Task: firstNonEmpty(name, mod), File: c.file, Line: node.Line, Reason: r})
+			}
 		}
 		sb := body.AppendNewBlock("step", []string{stepName}).Body()
 		if items != nil {

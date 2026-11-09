@@ -119,17 +119,37 @@ func runConvertRole(role, out, playbook, inventory string, stderr io.Writer) int
 }
 
 // report says what converted and lists what's left, returning the exit code.
+// Notes on converted steps are listed too, but leave the exit code alone.
 func report(res ansible.Result, stderr io.Writer, files bool) int {
+	code := 0
 	if len(res.Review) == 0 {
-		fmt.Fprintf(stderr, "Converted all %d tasks.\n", res.Converted)
-		return 0
+		if res.Converted == 1 {
+			fmt.Fprintln(stderr, "Converted the 1 task.")
+		} else {
+			fmt.Fprintf(stderr, "Converted all %d tasks.\n", res.Converted)
+		}
+	} else {
+		things := "things need"
+		if len(res.Review) == 1 {
+			things = "thing needs"
+		}
+		fmt.Fprintf(stderr, "Converted %d tasks. %d %s you; each is marked TODO(convert):\n", res.Converted, len(res.Review), things)
+		listIssues(stderr, res.Review, files)
+		code = 3
 	}
-	things := "things need"
-	if len(res.Review) == 1 {
-		things = "thing needs"
+	if len(res.Notes) > 0 {
+		steps := "converted steps have a note"
+		if len(res.Notes) == 1 {
+			steps = "converted step has a note"
+		}
+		fmt.Fprintf(stderr, "%d %s to act on once, also marked TODO(convert):\n", len(res.Notes), steps)
+		listIssues(stderr, res.Notes, files)
 	}
-	fmt.Fprintf(stderr, "Converted %d tasks. %d %s you; each is marked TODO(convert):\n", res.Converted, len(res.Review), things)
-	for _, r := range res.Review {
+	return code
+}
+
+func listIssues(stderr io.Writer, issues []ansible.Issue, files bool) {
+	for _, r := range issues {
 		name := r.Task
 		if name == "" {
 			name = "(unnamed task)"
@@ -143,5 +163,4 @@ func report(res ansible.Result, stderr io.Writer, files bool) int {
 			fmt.Fprintf(stderr, "  line %d, %s: %s\n", r.Line, name, r.Reason)
 		}
 	}
-	return 3
 }
