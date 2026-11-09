@@ -194,6 +194,16 @@ jobs:
           path: ~/.cache/conn3x-plugins
           key: providers-${{ runner.os }}-${{ hashFiles('examples/**/.terraform.lock.hcl') }}
           restore-keys: providers-${{ runner.os }}-
+      # The runner image ships MySQL, and its AppArmor profile attaches by
+      # path to /usr/sbin/mysqld in the test containers too. There it stops
+      # the postinst from stopping its own mysqld, so the install never
+      # returns.
+      - name: Unload the runner's mysqld AppArmor profile
+        run: |
+          if sudo aa-status 2>/dev/null | grep -q mysqld; then
+            sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.mysqld
+          fi
+          sudo aa-status 2>/dev/null | grep mysqld || echo "no mysqld profile loaded"
       # "require" fails an apply that can't use the agent, so the on leg
       # proves every non-become host ran its commands through it.
       - name: End-to-end tests against Podman hosts

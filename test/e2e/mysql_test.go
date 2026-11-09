@@ -33,19 +33,16 @@ func TestMySQL(t *testing.T) {
 			install := `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mariadb-server >/dev/null && systemctl enable --now mariadb`
 			switch {
 			case image == "ubuntu2404":
-				// On a CI runner MySQL's first start, inside the install, hangs
-				// though it doesn't here. Two known causes in containers are
-				// a huge open files limit, which mysqld sizes tables from, and
-				// no native AIO contexts left on a shared kernel. MariaDB copes
-				// with both; MySQL is spared them here.
-				install = `ulimit -n 65536 && mkdir -p /etc/mysql/conf.d && printf '[mysqld]\ninnodb_use_native_aio = 0\n' > /etc/mysql/conf.d/conn3x-test.cnf &&
-					apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server >/dev/null && systemctl enable --now mysql`
+				// On a host with its own MySQL AppArmor profile loaded, as CI's
+				// runner has, the postinst can't stop its temporary mysqld and
+				// the install hangs. ci.yml unloads that profile first.
+				install = `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server >/dev/null && systemctl enable --now mysql`
 			case rpmImage(image):
 				install = "dnf install -y -q mariadb-server >/dev/null && systemctl enable --now mariadb"
 			}
 			// A server that hangs at install fails this test, not the suite,
 			// and says where it was.
-			h.exec("", "sh", "-c", `timeout 300 sh -c "$1" || { echo "install failed or hung: $?"; ulimit -n; ps -eo pid,etime,stat,args; tail -n 40 /var/log/mysql/error.log; tail -n 60 /var/log/apt/term.log; for p in $(pgrep mysqld); do ls -l /proc/$p/fd; done; exit 1; }`, "sh",
+			h.exec("", "sh", "-c", `timeout 300 sh -c "$1" || { echo "install failed or hung: $?"; ps -eo pid,etime,stat,args; tail -n 40 /var/log/mysql/error.log; tail -n 30 /var/log/apt/term.log; exit 1; }`, "sh",
 				install+` && for i in $(seq 60); do mysql -u root -e 'select 1' >/dev/null 2>&1 && break; sleep 1; done`)
 			// MariaDB's own name for the client, where it has one, skips a warning.
 			const cli = `"$(command -v mariadb || command -v mysql)"`
