@@ -33,11 +33,17 @@ func TestMySQL(t *testing.T) {
 			install := `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mariadb-server >/dev/null && systemctl enable --now mariadb`
 			switch {
 			case image == "ubuntu2404":
-				install = `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server >/dev/null && systemctl enable --now mysql`
+				// On a CI runner many test containers share one kernel, and
+				// MySQL's InnoDB can find no native AIO contexts left there,
+				// which hangs its first start inside the install. MariaDB falls
+				// back by itself; MySQL is told to here.
+				install = `mkdir -p /etc/mysql/conf.d && printf '[mysqld]\ninnodb_use_native_aio = 0\n' > /etc/mysql/conf.d/conn3x-test.cnf &&
+					apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server >/dev/null && systemctl enable --now mysql`
 			case rpmImage(image):
 				install = "dnf install -y -q mariadb-server >/dev/null && systemctl enable --now mariadb"
 			}
-			h.exec("", "sh", "-c", install+` && for i in $(seq 60); do mysql -u root -e 'select 1' >/dev/null 2>&1 && break; sleep 1; done`)
+			// A server that hangs at install fails this test, not the suite.
+			h.exec("", "timeout", "600", "sh", "-c", install+` && for i in $(seq 60); do mysql -u root -e 'select 1' >/dev/null 2>&1 && break; sleep 1; done`)
 			// MariaDB's own name for the client, where it has one, skips a warning.
 			const cli = `"$(command -v mariadb || command -v mysql)"`
 			sql := func(q string) string {
