@@ -90,6 +90,7 @@ type converter struct {
 	roleDirs  map[string]int
 	modules   map[string]int
 	callWhy   map[*yaml.Node]string
+	factsTail bool // a later part of the play, split around a role call, reads facts
 	res       Result
 	hostVars  map[string]bool // groups that still need a hosts variable
 	needUser  bool
@@ -240,7 +241,15 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 	var blocks []*hclwrite.Block
 	after := ""
 	commented := len(c.res.Review) > review
-	for i, seg := range c.segments(p) {
+	segs := c.segments(p)
+	for i, seg := range segs {
+		// A task reading facts in a later part still counts as later.
+		c.factsTail = false
+		for _, later := range segs[i+1:] {
+			for _, t := range later.tasks {
+				c.factsTail = c.factsTail || readsFacts(t)
+			}
+		}
 		if seg.call != nil {
 			if i == 0 && commented {
 				blocks = append(blocks, circuit)
@@ -267,10 +276,23 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 			waitFor(next, after)
 		}
 		blocks = append(blocks, next)
-		if a := lastStep(next); a != "" {
+		if a := finished(next); a != "" {
 			after = a
 		}
 	}
+	c.factsTail = false
+	// Each circuit converts the play's handlers again; say once what they
+	// leave for review.
+	seen := map[string]bool{}
+	kept := c.res.Review[:review]
+	for _, r := range c.res.Review[review:] {
+		k := fmt.Sprintf("%s:%d:%s:%s", r.File, r.Line, r.Task, r.Reason)
+		if !seen[k] {
+			seen[k] = true
+			kept = append(kept, r)
+		}
+	}
+	c.res.Review = kept
 	return blocks
 }
 
@@ -307,7 +329,7 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes, handlerNodes []*yaml.Nod
 	tasks := c.flatten(taskNodes, file, []string{file})
 	// Handlers run after every task, so they count as later for all of them.
 	c.factsAfter = map[*yaml.Node]bool{}
-	later := false
+	later := c.factsTail
 	for _, h := range handlerNodes {
 		later = later || readsFacts(h)
 	}
@@ -1156,8 +1178,12 @@ func slug(s string) string {
 
 func unique(name string, used map[string]int) string {
 	used[name]++
-	if n := used[name]; n > 1 {
-		return fmt.Sprintf("%s_%d", name, n)
+	for n := used[name]; n > 1; n++ {
+		// Skip a suffixed name already taken, as by a play called web_2.
+		if next := fmt.Sprintf("%s_%d", name, n); used[next] == 0 {
+			used[name], used[next] = n, 1
+			return next
+		}
 	}
 	return name
 }

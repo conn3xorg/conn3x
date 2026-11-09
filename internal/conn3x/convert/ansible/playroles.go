@@ -44,8 +44,28 @@ type convertedRole struct {
 	vars map[string]bool
 }
 
-// roleCallKeys are what a role call may set besides its name and vars.
-var roleCallKeys = map[string]bool{"name": true, "tags": true, "vars": true, "become": true}
+// includeRoleOptions are include_role's own arguments, which a roles entry
+// would pass to the role as variables instead; refused either way.
+var includeRoleOptions = map[string]bool{
+	"tasks_from": true, "vars_from": true, "defaults_from": true, "handlers_from": true,
+	"apply": true, "public": true, "allow_duplicates": true, "rolespec_validate": true,
+}
+
+// setBecome reads a call's become, which must be a plain true or false:
+// anything else, such as a Jinja expression, would be read as false.
+func (call *roleCall) setBecome(n *yaml.Node) string {
+	switch strings.ToLower(scalar(n)) {
+	case "true", "yes", "on":
+		b := true
+		call.become = &b
+	case "false", "no", "off":
+		b := false
+		call.become = &b
+	default:
+		return "sets become to something other than true or false, which the converter can't translate"
+	}
+	return ""
+}
 
 // segments splits a play's tasks around the roles it runs, in the order
 // Ansible runs them: pre_tasks, roles, tasks, post_tasks. A call that can't
@@ -102,9 +122,8 @@ func (c *converter) playRole(n *yaml.Node) *roleCall {
 				call.vars[kk] = v
 			}
 		case k == "become":
-			b := truthy(scalar(m[k]))
-			call.become = &b
-		case keywords[k]:
+			why = firstNonEmpty(why, call.setBecome(m[k]))
+		case keywords[k] || includeRoleOptions[k]:
 			why = firstNonEmpty(why, "sets "+k+" on the role, which the converter can't translate yet")
 		default:
 			// The older way to pass a role its variables.
@@ -126,14 +145,13 @@ func (c *converter) includeRole(n *yaml.Node, mod string, args map[string]*yaml.
 	m := mapping(n)
 	for _, k := range sortedKeys(m) {
 		switch {
-		case !keywords[k] || k == "name" || k == "tags":
+		case k == "name" || k == "tags" || k[strings.LastIndex(k, ".")+1:] == mod && !keywords[k]:
 		case k == "vars":
 			for kk, v := range mapping(m[k]) {
 				call.vars[kk] = v
 			}
 		case k == "become":
-			b := truthy(scalar(m[k]))
-			call.become = &b
+			why = firstNonEmpty(why, call.setBecome(m[k]))
 		default:
 			why = firstNonEmpty(why, "sets "+k+" on "+mod+", which the converter can't translate yet")
 		}
@@ -144,7 +162,13 @@ func (c *converter) includeRole(n *yaml.Node, mod string, args map[string]*yaml.
 // checkCall returns the call when its role can be converted, and otherwise
 // records why for flatten and returns nil.
 func (c *converter) checkCall(call *roleCall, why string) *roleCall {
-	if why == "" {
+	switch {
+	case why != "":
+	case c.playNoLog:
+		why = "runs a role in a play that sets no_log, which its circuit wouldn't keep; convert the role with -role and check what it writes before calling it"
+	case c.otherUser != "":
+		why = "runs a role in a play where " + c.otherUser + ", which its circuit wouldn't keep; convert the role with -role and set who it runs as"
+	default:
 		_, why = c.convertRole(call.role)
 	}
 	if why != "" {
@@ -178,7 +202,7 @@ func (c *converter) convertRole(name string) (*convertedRole, string) {
 		return nil, fmt.Sprintf("runs the role %s, which can't be converted: %s", name, err)
 	}
 	base := filepath.Base(rel)
-	dir := "circuit-" + strings.ReplaceAll(unique(slug(base[strings.LastIndex(base, ".")+1:]), c.roleDirs), "_", "-")
+	dir := unique("circuit-"+strings.ReplaceAll(slug(base[strings.LastIndex(base, ".")+1:]), "_", "-"), c.roleDirs)
 	if c.res.Files == nil {
 		c.res.Files = map[string][]byte{}
 	}
@@ -276,21 +300,29 @@ func (c *converter) module(call *roleCall, head *hclwrite.Body, playVars map[str
 	return mb
 }
 
-// lastStep is the address of a circuit's last step, which every step before
-// it runs ahead of, or empty when it has none.
-func lastStep(circuit *hclwrite.Block) string {
-	addr := ""
+// finished is what to wait for so a circuit is done: its last step, which
+// every step before it runs ahead of, and its handlers, which Ansible runs
+// before the play's next section. Empty when it has no steps.
+func finished(circuit *hclwrite.Block) string {
+	name := circuit.Labels()[0]
+	last := ""
+	var handlers []string
 	for _, blk := range circuit.Body().Blocks() {
-		if blk.Type() != "step" || len(blk.Body().Blocks()) == 0 {
-			continue
-		}
-		for _, inner := range blk.Body().Blocks() {
-			if t, ok := configs.CircuitStepType(inner.Type()); ok {
-				addr = t + "." + circuit.Labels()[0] + "__" + blk.Labels()[0]
+		switch blk.Type() {
+		case "step":
+			for _, inner := range blk.Body().Blocks() {
+				if t, ok := configs.CircuitStepType(inner.Type()); ok {
+					last = t + "." + name + "__" + blk.Labels()[0]
+				}
 			}
+		case "handler":
+			handlers = append(handlers, "conn3x_service_action."+name+"__"+blk.Labels()[0])
 		}
 	}
-	return addr
+	if last == "" {
+		return ""
+	}
+	return strings.Join(append([]string{last}, handlers...), ", ")
 }
 
 // waitFor makes a circuit's first step wait for addr, so the circuit runs

@@ -82,3 +82,76 @@ func TestConvertPlayRolesRefuses(t *testing.T) {
 		t.Errorf("wrote a module:\n%s", res.HCL)
 	}
 }
+
+// convertPlay writes play beside a copy of the fixture's roles, adding
+// extra roles as copies of web, and converts it with Options.Roles.
+func convertPlay(t *testing.T, play string, extra ...string) Result {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range append([]string{"web"}, extra...) {
+		if err := os.CopyFS(filepath.Join(dir, "roles", name), os.DirFS(filepath.Join("testdata", "playroles", "roles", "web"))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "p.yml"), []byte(play), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ConvertWith(filepath.Join(dir, "p.yml"), Options{Roles: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// Each of these would have run the role differently from Ansible, so the
+// call is left for review instead of becoming a module.
+func TestConvertPlayRolesRefusesWhatChangesTheRun(t *testing.T) {
+	for play, want := range map[string]string{
+		"- hosts: all\n  tasks:\n    - include_role:\n        name: web\n      with_items: [a, b]\n": "sets with_items on include_role",
+		"- hosts: all\n  roles:\n    - role: web\n      become: \"{{ b }}\"\n":                       "sets become to something other than true or false",
+		"- hosts: all\n  roles:\n    - role: web\n      tasks_from: other\n":                         "sets tasks_from on the role",
+		"- hosts: all\n  no_log: true\n  roles:\n    - web\n":                                        "sets no_log",
+		"- hosts: all\n  become: true\n  become_user: deploy\n  roles:\n    - web\n":                 "which its circuit wouldn't keep",
+	} {
+		res := convertPlay(t, play)
+		if strings.Contains(string(res.HCL), "module ") || len(res.Review) == 0 || !strings.Contains(res.Review[len(res.Review)-1].Reason, want) {
+			t.Errorf("%s: review %+v\n%s", play, res.Review, res.HCL)
+		}
+	}
+}
+
+// Roles whose names slug alike get their own directories, and a circuit
+// split from one play doesn't take a later play's name.
+func TestConvertPlayRolesNamesDontCollide(t *testing.T) {
+	res := convertPlay(t, "- hosts: web\n  roles:\n    - web\n    - x.web\n    - web_2\n  tasks:\n    - name: After\n      package:\n        name: curl\n- name: web_2\n  hosts: other\n  tasks:\n    - name: Other\n      package:\n        name: tree\n", "x.web", "web_2")
+	hcl := string(res.HCL)
+	for _, dir := range []string{"circuit-web", "circuit-web_2", "circuit-web-2"} {
+		if res.Files[dir+"/main.circuit.hcl"] == nil || !strings.Contains(hcl, `"./`+dir+`"`) {
+			t.Errorf("no %s:\n%s", dir, hcl)
+		}
+	}
+	if strings.Count(hcl, `circuit "web_2" {`) != 1 {
+		t.Errorf("circuit names collide:\n%s", hcl)
+	}
+}
+
+// A circuit after a role waits for it, and the role waits for the circuit
+// before it, handlers included, as Ansible flushes them between sections.
+// A handler that can't convert is listed for review once, though each
+// circuit carries the play's handlers.
+func TestConvertPlayRolesWaitsForHandlers(t *testing.T) {
+	res := convertPlay(t, "- hosts: web\n  pre_tasks:\n    - name: Conf\n      copy:\n        content: x\n        dest: /etc/x\n      notify: Restart x\n  roles:\n    - web\n  tasks:\n    - name: After\n      package:\n        name: curl\n  handlers:\n    - name: Restart x\n      service:\n        name: x\n        state: restarted\n    - name: Odd\n      command: /bin/true\n")
+	hcl := string(res.HCL)
+	if !strings.Contains(hcl, "depends_on = [conn3x_file.web__conf, conn3x_service_action.web__restart_x]") || !strings.Contains(hcl, "depends_on = [module.web]") {
+		t.Errorf("waits:\n%s", hcl)
+	}
+	odd := 0
+	for _, r := range res.Review {
+		if r.Task == "Odd" {
+			odd++
+		}
+	}
+	if odd != 1 {
+		t.Errorf("the handler is listed %d times: %+v", odd, res.Review)
+	}
+}
