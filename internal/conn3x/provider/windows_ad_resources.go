@@ -651,3 +651,153 @@ func applyWinDC(ctx context.Context, req providers.ApplyResourceChangeRequest) p
 	resp.NewState = promotedState(req.PlannedState, restart, "password_wo", "safe_mode_password_wo")
 	return resp
 }
+
+func winChildDomainSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "Experimental. A new child domain in an Active Directory forest that exists, with this Windows host as its first domain controller and DNS server. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the domain; nothing is demoted.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"domain_name":   {Type: cty.String, Required: true, Description: "Full DNS name of the new domain, such as emea.lab.example.com. Everything after the first label is the parent domain, which must exist."},
+			"netbios_name":  {Type: cty.String, Optional: true, Description: "NetBIOS name of the new domain, up to 15 characters, such as EMEA. Unset lets Windows take it from the first label. Used only when the domain is made."},
+			"username":      {Type: cty.String, Required: true, Description: "Account in the forest that may add a domain, such as LAB\\admin, a member of Enterprise Admins. Used only when the domain is made."},
+			"database_path": {Type: cty.String, Optional: true, Description: "Folder for the AD database. Windows' default is C:\\Windows\\NTDS. Used only when the domain is made."},
+			"log_path":      {Type: cty.String, Optional: true, Description: "Folder for the AD logs. Used only when the domain is made."},
+			"sysvol_path":   {Type: cty.String, Optional: true, Description: "Folder for SYSVOL. Used only when the domain is made."},
+			"password_wo": {
+				Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
+				Description: "Password for username, kept out of plan and state. Needed to make the domain, and used only then.",
+			},
+			"safe_mode_password_wo": {
+				Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
+				Description: "Directory Services Restore Mode password for this domain controller, kept out of plan and state. Needed to make the domain, and used only then: changing it later changes nothing on the host.",
+			},
+			"timeout":         {Type: cty.String, Optional: true, Description: "How long promotion may take. Defaults to \"30m\"."},
+			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether Windows reported wanting a reboot after the last change. Promotion always does."},
+			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether the host was a domain controller in this domain, or promoted into it and waiting for its reboot, at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func winChildDomainFrom(v cty.Value) windows.ChildDomain {
+	return windows.ChildDomain{
+		DomainName: stringOr(v.GetAttr("domain_name"), ""), NetBIOSName: stringOr(v.GetAttr("netbios_name"), ""), Username: stringOr(v.GetAttr("username"), ""),
+		DatabasePath: stringOr(v.GetAttr("database_path"), ""), LogPath: stringOr(v.GetAttr("log_path"), ""), SysvolPath: stringOr(v.GetAttr("sysvol_path"), ""),
+	}
+}
+
+// childLockout is forestLockout for the new domain: the same rules about which
+// login still works once the host has no local accounts.
+func childLockout(v cty.Value, c windows.ChildDomain, host string) string {
+	return forestLockout(v, windows.Forest{DomainName: c.DomainName, NetBIOSName: c.NetBIOSName}, host)
+}
+
+func validateWinChildDomain(cfg cty.Value) tfdiags.Diagnostics {
+	diags := validatePromotion(cfg, []string{"password_wo", "safe_mode_password_wo"}, []string{"domain_name", "netbios_name", "username", "database_path", "log_path", "sysvol_path"}, func() (string, error) {
+		return winChildDomainFrom(cfg).Check()
+	})
+	if !cfg.IsNull() && !diags.HasErrors() {
+		for _, a := range []string{"domain_name", "netbios_name"} {
+			if !cfg.GetAttr(a).IsKnown() {
+				return diags
+			}
+		}
+		if why := childLockout(cfg, winChildDomainFrom(cfg), ""); why != "" {
+			diags = diags.Append(attrError("ssh", why))
+		}
+	}
+	return diags
+}
+
+func planWinChildDomain(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planWinPromotion(req, "windows_ad_domain", "domain_name", "password_wo", "safe_mode_password_wo")
+}
+
+// childDomainAction decides what apply does with what the host is now.
+func childDomainAction(c windows.ChildDomain, a windows.ActualForest) (promote bool, err error) {
+	switch {
+	case c.Matches(a):
+		return false, nil
+	case a.Forest != "":
+		return false, fmt.Errorf("this host is already a domain controller in %s; Conn3x never demotes one, so it can't make %s here", firstNonEmpty(a.Joined, a.Promoted, a.Forest), c.DomainName)
+	case a.Joined != "":
+		return false, fmt.Errorf("this host is a member of %s; a new domain needs a server that isn't in a domain, and Conn3x never takes a host out of one", a.Joined)
+	}
+	return true, nil
+}
+
+func firstNonEmpty(s ...string) string {
+	for _, v := range s {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func readWinChildDomain(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	if req.PriorState.IsNull() {
+		return providers.ReadResourceResponse{NewState: req.PriorState}
+	}
+	return readWinADStep(ctx, req, winChildDomainFrom(req.PriorState).Matches)
+}
+
+func applyWinChildDomain(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	var resp providers.ApplyResourceChangeResponse
+	if req.PlannedState.IsNull() {
+		resp.NewState = req.PlannedState // forget: demoting a DC is never automatic
+		return resp
+	}
+	fail := func(err error) providers.ApplyResourceChangeResponse {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_ad_domain: %w", err))
+		return resp
+	}
+	c := winChildDomainFrom(req.PlannedState)
+	if _, err := c.Check(); err != nil {
+		return fail(err)
+	}
+	timeout, err := durationOr(req.PlannedState.GetAttr("timeout"), defaultForestTimeout)
+	if err != nil {
+		return fail(err)
+	}
+	h, err := winHost(ctx, req.PlannedState.GetAttr("ssh"))
+	if err != nil {
+		return fail(err)
+	}
+	// Promotion adds the DNS role, and Windows servicing takes one change at a time.
+	defer lockHost(h, "windows_feature")()
+	a, err := windows.ReadForest(ctx, h.client)
+	if err != nil {
+		return fail(err)
+	}
+	restart := a.Pending
+	promote, err := childDomainAction(c, a)
+	if err != nil {
+		return fail(err)
+	}
+	if promote {
+		facts, err := windows.Gather(ctx, h.client)
+		if err != nil {
+			return fail(err)
+		}
+		if why := childLockout(req.PlannedState, c, facts.Hostname); why != "" {
+			return fail(fmt.Errorf("%s", why))
+		}
+		pw, dsrm := req.Config.GetAttr("password_wo"), req.Config.GetAttr("safe_mode_password_wo")
+		if !known(pw) || !known(dsrm) {
+			return fail(fmt.Errorf("password_wo and safe_mode_password_wo are needed to make domain %s", c.DomainName))
+		}
+		if restart, err = windows.ApplyChildDomain(ctx, h.client, c, pw.AsString(), dsrm.AsString(), timeout); err != nil {
+			return fail(fmt.Errorf("making domain %s under %s: %w", c.DomainName, c.Parent(), err))
+		}
+		if a, err = windows.ReadForest(ctx, h.client); err != nil {
+			return fail(err)
+		}
+		if !c.Matches(a) {
+			return fail(fmt.Errorf("Install-ADDSDomain reported success, but the host doesn't show it's a domain controller in %s", c.DomainName))
+		}
+	}
+	resp.NewState = promotedState(req.PlannedState, restart, "password_wo", "safe_mode_password_wo")
+	return resp
+}

@@ -29,12 +29,14 @@ function New-ADFolders($missing) {
 }
 
 # As apply_package.ps1: a volatile key that windows_reboot's check finds, so a
-# run that stops before its reboot step plans that reboot next time.
-function Set-RebootMarker {
+# run that stops before its reboot step plans that reboot next time. $domain,
+# if given, names the domain the host was promoted into, which Windows itself
+# shows only after the reboot.
+function Set-RebootMarker($domain) {
   $parent = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey('SOFTWARE\Conn3x')
   try {
     $k = $parent.CreateSubKey('RebootRequired', [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, [Microsoft.Win32.RegistryOptions]::Volatile)
-    $k.Close()
+    try { if ($domain) { $k.SetValue('PromotedDomain', [string]$domain) } } finally { $k.Close() }
   } finally { $parent.Close() }
 }
 

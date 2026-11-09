@@ -86,6 +86,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_ad_user":              {winADUserSchema, validateWinADUser, planWinADUser, readWinADUser, applyWinADUser, upgradeWith(winADUserSchema)},
 	"conn3x_windows_ad_forest":            {winForestSchema, validateWinForest, planWinForest, readWinForest, applyWinForest, upgradeWith(winForestSchema)},
 	"conn3x_windows_directory":            {winDirectorySchema, validateWinDirectory, planWinDirectory, readWinDirectory, applyWinDirectory, upgradeWith(winDirectorySchema)},
+	"conn3x_windows_ad_domain":            {winChildDomainSchema, validateWinChildDomain, planWinChildDomain, readWinChildDomain, applyWinChildDomain, upgradeWith(winChildDomainSchema)},
 	"conn3x_windows_ad_domain_controller": {winDCSchema, validateWinDC, planWinDC, readWinDC, applyWinDC, upgradeWith(winDCSchema)},
 	"conn3x_windows_domain_membership":    {winMembershipSchema, validateWinMembership, planWinMembership, readWinMembership, applyWinMembership, upgradeWith(winMembershipSchema)},
 	"conn3x_windows_dns_client":           {winDNSClientSchema, validateWinDNSClient, planWinDNSClient, readWinDNSClient, applyWinDNSClient, upgradeWith(winDNSClientSchema)},

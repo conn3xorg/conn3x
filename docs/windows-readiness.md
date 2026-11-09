@@ -19,6 +19,7 @@ A module drops the experimental label when all of these hold:
 | Module | Runner | Azure | Import | What's missing |
 | --- | --- | --- | --- | --- |
 | `windows_acl` | yes | yes | no | |
+| `windows_ad_domain` | no | yes, through `azure-ad-child-domain` | no | A tree domain, a new tree in the forest, isn't offered |
 | `windows_ad_domain_controller` | no | yes, through `azure-ad-lab` | no | Promoting straight from a workgroup server is untested (#395) |
 | `windows_ad_forest` | yes | yes | no | |
 | `windows_ad_group` | module-level | yes | no | Members from another domain (#462); changing scope or category on a real DC (#408); groups of 5,000+ (#407) |

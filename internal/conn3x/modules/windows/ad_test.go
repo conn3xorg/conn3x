@@ -222,3 +222,77 @@ func TestApplyJoinAndDCPasswords(t *testing.T) {
 		t.Error("dc accepted an empty safe mode password")
 	}
 }
+
+func TestChildDomain(t *testing.T) {
+	c := ChildDomain{DomainName: "EMEA.lab.test", Username: `lab.test\admin`}
+	if _, err := c.Check(); err != nil || c.Parent() != "lab.test" {
+		t.Fatalf("%v, parent %q", err, c.Parent())
+	}
+	if _, err := (ChildDomain{DomainName: "emea.lab.test", Username: "admin@lab.test"}).Check(); err != nil {
+		t.Error(err)
+	}
+	for want, c := range map[string]ChildDomain{
+		"domain_name":  {DomainName: "lab.test", Username: "a@lab.test"},
+		"netbios_name": {DomainName: "emea.lab.test", NetBIOSName: "A.B", Username: "a@lab.test"},
+		"sysvol_path":  {DomainName: "emea.lab.test", SysvolPath: `F:\`, Username: "a@lab.test"},
+		"username":     {DomainName: "emea.lab.test"},
+	} {
+		if attr, err := c.Check(); attr != want || err == nil {
+			t.Errorf("%+v: %s, %v", c, attr, err)
+		}
+	}
+	// Install-ADDSDomain finds the forest through DNS, so a NetBIOS name or
+	// none won't do.
+	for _, u := range []string{`LAB\admin`, "admin", "admin@lab"} {
+		if attr, _ := (ChildDomain{DomainName: "emea.lab.test", Username: u}).Check(); attr != "username" {
+			t.Errorf("%s: %q", u, attr)
+		}
+	}
+	// Promoted, before its reboot: still a workgroup, and only the marker
+	// says which domain.
+	got, err := ReadForest(context.Background(), &fake{answers: []map[string]any{{"ok": true, "value": map[string]any{
+		"role": 2, "domain": "WORKGROUP", "root_dn": "DC=lab,DC=test", "marker": true, "promoted": "emea.lab.test"}}}})
+	if want := (ActualForest{Forest: "lab.test", Pending: true, Promoted: "emea.lab.test"}); err != nil || got != want {
+		t.Fatalf("pending: %+v, %v", got, err)
+	}
+	if !c.Matches(got) {
+		t.Error("no match while pending")
+	}
+	for _, a := range []ActualForest{
+		{Forest: "lab.test", Joined: "emea.lab.test"},
+	} {
+		if !c.Matches(a) {
+			t.Errorf("%+v: no match", a)
+		}
+	}
+	for _, a := range []ActualForest{
+		{},
+		{Member: "emea.lab.test", Joined: "emea.lab.test"},
+		{Forest: "lab.test", Joined: "lab.test"},
+		{Forest: "lab.test", Pending: true, Promoted: "apac.lab.test"},
+		// A name left in the marker counts only while the marker is there.
+		{Forest: "lab.test", Promoted: "emea.lab.test"},
+	} {
+		if c.Matches(a) {
+			t.Errorf("%+v: matched", a)
+		}
+	}
+}
+
+func TestApplyChildDomainPasswords(t *testing.T) {
+	const pw, dsrm = "s3ntinel-Admin!", "s3ntinel-Dsrm!"
+	f := &fake{answers: []map[string]any{{"ok": false, "error": "refused " + pw + " and " + dsrm}}}
+	if _, err := ApplyChildDomain(context.Background(), f, ChildDomain{DomainName: "emea.lab.test", Username: `lab.test\j`, SysvolPath: "F:/SYSVOL/"}, pw, dsrm, time.Minute); err == nil || strings.Contains(err.Error(), pw) || strings.Contains(err.Error(), dsrm) {
+		t.Fatalf("err = %v", err)
+	}
+	args := f.sent[0]["args"].(map[string]any)
+	if args["label"] != "emea" || args["parent"] != "lab.test" || args["password"] != pw || args["safe_mode_password"] != dsrm || args["sysvol_path"] != `F:\SYSVOL` {
+		t.Errorf("sent %v", args)
+	}
+	if strings.Contains(f.sent[0]["script"].(string), pw) {
+		t.Error("password in the script")
+	}
+	if _, err := ApplyChildDomain(context.Background(), &fake{}, ChildDomain{DomainName: "emea.lab.test", Username: "j"}, "", "x", time.Minute); err == nil {
+		t.Error("accepted an empty password")
+	}
+}

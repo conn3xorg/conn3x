@@ -73,6 +73,7 @@ var circuitModules = map[string]string{
 	"eos_interface":                "conn3x_eos_interface",
 	"eos_user":                     "conn3x_eos_user",
 	"windows_acl":                  "conn3x_windows_acl",
+	"windows_ad_domain":            "conn3x_windows_ad_domain",
 	"windows_ad_domain_controller": "conn3x_windows_ad_domain_controller",
 	"windows_ad_forest":            "conn3x_windows_ad_forest",
 	"windows_ad_group":             "conn3x_windows_ad_group",

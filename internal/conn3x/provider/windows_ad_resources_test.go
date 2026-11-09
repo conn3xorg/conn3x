@@ -298,3 +298,69 @@ func TestWinJoinAndDCAction(t *testing.T) {
 		}
 	}
 }
+
+func TestWinChildDomain(t *testing.T) {
+	r := resourceTypes["conn3x_windows_ad_domain"]
+	ok := map[string]cty.Value{"domain_name": cty.StringVal("EMEA.lab.test"), "netbios_name": cty.StringVal("EMEA"), "username": cty.StringVal("admin@lab.test"),
+		"password_wo": cty.StringVal("s3ntinel"), "safe_mode_password_wo": cty.StringVal("s3ntinel")}
+	for _, user := range []string{"azadmin", `EMEA\azadmin`, `emea.lab.test\azadmin`} {
+		if d := r.validate(forestCfg(r, user, ok)); d.HasErrors() {
+			t.Errorf("%s: %v", user, d.Err())
+		}
+	}
+	for _, user := range []string{`.\azadmin`, `LAB\azadmin`} {
+		if d := r.validate(forestCfg(r, user, ok)); !d.HasErrors() {
+			t.Errorf("%s: accepted", user)
+		}
+	}
+	with := func(k string, v cty.Value) map[string]cty.Value {
+		m := map[string]cty.Value{}
+		for a, b := range ok {
+			m[a] = b
+		}
+		m[k] = v
+		return m
+	}
+	for name, c := range map[string]struct {
+		attrs map[string]cty.Value
+		attr  string
+	}{
+		"two labels":   {with("domain_name", cty.StringVal("lab.test")), "domain_name"},
+		"netbios user": {with("username", cty.StringVal(`LAB\admin`)), "username"},
+		"empty dsrm":   {with("safe_mode_password_wo", cty.StringVal("")), "safe_mode_password_wo"},
+	} {
+		d := r.validate(forestCfg(r, "azadmin", c.attrs))
+		if len(d) != 1 || !tfdiags.GetAttribute(d[0]).Equals(cty.GetAttrPath(c.attr)) {
+			t.Errorf("%s: %v", name, d.Err())
+		}
+	}
+	// Passwords are in no plan, and removing the step forgets it.
+	cfg := forestCfg(r, "azadmin", ok)
+	p := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(cfg.Type()), ProposedNewState: cfg, Config: cfg}).PlannedState
+	if strings.Contains(p.GoString(), "s3ntinel") || !p.GetAttr("password_wo").IsNull() || p.GetAttr("reboot_required").IsKnown() {
+		t.Errorf("planned %#v", p)
+	}
+	vals := p.AsValueMap()
+	vals["revision"], vals["in_sync"], vals["reboot_required"] = cty.StringVal("r"), cty.True, cty.True
+	prior := cty.ObjectVal(vals)
+	if resp := r.apply(context.Background(), providers.ApplyResourceChangeRequest{PriorState: prior, PlannedState: cty.NullVal(prior.Type()), Config: cty.NullVal(prior.Type())}); resp.Diagnostics.HasErrors() || !resp.NewState.IsNull() {
+		t.Errorf("remove %v", resp.Diagnostics.Err())
+	}
+	c := windows.ChildDomain{DomainName: "emea.lab.test"}
+	for _, x := range []struct {
+		a       windows.ActualForest
+		promote bool
+		err     string
+	}{
+		{windows.ActualForest{}, true, ""},
+		{windows.ActualForest{Forest: "lab.test", Pending: true, Promoted: "EMEA.lab.test"}, false, ""},
+		{windows.ActualForest{Forest: "lab.test", Joined: "emea.lab.test"}, false, ""},
+		{windows.ActualForest{Forest: "lab.test", Joined: "lab.test"}, false, "already a domain controller in lab.test"},
+		{windows.ActualForest{Member: "lab.test", Joined: "lab.test"}, false, "member of lab.test"},
+	} {
+		promote, err := childDomainAction(c, x.a)
+		if promote != x.promote || (err == nil) != (x.err == "") || (err != nil && !strings.Contains(err.Error(), x.err)) {
+			t.Errorf("%+v: %v, %v", x.a, promote, err)
+		}
+	}
+}

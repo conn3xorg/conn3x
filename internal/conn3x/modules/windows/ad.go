@@ -86,6 +86,9 @@ type ActualForest struct {
 	// Joined is the domain this host is in, as a member or a domain
 	// controller, or "" in a workgroup.
 	Joined string
+	// Promoted is the domain Conn3x promoted this host into, while the
+	// reboot that finishes it is still to come.
+	Promoted string
 }
 
 // DomainRole values from Win32_ComputerSystem.
@@ -108,6 +111,8 @@ func ReadForest(ctx context.Context, r ps.Runner) (ActualForest, error) {
 		RootDN string `json:"root_dn"`
 		Marker bool   `json:"marker"`
 		Part   bool   `json:"part"`
+		// Promoted is what the reboot marker names, if anything.
+		Promoted string `json:"promoted"`
 	}
 	if err := json.Unmarshal(res.Value, &a); err != nil {
 		return ActualForest{}, errors.New("reading the forest: the host's answer wasn't valid")
@@ -125,7 +130,7 @@ func ReadForest(ctx context.Context, r ps.Runner) (ActualForest, error) {
 	// domain alone could be left over from a promotion rolled back by hand,
 	// so it counts only with the reboot marker promotion leaves.
 	case a.RootDN != "" && a.Marker:
-		f.Forest, f.Pending = dnToName(a.RootDN), true
+		f.Forest, f.Pending, f.Promoted = dnToName(a.RootDN), true, a.Promoted
 	case a.Role == roleMemberWorkstation || a.Role == roleMemberServer:
 		f.Member = a.Domain
 	}
@@ -294,6 +299,82 @@ func ApplyDomainController(ctx context.Context, r ps.Runner, d DomainController,
 		return false, errors.New(Scrub(err.Error(), []string{password, safeModePassword}))
 	}
 	return restartFrom(res.Value, "domain controller in "+d.DomainName)
+}
+
+// ChildDomain is a new domain in a forest that exists, with this host as its
+// first domain controller.
+type ChildDomain struct {
+	DomainName   string // DNS name of the new domain, such as emea.lab.example.com
+	NetBIOSName  string // empty lets Windows derive it from the first label
+	Username     string // account in the forest that may add a domain, by DNS name, such as admin@lab.example.com
+	DatabasePath string
+	LogPath      string
+	SysvolPath   string
+}
+
+// Parent is the domain the new one goes under: its name without the first label.
+func (c ChildDomain) Parent() string {
+	_, parent, _ := strings.Cut(c.DomainName, ".")
+	return parent
+}
+
+// Check validates a ChildDomain, naming the attribute at fault.
+func (c ChildDomain) Check() (attr string, err error) {
+	if attr, err := (Forest{DomainName: c.DomainName, NetBIOSName: c.NetBIOSName, DatabasePath: c.DatabasePath, LogPath: c.LogPath, SysvolPath: c.SysvolPath}).Check(); err != nil {
+		return attr, err
+	}
+	if strings.Count(c.DomainName, ".") < 2 {
+		return "domain_name", fmt.Errorf("domain_name %q must be the new domain's full name, its own label in front of its parent's, such as emea.%s", c.DomainName, c.DomainName)
+	}
+	if err := checkUsername("username", c.Username); err != nil {
+		return "username", err
+	}
+	// Seen on Azure: Install-ADDSDomain refuses LAB\admin, as the host can't
+	// find a NetBIOS name in DNS before it's in the forest.
+	domain, _, qualified := strings.Cut(c.Username, `\`)
+	if !qualified {
+		_, domain, qualified = strings.Cut(c.Username, "@")
+	}
+	if !qualified || !strings.Contains(domain, ".") {
+		return "username", fmt.Errorf(`username %q must name its domain by its DNS name, such as admin@lab.example.com or lab.example.com\admin: the new domain controller finds the forest through DNS`, c.Username)
+	}
+	return "", nil
+}
+
+// Matches reports whether the host is a domain controller in this domain, or
+// promoted into it by Conn3x and waiting for its reboot. Until that reboot,
+// Windows still says the host is in a workgroup.
+func (c ChildDomain) Matches(a ActualForest) bool {
+	return a.Forest != "" && (strings.EqualFold(a.Joined, c.DomainName) || a.Pending && strings.EqualFold(a.Promoted, c.DomainName))
+}
+
+// ApplyChildDomain promotes the host with Install-ADDSDomain, DNS included,
+// and never reboots it. Both passwords travel on stdin only, and errors have
+// them blanked.
+func ApplyChildDomain(ctx context.Context, r ps.Runner, c ChildDomain, password, safeModePassword string, timeout time.Duration) (restart bool, err error) {
+	if err := checkPassword("password_wo", password); err != nil {
+		return false, err
+	}
+	if err := checkPassword("safe_mode_password_wo", safeModePassword); err != nil {
+		return false, err
+	}
+	clean := func(p string) string {
+		if p == "" {
+			return ""
+		}
+		c, _ := CleanLocalPath("", p)
+		return c
+	}
+	label, parent, _ := strings.Cut(c.DomainName, ".")
+	res, err := ps.Apply(ctx, r, script("apply_ad_domain.ps1"), map[string]any{
+		"domain_name": c.DomainName, "label": label, "parent": parent, "netbios_name": c.NetBIOSName,
+		"username": c.Username, "password": password, "safe_mode_password": safeModePassword,
+		"database_path": clean(c.DatabasePath), "log_path": clean(c.LogPath), "sysvol_path": clean(c.SysvolPath),
+	}, timeout)
+	if err != nil {
+		return false, errors.New(Scrub(err.Error(), []string{password, safeModePassword}))
+	}
+	return restartFrom(res.Value, "new domain "+c.DomainName)
 }
 
 func restartFrom(v json.RawMessage, what string) (bool, error) {
