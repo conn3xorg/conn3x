@@ -45,8 +45,9 @@ if ($add.Count -or $remove.Count) {
   $de = [adsi]"LDAP://localhost/<GUID=$guid>"
   try {
     # 3 appends values and 4 deletes them, without reading the whole list,
-    # a thousand to a write so a big group's request stays small.
-    for ($i = 0; $i -lt $add.Count; $i += 1000) { $de.PutEx(3, 'member', [object[]]@($add | Select-Object -Skip $i -First 1000)); $de.SetInfo() }
-    for ($i = 0; $i -lt $remove.Count; $i += 1000) { $de.PutEx(4, 'member', [object[]]@($remove | Select-Object -Skip $i -First 1000)); $de.SetInfo() }
+    # a thousand to a write so a big group's request stays small. Slices,
+    # not Select-Object: COM can't take the wrapped strings that returns.
+    for ($i = 0; $i -lt $add.Count; $i += 1000) { $de.PutEx(3, 'member', [object[]]$add[$i..([Math]::Min($i + 999, $add.Count - 1))]); $de.SetInfo() }
+    for ($i = 0; $i -lt $remove.Count; $i += 1000) { $de.PutEx(4, 'member', [object[]]$remove[$i..([Math]::Min($i + 999, $remove.Count - 1))]); $de.SetInfo() }
   } finally { $de.psbase.Dispose() }
 }
