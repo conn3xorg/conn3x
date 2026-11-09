@@ -90,7 +90,7 @@ $out.description = [string]$g.Description
 # Members from other domains in the forest aren't under this DC's domain,
 # so the search above missed them. The global catalog has them, 50 to a query.
 $dns = @($g.member | ForEach-Object { [string]$_ })
-$other = @($dns | Where-Object { -not $sidOf.ContainsKey($_) })
+$other = @($dns | Where-Object { $null -eq $sidOf[$_] })
 for ($i = 0; $i -lt $other.Count; $i += 50) {
   $gc.Filter = '(|' + ((@($other | Select-Object -Skip $i -First 50) | ForEach-Object { '(distinguishedName=' + ($_ -replace '\\', '\5c' -replace '\*', '\2a' -replace '\(', '\28' -replace '\)', '\29') + ')' }) -join '') + ')'
   $found = $gc.FindAll()
