@@ -19,11 +19,14 @@ $readCommands = 'Get-Acl', 'Get-ADDomain', 'Get-ADGroup', 'Get-ADObject', 'Get-A
 $readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity', 'NetTCPIP', 'ScheduledTasks', 'ServerManager'
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
+# DirectorySearcher only searches; read_ad_group.ps1 pages through a big
+# group's members with it, and sets its PageSize, as on any search it makes.
 $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter::ToUInt32', 'BitConverter::ToUInt64', 'Convert::ToBase64String',
+  'DirectoryServices.DirectorySearcher::new',
   'IO.File::ReadAllBytes', 'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
   'Security.Cryptography.SHA256::Create', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
   'string::Join'
-$readInstance = 'Close', 'ComputeHash', 'CreateUpdateSearcher', 'Search', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
+$readInstance = 'Close', 'ComputeHash', 'CreateUpdateSearcher', 'Dispose', 'FindAll', 'Search', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
   'Replace', 'ToLowerInvariant', 'ToString', 'Translate'
 # Cmdlets that treat a positional argument as a -Path, with their usual aliases.
 $pathCommands = 'Add-Content', 'Clear-Content', 'Clear-Item', 'Copy-Item', 'Get-Acl', 'Get-ChildItem', 'Get-Content', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Invoke-Item',
@@ -46,11 +49,12 @@ foreach ($file in $Files) {
   # honours, so it's matched as text.
   if ($isRead -and (Get-Content -LiteralPath $file -Raw) -imatch '(?m)^\s*#requires\b.*\s-a') { Report $file $tree 'a read script may not load an assembly with #Requires -Assemblies' }
   $all = $tree.FindAll({ $true }, $true)
-  # A read may fill in a table it made itself, and set nothing else's properties.
+  # A read may fill in a table it made itself, or set up a directory search it
+  # made, and set nothing else's properties.
   $tables = @{}
   foreach ($a in $all | Where-Object { $_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left -is [Management.Automation.Language.VariableExpressionAst] }) {
     $name = $a.Left.VariablePath.UserPath
-    $isTable = $a.Right.Extent.Text -match '^@\{'
+    $isTable = $a.Right.Extent.Text -match '^(@\{|\[DirectoryServices\.DirectorySearcher\]::new\()'
     if (-not $tables.ContainsKey($name)) { $tables[$name] = $isTable } else { $tables[$name] = $tables[$name] -and $isTable }
   }
   function Test-OwnTable($target) {
