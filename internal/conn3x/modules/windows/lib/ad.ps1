@@ -43,6 +43,11 @@ function Set-RebootMarker {
 function Import-AD {
   $env:ADPS_LoadDefaultDrive = 0
   Import-Module ActiveDirectory -ErrorAction Stop
+  # These scripts run on a DC. Without -Server, the DC locator can pick
+  # another one that hasn't replicated a change yet, so a read straight
+  # after a write could miss it. A script that names a server, such as the
+  # global catalog check, still gets the one it names.
+  $global:PSDefaultParameterValues['*-AD*:Server'] = 'localhost'
 }
 
 # Sets one text attribute, or clears it for "", which the cmdlets refuse as a

@@ -6,6 +6,8 @@ $env:ADPS_LoadDefaultDrive = 0
 Import-Module CimCmdlets
 if ((Get-CimInstance Win32_ComputerSystem).DomainRole -lt 4) { return '' }
 try { Import-Module ActiveDirectory } catch { return '' }
+# Ask this DC, not one the locator picks that may not have replicated yet.
+$PSDefaultParameterValues['*-AD*:Server'] = 'localhost'
 # Straight after a DC's reboot, ADWS can answer for the domain a minute before
 # the global catalog, and a write in that minute can hang. So AD is ready once
 # a query through the global catalog works too. Anything else is the reason.
