@@ -7,16 +7,15 @@ Import-Module CimCmdlets
 if ((Get-CimInstance Win32_ComputerSystem).DomainRole -lt 4) { return @{ ad = $false } }
 # The stub stops on any error, so a DC without the module lands in catch.
 try { Import-Module ActiveDirectory } catch { return @{ ad = $false } }
-# Ask this DC, not one the locator picks that may not have replicated yet.
-$PSDefaultParameterValues['*-AD*:Server'] = 'localhost'
+# -Server 'localhost' asks this DC, not one the locator picks that may lag.
 $out = @{ ad = $true; exists = $false; path_dn = '' }
 if ($A.path) {
-  try { $out.path_dn = [string](Get-ADObject -Identity ([string]$A.path)).DistinguishedName }
+  try { $out.path_dn = [string](Get-ADObject -Server 'localhost' -Identity ([string]$A.path)).DistinguishedName }
   catch { if ($_.Exception.GetType().Name -ne 'ADIdentityNotFoundException') { throw } }
 }
 # As read_ad_group.ps1.
 $n = ([string]$A.name) -replace '\\', '\5c' -replace '\*', '\2a' -replace '\(', '\28' -replace '\)', '\29'
-$u = @(Get-ADUser -LDAPFilter "(sAMAccountName=$n)" -Properties Description, DisplayName, PasswordNeverExpires, PasswordLastSet)
+$u = @(Get-ADUser -Server 'localhost' -LDAPFilter "(sAMAccountName=$n)" -Properties Description, DisplayName, PasswordNeverExpires, PasswordLastSet)
 if (-not $u.Count) { return $out }
 $u = $u[0]
 $out.exists = $true

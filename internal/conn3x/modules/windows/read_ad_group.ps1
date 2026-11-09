@@ -7,16 +7,15 @@ Import-Module CimCmdlets
 if ((Get-CimInstance Win32_ComputerSystem).DomainRole -lt 4) { return @{ ad = $false } }
 # The stub stops on any error, so a DC without the module lands in catch.
 try { Import-Module ActiveDirectory } catch { return @{ ad = $false } }
-# Ask this DC, not one the locator picks that may not have replicated yet.
-$PSDefaultParameterValues['*-AD*:Server'] = 'localhost'
+# -Server 'localhost' asks this DC, not one the locator picks that may lag.
 $out = @{ ad = $true; exists = $false; path_dn = ''; wanted = @{}; members = @() }
 if ($A.path) {
-  try { $out.path_dn = [string](Get-ADObject -Identity ([string]$A.path)).DistinguishedName }
+  try { $out.path_dn = [string](Get-ADObject -Server 'localhost' -Identity ([string]$A.path)).DistinguishedName }
   catch { if ($_.Exception.GetType().Name -ne 'ADIdentityNotFoundException') { throw } }
 }
 # LDAP filter escapes, the backslash first.
 $e = ([string]$A.name) -replace '\\', '\5c' -replace '\*', '\2a' -replace '\(', '\28' -replace '\)', '\29'
-$g = @(Get-ADGroup -LDAPFilter "(sAMAccountName=$e)" -Properties Description, member)
+$g = @(Get-ADGroup -Server 'localhost' -LDAPFilter "(sAMAccountName=$e)" -Properties Description, member)
 # The tables' keys ignore case, as sAMAccountName does, so each answer lands
 # on the name as configured.
 $names = @(@($A.members) | Where-Object { $_ } | ForEach-Object { [string]$_ })
@@ -43,7 +42,7 @@ foreach ($m in $names) { if ($known[$m]) { $out.wanted[$m] = $known[$m] } }
 $rest = @($names | Where-Object { -not $known[$_] })
 for ($i = 0; $i -lt $rest.Count; $i += 50) {
   $f = (@($rest | Select-Object -Skip $i -First 50) | ForEach-Object { '(sAMAccountName=' + ($_ -replace '\\', '\5c' -replace '\*', '\2a' -replace '\(', '\28' -replace '\)', '\29') + ')' }) -join ''
-  foreach ($o in @(Get-ADObject -LDAPFilter "(|$f)" -Properties sAMAccountName)) { $out.wanted[[string]$o.sAMAccountName] = [string]$o.DistinguishedName }
+  foreach ($o in @(Get-ADObject -Server 'localhost' -LDAPFilter "(|$f)" -Properties sAMAccountName)) { $out.wanted[[string]$o.sAMAccountName] = [string]$o.DistinguishedName }
 }
 if (-not $g.Count) { return $out }
 $g = $g[0]
