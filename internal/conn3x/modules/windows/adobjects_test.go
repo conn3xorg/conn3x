@@ -263,3 +263,21 @@ func TestADGroupOtherDomains(t *testing.T) {
 		t.Errorf("remove %v, sids %v", args["remove"], args["remove_sids"])
 	}
 }
+
+// A member the read knows only by DN is still the account known by SID, so
+// it's neither added again nor taken out.
+func TestADGroupMixedForms(t *testing.T) {
+	carol := ADPrincipal{DN: "CN=carol,CN=Users,DC=emea,DC=lab,DC=test", SID: "S-1-5-21-2-1105"}
+	a := ActualADGroup{AD: true, Exists: true,
+		Members: []ADPrincipal{{DN: "cn=Carol,CN=Users,DC=emea,DC=lab,DC=test"}},
+		Wanted:  map[string]ADPrincipal{`EMEA\carol`: carol}}
+	g := ADGroup{Name: "g", Members: []string{`EMEA\carol`}, Authoritative: true}
+	if add, remove, _ := g.changes(a); len(add)+len(remove) != 0 {
+		t.Errorf("add %v, remove %v", add, remove)
+	}
+	// The other way round: the group's member has a SID, the wanted one only a DN.
+	a = ActualADGroup{AD: true, Exists: true, Members: []ADPrincipal{carol}, Wanted: map[string]ADPrincipal{"carol": {DN: carol.DN}}}
+	if !(ADGroup{Name: "g", Members: []string{"carol"}, Authoritative: true}).Matches(a) {
+		t.Error("no match")
+	}
+}

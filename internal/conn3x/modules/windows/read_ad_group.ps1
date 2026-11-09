@@ -68,9 +68,10 @@ foreach ($m in @($all | Where-Object { $_ -match '[\\@]' })) {
     throw
   }
   $p = @{ dn = ''; sid = $sid }
-  $gc.Filter = "(objectSid=$sid)"
-  $found = $gc.FindAll()
-  try { foreach ($r in $found) { $p.dn = [string]$r.Properties['distinguishedname'][0] } } finally { $found.Dispose() }
+  # objectSid is binary, so a filter on the SID's text may not match; binding
+  # by SID asks the global catalog for the object itself. One outside the
+  # forest isn't there, and keeps only its SID.
+  try { $p.dn = [string]([adsi]"GC://localhost/<SID=$sid>").distinguishedName } catch { $p.dn = '' }
   $out.wanted[$m] = $p
 }
 if (-not $g.Count) { return $out }
@@ -95,6 +96,13 @@ for ($i = 0; $i -lt $other.Count; $i += 50) {
       if ($r.Properties['objectsid'].Count) { $sidOf[[string]$r.Properties['distinguishedname'][0]] = [string][Security.Principal.SecurityIdentifier]::new([byte[]]$r.Properties['objectsid'][0], 0).Value }
     }
   } finally { $found.Dispose() }
+}
+# Every member that has a SID needs it, or the comparison would match one
+# by SID and the other by DN. So any still without one is looked up by
+# itself; one AD can't find stops the read rather than guess.
+foreach ($d in @($dns | Where-Object { -not $sidOf[$_] })) {
+  $o = Get-ADObject -Server 'localhost:3268' -Identity $d -Properties objectSid
+  $sidOf[$d] = if ($o.objectSid) { [string]$o.objectSid.Value } else { '' }
 }
 $out.members = @($dns | ForEach-Object { @{ dn = $_; sid = [string]$sidOf[$_] } })
 $out

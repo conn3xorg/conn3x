@@ -336,25 +336,40 @@ func inPath(path, parent, pathDN string) bool {
 
 // changes is what ApplyADGroup has to add and remove.
 func (g ADGroup) changes(a ActualADGroup) (add, remove []ADPrincipal, unresolved []string) {
-	in := map[string]bool{}
-	for _, p := range a.Members {
-		in[p.key()] = true
+	// Each principal goes in under both its SID and its DN, so one the read
+	// knows only by DN still matches the same account known by SID.
+	keys := func(p ADPrincipal) []string {
+		k := []string{p.key()}
+		if p.SID != "" && p.DN != "" {
+			k = append(k, ADPrincipal{DN: p.DN}.key())
+		}
+		return k
 	}
-	want := map[string]bool{}
+	has := func(set map[string]bool, p ADPrincipal) bool {
+		return slices.ContainsFunc(keys(p), func(k string) bool { return set[k] })
+	}
+	in, want := map[string]bool{}, map[string]bool{}
+	for _, p := range a.Members {
+		for _, k := range keys(p) {
+			in[k] = true
+		}
+	}
 	for _, m := range g.Members {
 		p := a.Wanted[m]
 		if p.DN == "" && p.SID == "" {
 			unresolved = append(unresolved, m)
 			continue
 		}
-		if !in[p.key()] && !want[p.key()] {
+		if !has(in, p) && !has(want, p) {
 			add = append(add, p)
 		}
-		want[p.key()] = true
+		for _, k := range keys(p) {
+			want[k] = true
+		}
 	}
 	if g.Authoritative {
 		for _, p := range a.Members {
-			if !want[p.key()] {
+			if !has(want, p) {
 				remove = append(remove, p)
 			}
 		}

@@ -18,7 +18,11 @@ if ($A.create) {
   if ($mine -contains $g.SID.Value) {
     $sids = @($A.remove_sids)
     for ($i = 0; $i -lt $sids.Count; $i++) {
-      if ($sids[$i] -and $mine -contains [string]$sids[$i]) { throw "this would take $(@($A.remove)[$i]) out of $($g.Name), and the login Conn3x uses gets its rights through it; that could lock Conn3x out" }
+      # Without a SID from the read, ask the global catalog, so the guard fails
+      # closed: a member AD can't find stops the apply here.
+      $sid = [string]$sids[$i]
+      if (-not $sid) { $sid = [string](Get-ADObject -Server 'localhost:3268' -Identity ([string]@($A.remove)[$i]) -Properties objectSid).objectSid.Value }
+      if ($sid -and $mine -contains $sid) { throw "this would take $(@($A.remove)[$i]) out of $($g.Name), and the login Conn3x uses gets its rights through it; that could lock Conn3x out" }
     }
   }
   if ($A.scope -and [string]$g.GroupScope -ne $A.scope) {

@@ -50,7 +50,7 @@ step "web_servers" {
 
 **Other domains.** The domain controller looks a name with a domain up as Windows does at logon, so an account in another domain of the forest, or in a domain the forest trusts, resolves, and its distinguished name comes from the global catalog. Members are added by SID, which reaches those domains. Seen on Azure, with a forest root and a child domain on Windows Server 2025: a child-domain user in a universal and a domain local group of the root, written both ways, removed by hand and put back, and a root account added by hand taken out by `authoritative`, each with a clean plan after. An account in a domain outside the forest, across a forest trust, is kept by AD as a foreign security principal, which Conn3x matches and names by SID. That path hasn't been tested yet.
 
-By default, `members` are added and nobody else is taken out. With `authoritative = true` the list is complete, and anyone else is removed on apply, from any domain.
+By default, `members` are added and nobody else is taken out. With `authoritative = true` the list is complete, and anyone else is removed on apply, from any domain. Changes are written a thousand members at a time, so an apply that fails partway through a big change leaves the first batches done, and the next apply finishes the rest.
 
 A member that doesn't exist yet, such as a user a later step makes, shows the group out of sync rather than failing the plan. At apply, a name that still doesn't resolve is an error, `no account named EMEA\nobody in the domain or a domain it trusts`, and nothing in the group changes. So put the users first, or chain the steps.
 
