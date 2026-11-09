@@ -31,10 +31,11 @@ func TestWinADObjectsValidate(t *testing.T) {
 			},
 		},
 		"conn3x_windows_ad_group": {
-			ok: map[string]cty.Value{"name": cty.StringVal("AppAdmins"), "scope": cty.StringVal("universal"), "members": cty.SetVal([]cty.Value{cty.StringVal("alice"), cty.StringVal("web1$")}), "authoritative": cty.True},
+			ok: map[string]cty.Value{"name": cty.StringVal("AppAdmins"), "scope": cty.StringVal("universal"), "members": cty.SetVal([]cty.Value{cty.StringVal("alice"), cty.StringVal("web1$"), cty.StringVal(`EMEA\carol`), cty.StringVal("dave@apac.lab.test")}), "authoritative": cty.True},
 			bad: map[string]map[string]cty.Value{
 				"scope":     {"name": cty.StringVal("g"), "scope": cty.StringVal("local")},
-				"domain":    {"name": cty.StringVal("g"), "members": cty.SetVal([]cty.Value{cty.StringVal(`LAB\alice`)})},
+				"domain":    {"name": cty.StringVal("g"), "members": cty.SetVal([]cty.Value{cty.StringVal(`L*B\alice`)})},
+				"dn":        {"name": cty.StringVal("g"), "members": cty.SetVal([]cty.Value{cty.StringVal("CN=alice,DC=lab,DC=test")})},
 				"auth only": {"name": cty.StringVal("g"), "authoritative": cty.True},
 			},
 		},

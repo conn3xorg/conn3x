@@ -197,7 +197,7 @@ func winADGroupSchema() providers.Schema {
 			"scope":           {Type: cty.String, Optional: true, Description: "\"domainlocal\", \"global\" or \"universal\". Unset, a new group is global."},
 			"category":        {Type: cty.String, Optional: true, Description: "\"security\" or \"distribution\". Unset, a new group is a security group."},
 			"description":     {Type: cty.String, Optional: true, Description: "Description."},
-			"members":         {Type: cty.Set(cty.String), Optional: true, Description: "Accounts that must be in it, by sAMAccountName in this domain: users, groups, and computers with their trailing $, such as alice, ops or web1$. Others are left in unless authoritative is set."},
+			"members":         {Type: cty.Set(cty.String), Optional: true, Description: "Accounts that must be in it: by sAMAccountName in this domain, such as alice, ops or web1$ (computers with their trailing $), or as DOMAIN\\name or a UPN for an account in another domain of the forest or one it trusts, such as EMEA\\carol or carol@emea.lab.example.com. Compared by SID, so one account written two ways is one member. Others are left in unless authoritative is set."},
 			"authoritative":   {Type: cty.Bool, Optional: true, Description: "true makes members the complete list: anyone else is taken out. Never the login Conn3x uses, in a group it gets its rights through."},
 			"on_remove":       adOnRemove("group"),
 			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether the group matched at the last refresh."},

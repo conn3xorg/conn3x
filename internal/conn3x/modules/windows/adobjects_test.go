@@ -41,7 +41,9 @@ func TestADObjectsCheck(t *testing.T) {
 		"ou path newline":  {OU{Name: "a", Path: "OU=a\n,DC=x"}, "path"},
 		"group scope":      {ADGroup{Name: "g", Scope: "Global"}, "scope"},
 		"group category":   {ADGroup{Name: "g", Category: "mail"}, "category"},
-		"group domain":     {ADGroup{Name: "g", Members: []string{`LAB\alice`}}, "members"},
+		"group domain":     {ADGroup{Name: "g", Members: []string{`LAB.X\alice\x`}}, "members"},
+		"group bad domain": {ADGroup{Name: "g", Members: []string{`L*B\alice`}}, "members"},
+		"group bad upn":    {ADGroup{Name: "g", Members: []string{"alice@lab"}}, "members"},
 		"group dn":         {ADGroup{Name: "g", Members: []string{"CN=alice,CN=Users,DC=lab,DC=test"}}, "members"},
 		"group twice":      {ADGroup{Name: "g", Members: []string{"alice", "ALICE"}}, "members"},
 		"group auth":       {ADGroup{Name: "g", Authoritative: true}, "authoritative"},
@@ -62,19 +64,19 @@ func TestADObjectsCheck(t *testing.T) {
 
 func TestADGroupChanges(t *testing.T) {
 	a := ActualADGroup{AD: true, Exists: true, Parent: "OU=Lab,DC=lab,DC=test", PathDN: "OU=Lab,DC=lab,DC=test", Scope: "Global", Category: "Security",
-		Members: []string{"CN=alice,CN=Users,DC=lab,DC=test", "CN=old,CN=Users,DC=lab,DC=test"},
-		Wanted:  map[string]string{"alice": "cn=Alice,cn=users,dc=lab,dc=test", "bob": "CN=bob,CN=Users,DC=lab,DC=test", "ghost": ""}}
+		Members: []ADPrincipal{{"CN=alice,CN=Users,DC=lab,DC=test", "S-1-5-21-1-1001"}, {"CN=old,CN=Users,DC=lab,DC=test", "S-1-5-21-1-1002"}},
+		Wanted:  map[string]ADPrincipal{"alice": {"cn=Alice,cn=users,dc=lab,dc=test", "S-1-5-21-1-1001"}, "bob": {"CN=bob,CN=Users,DC=lab,DC=test", "S-1-5-21-1-1003"}, "ghost": {}}}
 	g := ADGroup{Name: "g", Path: "ou=lab,dc=lab,dc=test", Scope: "global", Members: []string{"alice"}}
 	if !g.Matches(a) {
 		t.Error("additive, alice in: no match")
 	}
 	g.Authoritative = true
-	if add, remove, _ := g.changes(a); g.Matches(a) || len(add) != 0 || len(remove) != 1 || remove[0] != "CN=old,CN=Users,DC=lab,DC=test" {
+	if add, remove, _ := g.changes(a); g.Matches(a) || len(add) != 0 || len(remove) != 1 || remove[0].DN != "CN=old,CN=Users,DC=lab,DC=test" {
 		t.Errorf("authoritative: add %v, remove %v", add, remove)
 	}
 	g = ADGroup{Name: "g", Members: []string{"alice", "bob", "ghost"}}
 	add, _, unresolved := g.changes(a)
-	if len(add) != 1 || add[0] != "CN=bob,CN=Users,DC=lab,DC=test" || len(unresolved) != 1 || g.Matches(a) {
+	if len(add) != 1 || add[0].DN != "CN=bob,CN=Users,DC=lab,DC=test" || len(unresolved) != 1 || g.Matches(a) {
 		t.Errorf("add %v, unresolved %v", add, unresolved)
 	}
 	if err := ApplyADGroup(context.Background(), &fake{}, g, a); err == nil || !strings.Contains(err.Error(), "ghost") {
@@ -191,7 +193,7 @@ func TestWaitAD(t *testing.T) {
 // A plan names each member an apply would add or take out, and each name
 // the directory doesn't have; a big list stops at 50 with a count.
 func TestADGroupPendingChanges(t *testing.T) {
-	a := ActualADGroup{Exists: true, Members: []string{"CN=alice,DC=lab", "CN=extra,DC=lab"}, Wanted: map[string]string{"alice": "CN=alice,DC=lab", "bob": "CN=bob,DC=lab"}}
+	a := ActualADGroup{Exists: true, Members: []ADPrincipal{{DN: "CN=alice,DC=lab"}, {DN: "CN=extra,DC=lab"}}, Wanted: map[string]ADPrincipal{"alice": {DN: "CN=alice,DC=lab"}, "bob": {DN: "CN=bob,DC=lab"}}}
 	g := ADGroup{Name: "Ops", Members: []string{"alice", "bob", "ghost"}, Authoritative: true}
 	if got := strings.Join(g.PendingChanges(a), "|"); got != "add CN=bob,DC=lab|remove CN=extra,DC=lab|not found ghost" {
 		t.Errorf("got %s", got)
@@ -200,12 +202,12 @@ func TestADGroupPendingChanges(t *testing.T) {
 	if got := strings.Join(g.PendingChanges(a), "|"); got != "add CN=bob,DC=lab|not found ghost" {
 		t.Errorf("not authoritative: %s", got)
 	}
-	big := ActualADGroup{Exists: true, Wanted: map[string]string{}}
+	big := ActualADGroup{Exists: true, Wanted: map[string]ADPrincipal{}}
 	var names []string
 	for i := range 60 {
 		n := fmt.Sprintf("u%02d", i)
 		names = append(names, n)
-		big.Wanted[n] = "CN=" + n
+		big.Wanted[n] = ADPrincipal{DN: "CN=" + n}
 	}
 	got := ADGroup{Name: "Big", Members: names}.PendingChanges(big)
 	if len(got) != 51 || got[50] != "and 10 more" {
@@ -213,5 +215,51 @@ func TestADGroupPendingChanges(t *testing.T) {
 	}
 	if len((ADGroup{Name: "Ops", Members: []string{"alice"}}).PendingChanges(a)) != 0 {
 		t.Error("an in-sync group has pending changes")
+	}
+}
+
+// Members from other domains: compared by SID, so the same account written
+// two ways is one member, and added by SID, which reaches other domains.
+func TestADGroupOtherDomains(t *testing.T) {
+	for _, m := range []string{`EMEA\carol`, `emea.lab.test\carol`, "carol@emea.lab.test", "web1$"} {
+		if err := checkMember(m); err != nil {
+			t.Errorf("%s: %v", m, err)
+		}
+	}
+	carol := ADPrincipal{DN: "CN=carol,CN=Users,DC=emea,DC=lab,DC=test", SID: "S-1-5-21-2-1105"}
+	// In a forest it only trusts: no DN in the global catalog, and the group
+	// holds a foreign security principal with the same SID.
+	dave := ADPrincipal{SID: "S-1-5-21-3-1106"}
+	a := ActualADGroup{AD: true, Exists: true,
+		Members: []ADPrincipal{{DN: "CN=carol,CN=Users,DC=emea,DC=lab,DC=test", SID: "s-1-5-21-2-1105"}, {DN: "CN=S-1-5-21-3-1106,CN=ForeignSecurityPrincipals,DC=lab,DC=test", SID: "S-1-5-21-3-1106"}},
+		Wanted:  map[string]ADPrincipal{`EMEA\carol`: carol, "carol@emea.lab.test": carol, `PARTNER\dave`: dave}}
+	g := ADGroup{Name: "g", Members: []string{`EMEA\carol`, "carol@emea.lab.test", `PARTNER\dave`}, Authoritative: true}
+	if _, err := g.Check(); err != nil {
+		t.Fatal(err)
+	}
+	if !g.Matches(a) {
+		t.Errorf("no match: %v", g.PendingChanges(a))
+	}
+	// Not in yet: added once, by SID.
+	a.Members = nil
+	f := &fake{answers: []map[string]any{{"ok": true}}}
+	if err := ApplyADGroup(context.Background(), f, g, a); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(f.sent[0]["args"].(map[string]any)["add"]); got != "[<SID=S-1-5-21-2-1105> <SID=S-1-5-21-3-1106>]" {
+		t.Errorf("add %s", got)
+	}
+	if got := strings.Join(g.PendingChanges(a), "|"); got != "add CN=carol,CN=Users,DC=emea,DC=lab,DC=test|add S-1-5-21-3-1106" {
+		t.Errorf("pending %s", got)
+	}
+	// Taken out by DN, with the SID for the lockout check.
+	a.Members = []ADPrincipal{{DN: "CN=x,DC=lab,DC=test", SID: "S-1-5-21-1-500"}, {DN: "CN=contact,DC=lab,DC=test"}}
+	f = &fake{answers: []map[string]any{{"ok": true}}}
+	if err := ApplyADGroup(context.Background(), f, ADGroup{Name: "g", Members: []string{}, Authoritative: true}, a); err != nil {
+		t.Fatal(err)
+	}
+	args := f.sent[0]["args"].(map[string]any)
+	if fmt.Sprint(args["remove"]) != "[CN=x,DC=lab,DC=test CN=contact,DC=lab,DC=test]" || fmt.Sprint(args["remove_sids"]) != "[S-1-5-21-1-500 ]" {
+		t.Errorf("remove %v, sids %v", args["remove"], args["remove_sids"])
 	}
 }

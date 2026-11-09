@@ -199,7 +199,8 @@ var (
 
 // ADGroup is a group in AD. Name is both its name and its sAMAccountName.
 // Members are sAMAccountNames in the same domain, such as alice, ops or
-// web1$; nil leaves membership alone. Without Authoritative, members are only
+// web1$, or accounts in another domain the DC trusts, as DOMAIN\name or a
+// UPN; nil leaves membership alone. Without Authoritative, members are only
 // added.
 type ADGroup struct {
 	Name          string
@@ -233,8 +234,8 @@ func (g ADGroup) Check() (attr string, err error) {
 	}
 	seen := map[string]bool{}
 	for _, m := range g.Members {
-		if err := checkSAM("member", m, 256); err != nil {
-			return "members", fmt.Errorf(`%w; members are account names in this domain, such as alice or web1$, not DOMAIN\name or a distinguished name`, err)
+		if err := checkMember(m); err != nil {
+			return "members", err
 		}
 		if seen[strings.ToLower(m)] {
 			return "members", fmt.Errorf("member %q is listed twice; names ignore case", m)
@@ -244,7 +245,57 @@ func (g ADGroup) Check() (attr string, err error) {
 	return "", nil
 }
 
-// ActualADGroup is a group as AD has it, with members by DN.
+// checkMember accepts an account name in the group's domain, DOMAIN\name,
+// with the domain's NetBIOS or DNS name, or a UPN such as alice@lab.example.com.
+func checkMember(m string) error {
+	const forms = `members are account names, such as alice or web1$ in this domain, or EMEA\carol or carol@emea.lab.example.com in another; not a distinguished name`
+	if domain, name, ok := strings.Cut(m, `\`); ok {
+		if err := checkSAM("member", name, 256); err != nil {
+			return fmt.Errorf("%w; %s", err, forms)
+		}
+		if !netbiosName.MatchString(domain) && ValidateDomainName("member", domain) != nil {
+			return fmt.Errorf("member %q: %q isn't a domain's NetBIOS or DNS name; %s", m, domain, forms)
+		}
+		return nil
+	}
+	if name, domain, ok := strings.Cut(m, "@"); ok {
+		if name == "" || checkUsername("member", m) != nil || ValidateDomainName("member", domain) != nil {
+			return fmt.Errorf("member %q isn't a UPN, such as carol@emea.lab.example.com; %s", m, forms)
+		}
+		return nil
+	}
+	if err := checkSAM("member", m, 256); err != nil {
+		return fmt.Errorf("%w; %s", err, forms)
+	}
+	return nil
+}
+
+// ADPrincipal is an account as a group's membership sees it. SID is "" for
+// one that has none, such as a contact, which is then known by DN.
+type ADPrincipal struct {
+	DN  string `json:"dn"`
+	SID string `json:"sid"`
+}
+
+// key is what two principals are compared by: the SID, so the same account
+// written two ways is one, or the DN without one.
+func (p ADPrincipal) key() string {
+	if p.SID != "" {
+		return strings.ToUpper(p.SID)
+	}
+	return "dn:" + strings.ToLower(p.DN)
+}
+
+// String names a principal in a plan: its DN, or its SID when the directory
+// has no object for it, as for an account in a forest it only trusts.
+func (p ADPrincipal) String() string {
+	if p.DN != "" {
+		return p.DN
+	}
+	return p.SID
+}
+
+// ActualADGroup is a group as AD has it, with members by DN and SID.
 type ActualADGroup struct {
 	AD          bool
 	Exists      bool
@@ -255,8 +306,8 @@ type ActualADGroup struct {
 	Scope       string
 	Category    string
 	Description string
-	Members     []string
-	Wanted      map[string]string // each configured member's DN; "" when there's no such account
+	Members     []ADPrincipal
+	Wanted      map[string]ADPrincipal // each configured member; empty when there's no such account
 }
 
 // ReadADGroup reads a group by sAMAccountName and finds each configured
@@ -264,17 +315,17 @@ type ActualADGroup struct {
 func ReadADGroup(ctx context.Context, r ps.Runner, g ADGroup) (ActualADGroup, error) {
 	res, err := ps.Read(ctx, r, script("read_ad_group.ps1"), map[string]any{"name": g.Name, "path": g.Path, "members": g.Members})
 	a, err := decodeAD[struct {
-		AD          bool              `json:"ad"`
-		Exists      bool              `json:"exists"`
-		DN          string            `json:"dn"`
-		Parent      string            `json:"parent"`
-		PathDN      string            `json:"path_dn"`
-		SID         string            `json:"sid"`
-		Scope       string            `json:"scope"`
-		Category    string            `json:"category"`
-		Description string            `json:"description"`
-		Members     []string          `json:"members"`
-		Wanted      map[string]string `json:"wanted"`
+		AD          bool                   `json:"ad"`
+		Exists      bool                   `json:"exists"`
+		DN          string                 `json:"dn"`
+		Parent      string                 `json:"parent"`
+		PathDN      string                 `json:"path_dn"`
+		SID         string                 `json:"sid"`
+		Scope       string                 `json:"scope"`
+		Category    string                 `json:"category"`
+		Description string                 `json:"description"`
+		Members     []ADPrincipal          `json:"members"`
+		Wanted      map[string]ADPrincipal `json:"wanted"`
 	}](res, err, "group "+g.Name)
 	return ActualADGroup(a), err
 }
@@ -283,28 +334,28 @@ func inPath(path, parent, pathDN string) bool {
 	return path == "" || (pathDN != "" && strings.EqualFold(parent, pathDN))
 }
 
-func hasFold(list []string, s string) bool {
-	return slices.ContainsFunc(list, func(v string) bool { return strings.EqualFold(v, s) })
-}
-
-// changes is what ApplyADGroup has to add and remove, by DN.
-func (g ADGroup) changes(a ActualADGroup) (add, remove, unresolved []string) {
-	var want []string
+// changes is what ApplyADGroup has to add and remove.
+func (g ADGroup) changes(a ActualADGroup) (add, remove []ADPrincipal, unresolved []string) {
+	in := map[string]bool{}
+	for _, p := range a.Members {
+		in[p.key()] = true
+	}
+	want := map[string]bool{}
 	for _, m := range g.Members {
-		dn := a.Wanted[m]
-		if dn == "" {
+		p := a.Wanted[m]
+		if p.DN == "" && p.SID == "" {
 			unresolved = append(unresolved, m)
 			continue
 		}
-		want = append(want, dn)
-		if !hasFold(a.Members, dn) && !hasFold(add, dn) {
-			add = append(add, dn)
+		if !in[p.key()] && !want[p.key()] {
+			add = append(add, p)
 		}
+		want[p.key()] = true
 	}
 	if g.Authoritative {
-		for _, dn := range a.Members {
-			if !hasFold(want, dn) {
-				remove = append(remove, dn)
+		for _, p := range a.Members {
+			if !want[p.key()] {
+				remove = append(remove, p)
 			}
 		}
 	}
@@ -318,11 +369,11 @@ func (g ADGroup) changes(a ActualADGroup) (add, remove, unresolved []string) {
 func (g ADGroup) PendingChanges(a ActualADGroup) []string {
 	add, remove, unresolved := g.changes(a)
 	out := []string{}
-	for _, dn := range add {
-		out = append(out, "add "+dn)
+	for _, p := range add {
+		out = append(out, "add "+p.String())
 	}
-	for _, dn := range remove {
-		out = append(out, "remove "+dn)
+	for _, p := range remove {
+		out = append(out, "remove "+p.String())
 	}
 	for _, m := range unresolved {
 		out = append(out, "not found "+m)
@@ -356,11 +407,26 @@ func ApplyADGroup(ctx context.Context, r ps.Runner, g ADGroup, a ActualADGroup) 
 	}
 	add, remove, unresolved := g.changes(a)
 	if len(unresolved) > 0 {
-		return fmt.Errorf("group %s: no account named %s in the domain", g.Name, strings.Join(unresolved, ", "))
+		return fmt.Errorf("group %s: no account named %s in the domain or a domain it trusts", g.Name, strings.Join(unresolved, ", "))
+	}
+	// Added by SID where there is one, which reaches accounts in other
+	// domains too; taken out by the DN the group holds.
+	addValues, removeDNs, removeSIDs := []string{}, []string{}, []string{}
+	for _, p := range add {
+		if p.SID != "" {
+			addValues = append(addValues, "<SID="+p.SID+">")
+		} else {
+			addValues = append(addValues, p.DN)
+		}
+	}
+	// removeSIDs lines up with removeDNs, "" where a member has no SID.
+	for _, p := range remove {
+		removeDNs = append(removeDNs, p.DN)
+		removeSIDs = append(removeSIDs, p.SID)
 	}
 	_, err := ps.Apply(ctx, r, script("apply_ad_group.ps1"), map[string]any{
 		"create": !a.Exists, "dn": a.DN, "name": g.Name, "path": g.Path, "move": a.Exists && !inPath(g.Path, a.Parent, a.PathDN),
-		"scope": g.Scope, "category": g.Category, "description": g.Description, "add": add, "remove": remove,
+		"scope": g.Scope, "category": g.Category, "description": g.Description, "add": addValues, "remove": removeDNs, "remove_sids": removeSIDs,
 	}, 2*time.Minute)
 	return err
 }

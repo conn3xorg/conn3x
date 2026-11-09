@@ -21,7 +21,7 @@ A module drops the experimental label when all of these hold:
 | `windows_acl` | yes | yes | no | |
 | `windows_ad_domain_controller` | no | yes, through `azure-ad-lab` | no | Promoting straight from a workgroup server is untested (#395) |
 | `windows_ad_forest` | yes | yes | no | |
-| `windows_ad_group` | module-level | yes | no | Members from another domain (#462); changing scope or category on a real DC (#408); groups of 5,000+ (#407) |
+| `windows_ad_group` | module-level | yes | no | Members from a trust to another forest are untested; changing scope or category on a real DC (#408); groups of 5,000+ (#407) |
 | `windows_ad_ou` | module-level | yes | no | |
 | `windows_ad_user` | module-level | yes | no | |
 | `windows_directory` | yes | yes | yes | |

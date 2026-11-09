@@ -20,11 +20,12 @@ $readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'Microsoft.PowerShe
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
 # DirectorySearcher only searches; read_ad_group.ps1 pages through a big
-# group's members with it, and sets its PageSize, as on any search it makes.
+# group's members with it, and sets its PageSize and Filter, as on any search
+# it makes. NTAccount only names an account: Translate asks LSA for its SID.
 $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter::ToUInt32', 'BitConverter::ToUInt64', 'Convert::ToBase64String',
   'DirectoryServices.DirectorySearcher::new',
   'IO.File::ReadAllBytes', 'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
-  'Security.Cryptography.SHA256::Create', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
+  'Security.Cryptography.SHA256::Create', 'Security.Principal.NTAccount::new', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
   'string::Join'
 $readInstance = 'Close', 'ComputeHash', 'CreateUpdateSearcher', 'Dispose', 'FindAll', 'Search', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
   'Replace', 'ToLowerInvariant', 'ToString', 'Translate'
