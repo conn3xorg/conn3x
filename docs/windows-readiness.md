@@ -18,7 +18,7 @@ A module drops the experimental label when all of these hold:
 
 | Module | Runner | Azure | Import | What's missing |
 | --- | --- | --- | --- | --- |
-| `windows_acl` | no | yes | no | A runner test (#561) |
+| `windows_acl` | yes | yes | no | |
 | `windows_ad_domain_controller` | no | yes, through `azure-ad-lab` | no | Promoting straight from a workgroup server is untested (#395) |
 | `windows_ad_forest` | yes | yes | no | |
 | `windows_ad_group` | module-level | yes | no | Members from another domain (#462); changing scope or category on a real DC (#408); groups of 5,000+ (#407) |
@@ -36,10 +36,10 @@ A module drops the experimental label when all of these hold:
 | `windows_package` | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_powershell` | yes | yes | n/a | |
 | `windows_reboot` | yes | yes | n/a | |
-| `windows_registry_value` | no | yes | yes | A runner test (#561) |
+| `windows_registry_value` | yes | yes | yes | |
 | `windows_scheduled_task` | yes | yes, through `azure-windows-fleet` | no | |
-| `windows_service` | no | yes | yes | A runner test (#561) |
-| `windows_update` | no | run by hand once | n/a | A runner test (#561); a large cumulative update on a real host |
+| `windows_service` | yes | yes | yes | |
+| `windows_update` | reads only | run by hand once | n/a | An install on the runner is slow and pointless; a large cumulative update on a real host |
 | `windows_user` | yes | no | yes | An Azure run |
 | `windows_wait_for` | yes | yes | n/a | |
 
