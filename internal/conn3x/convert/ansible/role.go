@@ -193,6 +193,7 @@ func ConvertRole(dir string) (Result, error) {
 		files["README.md"] = append(files["README.md"], b.String()...)
 	}
 	c.res.Files = files
+	c.res.Variables = append(order, used...)
 	return c.res, nil
 }
 

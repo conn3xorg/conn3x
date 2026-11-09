@@ -84,3 +84,58 @@ func TestConvertAnsibleRoleThenApply(t *testing.T) {
 		})
 	}
 }
+
+// A playbook that runs a role converts, with -out, into its own circuits and
+// a module calling the role's circuit, which takes the play's vars over the
+// role's defaults, and the whole thing applies in Ansible's order.
+func TestConvertAnsiblePlayRolesThenApply(t *testing.T) {
+	for _, image := range linuxImages {
+		t.Run(image, func(t *testing.T) {
+			h := startHost(t, image)
+			w := newWorkdir(t, "convert_play_roles")
+			w.writeAs("play.yml", nil)
+			for name, content := range map[string]string{
+				"roles/greet/defaults/main.yml": "greeting: from the role\n",
+				"roles/greet/tasks/main.yml":    "- name: Greet\n  copy:\n    content: \"{{ greeting }}\\n\"\n    dest: /opt/greet/hello.txt\n",
+			} {
+				path := filepath.Join(w.dir, filepath.FromSlash(name))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if out, code := w.conn3x("convert", "ansible", "-out", "play.tf", "play.yml"); code != 0 || !strings.Contains(out, "Converted all 3 tasks.") {
+				t.Fatalf("convert exited %d:\n%s", code, out)
+			}
+
+			// The test host listens on a mapped port with its own known_hosts.
+			tf, err := os.ReadFile(filepath.Join(w.dir, "play.tf"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			patched := strings.ReplaceAll(string(tf), "\n    private_key_file = var.ssh_private_key_file",
+				fmt.Sprintf("\n    private_key_file = var.ssh_private_key_file\n    port = %s\n    known_hosts_file = %q", h.port, h.knownHosts))
+			patched = strings.ReplaceAll(patched, "\n  ssh_private_key_file = var.ssh_private_key_file",
+				fmt.Sprintf("\n  ssh_private_key_file = var.ssh_private_key_file\n  ssh_port = %s\n  ssh_known_hosts_file = %q", h.port, h.knownHosts))
+			if !strings.Contains(patched, "module \"greet\"") || !strings.Contains(patched, "ssh_port") {
+				t.Fatalf("no module to patch:\n%s", tf)
+			}
+			vars := fmt.Sprintf("box_hosts = { box = \"127.0.0.1\" }\nssh_user = \"root\"\nssh_private_key_file = %q\n", h.keyFile)
+			for name, content := range map[string]string{"play.tf": patched, "terraform.tfvars": vars} {
+				if err := os.WriteFile(filepath.Join(w.dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w.mustConn3x("init", "-no-color")
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+			if got := h.exec("", "sh", "-c", "cat /opt/greet/hello.txt /opt/greet/after.txt"); got != "from the play\nafter\n" {
+				t.Fatalf("host after apply:\n%s", got)
+			}
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+				t.Fatalf("plan after apply:\n%s", out)
+			}
+		})
+	}
+}

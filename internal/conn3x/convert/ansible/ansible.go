@@ -37,8 +37,13 @@ type Result struct {
 	// do, since the converter writes them on every run.
 	Notes []Issue
 	// Files is a converted role: each file of the circuit directory, by its
-	// path in it. HCL is empty then.
+	// path in it. HCL is empty then. For a playbook converted with
+	// Options.Roles, it holds the circuit directory of each role the
+	// playbook runs, by its path beside the playbook's own file.
 	Files map[string][]byte
+	// Variables are what a converted role's circuit takes besides its hosts
+	// and login.
+	Variables []string
 }
 
 // Options change how a playbook converts.
@@ -46,6 +51,10 @@ type Options struct {
 	// Inventory, when set, fills in each play's hosts and login instead of
 	// leaving variables for them.
 	Inventory *Inventory
+	// Roles converts each role a play runs into its own circuit directory,
+	// in Result.Files, and calls it as a module. Without it, role calls are
+	// left for review.
+	Roles bool
 }
 
 // Convert reads the playbook at path and translates it.
@@ -64,7 +73,8 @@ func ConvertWith(path string, opts Options) (Result, error) {
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.SequenceNode {
 		return Result{}, fmt.Errorf("%s: a playbook is a list of plays", path)
 	}
-	c := &converter{dir: filepath.Dir(path), file: filepath.Base(path), inv: opts.Inventory}
+	c := &converter{dir: filepath.Dir(path), file: filepath.Base(path), inv: opts.Inventory, roleCalls: opts.Roles,
+		roles: map[string]*convertedRole{}, roleDirs: map[string]int{}, modules: map[string]int{}, callWhy: map[*yaml.Node]string{}}
 	return c.run(doc.Content[0]), nil
 }
 
@@ -72,6 +82,14 @@ type converter struct {
 	dir, file string // file is the one being read, relative to dir
 	inv       *Inventory
 	role      *role // set while converting a role
+	// roleCalls is Options.Roles. roles are those converted so far, by
+	// their path, roleDirs and modules the names used, and callWhy why a
+	// role call couldn't convert, for flatten to leave it for review.
+	roleCalls bool
+	roles     map[string]*convertedRole
+	roleDirs  map[string]int
+	modules   map[string]int
+	callWhy   map[*yaml.Node]string
 	res       Result
 	hostVars  map[string]bool // groups that still need a hosts variable
 	needUser  bool
@@ -98,7 +116,7 @@ func (c *converter) run(plays *yaml.Node) Result {
 		hosts := scalar(p["hosts"])
 		name := slug(firstNonEmpty(scalar(p["name"]), hosts, fmt.Sprintf("play_%d", i+1)))
 		name = unique(name, used)
-		circuits = append(circuits, c.play(name, hosts, p, play))
+		circuits = append(circuits, c.play(name, hosts, p, play, used)...)
 	}
 
 	groups := make([]string, 0, len(c.hostVars))
@@ -164,7 +182,8 @@ func (c *converter) login(circuit, ssh *hclwrite.Body, play string, node *yaml.N
 }
 
 // play turns one play into a circuit.
-func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml.Node) *hclwrite.Block {
+func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml.Node, used map[string]int) []*hclwrite.Block {
+	review := len(c.res.Review)
 	n := noLogOf(node)
 	c.playNoLog = n != nil && !noLogOff(n)
 	circuit := hclwrite.NewBlock("circuit", []string{name})
@@ -203,16 +222,56 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 			vars[k] = v.Value
 		}
 	}
-	if p["roles"] != nil {
-		c.issue(cb, name, p["roles"], "uses roles, which the converter can't translate yet; convert each role's tasks and add them as steps")
+	if !c.roleCalls {
+		if p["roles"] != nil {
+			c.issue(cb, name, p["roles"], "uses roles; convert with -out and each role's circuit is written beside the playbook's and called as a module, or convert each with -role")
+		}
+		var tasks []*yaml.Node
+		for _, key := range []string{"pre_tasks", "tasks", "post_tasks"} {
+			tasks = append(tasks, seq(p[key])...)
+		}
+		c.steps(cb, tasks, seq(p["handlers"]), c.file, become, vars)
+		return []*hclwrite.Block{circuit}
 	}
 
-	var tasks []*yaml.Node
-	for _, key := range []string{"pre_tasks", "tasks", "post_tasks"} {
-		tasks = append(tasks, seq(p[key])...)
+	// The play's parts, each waiting for the one before. The first circuit
+	// holds the play's hosts, login and any comments about the play, so it
+	// stays even with no steps when those comments are there.
+	var blocks []*hclwrite.Block
+	after := ""
+	commented := len(c.res.Review) > review
+	for i, seg := range c.segments(p) {
+		if seg.call != nil {
+			if i == 0 && commented {
+				blocks = append(blocks, circuit)
+			}
+			blocks = append(blocks, c.module(seg.call, cb, mapping(p["vars"]), after))
+			after = "module." + blocks[len(blocks)-1].Labels()[0]
+			continue
+		}
+		next := circuit
+		if i > 0 {
+			next = hclwrite.NewBlock("circuit", []string{unique(name, used)})
+			nb := next.Body()
+			nb.SetAttributeRaw("hosts", cb.GetAttribute("hosts").Expr().BuildTokens(nil))
+			nb.AppendNewline()
+			for _, blk := range cb.Blocks() {
+				if blk.Type() == "ssh" {
+					nb.AppendBlock(hclwrite.NewBlock("ssh", nil))
+					nb.Blocks()[len(nb.Blocks())-1].Body().AppendUnstructuredTokens(blk.Body().BuildTokens(nil))
+				}
+			}
+		}
+		c.steps(next.Body(), seg.tasks, seq(p["handlers"]), c.file, become, vars)
+		if after != "" {
+			waitFor(next, after)
+		}
+		blocks = append(blocks, next)
+		if a := lastStep(next); a != "" {
+			after = a
+		}
 	}
-	c.steps(cb, tasks, seq(p["handlers"]), c.file, become, vars)
-	return circuit
+	return blocks
 }
 
 // steps converts tasks, read from c.file, and the handlers they notify into

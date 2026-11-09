@@ -32,7 +32,7 @@ circuit "mixed" {
   #   - name: Back again
   #     import_tasks: loop.yml
 
-  # TODO(convert): Task "Another role" (tasks/main.yml line 14) uses include_role, which runs another role here; convert that role with -role and call its circuit as a module.
+  # TODO(convert): Task "Another role" (tasks/main.yml line 14) uses include_role, which runs another role here; the converter only calls roles run from a play's own task lists, with -out, so convert that role with -role and call its circuit as a module.
   #   - name: Another role
   #     include_role:
   #       name: common

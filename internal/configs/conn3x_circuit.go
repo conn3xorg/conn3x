@@ -1015,3 +1015,13 @@ func stepRunOnce(body *hclsyntax.Body) (bool, hcl.Diagnostics) {
 	}
 	return true, nil
 }
+
+// CircuitStepType is the resource type a step's module block becomes, such
+// as conn3x_file for template, so other tools can name a step's address.
+func CircuitStepType(module string) (string, bool) {
+	if module == "template" {
+		return "conn3x_file", true
+	}
+	t, ok := circuitModules[module]
+	return t, ok
+}

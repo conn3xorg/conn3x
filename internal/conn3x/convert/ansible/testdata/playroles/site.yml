@@ -1,0 +1,24 @@
+- hosts: web
+  become: true
+  vars:
+    web_port: 8080
+  pre_tasks:
+    - name: Install curl
+      package:
+        name: curl
+  roles:
+    - web
+  tasks:
+    - name: Write the motd
+      copy:
+        content: "Managed by Conn3x\n"
+        dest: /etc/motd
+    - name: Second site
+      include_role:
+        name: web
+      vars:
+        web_port: 9090
+        web_extra: x
+    - name: Something else
+      include_role:
+        name: missing

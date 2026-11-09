@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/opentofu/opentofu/internal/command"
 	"github.com/opentofu/opentofu/internal/conn3x/convert/ansible"
@@ -23,6 +25,8 @@ func convertCommand() command.Command {
 
 Write the result beside the playbook so the files it copies resolve. With -i, hosts and logins come from the inventory.
 
+With -out, each role a play runs, from its roles list or an include_role or import_role in its task lists, is converted from roles/ beside the playbook into a circuit directory beside the output file, and called as a module in the order Ansible runs it. A directory that already has files is kept as it is.
+
 With -role, converts one role's directory instead, such as one ansible-galaxy installed, into a new circuit directory named by -out. Nothing is downloaded: install a role from Galaxy yourself, with ansible-galaxy, then point -role at it.
 
 Exits 0 when every task converted, 3 when some need review, and 1 on errors.`,
@@ -31,7 +35,7 @@ Exits 0 when every task converted, 3 when some need review, and 1 on errors.`,
 	// usage line still shows it as required.
 	ans.CommandLine.PositionalArg(&playbook, "PLAYBOOK", true)
 	ans.UsageOverride.Usage = "conn3x [global options] convert ansible [options] <PLAYBOOK>\n       conn3x [global options] convert ansible -role <ROLE> -out <DIR>"
-	ans.CommandLine.StringVar(&out, "out", "", "Write the circuits to this file instead of standard output. With -role, the new directory to write the circuit to.")
+	ans.CommandLine.StringVar(&out, "out", "", "Write the circuits to this file instead of standard output, and the circuits of the roles the playbook runs beside it. With -role, the new directory to write the circuit to.")
 	ans.CommandLine.StringVar(&role, "role", "", "Convert the Ansible role in this directory into a circuit directory.")
 	ans.CommandLine.StringVar(&inventory, "i", "", "Inventory file (INI or YAML) to fill in each play's hosts and login from.")
 	ans.CommandLine.StringVar(&inventory, "inventory", "", "Same as -i.")
@@ -55,7 +59,8 @@ func runConvert(playbook, inventory, out string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Error: a playbook path is required, as in: conn3x convert ansible site.yml")
 		return 1
 	}
-	var opts ansible.Options
+	// Role directories go beside the file, so they need one.
+	opts := ansible.Options{Roles: out != ""}
 	if inventory != "" {
 		inv, err := ansible.ReadInventory(inventory)
 		if err != nil {
@@ -72,13 +77,48 @@ func runConvert(playbook, inventory, out string, stdout, stderr io.Writer) int {
 	if out == "" {
 		_, err = stdout.Write(res.HCL)
 	} else {
-		err = os.WriteFile(out, res.HCL, 0o644)
+		err = writeRoles(res.Files, filepath.Dir(out), stderr)
+		if err == nil {
+			err = os.WriteFile(out, res.HCL, 0o644)
+		}
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %s\n", err)
 		return 1
 	}
-	return report(res, stderr, false)
+	return report(res, stderr, len(res.Files) > 0)
+}
+
+// writeRoles writes the circuit directory of each role a playbook runs.
+// One that already has files is kept as it is, since it may hold edits.
+func writeRoles(files map[string][]byte, dir string, stderr io.Writer) error {
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	kept := map[string]bool{}
+	for _, p := range paths {
+		top, _, _ := strings.Cut(p, "/")
+		if _, done := kept[top]; !done {
+			entries, err := os.ReadDir(filepath.Join(dir, top))
+			kept[top] = err == nil && len(entries) > 0
+			if kept[top] {
+				fmt.Fprintf(stderr, "Kept %s, which already has files; convert into a new directory to see the role's circuit as it converts now.\n", top)
+			}
+		}
+		if kept[top] {
+			continue
+		}
+		path := filepath.Join(dir, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, files[p], 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runConvertRole converts a role into a new circuit directory. It never
