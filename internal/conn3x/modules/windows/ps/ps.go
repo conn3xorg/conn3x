@@ -42,8 +42,10 @@ type Runner interface {
 	RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error)
 }
 
-// ReadTimeout limits a read script. Slow roles take seconds, not minutes.
-const ReadTimeout = 2 * time.Minute
+// ReadTimeout limits a read script. Reads take seconds, but on 2-vCPU Azure
+// VMs a host's first plan after a reboot or a new Conn3x build sometimes took
+// 60 to 98s, and one read past two minutes failed a plan (#349).
+const ReadTimeout = 5 * time.Minute
 
 //go:embed stub.ps1
 var stub string
