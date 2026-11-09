@@ -59,6 +59,15 @@ func TestImportPriorPerModule(t *testing.T) {
 		{"conn3x_selinux_fcontext", `{"target":"/srv/www(/.*)?","setype":"httpd_sys_content_t"}`, "203.0.113.10:2222:selinux_fcontext:/srv/www(/.*)?", nil},
 		{"conn3x_postgresql_database", `{"name":"app","owner":"app","encoding":"UTF8"}`, "203.0.113.10:2222:postgresql_database:app", nil},
 		{"conn3x_postgresql_role", `{"name":"App","attributes":["CREATEDB"]}`, "203.0.113.10:2222:postgresql_role:App", nil},
+		{"conn3x_mysql_database", `{"name":"app","charset":"utf8mb4"}`, "203.0.113.10:2222:mysql_database:app", nil},
+		// Without a host the account is app@localhost, as planMysqlUser has it.
+		{"conn3x_mysql_user", `{"name":"app"}`, "203.0.113.10:2222:mysql_user:app:localhost", func(v cty.Value) error {
+			if !v.GetAttr("host").RawEquals(cty.StringVal("localhost")) {
+				return fmt.Errorf("host = %#v, want localhost", v.GetAttr("host"))
+			}
+			return nil
+		}},
+		{"conn3x_mysql_user", `{"name":"app","host":"%"}`, "203.0.113.10:2222:mysql_user:app:%", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
 			_, v, err := importPrior(tc.typeName, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+tc.args+`}`)

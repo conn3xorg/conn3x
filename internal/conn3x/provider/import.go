@@ -17,6 +17,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/firewall"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mount"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/postgresql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/selinux"
@@ -75,6 +76,11 @@ var importable = map[string]struct {
 	"conn3x_postgresql_database": {nameID("postgresql_database", nil), notNull, "PostgreSQL database %s", hasPgDatabase},
 	"conn3x_postgresql_role":     {nameID("postgresql_role", nil), notNull, "PostgreSQL role %s", hasPgRole},
 
+	// A MySQL account is its name and host together: app@localhost and
+	// app@% are two accounts, so both are in the id.
+	"conn3x_mysql_database": {nameID("mysql_database", nil), notNull, "MySQL database %s", hasMysqlDatabase},
+	"conn3x_mysql_user":     {keysID("mysql_user", "name", "host"), notNull, "", hasMysqlUser},
+
 	"conn3x_windows_file":           {pathID(""), notNull, "file %s", nil},
 	"conn3x_windows_directory":      {pathID("windows_directory"), notNull, "directory %s", nil},
 	"conn3x_windows_service":        {nameID("windows_service", nil), notNull, "service %s", hasWinService},
@@ -110,6 +116,10 @@ var ruleWhat = map[string]func(cty.Value) string{
 			what += " in zone " + z
 		}
 		return what
+	},
+	"conn3x_mysql_user": func(v cty.Value) string {
+		u := mysqlUserFrom(v)
+		return fmt.Sprintf("MySQL account '%s'@'%s'", u.Name, u.Host)
 	},
 	"conn3x_ufw_rule": func(v cty.Value) string {
 		what := "the ufw rule " + v.GetAttr("action").AsString() + " " + v.GetAttr("port").AsString()
@@ -209,6 +219,22 @@ func hasPgDatabase(ctx context.Context, h *hostConn, v cty.Value) (bool, error) 
 // it has until a step sets one.
 func hasPgRole(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	s, err := postgresql.ReadRole(ctx, h, v.GetAttr("name").AsString())
+	return s.Exists, err
+}
+
+// hasMysqlDatabase: the server has a database of that name. Its charset and
+// collation are what the step then manages. The client logs in as root over
+// the server's socket, so it needs become = true, and says so without it.
+func hasMysqlDatabase(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	s, err := mysql.ReadDatabase(ctx, h, v.GetAttr("name").AsString())
+	return s.Exists, err
+}
+
+// hasMysqlUser: the server has the account, name and host together. Its
+// password stays as it is until a step sets one, since password_wo never
+// goes into an import ID.
+func hasMysqlUser(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	s, err := mysql.ReadUser(ctx, h, mysqlUserFrom(v))
 	return s.Exists, err
 }
 
@@ -400,6 +426,9 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 	}
 	if typeName == "conn3x_package" && vals["state"].IsNull() {
 		vals["state"] = cty.StringVal(string(pkg.Present)) // what planPackage defaults it to
+	}
+	if typeName == "conn3x_mysql_user" && vals["host"].IsNull() {
+		vals["host"] = cty.StringVal("localhost") // what planMysqlUser defaults it to
 	}
 	if id.WriteOnly {
 		if typeName == "conn3x_windows_file" {

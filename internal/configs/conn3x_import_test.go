@@ -165,6 +165,14 @@ func TestStepImportSyncedModules(t *testing.T) {
       name        = "app"
       password_wo = "s3cret"
     }`,
+		"conn3x_mysql_database": `mysql_database {
+      name = "app"
+    }`,
+		"conn3x_mysql_user": `mysql_user {
+      name        = "app"
+      host        = "%"
+      password_wo = "s3cret"
+    }`,
 		"conn3x_windows_package": `windows_package {
       product_code = "{23170F69-40C1-2702-2501-000001000000}"
       source       = "C:/install/7z.msi"

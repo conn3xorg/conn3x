@@ -60,6 +60,8 @@ var importModules = map[string]string{
 
 	"conn3x_postgresql_database": "postgresql_database",
 	"conn3x_postgresql_role":     "postgresql_role",
+	"conn3x_mysql_database":      "mysql_database",
+	"conn3x_mysql_user":          "mysql_user",
 
 	"conn3x_windows_file":           "windows_file",
 	"conn3x_windows_directory":      "windows_directory",
