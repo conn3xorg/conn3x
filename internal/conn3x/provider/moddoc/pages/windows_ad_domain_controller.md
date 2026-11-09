@@ -46,7 +46,7 @@ step "adws" {
 <!-- reference -->
 ## How it works
 
-**Promotion.** Conn3x runs `Install-ADDSDomainController` with `-InstallDns` and `-NoRebootOnCompletion`, so the new DC is a DNS server and a global catalog, as Windows makes one by default. Join the host to the domain first with [`windows_domain_membership`](windows_domain_membership.md): that's the path Conn3x has been tested on. On a 2-vCPU VM promotion takes about a minute.
+**Promotion.** Conn3x runs `Install-ADDSDomainController` with `-InstallDns` and `-NoRebootOnCompletion`, so the new DC is a DNS server and a global catalog, as Windows makes one by default. Two paths have been tested on Azure, each with a clean second plan: joining the host to the domain first with [`windows_domain_membership`](windows_domain_membership.md), then promoting it, and promoting a Windows Server 2025 host straight from a workgroup, with its DNS pointed at a domain controller by [`windows_dns_client`](windows_dns_client.md). On a 2-vCPU VM promotion takes about a minute.
 
 **Why it needs a password.** A key login has no password to show the domain, so promotion uses the account in `username` and `password_wo`. It has to be able to add domain controllers: a member of Domain Admins can.
 

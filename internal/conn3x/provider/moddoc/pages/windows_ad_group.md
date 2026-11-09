@@ -42,9 +42,11 @@ A member that doesn't exist yet, such as a user a later step makes, shows the gr
 
 **Lockout guard.** Conn3x won't take its own login out of a group it gets its rights through, such as Domain Admins, so apply fails until the list keeps it.
 
-**Scope and category.** Leave them unset and a new group is a global security group, as Windows makes one. A scope change between `global` and `domainlocal` goes through `universal`, because AD allows no direct step. AD refuses some changes anyway, such as making a group global while it has members from another domain.
+**Scope and category.** Leave them unset and a new group is a global security group, as Windows makes one. A scope change between `global` and `domainlocal` goes through `universal`, because AD allows no direct step. AD refuses some changes anyway, such as making a domain local group that holds another domain local group global: the apply fails with AD's "A universal group cannot have a local group as a member", and the group keeps its scope. Changes both ways between `global` and `domainlocal`, and between `security` and `distribution`, were tested on a Windows Server 2025 domain controller, each with a clean second plan.
 
-**Drift.** A refresh reads the scope, category, description, location and members. A member added or removed by hand in Active Directory Users and Computers, or with `Add-ADGroupMember`, puts the step out of sync, and `conn3x drift` exits 2. Without `authoritative`, an extra member isn't drift.
+**Big groups.** A group with 5,001 members applied, with `authoritative = true`, and planned clean in about 20 seconds on a 2-vCPU domain controller. Members already in the group are found with one query, so a large group costs about as much to read as a small one.
+
+**Drift.** A refresh reads the scope, category, description, location and members. A member added or removed by hand in Active Directory Users and Computers, or with `Add-ADGroupMember`, puts the step out of sync, and `conn3x drift` exits 2. Without `authoritative`, an extra member isn't drift. Drift and the plan say the group changed, not which member: look in AD for that.
 
 ## Removal
 
