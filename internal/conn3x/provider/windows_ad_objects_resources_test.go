@@ -132,3 +132,27 @@ func TestADWriteRetriesOnlyNoAnswer(t *testing.T) {
 		t.Errorf("twice: %v, %d writes", err, calls)
 	}
 }
+
+// A plan that puts a group right clears pending_changes, so the plan shows
+// each member the refresh found; an in-sync group keeps what it had.
+func TestWinADGroupPlanShowsPendingChanges(t *testing.T) {
+	r := resourceTypes["conn3x_windows_ad_group"]
+	cfg := objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal("Ops"), "members": cty.SetVal([]cty.Value{cty.StringVal("alice")})})
+	created := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(cfg.Type()), ProposedNewState: cfg, Config: cfg}).PlannedState
+	if p := created.GetAttr("pending_changes"); !p.IsKnown() || p.LengthInt() != 0 {
+		t.Fatalf("created: %#v", p)
+	}
+	vals := created.AsValueMap()
+	vals["revision"], vals["on_remove"] = cty.StringVal("r"), cty.StringVal("forget")
+	vals["in_sync"], vals["pending_changes"] = cty.False, cty.ListVal([]cty.Value{cty.StringVal("remove CN=extra,DC=lab")})
+	drifted := cty.ObjectVal(vals)
+	p := r.plan(providers.PlanResourceChangeRequest{PriorState: drifted, ProposedNewState: drifted, Config: cfg}).PlannedState
+	if p.GetAttr("in_sync").IsKnown() || p.GetAttr("pending_changes").LengthInt() != 0 {
+		t.Errorf("drifted: in_sync %#v, pending_changes %#v", p.GetAttr("in_sync"), p.GetAttr("pending_changes"))
+	}
+	vals["in_sync"], vals["pending_changes"] = cty.True, cty.ListValEmpty(cty.String)
+	clean := cty.ObjectVal(vals)
+	if p := r.plan(providers.PlanResourceChangeRequest{PriorState: clean, ProposedNewState: clean, Config: cfg}).PlannedState; !p.RawEquals(clean) {
+		t.Errorf("in sync planned a change: %#v", p)
+	}
+}

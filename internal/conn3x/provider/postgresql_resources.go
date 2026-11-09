@@ -85,10 +85,10 @@ func pgRoleSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "A role in the PostgreSQL server on the host, such as an application's login, managed through psql as the postgres user.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":       {Type: cty.String, Computed: true},
-			"revision": revisionAttr(),
-			"name":     {Type: cty.String, Required: true, Description: "Role name, up to 63 bytes."},
-			"login":    {Type: cty.Bool, Optional: true, Description: "Whether the role can log in. Default true, as for a user; false makes a group role."},
+			"id":         {Type: cty.String, Computed: true},
+			"revision":   revisionAttr(),
+			"name":       {Type: cty.String, Required: true, Description: "Role name, up to 63 bytes."},
+			"login":      {Type: cty.Bool, Optional: true, Description: "Whether the role can log in. Default true, as for a user; false makes a group role."},
 			"attributes": {Type: cty.Set(cty.String), Optional: true, Description: "Exactly the attributes the role has, from SUPERUSER, CREATEDB, CREATEROLE, REPLICATION and BYPASSRLS; those not listed are taken away. Unset leaves them as they are, and a new role gets none."},
 			"password_wo": {
 				Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,

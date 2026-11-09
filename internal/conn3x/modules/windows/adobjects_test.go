@@ -5,6 +5,7 @@ package windows
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -184,5 +185,33 @@ func TestWaitAD(t *testing.T) {
 	cancel()
 	if err := WaitAD(cctx, &hang{}, time.Minute); err != context.Canceled {
 		t.Errorf("cancelled: %v", err)
+	}
+}
+
+// A plan names each member an apply would add or take out, and each name
+// the directory doesn't have; a big list stops at 50 with a count.
+func TestADGroupPendingChanges(t *testing.T) {
+	a := ActualADGroup{Exists: true, Members: []string{"CN=alice,DC=lab", "CN=extra,DC=lab"}, Wanted: map[string]string{"alice": "CN=alice,DC=lab", "bob": "CN=bob,DC=lab"}}
+	g := ADGroup{Name: "Ops", Members: []string{"alice", "bob", "ghost"}, Authoritative: true}
+	if got := strings.Join(g.PendingChanges(a), "|"); got != "add CN=bob,DC=lab|remove CN=extra,DC=lab|not found ghost" {
+		t.Errorf("got %s", got)
+	}
+	g.Authoritative = false
+	if got := strings.Join(g.PendingChanges(a), "|"); got != "add CN=bob,DC=lab|not found ghost" {
+		t.Errorf("not authoritative: %s", got)
+	}
+	big := ActualADGroup{Exists: true, Wanted: map[string]string{}}
+	var names []string
+	for i := range 60 {
+		n := fmt.Sprintf("u%02d", i)
+		names = append(names, n)
+		big.Wanted[n] = "CN=" + n
+	}
+	got := ADGroup{Name: "Big", Members: names}.PendingChanges(big)
+	if len(got) != 51 || got[50] != "and 10 more" {
+		t.Errorf("%d entries, last %q", len(got), got[len(got)-1])
+	}
+	if len((ADGroup{Name: "Ops", Members: []string{"alice"}}).PendingChanges(a)) != 0 {
+		t.Error("an in-sync group has pending changes")
 	}
 }

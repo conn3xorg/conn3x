@@ -312,6 +312,27 @@ func (g ADGroup) changes(a ActualADGroup) (add, remove, unresolved []string) {
 }
 
 // Matches reports whether AD has the group as configured.
+// PendingChanges says which members an apply would add and take out, and
+// which named members the directory doesn't have, so a plan can show them.
+// A big group's list stops at 50, with a count of the rest.
+func (g ADGroup) PendingChanges(a ActualADGroup) []string {
+	add, remove, unresolved := g.changes(a)
+	out := []string{}
+	for _, dn := range add {
+		out = append(out, "add "+dn)
+	}
+	for _, dn := range remove {
+		out = append(out, "remove "+dn)
+	}
+	for _, m := range unresolved {
+		out = append(out, "not found "+m)
+	}
+	if len(out) > 50 {
+		out = append(out[:50], fmt.Sprintf("and %d more", len(out)-50))
+	}
+	return out
+}
+
 func (g ADGroup) Matches(a ActualADGroup) bool {
 	if !a.Exists || !inPath(g.Path, a.Parent, a.PathDN) ||
 		(g.Scope != "" && !strings.EqualFold(g.Scope, a.Scope)) ||

@@ -426,7 +426,9 @@ func TestJoinAndDCFailWithoutPasswords(t *testing.T) {
 	t.Logf("join: %v", err)
 	base := `C:\c3d-` + randHex(4)
 	run(t, c, `param($A) [void][IO.Directory]::CreateDirectory($A.b); & icacls.exe $A.b /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null`, map[string]any{"b": base})
-	t.Cleanup(func() { _, _ = ps.User(context.Background(), c, `param($A) [IO.Directory]::Delete($A.b, $true)`, map[string]any{"b": base}, time.Minute) })
+	t.Cleanup(func() {
+		_, _ = ps.User(context.Background(), c, `param($A) [IO.Directory]::Delete($A.b, $true)`, map[string]any{"b": base}, time.Minute)
+	})
 	_, err = windows.ApplyDomainController(ctx, c, windows.DomainController{DomainName: "nowhere.conn3x.invalid", Username: `NOWHERE\admin`, DatabasePath: base}, pw, dsrm, 5*time.Minute)
 	if err == nil || !strings.Contains(err.Error(), "can rename or replace") || strings.Contains(err.Error(), pw) || strings.Contains(err.Error(), dsrm) {
 		t.Errorf("dc with an open folder: %v", err)

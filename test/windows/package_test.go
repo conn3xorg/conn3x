@@ -237,7 +237,9 @@ func TestPackageFromURL(t *testing.T) {
 	c := connect(t)
 	ctx := context.Background()
 	p := windows.Package{ProductCode: sevenZipCode, URL: sevenZipURL, SHA256: sevenZipSum}
-	t.Cleanup(func() { _, _ = windows.ApplyPackage(context.Background(), c, windows.Package{ProductCode: sevenZipCode, Absent: true}, 10*time.Minute) })
+	t.Cleanup(func() {
+		_, _ = windows.ApplyPackage(context.Background(), c, windows.Package{ProductCode: sevenZipCode, Absent: true}, 10*time.Minute)
+	})
 	if _, err := windows.ApplyPackage(ctx, c, p, 10*time.Minute); err != nil {
 		t.Fatal(err)
 	}

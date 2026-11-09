@@ -190,17 +190,18 @@ func winADGroupSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "Experimental. A group in Active Directory, and who is in it, run on a domain controller. Settings left unset are left as they are.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":            {Type: cty.String, Computed: true},
-			"revision":      revisionAttr(),
-			"name":          {Type: cty.String, Required: true, Description: "Group name, used as both its name and its sAMAccountName, such as AppAdmins."},
-			"path":          {Type: cty.String, Optional: true, Description: adPathDescription + " A group found elsewhere is moved."},
-			"scope":         {Type: cty.String, Optional: true, Description: "\"domainlocal\", \"global\" or \"universal\". Unset, a new group is global."},
-			"category":      {Type: cty.String, Optional: true, Description: "\"security\" or \"distribution\". Unset, a new group is a security group."},
-			"description":   {Type: cty.String, Optional: true, Description: "Description."},
-			"members":       {Type: cty.Set(cty.String), Optional: true, Description: "Accounts that must be in it, by sAMAccountName in this domain: users, groups, and computers with their trailing $, such as alice, ops or web1$. Others are left in unless authoritative is set."},
-			"authoritative": {Type: cty.Bool, Optional: true, Description: "true makes members the complete list: anyone else is taken out. Never the login Conn3x uses, in a group it gets its rights through."},
-			"on_remove":     adOnRemove("group"),
-			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the group matched at the last refresh."},
+			"id":              {Type: cty.String, Computed: true},
+			"revision":        revisionAttr(),
+			"name":            {Type: cty.String, Required: true, Description: "Group name, used as both its name and its sAMAccountName, such as AppAdmins."},
+			"path":            {Type: cty.String, Optional: true, Description: adPathDescription + " A group found elsewhere is moved."},
+			"scope":           {Type: cty.String, Optional: true, Description: "\"domainlocal\", \"global\" or \"universal\". Unset, a new group is global."},
+			"category":        {Type: cty.String, Optional: true, Description: "\"security\" or \"distribution\". Unset, a new group is a security group."},
+			"description":     {Type: cty.String, Optional: true, Description: "Description."},
+			"members":         {Type: cty.Set(cty.String), Optional: true, Description: "Accounts that must be in it, by sAMAccountName in this domain: users, groups, and computers with their trailing $, such as alice, ops or web1$. Others are left in unless authoritative is set."},
+			"authoritative":   {Type: cty.Bool, Optional: true, Description: "true makes members the complete list: anyone else is taken out. Never the login Conn3x uses, in a group it gets its rights through."},
+			"on_remove":       adOnRemove("group"),
+			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether the group matched at the last refresh."},
+			"pending_changes": {Type: cty.List(cty.String), Computed: true, Description: "The members the last refresh found an apply would add (\"add <DN>\") or take out (\"remove <DN>\"), and those the directory doesn't have (\"not found <name>\"). A plan to put them right shows them here. Empty when nothing is waiting."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -227,15 +228,42 @@ func validateWinADGroup(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planWinADGroup(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSyncedFold(req, "windows_ad_group", []string{"name"}, []string{"path", "scope", "category", "description", "members", "authoritative"})
+	resp := planSyncedFold(req, "windows_ad_group", []string{"name"}, []string{"path", "scope", "category", "description", "members", "authoritative"})
+	if resp.PlannedState.IsNull() {
+		return resp
+	}
+	// A plan that puts the group right clears the list, so it shows each
+	// change the refresh found.
+	vals := resp.PlannedState.AsValueMap()
+	switch {
+	case req.PriorState.IsNull():
+		vals["pending_changes"] = cty.ListValEmpty(cty.String)
+	case vals["in_sync"].IsKnown():
+		vals["pending_changes"] = req.PriorState.GetAttr("pending_changes")
+	default:
+		vals["pending_changes"] = cty.ListValEmpty(cty.String)
+	}
+	resp.PlannedState = cty.ObjectVal(vals)
+	return resp
 }
 
 func readWinADGroup(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	g := winADGroupFrom(req.PriorState)
-	return adRead(ctx, req, func(c *ssh.Client) (bool, error) {
+	pending := []string{}
+	resp := adRead(ctx, req, func(c *ssh.Client) (bool, error) {
 		a, err := windows.ReadADGroup(ctx, c, g)
+		if err == nil && a.Exists {
+			pending = g.PendingChanges(a)
+		}
 		return g.Matches(a), err
 	})
+	if resp.Diagnostics.HasErrors() || resp.NewState.IsNull() {
+		return resp
+	}
+	vals := resp.NewState.AsValueMap()
+	vals["pending_changes"] = stringListVal(pending)
+	resp.NewState = cty.ObjectVal(vals)
+	return resp
 }
 
 func applyWinADGroup(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
@@ -278,7 +306,9 @@ func applyWinADGroup(ctx context.Context, req providers.ApplyResourceChangeReque
 			return fail(fmt.Errorf("group %s doesn't match what was set; something else changed it", g.Name))
 		}
 	}
-	resp.NewState = withSync(req.PlannedState, true)
+	vals := withSync(req.PlannedState, true).AsValueMap()
+	vals["pending_changes"] = cty.ListValEmpty(cty.String)
+	resp.NewState = cty.ObjectVal(vals)
 	return resp
 }
 

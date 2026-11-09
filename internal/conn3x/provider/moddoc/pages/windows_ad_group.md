@@ -46,7 +46,7 @@ A member that doesn't exist yet, such as a user a later step makes, shows the gr
 
 **Big groups.** A group with 5,001 members applied, with `authoritative = true`, and planned clean in about 20 seconds on a 2-vCPU domain controller. Members already in the group are found with one query, so a large group costs about as much to read as a small one.
 
-**Drift.** A refresh reads the scope, category, description, location and members. A member added or removed by hand in Active Directory Users and Computers, or with `Add-ADGroupMember`, puts the step out of sync, and `conn3x drift` exits 2. Without `authoritative`, an extra member isn't drift. Drift and the plan say the group changed, not which member: look in AD for that.
+**Drift.** A refresh reads the scope, category, description, location and members. A member added or removed by hand in Active Directory Users and Computers, or with `Add-ADGroupMember`, puts the step out of sync, and `conn3x drift` exits 2. Without `authoritative`, an extra member isn't drift. The plan names them: `pending_changes` lists each member the apply would add (`add CN=bob,...`) or take out (`remove CN=extra,...`), and each listed name the directory doesn't have (`not found ghost`), up to 50 and then a count. `conn3x drift` lists the group as changed, and `conn3x plan` shows that list.
 
 ## Removal
 

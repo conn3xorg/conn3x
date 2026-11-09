@@ -134,7 +134,7 @@ func (r Role) Matches(s RoleState) bool {
 
 // ident quotes a name as an SQL identifier, and literal a value as a string.
 // A literal's backslashes are plain since standard_conforming_strings, on by
-// default since PostgreSQL 9.1; E'' is never used.
+// default since PostgreSQL 9.1; no string uses the E prefix.
 func ident(s string) string   { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 func literal(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
