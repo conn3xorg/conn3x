@@ -78,6 +78,7 @@ var importable = map[string]struct {
 	"conn3x_windows_feature":        {nameID("windows_feature", nil), notNull, "feature %s", hasWinFeature},
 	"conn3x_windows_user":           {nameID("windows_user", nil), notNull, "local user %s", hasWinUser},
 	"conn3x_windows_group":          {nameID("windows_group", nil), notNull, "local group %s", hasWinGroup},
+	"conn3x_windows_package":        {keysID("windows_package", "product_code"), notNull, "MSI package %s", hasWinPackage},
 
 	// A host always has a hostname, time zone and locale, so there's
 	// nothing to find first: a different one imports and plans an update.

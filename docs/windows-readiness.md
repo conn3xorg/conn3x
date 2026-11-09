@@ -33,7 +33,7 @@ A module drops the experimental label when all of these hold:
 | `windows_group` | yes | no | yes | An Azure run |
 | `windows_iis_app_pool` | yes | yes, through `azure-windows-fleet` | no | |
 | `windows_iis_site` | yes | yes, through `azure-windows-fleet` | no | |
-| `windows_package` | yes | yes, through `azure-windows-fleet` | no | |
+| `windows_package` | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_powershell` | yes | yes | n/a | |
 | `windows_reboot` | yes | yes | n/a | |
 | `windows_registry_value` | no | yes | yes | A runner test (#561) |
@@ -47,7 +47,7 @@ A module drops the experimental label when all of these hold:
 
 ## What's left across the board
 
-- **`import` on the rest** (#417): seven modules import now (#563, #567). `windows_package` is next, then the less common ones.
+- **`import` on the rest** (#417): eight modules import now (#563, #567, and `windows_package` by its product code). The less common ones are next.
 
 Windows Server 2022 runs in CI since #568, on the first try for every runner test.
 

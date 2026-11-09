@@ -65,6 +65,7 @@ var importModules = map[string]string{
 	"conn3x_windows_feature":        "windows_feature",
 	"conn3x_windows_user":           "windows_user",
 	"conn3x_windows_group":          "windows_group",
+	"conn3x_windows_package":        "windows_package",
 }
 
 // ImportableType is the resource type a module's step lowers to, when the

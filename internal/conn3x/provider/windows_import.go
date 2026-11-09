@@ -39,6 +39,13 @@ func hasWinUser(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	return a.Exists, err
 }
 
+// hasWinPackage: Windows lists the product code as installed. The .msi
+// it came from isn't checked, so source, url and sha256 are what a later
+// reinstall would use.
+func hasWinPackage(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	return windows.PackageInstalled(ctx, h.client, v.GetAttr("product_code").AsString())
+}
+
 func hasWinGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	a, err := windows.ReadGroup(ctx, h.client, winGroupFrom(v))
 	return a.Exists, err

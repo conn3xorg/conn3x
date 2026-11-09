@@ -157,6 +157,11 @@ func TestStepImportSyncedModules(t *testing.T) {
 		"conn3x_windows_group": `windows_group {
       name = "AppOps"
     }`,
+		"conn3x_windows_package": `windows_package {
+      product_code = "{23170F69-40C1-2702-2501-000001000000}"
+      source       = "C:/install/7z.msi"
+      sha256       = "0000000000000000000000000000000000000000000000000000000000000000"
+    }`,
 	} {
 		mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit("step \"s\" {\n    import = true\n    " + step + "\n  }")})
 		if diags.HasErrors() {
