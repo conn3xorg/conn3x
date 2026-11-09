@@ -1,0 +1,29 @@
+circuit "db" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "app_db" {
+    mysql_database {
+      name      = "app"
+      charset   = "utf8mb4"
+      collation = "utf8mb4_bin"
+    }
+  }
+
+  step "app_user" {
+    mysql_user {
+      name        = "app"
+      host        = "127.0.0.1"
+      password_wo = "{{.Password}}"
+      grants = {
+        app = [{{.Privileges}}]
+      }
+    }
+  }
+}

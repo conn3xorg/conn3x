@@ -33,6 +33,8 @@ const circuitFileExt = ".circuit.hcl"
 var circuitModules = map[string]string{
 	"authorized_key":      "conn3x_authorized_key",
 	"known_hosts":         "conn3x_known_hosts",
+	"mysql_database":      "conn3x_mysql_database",
+	"mysql_user":          "conn3x_mysql_user",
 	"postgresql_database": "conn3x_postgresql_database",
 	"postgresql_role":     "conn3x_postgresql_role",
 	"limit":               "conn3x_limit",
