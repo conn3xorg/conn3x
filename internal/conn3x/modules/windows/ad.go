@@ -331,12 +331,14 @@ func (c ChildDomain) Check() (attr string, err error) {
 	}
 	// Seen on Azure: Install-ADDSDomain refuses LAB\admin, as the host can't
 	// find a NetBIOS name in DNS before it's in the forest.
+	// The account's domain is the parent or one above it, never the new
+	// domain itself, which doesn't exist yet.
 	domain, _, qualified := strings.Cut(c.Username, `\`)
 	if !qualified {
 		_, domain, qualified = strings.Cut(c.Username, "@")
 	}
-	if !qualified || !strings.Contains(domain, ".") {
-		return "username", fmt.Errorf(`username %q must name its domain by its DNS name, such as admin@lab.example.com or lab.example.com\admin: the new domain controller finds the forest through DNS`, c.Username)
+	if !qualified || strings.Count(c.Username, "@") > 1 || !strings.HasSuffix(strings.ToLower(c.DomainName), "."+strings.ToLower(domain)) {
+		return "username", fmt.Errorf(`username %q must be an account in %s or a domain above it, named by the domain's DNS name, such as admin@%s or %s\admin: the new domain controller finds the forest through DNS`, c.Username, c.Parent(), c.Parent(), c.Parent())
 	}
 	return "", nil
 }

@@ -660,7 +660,7 @@ func winChildDomainSchema() providers.Schema {
 			"revision":      revisionAttr(),
 			"domain_name":   {Type: cty.String, Required: true, Description: "Full DNS name of the new domain, such as emea.lab.example.com. Everything after the first label is the parent domain, which must exist."},
 			"netbios_name":  {Type: cty.String, Optional: true, Description: "NetBIOS name of the new domain, up to 15 characters, such as EMEA. Unset lets Windows take it from the first label. Used only when the domain is made."},
-			"username":      {Type: cty.String, Required: true, Description: "Account in the forest that may add a domain, such as LAB\\admin, a member of Enterprise Admins. Used only when the domain is made."},
+			"username":      {Type: cty.String, Required: true, Description: "Account in the forest that may add a domain, a member of Enterprise Admins, named by its domain's DNS name: admin@lab.example.com or lab.example.com\\admin, not LAB\\admin. Its domain is the new domain's parent or another domain above it. Used only when the domain is made."},
 			"database_path": {Type: cty.String, Optional: true, Description: "Folder for the AD database. Windows' default is C:\\Windows\\NTDS. Used only when the domain is made."},
 			"log_path":      {Type: cty.String, Optional: true, Description: "Folder for the AD logs. Used only when the domain is made."},
 			"sysvol_path":   {Type: cty.String, Optional: true, Description: "Folder for SYSVOL. Used only when the domain is made."},

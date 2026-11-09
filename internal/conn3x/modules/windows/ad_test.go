@@ -228,7 +228,13 @@ func TestChildDomain(t *testing.T) {
 	if _, err := c.Check(); err != nil || c.Parent() != "lab.test" {
 		t.Fatalf("%v, parent %q", err, c.Parent())
 	}
-	if _, err := (ChildDomain{DomainName: "emea.lab.test", Username: "admin@lab.test"}).Check(); err != nil {
+	for _, u := range []string{"admin@lab.test", "admin@LAB.test", `lab.test\admin`} {
+		if _, err := (ChildDomain{DomainName: "emea.lab.test", Username: u}).Check(); err != nil {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+	// The forest root, two levels up, is an ancestor too.
+	if _, err := (ChildDomain{DomainName: "rome.emea.lab.test", Username: "admin@lab.test"}).Check(); err != nil {
 		t.Error(err)
 	}
 	for want, c := range map[string]ChildDomain{
@@ -243,7 +249,7 @@ func TestChildDomain(t *testing.T) {
 	}
 	// Install-ADDSDomain finds the forest through DNS, so a NetBIOS name or
 	// none won't do.
-	for _, u := range []string{`LAB\admin`, "admin", "admin@lab"} {
+	for _, u := range []string{`LAB\admin`, "admin", "admin@lab", "admin@emea.lab.test", `EMEA.lab.test\admin`, "a@b@lab.test", "admin@other.test", "admin@xlab.test"} {
 		if attr, _ := (ChildDomain{DomainName: "emea.lab.test", Username: u}).Check(); attr != "username" {
 			t.Errorf("%s: %q", u, attr)
 		}
