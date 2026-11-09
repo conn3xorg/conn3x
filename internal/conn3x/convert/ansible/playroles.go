@@ -37,6 +37,9 @@ type roleCall struct {
 	become *bool
 	task   bool   // an include_role or import_role, which counts as a task
 	file   string // where the call is written, when not the playbook: a role's meta/
+	// family is the one OS family a when on the call allows, such as
+	// "debian": the call passes only that family's hosts. Empty for all.
+	family string
 }
 
 // convertedRole is a role written into the result as a circuit directory.
@@ -59,6 +62,22 @@ type convertedRole struct {
 var includeRoleOptions = map[string]bool{
 	"tasks_from": true, "vars_from": true, "defaults_from": true, "handlers_from": true,
 	"apply": true, "public": true, "allow_duplicates": true, "rolespec_validate": true,
+}
+
+// setWhen reads a when on a role call. Ansible tests it on each host, and a
+// host where it's false skips the role. One that only tests the host's
+// family narrows the hosts the call passes; anything else is refused.
+func (call *roleCall) setWhen(n *yaml.Node, on string) string {
+	allowed, _, ok := familyWhen(n)
+	switch {
+	case !ok:
+		return "sets when on " + on + ", which the converter can't translate yet: only a when on the host's OS family converts"
+	case len(allowed) == 0:
+		return "uses a when no Debian or Red Hat family host meets, so it would never run"
+	case len(allowed) < len(osFamilies):
+		call.family = allowed[0].conn3x
+	}
+	return ""
 }
 
 // setBecome reads a call's become, which must be a plain true or false:
@@ -133,6 +152,8 @@ func (c *converter) playRole(n *yaml.Node) *roleCall {
 			}
 		case k == "become":
 			why = firstNonEmpty(why, call.setBecome(m[k]))
+		case k == "when":
+			why = firstNonEmpty(why, call.setWhen(m[k], "the role"))
 		case keywords[k] || includeRoleOptions[k]:
 			why = firstNonEmpty(why, "sets "+k+" on the role, which the converter can't translate yet")
 		default:
@@ -162,6 +183,8 @@ func (c *converter) includeRole(n *yaml.Node, mod string, args map[string]*yaml.
 			}
 		case k == "become":
 			why = firstNonEmpty(why, call.setBecome(m[k]))
+		case k == "when":
+			why = firstNonEmpty(why, call.setWhen(m[k], mod))
 		default:
 			why = firstNonEmpty(why, "sets "+k+" on "+mod+", which the converter can't translate yet")
 		}
@@ -277,7 +300,21 @@ func (c *converter) calls(call *roleCall, head *hclwrite.Body, playVars map[stri
 		c.ran[key] = true
 	}
 	var blocks []*hclwrite.Block
+	if call.family != "" {
+		if b := c.factsBlock(head); b != nil {
+			blocks = append(blocks, b)
+		}
+	}
 	for _, dep := range r.deps {
+		// A host that skips the role skips its dependencies too.
+		if call.family != "" {
+			if dep.family != "" && dep.family != call.family {
+				continue // no host is both families
+			}
+			d := *dep
+			d.family = call.family
+			dep = &d
+		}
 		b, a := c.calls(dep, head, playVars, after)
 		blocks, after = append(blocks, b...), a
 	}
@@ -296,6 +333,9 @@ func callKey(call *roleCall) string {
 	sort.Strings(keys)
 	if call.become != nil {
 		keys = append(keys, fmt.Sprint("become=", *call.become))
+	}
+	if call.family != "" {
+		keys = append(keys, "family="+call.family)
 	}
 	return strings.Join(keys, " ")
 }
@@ -317,7 +357,13 @@ func (c *converter) module(call *roleCall, head *hclwrite.Body, playVars map[str
 	b := mb.Body()
 	b.SetAttributeValue("source", cty.StringVal("./"+r.dir))
 	b.AppendNewline()
-	b.SetAttributeRaw("hosts", head.GetAttribute("hosts").Expr().BuildTokens(nil))
+	hosts := head.GetAttribute("hosts").Expr().BuildTokens(nil)
+	if call.family != "" {
+		b.SetAttributeRaw("hosts", rawTokens(fmt.Sprintf("{ for h, addr in %s : h => addr if data.conn3x_host.%s[h].os_family == %q }",
+			strings.TrimSpace(string(hosts.Bytes())), c.facts[strings.TrimSpace(string(hosts.Bytes()))], call.family)))
+	} else {
+		b.SetAttributeRaw("hosts", hosts)
+	}
 	var ssh *hclwrite.Body
 	for _, blk := range head.Blocks() {
 		if blk.Type() == "ssh" {
@@ -377,6 +423,50 @@ func (c *converter) module(call *roleCall, head *hclwrite.Body, playVars map[str
 		c.res.Converted++
 	}
 	return mb
+}
+
+// factsBlock returns the conn3x_host data source that reads the OS family of
+// head's hosts, the first time a role call there filters by family, and nil
+// after. It logs in as the play's circuit does, with a host object's own
+// address, port, user and host_key where it has them.
+func (c *converter) factsBlock(head *hclwrite.Body) *hclwrite.Block {
+	hosts := strings.TrimSpace(string(head.GetAttribute("hosts").Expr().BuildTokens(nil).Bytes()))
+	if c.facts[hosts] != "" {
+		return nil
+	}
+	name := "hosts"
+	if v, ok := strings.CutPrefix(hosts, "var."); ok {
+		name = slug(v)
+	}
+	name = unique(name, c.factsNames)
+	c.facts[hosts] = name
+	var ssh *hclwrite.Body
+	for _, blk := range head.Blocks() {
+		if blk.Type() == "ssh" {
+			ssh = blk.Body()
+		}
+	}
+	setting := func(k string) string {
+		if a := ssh.GetAttribute(k); a != nil {
+			return strings.TrimSpace(string(a.Expr().BuildTokens(nil).Bytes()))
+		}
+		return ""
+	}
+	db := hclwrite.NewBlock("data", []string{"conn3x_host", name})
+	b := db.Body()
+	b.SetAttributeRaw("for_each", rawTokens(hosts))
+	b.AppendNewline()
+	sb := b.AppendNewBlock("ssh", nil).Body()
+	sb.SetAttributeRaw("host", rawTokens("try(each.value.address, each.value)"))
+	for _, k := range []string{"port", "user", "host_key"} {
+		sb.SetAttributeRaw(k, rawTokens(fmt.Sprintf("try(each.value.%s, %s)", k, firstNonEmpty(setting(k), "null"))))
+	}
+	for _, k := range []string{"private_key_file", "known_hosts_file", "become"} {
+		if v := setting(k); v != "" {
+			sb.SetAttributeRaw(k, rawTokens(v))
+		}
+	}
+	return db
 }
 
 // finished is what to wait for so a circuit is done: its last step, which

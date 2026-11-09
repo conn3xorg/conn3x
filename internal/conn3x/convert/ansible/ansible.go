@@ -75,7 +75,8 @@ func ConvertWith(path string, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("%s: a playbook is a list of plays", path)
 	}
 	c := &converter{dir: filepath.Dir(path), file: filepath.Base(path), inv: opts.Inventory, roleCalls: opts.Roles,
-		roles: map[string]*convertedRole{}, roleDirs: map[string]int{}, converting: map[string]bool{}, called: map[string]bool{}, modules: map[string]int{}, callWhy: map[*yaml.Node]string{}}
+		roles: map[string]*convertedRole{}, roleDirs: map[string]int{}, converting: map[string]bool{}, called: map[string]bool{}, modules: map[string]int{}, callWhy: map[*yaml.Node]string{},
+		facts: map[string]string{}, factsNames: map[string]int{}}
 	return c.run(doc.Content[0]), nil
 }
 
@@ -91,7 +92,11 @@ type converter struct {
 	roleDirs  map[string]int
 	modules   map[string]int
 	callWhy   map[*yaml.Node]string
-	factsTail bool // a later part of the play, split around a role call, reads facts
+	// facts names the conn3x_host data source written for each hosts
+	// expression a role call filters by family, and factsNames the names used.
+	facts      map[string]string
+	factsNames map[string]int
+	factsTail  bool // a later part of the play, split around a role call, reads facts
 	// ran are the roles the current play has called by its roles list or
 	// as a dependency, which Ansible runs once each; converting holds
 	// those being converted, to catch a role that depends on itself.

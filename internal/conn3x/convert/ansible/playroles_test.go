@@ -269,3 +269,71 @@ func TestConvertPlayRolesBesideThePlaybook(t *testing.T) {
 		t.Fatalf("%v %+v\n%s", err, res.Review, res.HCL)
 	}
 }
+
+// A when on a role call that tests the host's family filters the hosts the
+// call passes, as Ansible skips the role on a host where it's false, reading
+// each host's family from one conn3x_host data source for the play's hosts.
+// A when every Conn3x host meets passes them all, one none meets is left
+// for review, and the role's meta/ dependencies get the same filter.
+func TestConvertPlayRolesWhen(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(filepath.Join(dir, "roles"), os.DirFS(filepath.Join("testdata", "playroles", "roles"))); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"roles/base/tasks/main.yml": "- name: Base\n  package:\n    name: curl\n",
+		"roles/web/meta/main.yml":   "dependencies:\n  - base\n",
+		"p.yml": `- hosts: web
+  roles:
+    - role: web
+      when: ansible_os_family == 'Debian'
+  tasks:
+    - include_role:
+        name: web
+      when: ansible_facts['os_family'] in ['RedHat']
+    - include_role:
+        name: web
+      when: ansible_os_family != 'Archlinux'
+    - include_role:
+        name: web
+      when: ansible_os_family == 'Archlinux'
+`,
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := ConvertWith(filepath.Join(dir, "p.yml"), Options{Roles: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := string(res.HCL)
+	if n := strings.Count(hcl, `data "conn3x_host" "web_hosts"`); n != 1 {
+		t.Errorf("%d facts data sources, want one for the play's hosts:\n%s", n, hcl)
+	}
+	for _, want := range []string{
+		"host = try(each.value.address, each.value)",
+		`hosts = { for h, addr in var.web_hosts : h => addr if data.conn3x_host.web_hosts[h].os_family == "debian" }`,
+		`hosts = { for h, addr in var.web_hosts : h => addr if data.conn3x_host.web_hosts[h].os_family == "redhat" }`,
+	} {
+		if !strings.Contains(strings.Join(strings.Fields(hcl), " "), want) {
+			t.Errorf("output lacks %q:\n%s", want, hcl)
+		}
+	}
+	// base for the Debian call, then web; base again for the Red Hat call,
+	// since the filter makes it a different call; the != call passes every
+	// host, base already ran unfiltered never, so it runs.
+	if n := strings.Count(hcl, `source = "./circuit-base"`); n != 3 {
+		t.Errorf("base is called %d times, want once per distinct filter:\n%s", n, hcl)
+	}
+	if n := strings.Count(hcl, "\n  hosts                = var.web_hosts\n"); n != 2 {
+		t.Errorf("%d unfiltered calls, want base and web for the != call:\n%s", n, hcl)
+	}
+	if len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "no Debian or Red Hat family host meets") {
+		t.Errorf("review: %+v", res.Review)
+	}
+}
