@@ -1,7 +1,7 @@
 # Converted from the Ansible role mixed by conn3x convert ansible.
 # Search for TODO(convert) to find what still needs a person.
 
-# TODO(convert): dependencies (meta/main.yml line 2) runs the roles common, geerlingguy.firewall first; convert each with -role and call its circuit as a module beside this one, with depends_on.
+# TODO(convert): dependencies (meta/main.yml line 2) runs the roles common, geerlingguy.firewall first; convert a playbook that runs this role, with -out, and they're converted and called before it.
 # TODO(convert): argument_specs (meta/main.yml line 5) checks the role's arguments, which the converter doesn't carry over to variable types and validation yet.
 
 circuit "mixed" {

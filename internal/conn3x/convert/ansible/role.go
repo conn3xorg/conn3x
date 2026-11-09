@@ -58,7 +58,11 @@ var reserved = map[string]bool{
 
 // ConvertRole reads the Ansible role in dir and translates it into the files
 // of a circuit directory.
-func ConvertRole(dir string) (Result, error) {
+func ConvertRole(dir string) (Result, error) { return convertRoleDir(dir, false) }
+
+// convertRoleDir is ConvertRole. depsCalled says the caller calls the role's
+// meta/ dependencies itself, so they aren't left for review.
+func convertRoleDir(dir string, depsCalled bool) (Result, error) {
 	if st, err := os.Stat(filepath.Join(dir, "tasks")); err != nil || !st.IsDir() {
 		return Result{}, fmt.Errorf("%s has no tasks/ directory, so it isn't a role; point -role at the role's own directory", dir)
 	}
@@ -70,7 +74,7 @@ func ConvertRole(dir string) (Result, error) {
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
 	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}}
-	c := &converter{dir: dir, role: r}
+	c := &converter{dir: dir, role: r, depsCalled: depsCalled}
 	r.varFiles = c.otherVarFiles()
 
 	f := hclwrite.NewEmptyFile()
@@ -263,8 +267,8 @@ func (c *converter) meta(body *hclwrite.Body) {
 		dm := mapping(d)
 		deps = append(deps, firstNonEmpty(scalar(d), scalar(dm["role"]), scalar(dm["name"]), "a role"))
 	}
-	if len(deps) > 0 {
-		c.note(body, "dependencies", file, t["dependencies"].Line, "runs the roles "+strings.Join(deps, ", ")+" first; convert each with -role and call its circuit as a module beside this one, with depends_on")
+	if len(deps) > 0 && !c.depsCalled {
+		c.note(body, "dependencies", file, t["dependencies"].Line, "runs the roles "+strings.Join(deps, ", ")+" first; convert a playbook that runs this role, with -out, and they're converted and called before it")
 	}
 	if n := t["argument_specs"]; n != nil {
 		c.note(body, "argument_specs", file, n.Line, "checks the role's arguments, which the converter doesn't carry over to variable types and validation yet")

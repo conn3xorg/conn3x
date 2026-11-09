@@ -42,6 +42,7 @@ type roleCall struct {
 type convertedRole struct {
 	dir  string // the directory in Result.Files, such as circuit-web
 	vars map[string]bool
+	deps []*roleCall // its meta/ dependencies, which run before it
 }
 
 // includeRoleOptions are include_role's own arguments, which a roles entry
@@ -197,7 +198,22 @@ func (c *converter) convertRole(name string) (*convertedRole, string) {
 	if st, err := os.Stat(filepath.Join(c.path(rel), "tasks")); err != nil || !st.IsDir() {
 		return nil, fmt.Sprintf("runs the role %s, which isn't at %s beside the playbook; install it there, as with ansible-galaxy role install -p roles, and convert again", name, rel)
 	}
-	res, err := ConvertRole(c.path(rel))
+	if c.converting[rel] {
+		return nil, fmt.Sprintf("runs the role %s, which depends on itself through meta/ dependencies", name)
+	}
+	c.converting[rel] = true
+	defer delete(c.converting, rel)
+	// Dependencies read like entries of a play's roles list.
+	meta, _ := (&converter{dir: c.path(rel)}).main(hclwrite.NewEmptyFile().Body(), "meta")
+	var deps []*roleCall
+	for _, d := range seq(mapping(meta)["dependencies"]) {
+		dep := c.playRole(d)
+		if dep == nil {
+			return nil, fmt.Sprintf("runs the role %s, whose dependency can't convert: it %s", name, c.callWhy[d])
+		}
+		deps = append(deps, dep)
+	}
+	res, err := convertRoleDir(c.path(rel), true)
 	if err != nil {
 		return nil, fmt.Sprintf("runs the role %s, which can't be converted: %s", name, err)
 	}
@@ -219,12 +235,49 @@ func (c *converter) convertRole(name string) (*convertedRole, string) {
 		c.res.Notes = append(c.res.Notes, r)
 	}
 	c.res.Converted += res.Converted
-	r := &convertedRole{dir: dir, vars: map[string]bool{}}
+	r := &convertedRole{dir: dir, vars: map[string]bool{}, deps: deps}
 	for _, v := range res.Variables {
 		r.vars[v] = true
 	}
 	c.roles[rel] = r
 	return r, ""
+}
+
+// calls writes the blocks that call a role's circuit and, before it, its
+// dependencies', each waiting for the one before, starting after after. It
+// returns what the next part waits for. A role from a roles list or meta/
+// that the play already ran, with the same vars, runs once, as in Ansible;
+// an include_role always runs.
+func (c *converter) calls(call *roleCall, head *hclwrite.Body, playVars map[string]*yaml.Node, after string) ([]*hclwrite.Block, string) {
+	r, _ := c.convertRole(call.role)
+	if !call.task {
+		key := r.dir + " " + callKey(call)
+		if c.ran[key] {
+			return nil, after
+		}
+		c.ran[key] = true
+	}
+	var blocks []*hclwrite.Block
+	for _, dep := range r.deps {
+		b, a := c.calls(dep, head, playVars, after)
+		blocks, after = append(blocks, b...), a
+	}
+	mb := c.module(call, head, playVars, after)
+	return append(blocks, mb), "module." + mb.Labels()[0]
+}
+
+// callKey is what a role call passes, so two calls that pass the same count
+// as one.
+func callKey(call *roleCall) string {
+	keys := make([]string, 0, len(call.vars))
+	for k, v := range call.vars {
+		keys = append(keys, k+"="+scalar(v))
+	}
+	sort.Strings(keys)
+	if call.become != nil {
+		keys = append(keys, fmt.Sprint("become=", *call.become))
+	}
+	return strings.Join(keys, ",")
 }
 
 // module writes the block that calls a role's circuit. head is the play's

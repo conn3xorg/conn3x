@@ -87,7 +87,8 @@ func TestConvertAnsibleRoleThenApply(t *testing.T) {
 
 // A playbook that runs a role converts, with -out, into its own circuits and
 // a module calling the role's circuit, which takes the play's vars over the
-// role's defaults, and the whole thing applies in Ansible's order.
+// role's defaults, after a module for the role's meta/ dependency, and the
+// whole thing applies in Ansible's order.
 func TestConvertAnsiblePlayRolesThenApply(t *testing.T) {
 	for _, image := range linuxImages {
 		t.Run(image, func(t *testing.T) {
@@ -97,6 +98,9 @@ func TestConvertAnsiblePlayRolesThenApply(t *testing.T) {
 			for name, content := range map[string]string{
 				"roles/greet/defaults/main.yml": "greeting: from the role\n",
 				"roles/greet/tasks/main.yml":    "- name: Greet\n  copy:\n    content: \"{{ greeting }}\\n\"\n    dest: /opt/greet/hello.txt\n",
+				"roles/greet/meta/main.yml":     "dependencies:\n  - role: base\n    word: from meta\n",
+				"roles/base/defaults/main.yml":  "word: from the default\n",
+				"roles/base/tasks/main.yml":     "- name: Base\n  copy:\n    content: \"{{ word }}\\n\"\n    dest: /opt/greet/base.txt\n",
 			} {
 				path := filepath.Join(w.dir, filepath.FromSlash(name))
 				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -106,7 +110,7 @@ func TestConvertAnsiblePlayRolesThenApply(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if out, code := w.conn3x("convert", "ansible", "-out", "play.tf", "play.yml"); code != 0 || !strings.Contains(out, "Converted all 3 tasks.") {
+			if out, code := w.conn3x("convert", "ansible", "-out", "play.tf", "play.yml"); code != 0 || !strings.Contains(out, "Converted all 4 tasks.") {
 				t.Fatalf("convert exited %d:\n%s", code, out)
 			}
 
@@ -130,7 +134,7 @@ func TestConvertAnsiblePlayRolesThenApply(t *testing.T) {
 			}
 			w.mustConn3x("init", "-no-color")
 			w.mustConn3x("apply", "-auto-approve", "-no-color")
-			if got := h.exec("", "sh", "-c", "cat /opt/greet/hello.txt /opt/greet/after.txt"); got != "from the play\nafter\n" {
+			if got := h.exec("", "sh", "-c", "cat /opt/greet/base.txt /opt/greet/hello.txt /opt/greet/after.txt"); got != "from meta\nfrom the play\nafter\n" {
 				t.Fatalf("host after apply:\n%s", got)
 			}
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
