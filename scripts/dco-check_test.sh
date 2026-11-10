@@ -26,10 +26,12 @@ g commit -q --allow-empty -m "feat: unsigned"
 out=$(cd "$work" && bash "$here/dco-check.sh" "$base" HEAD) && fail "unsigned commit accepted"
 echo "$out" | grep -q "missing Signed-off-by for dev@example.com" || fail "no offender listed: $out"
 
-# Dependabot cannot sign off; its commits are exempt.
+# An author email is whatever the committer types, so no address is exempt.
+# The workflow skips Dependabot's pull requests by their author instead.
 base2=$(g rev-parse HEAD)
 git -C "$work" -c user.name="dependabot[bot]" -c user.email="49699333+dependabot[bot]@users.noreply.github.com" -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q --allow-empty -m "build: bump x"
-(cd "$work" && bash "$here/dco-check.sh" "$base2" HEAD >/dev/null) || fail "dependabot commit rejected"
+if (cd "$work" && bash "$here/dco-check.sh" "$base2" HEAD >/dev/null); then fail "commit exempted by its author email"; fi
+g reset -q --hard HEAD~1
 
 # Email case doesn't matter.
 git -C "$work" -c user.name=Dev -c user.email=Dev@Example.com -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q --allow-empty -m "feat: mixed case" -m "Signed-off-by: Dev <dev@example.com>"

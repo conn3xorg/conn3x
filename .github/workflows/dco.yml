@@ -14,7 +14,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Dependabot can't sign off; its changes are reviewed in the pull
+      # request instead. The exemption goes by who opened the pull request,
+      # which GitHub sets, not by a commit's author email, which anyone can.
       - name: Check Signed-off-by on every commit
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
