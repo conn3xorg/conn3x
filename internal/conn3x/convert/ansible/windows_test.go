@@ -408,15 +408,16 @@ func TestWinUpdates(t *testing.T) {
 	}
 
 	for reason, task := range map[string]string{
-		"only downloads updates":               `win_updates: {state: downloaded}`,
-		"names the category \"Application\"":   `win_updates: {category_names: [Application]}`,
-		"also matches products":                `win_updates: {category_names: [Windows Server 2019]}`,
-		"takes titles and patterns there too":  `win_updates: {accept_list: ['Cumulative Update']}`,
-		"has server_selection windows_update":  `win_updates: {server_selection: windows_update}`,
-		"writes Windows Update's log":          `win_updates: {log_path: 'C:\wu.txt'}`,
-		"sets skip_optional":                   `win_updates: {skip_optional: true}`,
-		"retries updates that didn't take":     `win_updates: {reboot: true, maximum_retries_on_failed_updates: 3}`,
-		"reboot_timeout that isn't a positive": `win_updates: {reboot: true, reboot_timeout: soon}`,
+		"only downloads updates":                           `win_updates: {state: downloaded}`,
+		"names the category \"Application\"":               `win_updates: {category_names: [Application]}`,
+		"also matches products":                            `win_updates: {category_names: [Windows Server 2019]}`,
+		"takes titles and patterns there too":              `win_updates: {accept_list: ['Cumulative Update']}`,
+		"has server_selection windows_update":              `win_updates: {server_selection: windows_update}`,
+		"writes Windows Update's log":                      `win_updates: {log_path: 'C:\wu.txt'}`,
+		"sets skip_optional":                               `win_updates: {skip_optional: true}`,
+		"sets both reject_list and its old name blacklist": `win_updates: {reject_list: [KB5034441], blacklist: [KB5034439]}`,
+		"retries updates that didn't take":                 `win_updates: {reboot: true, maximum_retries_on_failed_updates: 3}`,
+		"reboot_timeout that isn't a positive":             `win_updates: {reboot: true, reboot_timeout: soon}`,
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {

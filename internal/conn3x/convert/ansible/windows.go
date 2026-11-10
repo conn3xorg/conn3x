@@ -765,6 +765,9 @@ func winUpdatesModule(in *input) ([]step, string) {
 		{"accept_list", []string{"accept_list", "whitelist"}},
 		{"reject_list", []string{"reject_list", "blacklist"}},
 	} {
+		if in.has(l.from[0]) && in.has(l.from[1]) {
+			return nil, fmt.Sprintf("sets both %s and its old name %s, and Ansible uses only one of them", l.from[0], l.from[1])
+		}
 		for _, from := range l.from {
 			if !in.has(from) {
 				continue
