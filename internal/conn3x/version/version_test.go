@@ -3,14 +3,23 @@
 
 package version
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestString(t *testing.T) {
 	old := Version
 	t.Cleanup(func() { Version = old })
 	Version = "1.2.3"
 
-	want := "Conn3x v1.2.3 (built on OpenTofu v1.13.2)"
+	// The upstream sync rewrites UPSTREAM, so the test reads it too.
+	upstream, err := os.ReadFile("UPSTREAM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Conn3x v1.2.3 (built on OpenTofu " + strings.TrimSpace(string(upstream)) + ")"
 	if got := String(); got != want {
 		t.Fatalf("String() = %q, want %q", got, want)
 	}
