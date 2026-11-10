@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.conn3x.org/schemas/report-1.json",
   "title": "Conn3x run report, format version 1",
-  "description": "What conn3x apply -report and conn3x drift -report write. Fields are only added within a format version. No attribute values are included.",
+  "description": "What conn3x apply -report and conn3x drift -report write. Fields are only added within a format version. No attribute values are read into it; an error is the text the terminal showed, which for a failed command step quotes the last lines the command printed.",
   "type": "object",
   "additionalProperties": false,
   "required": ["format_version", "conn3x_version", "command", "started", "finished", "success", "hosts", "cloud", "drift", "errors"],

@@ -87,7 +87,7 @@ var (
 		what string
 	}{
 		{regexp.MustCompile(`\b(?:curl|wget)\b[^|;&\n]*\|\s*(?:sudo\s+)?(?:ba|da|z)?sh\b`), "pipes a download into a shell"},
-		{regexp.MustCompile(`--(?:password|passwd|pass|token|secret|api-key)[ =]\\?"?\$`), "puts a secret on a command line, where ps can read it"},
+		{regexp.MustCompile(`--(?:password|passwd|pass|token|secret|api-key)[ =]\\?"?\$`), "puts a secret on a command line, where ps can read it; a command step can take it in stdin_wo"},
 		{regexp.MustCompile(`\bchmod\s+(?:-R\s+)?(?:0?777|0?666|a\+w|o\+w)(\s|$)`), "makes a path writable by everyone"},
 		{regexp.MustCompile(`(?:>|\btee\s+)\s*/tmp/[\w.$]`), "writes to a predictable name in /tmp"}, // not on an Exec= line, below
 		{regexp.MustCompile(`--allow-root\b`), "tells a tool that refuses root to run as root anyway"},

@@ -1,3 +1,8 @@
+variable "token" {
+  type      = string
+  ephemeral = true
+}
+
 circuit "box" {
   hosts = { box = "127.0.0.1" }
 
@@ -12,6 +17,16 @@ circuit "box" {
     command {
       command = "date +%s%N >> /var/tmp/conn3x-runs && touch /var/tmp/conn3x-built"
       creates = "/var/tmp/conn3x-built"
+    }
+  }
+
+  # The secret arrives on standard input. The command line, which every
+  # user on the host can read while it runs, is saved to show it isn't there.
+  step "token" {
+    command {
+      command  = "umask 077; tr '\\0' ' ' < /proc/$$/cmdline > /var/tmp/conn3x-cmdline; cat > /var/tmp/conn3x-token"
+      stdin_wo = var.token
+      creates  = "/var/tmp/conn3x-token"
     }
   }
 }

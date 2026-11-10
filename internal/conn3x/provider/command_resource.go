@@ -16,23 +16,28 @@ import (
 )
 
 // commandRerun lists the arguments whose change means "run it again".
-var commandRerun = []string{"command", "creates", "removes", "unless", "triggers"}
+var commandRerun = []string{"command", "stdin_hmac", "creates", "removes", "unless", "triggers"}
 
 func commandSchema() providers.Schema {
 	return providers.Schema{
 		Block: &configschema.Block{
 			Description: "A shell command, for what no module covers yet. Guards say when it has already done its job.",
 			Attributes: map[string]*configschema.Attribute{
-				"id":        {Type: cty.String, Computed: true},
-				"revision":  revisionAttr(),
-				"command":   {Type: cty.String, Required: true, Description: "Shell command, run with /bin/sh."},
-				"creates":   {Type: cty.String, Optional: true, Description: "Skip the command while this path exists."},
-				"removes":   {Type: cty.String, Optional: true, Description: "Skip the command while this path is missing."},
-				"unless":    {Type: cty.String, Optional: true, Description: "Skip the command while this check command succeeds."},
-				"triggers":  {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the command runs again whenever it changes."},
-				"satisfied": {Type: cty.Bool, Computed: true, Description: "Whether the guards hold on the host."},
-				"stdout":    {Type: cty.String, Computed: true, Sensitive: true, Description: "Output of the last run, truncated to 4 KiB."},
-				"stderr":    {Type: cty.String, Computed: true, Sensitive: true, Description: "Error output of the last run, truncated to 4 KiB."},
+				"id":       {Type: cty.String, Computed: true},
+				"revision": revisionAttr(),
+				"command":  {Type: cty.String, Required: true, Description: "Shell command, run with /bin/sh."},
+				"stdin_wo": {
+					Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
+					Description: "Text the command reads on standard input, kept out of state: state records only stdin_hmac, and the text is blanked from output and errors. Use it for secrets, which a command line would show in the host's process list.",
+				},
+				"stdin_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of stdin_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null without stdin_wo."},
+				"creates":    {Type: cty.String, Optional: true, Description: "Skip the command while this path exists."},
+				"removes":    {Type: cty.String, Optional: true, Description: "Skip the command while this path is missing."},
+				"unless":     {Type: cty.String, Optional: true, Description: "Skip the command while this check command succeeds. It never gets stdin_wo, which a plan doesn't have."},
+				"triggers":   {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the command runs again whenever it changes."},
+				"satisfied":  {Type: cty.Bool, Computed: true, Description: "Whether the guards hold on the host."},
+				"stdout":     {Type: cty.String, Computed: true, Sensitive: true, Description: "Output of the last run, truncated to 4 KiB."},
+				"stderr":     {Type: cty.String, Computed: true, Sensitive: true, Description: "Error output of the last run, truncated to 4 KiB."},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 		},
@@ -55,6 +60,9 @@ func validateCommand(cfg cty.Value) tfdiags.Diagnostics {
 	if c := cfg.GetAttr("command"); known(c) && c.AsString() == "" {
 		diags = diags.Append(attrError("command", "command must not be empty"))
 	}
+	if s := cfg.GetAttr("stdin_wo"); known(s) && s.AsString() == "" {
+		diags = diags.Append(attrError("stdin_wo", "stdin_wo must not be empty; leave it out to give the command no input"))
+	}
 	for _, a := range []string{"creates", "removes", "unless"} {
 		if !cfg.GetAttr(a).IsKnown() {
 			return diags
@@ -66,8 +74,43 @@ func validateCommand(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
+// stdinHMAC is what state records for stdin_wo.
+func stdinHMAC(key []byte, wo cty.Value) string {
+	return contentHMAC(key, "command.stdin_wo", wo.AsString())
+}
+
 func planCommand(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planGuarded(req, "command", commandRerun)
+	if req.ProposedNewState.IsNull() {
+		return providers.PlanResourceChangeResponse{PlannedState: req.ProposedNewState}
+	}
+	vals := req.ProposedNewState.AsValueMap()
+	vals["stdin_wo"] = cty.NullVal(cty.String)
+	vals["stdin_hmac"] = cty.NullVal(cty.String)
+	var warning error
+	if wo := req.Config.GetAttr("stdin_wo"); !wo.IsNull() {
+		vals["stdin_hmac"] = cty.UnknownVal(cty.String)
+		key, err := hmacKey(true)
+		if err == nil && !req.PriorState.IsNull() {
+			if stored := req.PriorState.GetAttr("stdin_hmac"); known(stored) {
+				err = checkHMACKey(stored.AsString(), key)
+			}
+		}
+		if err != nil {
+			var resp providers.PlanResourceChangeResponse
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("stdin_wo", err.Error()))
+			return resp
+		}
+		warning = hmacKeyPermissionWarning()
+		if wo.IsKnown() {
+			vals["stdin_hmac"] = cty.StringVal(stdinHMAC(key, wo))
+		}
+	}
+	req.ProposedNewState = cty.ObjectVal(vals)
+	resp := planGuarded(req, "command", commandRerun)
+	if warning != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(warning.Error()))
+	}
+	return resp
 }
 
 // planGuarded plans a step that runs something: again when any of rerun
@@ -147,6 +190,17 @@ func applyCommand(ctx context.Context, req providers.ApplyResourceChangeRequest)
 
 	guards := commandGuards(req.PlannedState)
 	vals := req.PlannedState.AsValueMap()
+	vals["stdin_wo"] = cty.NullVal(cty.String)
+	secret := ""
+	if wo := req.Config.GetAttr("stdin_wo"); !wo.IsNull() {
+		key, err := hmacKey(true)
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("stdin_wo", err.Error()))
+			return resp
+		}
+		secret = wo.AsString()
+		vals["stdin_hmac"] = cty.StringVal(stdinHMAC(key, wo))
+	}
 	done, err := command.Satisfied(ctx, host, guards)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
@@ -157,7 +211,7 @@ func applyCommand(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		stdout, stderr = req.PriorState.GetAttr("stdout"), req.PriorState.GetAttr("stderr")
 	}
 	if !done {
-		out, err := command.Run(ctx, host, req.PlannedState.GetAttr("command").AsString())
+		out, err := command.RunWithInput(ctx, host, req.PlannedState.GetAttr("command").AsString(), secret)
 		if err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(err)
 			return resp
