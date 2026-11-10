@@ -213,7 +213,9 @@ jobs:
           podman --version
           mkdir -p ~/.cache/conn3x-plugins
           export TF_PLUGIN_CACHE_DIR=~/.cache/conn3x-plugins
-          go test -tags e2e -count=1 -timeout 30m -v ./test/e2e/...
+          # The suite runs one test at a time and takes 20 to 26 minutes on
+          # main; a slow package mirror alone can add five.
+          go test -tags e2e -count=1 -timeout 45m -v ./test/e2e/...
 
   # The required check: both agent modes passed.
   e2e:
