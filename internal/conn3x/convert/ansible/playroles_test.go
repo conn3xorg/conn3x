@@ -122,6 +122,53 @@ func TestConvertPlayRolesEntryFiles(t *testing.T) {
 	}
 }
 
+// A looped include_role runs the role once per item, one after another as
+// Ansible does, so each item is a module waiting for the one before, not a
+// for_each. The role converts into its own directory with the loop
+// variable required, and a plain call keeps the directory without it.
+func TestConvertPlayRolesLoop(t *testing.T) {
+	play := "- hosts: all\n  tasks:\n    - include_role:\n        name: web\n" +
+		"    - include_role:\n        name: web\n      loop: [80, 8080]\n      loop_control:\n        loop_var: web_port\n        label: port\n"
+	res := convertPlay(t, play)
+	if len(res.Review) != 0 || res.Converted == 0 {
+		t.Fatalf("review: %+v", res.Review)
+	}
+	hcl := string(res.HCL)
+	for _, want := range []string{
+		"module \"web\" {\n  source = \"./circuit-web\"",
+		"module \"web_2\" {\n  source = \"./circuit-web-each\"", "web_port = 80\n", "depends_on = [module.web]",
+		"module \"web_3\" {\n  source = \"./circuit-web-each\"", "web_port = 8080", "depends_on = [module.web_2]",
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("output lacks %q:\n%s", want, hcl)
+		}
+	}
+	if strings.Contains(hcl, "for_each") {
+		t.Errorf("a looped call shouldn't use for_each:\n%s", hcl)
+	}
+	v := string(res.Files["circuit-web-each/variables.tf"])
+	if i := strings.Index(v, "variable \"web_port\""); i < 0 || strings.Contains(v[i:], "default") {
+		t.Errorf("the looped circuit should require web_port:\n%s", v)
+	}
+	if v := string(res.Files["circuit-web/variables.tf"]); !strings.Contains(v, "default     = 80") {
+		t.Errorf("the plain circuit should keep web_port's default:\n%s", v)
+	}
+
+	for task, want := range map[string]string{
+		"import_role:\n        name: web\n      loop: [a]":                                                "sets loop on import_role",
+		"include_role:\n        name: web\n      loop: \"{{ ports }}\"":                                   "uses a loop over a variable",
+		"include_role:\n        name: web\n      loop: [{a: 1}]":                                          "loops over items with fields",
+		"include_role:\n        name: web\n      loop: []":                                                "loops over no items",
+		"include_role:\n        name: web\n      loop: [a]\n      loop_control:\n        pause: 3":        "sets pause in loop_control",
+		"include_role:\n        name: web\n      loop: [a]\n      loop_control:\n        loop_var: hosts": "sets loop_var to a name the circuit can't use",
+	} {
+		res := convertPlay(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if strings.Contains(string(res.HCL), "module ") || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, want) {
+			t.Errorf("%s: review %+v", task, res.Review)
+		}
+	}
+}
+
 // convertPlay writes play beside a copy of the fixture's roles, adding
 // extra roles as copies of web, and converts it with Options.Roles.
 func convertPlay(t *testing.T, play string, extra ...string) Result {

@@ -5,6 +5,7 @@ package ansible
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -43,6 +44,10 @@ type roleCall struct {
 	// entry is the file include_role's tasks_from, vars_from,
 	// defaults_from and handlers_from name, by the directory it's in.
 	entry map[string]string
+	// items are an include_role's loop, which runs the role once for each,
+	// with the item as loopVar.
+	items   []*yaml.Node
+	loopVar string
 }
 
 // convertedRole is a role written into the result as a circuit directory.
@@ -208,6 +213,16 @@ func (c *converter) includeRole(n *yaml.Node, mod string, args map[string]*yaml.
 	m := mapping(n)
 	for _, k := range sortedKeys(m) {
 		switch {
+		case k == "loop" && mod == "import_role":
+			why = firstNonEmpty(why, "sets loop on import_role, which Ansible doesn't allow; use include_role")
+		case k == "loop":
+			if _, w := literalLoop(m[k]); w != "" {
+				why = firstNonEmpty(why, w)
+			} else if call.items = m[k].Content; len(call.items) == 0 {
+				why = firstNonEmpty(why, "loops over no items, so it never runs")
+			}
+		case k == "loop_control":
+			why = firstNonEmpty(why, call.setLoopControl(m[k]))
 		case k == "name" || k == "tags" || k[strings.LastIndex(k, ".")+1:] == mod && !keywords[k]:
 		case k == "vars":
 			for kk, v := range mapping(m[k]) {
@@ -221,7 +236,28 @@ func (c *converter) includeRole(n *yaml.Node, mod string, args map[string]*yaml.
 			why = firstNonEmpty(why, "sets "+k+" on "+mod+", which the converter can't translate yet")
 		}
 	}
+	if call.items != nil && call.loopVar == "" {
+		call.loopVar = "item"
+	}
 	return c.checkCall(call, why)
+}
+
+// setLoopControl reads a looped include_role's loop_control, which may
+// rename item and label it; anything else changes how the loop runs.
+func (call *roleCall) setLoopControl(n *yaml.Node) string {
+	m := mapping(n)
+	for _, k := range sortedKeys(m) {
+		switch v := scalar(m[k]); {
+		case k == "label":
+		case k == "loop_var" && identifier.MatchString(v) && !reserved[v]:
+			call.loopVar = v
+		case k == "loop_var":
+			return "sets loop_var to a name the circuit can't use for a variable"
+		default:
+			return "sets " + k + " in loop_control, which the converter can't translate yet"
+		}
+	}
+	return ""
 }
 
 // checkCall returns the call when its role can be converted, and otherwise
@@ -234,7 +270,7 @@ func (c *converter) checkCall(call *roleCall, why string) *roleCall {
 	case c.otherUser != "":
 		why = "runs a role in a play where " + c.otherUser + ", which its circuit wouldn't keep; convert the role with -role and set who it runs as"
 	default:
-		_, why = c.convertRole(call.role, call.entry)
+		_, why = c.convertRole(call.role, call.entry, call.loopVar)
 	}
 	if why != "" {
 		c.callWhy[call.node] = why
@@ -243,9 +279,9 @@ func (c *converter) checkCall(call *roleCall, why string) *roleCall {
 	return call
 }
 
-// convertRole converts the named role once for each set of entry files,
-// into Result.Files, and returns it, or why it can't.
-func (c *converter) convertRole(name string, entry map[string]string) (*convertedRole, string) {
+// convertRole converts the named role once for each set of entry files and
+// loop variable, into Result.Files, and returns it, or why it can't.
+func (c *converter) convertRole(name string, entry map[string]string, loopVar string) (*convertedRole, string) {
 	switch {
 	case name == "":
 		return nil, "runs a role without naming it"
@@ -282,6 +318,12 @@ func (c *converter) convertRole(name string, entry map[string]string) (*converte
 		key += " " + file
 		suffix += "-" + slug(strings.TrimSuffix(f, filepath.Ext(f)))
 	}
+	// A looped call needs the item as a variable, which a plain call
+	// mustn't have to set.
+	if loopVar != "" {
+		key += " loop=" + loopVar
+		suffix += "-each"
+	}
 	if r, ok := c.roles[key]; ok {
 		return r, ""
 	}
@@ -301,7 +343,7 @@ func (c *converter) convertRole(name string, entry map[string]string) (*converte
 		dep.file = filepath.ToSlash(filepath.Join(rel, metaFile))
 		deps = append(deps, dep)
 	}
-	res, err := convertRoleDir(c.path(rel), true, entry)
+	res, err := convertRoleDir(c.path(rel), true, entry, loopVar)
 	if err != nil {
 		return nil, fmt.Sprintf("runs the role %s, which can't be converted: %s", name, err)
 	}
@@ -338,7 +380,7 @@ func (c *converter) convertRole(name string, entry map[string]string) (*converte
 // that the play already ran, with the same vars, runs once, as in Ansible;
 // an include_role always runs.
 func (c *converter) calls(call *roleCall, head *hclwrite.Body, playVars map[string]*yaml.Node, after string) ([]*hclwrite.Block, string) {
-	r, _ := c.convertRole(call.role, call.entry)
+	r, _ := c.convertRole(call.role, call.entry, call.loopVar)
 	if !call.task && !r.again {
 		key := r.dir + " " + callKey(call)
 		if c.ran[key] {
@@ -365,8 +407,22 @@ func (c *converter) calls(call *roleCall, head *hclwrite.Body, playVars map[stri
 		b, a := c.calls(dep, head, playVars, after)
 		blocks, after = append(blocks, b...), a
 	}
-	mb := c.module(call, head, playVars, after)
-	return append(blocks, mb), "module." + mb.Labels()[0]
+	if call.items == nil {
+		mb := c.module(call, head, playVars, after)
+		return append(blocks, mb), "module." + mb.Labels()[0]
+	}
+	// Ansible runs the items one after another, and for_each would run
+	// them at once, so each item gets a module that waits for the one
+	// before.
+	for i, item := range call.items {
+		each := *call
+		each.vars = maps.Clone(call.vars)
+		each.vars[call.loopVar] = item
+		each.task = call.task && i == 0
+		mb := c.module(&each, head, playVars, after)
+		blocks, after = append(blocks, mb), "module."+mb.Labels()[0]
+	}
+	return blocks, after
 }
 
 // callKey is what a role call passes, so two calls that pass the same count
@@ -391,7 +447,7 @@ func callKey(call *roleCall) string {
 // first circuit, whose hosts and login the module takes; after is what it
 // waits for, if anything.
 func (c *converter) module(call *roleCall, head *hclwrite.Body, playVars map[string]*yaml.Node, after string) *hclwrite.Block {
-	r, _ := c.convertRole(call.role, call.entry)
+	r, _ := c.convertRole(call.role, call.entry, call.loopVar)
 	c.called[r.dir] = true
 	if call.file != "" {
 		file := c.file

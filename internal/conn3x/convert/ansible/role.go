@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -58,12 +59,14 @@ var reserved = map[string]bool{
 
 // ConvertRole reads the Ansible role in dir and translates it into the files
 // of a circuit directory.
-func ConvertRole(dir string) (Result, error) { return convertRoleDir(dir, false, nil) }
+func ConvertRole(dir string) (Result, error) { return convertRoleDir(dir, false, nil, "") }
 
 // convertRoleDir is ConvertRole. depsCalled says the caller calls the role's
 // meta/ dependencies itself, so they aren't left for review. entry names
 // the files to start from instead of main, as include_role's tasks_from does.
-func convertRoleDir(dir string, depsCalled bool, entry map[string]string) (Result, error) {
+// loopVar is the variable a looped call sets for each item, which the
+// circuit then requires.
+func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVar string) (Result, error) {
 	if st, err := os.Stat(filepath.Join(dir, "tasks")); err != nil || !st.IsDir() {
 		return Result{}, fmt.Errorf("%s has no tasks/ directory, so it isn't a role; point -role at the role's own directory", dir)
 	}
@@ -126,6 +129,13 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string) (Resul
 		r.defaults[k] = &roleDefault{value: v, number: number}
 		order = append(order, k)
 	}
+	// The loop's item beats the role's vars/ and defaults, as a task's
+	// vars do in Ansible.
+	if loopVar != "" {
+		delete(vars, loopVar)
+		order = slices.DeleteFunc(order, func(k string) bool { return k == loopVar })
+		r.defaults[loopVar] = &roleDefault{}
+	}
 
 	tasks, tasksFile := c.main(body, "tasks")
 	handlers, handlersFile := c.main(body, "handlers")
@@ -169,6 +179,16 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string) (Resul
 		vb.AppendBlock(b)
 	}
 
+	var looped []string
+	if loopVar != "" {
+		b := hclwrite.NewBlock("variable", []string{loopVar})
+		b.Body().SetAttributeRaw("type", rawTokens("string"))
+		b.Body().SetAttributeValue("description", cty.StringVal("One item of the caller's loop, which the role reads as "+loopVar+"."))
+		vb.AppendNewline()
+		vb.AppendBlock(b)
+		looped = []string{loopVar}
+	}
+
 	used := make([]string, 0, len(r.defaultUsed))
 	for x := range r.defaultUsed {
 		used = append(used, x)
@@ -207,7 +227,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string) (Resul
 		files["README.md"] = append(files["README.md"], b.String()...)
 	}
 	c.res.Files = files
-	c.res.Variables = append(order, used...)
+	c.res.Variables = slices.Concat(order, used, looped)
 	return c.res, nil
 }
 
