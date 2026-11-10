@@ -55,6 +55,10 @@ grep -q 'v2' "$t1/internal/foo.go" || fail "foo.go not updated"
 [ "$(cat "$t1/internal/conn3x/version/UPSTREAM")" = v2 ] || fail "UPSTREAM not bumped"
 grep -q 'v2' "$t1/cmd/tofu/x.go" || fail "cmd/tofu/x.go not updated"
 grep -q 'v2' "$t1/cmd/conn3x/x.go" || fail "cmd/conn3x/x.go not updated"
+# A file that applies cleanly is staged as upstream's own blob. The steps
+# after the sync read the index without the cache, so the blob must be here.
+(cd "$t1" && python3 "$here/commit_payload.py" >/dev/null) \
+  || fail "staged changes can't be read without the upstream cache"
 
 # Case 2: a local edit to an upstream-owned line conflicts and fails loudly.
 t2="$work/t2"; new_target "$t2"

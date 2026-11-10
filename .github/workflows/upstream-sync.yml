@@ -15,6 +15,9 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write # to report a scheduled run that failed
     steps:
       - name: Require SYNC_TOKEN
         env:
@@ -75,3 +78,22 @@ jobs:
             --body "Applies upstream OpenTofu changes $from..$to. Release notes: https://github.com/opentofu/opentofu/releases/tag/$to
 
           CI runs the full upstream test suite on sync branches."
+      # Upstream security fixes arrive through this job, and nobody watches
+      # a weekly schedule: a failed run has to say so somewhere people look.
+      - name: Open an issue when a scheduled sync fails
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="The weekly upstream sync failed"
+          open=$(gh issue list --repo "$REPO" --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$REPO" --body "It failed again: $RUN_URL"
+          else
+            gh issue create --repo "$REPO" --title "$title" --label bug \
+              --body "The scheduled upstream sync failed, so no sync pull request was opened and upstream fixes aren't arriving. Run: $RUN_URL
+
+          Fix the cause, then run the workflow by hand from the Actions tab."
+          fi

@@ -50,6 +50,12 @@ if [ -s "$patch" ]; then
     echo "CONFLICT: upstream sync $from..$to needs manual resolution" >&2
     exit 1
   fi
+  # A file that applies cleanly is staged as upstream's own blob, which is
+  # only in the cache. Copy each staged blob into this repository, or
+  # nothing that runs after this, without the cache, can read the index.
+  for blob in $(git diff --cached --no-renames --diff-filter=d --raw --abbrev=40 HEAD | awk '{print $4}'); do
+    GIT_ALTERNATE_OBJECT_DIRECTORIES="$cache/objects" git cat-file blob "$blob" | git hash-object -w --stdin >/dev/null
+  done
 fi
 
 echo "$to" > internal/conn3x/version/UPSTREAM
