@@ -44,7 +44,7 @@ brew install conn3xorg/tap/conn3x
 Or download a release:
 
 ```sh
-VERSION=0.10.0 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.11.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
@@ -52,7 +52,7 @@ tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x 
 On Windows, the zip holds `conn3x.exe`. Put it somewhere on your `PATH`:
 
 ```powershell
-$v = "0.10.0"
+$v = "0.11.0"
 Invoke-WebRequest "https://github.com/conn3xorg/conn3x/releases/download/v$v/conn3x_${v}_windows_amd64.zip" -OutFile conn3x.zip
 Expand-Archive conn3x.zip -DestinationPath conn3x
 ```
@@ -130,7 +130,8 @@ container, in about five.
 - **Covers the everyday work.** Files, templates, and lines or blocks inside them;
   packages and repositories, services, users and SSH keys, cron jobs and timers,
   sysctl, mounts, the hostname, time zone and locale, firewalld and ufw, SELinux,
-  downloads, archives, git checkouts, reboots, waits and guarded commands, plus facts
+  PostgreSQL and MySQL databases and accounts, downloads, archives, git checkouts,
+  reboots, waits and guarded commands, plus facts
   about each host to plan with. [Every module](https://docs.conn3x.org/modules/file)
   is in the docs.
 - **Takes over servers you already run.** Put `import = true` on a step and the first
@@ -146,11 +147,14 @@ container, in about five.
   and `run_once` runs it on just one.
 - **Checks a file before it lands.** Give `file` a `validate` command, such as
   `visudo -cf %s`, and a broken `sudoers` or `sshd_config` never replaces the one that
-  works. `conn3x convert ansible` carries it over from `copy` tasks.
+  works. `conn3x convert ansible` carries it over from `copy` tasks. Add
+  `confirm_after` to a file, template or firewall rule, and if the change cuts Conn3x
+  off, the host puts the old one back by itself.
 - **Reaches Windows Server too, in preview.** Files, access rules, the registry,
   services, users and groups, firewall rules, MSI packages, scheduled tasks, IIS,
-  Windows Update, and a small Active Directory domain with its OUs, groups and users, on
-  Windows Server 2022 and 2025, over OpenSSH. Seven of those modules take `import`, so
+  Windows Update, and Active Directory forests and child domains with their OUs, groups
+  and users, on Windows Server 2022 and 2025, over OpenSSH. Eight of those modules take
+  `import`, so
   a server you already run is adopted rather than set up again. The
   [module pages](https://docs.conn3x.org/modules/windows_file) say what may still change.
 - **Starts on network switches, experimentally.** `eos_config`, `eos_hostname`,
@@ -167,7 +171,8 @@ container, in about five.
   modules and circuits without ever running a plan.
 - **Brings your playbooks.** `conn3x convert ansible -i inventory site.yml` turns a
   playbook into circuits and marks anything it can't translate for you to finish.
-  `-role` turns an Ansible role into a circuit directory.
+  The roles a playbook runs convert too, each into a circuit directory of its own, and
+  `-role` converts a single role.
 - **Borrows what others have written.** [conn3x.org/circuits](https://conn3x.org/circuits)
   lists shared circuits, such as nginx, users and a hardened baseline, that you add with
   one `module` block. Written one worth sharing? List it there.
