@@ -1,0 +1,2 @@
+# TestPlanShowWithEmbeddedSchema builds its test provider here on every run.
+cache/
