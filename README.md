@@ -44,7 +44,7 @@ brew install conn3xorg/tap/conn3x
 Or download a release:
 
 ```sh
-VERSION=0.11.0 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.12.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
@@ -52,7 +52,7 @@ tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x 
 On Windows, the zip holds `conn3x.exe`. Put it somewhere on your `PATH`:
 
 ```powershell
-$v = "0.11.0"
+$v = "0.12.0"
 Invoke-WebRequest "https://github.com/conn3xorg/conn3x/releases/download/v$v/conn3x_${v}_windows_amd64.zip" -OutFile conn3x.zip
 Expand-Archive conn3x.zip -DestinationPath conn3x
 ```
@@ -168,11 +168,14 @@ container, in about five.
 - **Checks your circuits and keeps a record.** `conn3x lint` flags what the circuit
   grader marks down, such as a download without a checksum. `-report` on `apply` and
   `drift` writes each run to a JSON file, and `conn3x mcp` lets an AI assistant look up
-  modules and circuits without ever running a plan.
+  modules and circuits without ever running a plan. In `conn3x test`, `idempotent = true`
+  fails a run whose second plan isn't empty.
 - **Brings your playbooks.** `conn3x convert ansible -i inventory site.yml` turns a
   playbook into circuits and marks anything it can't translate for you to finish.
   The roles a playbook runs convert too, each into a circuit directory of its own, and
-  `-role` converts a single role.
+  `-role` converts a single role. Database tasks and `win_updates` come across as well.
+  A `command` with shell characters, a Vault value or anything tagged `never` is left
+  for you, with the reason.
 - **Borrows what others have written.** [conn3x.org/circuits](https://conn3x.org/circuits)
   lists shared circuits, such as nginx, users and a hardened baseline, that you add with
   one `module` block. Written one worth sharing? List it there.

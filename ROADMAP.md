@@ -15,7 +15,7 @@ The goal: anything you'd do with Terraform, OpenTofu, Ansible, Chef or Puppet, y
 - Adopting servers you already run: `import` on a step takes over what a Linux host already has, on 21 modules since v0.9.0, from `file` and `package` to `cron`, `mount` and firewall rules, and on the database steps since v0.11.0, and steps take OpenTofu's `lifecycle` block, from `prevent_destroy` to preconditions. `provider::conn3x::import_id` adopts what a shared circuit manages, and `conn3x generate step` writes the step from what's on the host. See [Adopt servers you already run](https://docs.conn3x.org/guides/adopt-servers).
 - `strategy = "per_host"`, since v0.9.0, so a slow host doesn't hold up the others.
 - Arista EOS switches over their own CLI, experimental since v0.9.0: `eos_config`, `eos_hostname`, `eos_vlan`, and since v0.10.0 `eos_interface` and `eos_user`, with one session and one commit per switch, tested on cEOS-lab, not yet on hardware. See [Network devices](https://docs.conn3x.org/network-devices).
-- `conn3x convert ansible` for bringing playbooks and, since v0.9.0, local roles across, and since v0.11.0 the roles a playbook runs, with their dependencies, and `conn3x drift` for both layers.
+- `conn3x convert ansible` for bringing playbooks and, since v0.9.0, local roles across, and since v0.11.0 the roles a playbook runs, with their dependencies, and since v0.12.0 database tasks, `win_updates`, `tasks_from` and a role in a `loop`, and `conn3x drift` for both layers.
 - Any OpenTofu provider. AWS, Azure, Google Cloud and DigitalOcean are tested end to end, each with a [tutorial](https://docs.conn3x.org/tutorials).
 
 ## Now
@@ -28,7 +28,7 @@ Network devices over their own CLI, starting with Arista EOS: switches, routers 
 
 ## After that
 
-- Ansible roles and Galaxy: since v0.9.0 `conn3x convert ansible -role` turns one local role into a circuit. Since v0.11.0 the roles a playbook runs convert with it, `meta/` dependencies included. Next is pulling roles from Galaxy, rewriting what it can prove and marking the rest.
+- Ansible roles and Galaxy: since v0.9.0 `conn3x convert ansible -role` turns one local role into a circuit. Since v0.11.0 the roles a playbook runs convert with it, `meta/` dependencies included, and since v0.12.0 so do `tasks_from` and a role in a `loop`. Next is pulling roles from Galaxy, rewriting what it can prove and marking the rest.
 - Ad-hoc commands: run one thing on a group of hosts and see what comes back, without writing a circuit.
 - A web UI: a self-hosted, open-source app for teams to run plans and applies, approve them, see history, schedule drift checks and keep credentials per project, in the spirit of [Semaphore UI](https://github.com/semaphoreui/semaphore) and AWX.
 
