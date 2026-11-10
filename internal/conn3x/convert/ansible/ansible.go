@@ -537,6 +537,17 @@ var keywords = map[string]bool{
 	"debugger": true, "action": true, "local_action": true,
 }
 
+// runsAsPostgres reports whether a task's module is one whose step already
+// runs psql as the postgres user.
+func runsAsPostgres(t map[string]*yaml.Node) bool {
+	for k := range t {
+		if m := k[strings.LastIndex(k, ".")+1:]; !keywords[k] && (m == "postgresql_db" || m == "postgresql_user") {
+			return true
+		}
+	}
+	return false
+}
+
 // translatable keywords are handled; the rest stop a task from converting.
 // no_log gets this far only when it is false.
 var harmless = map[string]bool{"name": true, "notify": true, "args": true, "tags": true, "no_log": true, "become": true}
@@ -598,6 +609,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			continue
 		}
 		if k == "when" && familyCond {
+			continue
+		}
+		// The PostgreSQL steps run psql as postgres themselves.
+		if k == "become_user" && scalar(t[k]) == "postgres" && runsAsPostgres(t) {
 			continue
 		}
 		if keywords[k] && !harmless[k] {

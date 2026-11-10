@@ -316,6 +316,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"package_facts":   factsModule("package_facts", "manager", "strategy"),
 	"cron":            cronModule,
 	"sysctl":          sysctlModule,
+	"postgresql_db":   pgDatabaseModule,
+	"postgresql_user": pgRoleModule,
 	"hostname":        nameOnly("hostname"),
 	"timezone":        nameOnly("timezone"),
 	"firewalld":       firewalldModule,
@@ -669,6 +671,117 @@ func sysctlModule(in *input) ([]step, string) {
 	}
 	in.ignore("reload", "sysctl_set")
 	return one("sysctl", []attr{s("name", in.str("name")), s("value", in.str("value"))})
+}
+
+// pgDatabaseModule converts community.postgresql.postgresql_db. The step
+// talks to the local server through psql, so connection options stay for a
+// person.
+func pgDatabaseModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "" && st != "present" {
+		return nil, fmt.Sprintf("has state %q; postgresql_database only makes a database, and drops it only when the step is removed with on_remove = \"delete\"", st)
+	}
+	if k := in.pgUnmodelled("template", "lc_collate", "lc_ctype", "icu_locale", "locale_provider", "conn_limit", "tablespace", "comment", "force", "target", "target_opts", "maintenance_db"); k != "" {
+		return nil, "sets " + k + ", which postgresql_database doesn't offer yet"
+	}
+	attrs := []attr{s("name", in.str("name", "db", "datname"))}
+	attrs = in.optional(attrs, "owner", "owner")
+	attrs = in.optional(attrs, "encoding", "encoding")
+	return one("postgresql_database", attrs)
+}
+
+// pgAttributes are the role attributes postgresql_role's attributes sets
+// exactly.
+var pgAttributes = []string{"SUPERUSER", "CREATEDB", "CREATEROLE", "REPLICATION", "BYPASSRLS"}
+
+// pgRoleModule converts community.postgresql.postgresql_user.
+func pgRoleModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "" && st != "present" {
+		return nil, fmt.Sprintf("has state %q; postgresql_role only makes a role, and drops it only when the step is removed with on_remove = \"delete\"", st)
+	}
+	if in.has("encrypted") && !in.bool("encrypted", true) {
+		return nil, "stores the password unencrypted; postgresql_role always sends a SCRAM-SHA-256 verifier"
+	}
+	if in.bool("no_password_changes", false) {
+		return nil, "sets no_password_changes, so Ansible sets the password only on a new role; postgresql_role sets it whenever password_wo changes"
+	}
+	if k := in.pgUnmodelled("db", "priv", "expires", "conn_limit", "comment", "groups", "fail_on_user", "trust_input"); k != "" {
+		return nil, "sets " + k + ", which postgresql_role doesn't offer yet"
+	}
+	attrs := []attr{s("name", in.str("name", "user"))}
+	if in.has("role_attr_flags") {
+		login, set, why := pgFlags(in.str("role_attr_flags"))
+		if why != "" {
+			return nil, why
+		}
+		if login != nil {
+			attrs = append(attrs, attr{key: "login", val: cty.BoolVal(*login)})
+		}
+		if set != nil {
+			vals := []cty.Value{}
+			for _, a := range set {
+				vals = append(vals, cty.StringVal(a))
+			}
+			v := cty.ListValEmpty(cty.String)
+			if len(vals) > 0 {
+				v = cty.ListVal(vals)
+			}
+			attrs = append(attrs, attr{key: "attributes", val: v})
+		}
+	}
+	var notes []string
+	if in.has("password") {
+		notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here.")
+	}
+	// Never read, so a password can't end up in the output.
+	in.ignore("password", "encrypted", "no_password_changes")
+	return one("postgresql_role", attrs, notes...)
+}
+
+// pgUnmodelled names the first of keys the task sets, or a login_ or
+// connection option, which the steps don't take: they run psql on the host.
+func (in *input) pgUnmodelled(keys ...string) string {
+	keys = append(keys, "login_host", "login_user", "login_password", "login_unix_socket", "port", "session_role", "ssl_mode", "ca_cert", "ssl_cert", "ssl_key", "connect_params")
+	for _, k := range keys {
+		if in.has(k) {
+			return k
+		}
+	}
+	return ""
+}
+
+// pgFlags reads role_attr_flags. Ansible changes only the attributes it
+// names, but postgresql_role's attributes is exact, so the flags convert to
+// it only when they name all five, each as X or NOX. LOGIN or NOLOGIN sets
+// login. Anything else is left for a person.
+func pgFlags(flags string) (login *bool, set []string, why string) {
+	named := map[string]bool{}
+	for _, f := range strings.Split(strings.ToUpper(flags), ",") {
+		f = strings.TrimSpace(f)
+		on := !strings.HasPrefix(f, "NO")
+		base := strings.TrimPrefix(f, "NO")
+		switch {
+		case f == "":
+		case base == "LOGIN":
+			login = &on
+		case slices.Contains(pgAttributes, base):
+			named[base] = on
+		default:
+			return nil, nil, fmt.Sprintf("sets the role flag %s, which postgresql_role doesn't offer yet", f)
+		}
+	}
+	if len(named) == 0 {
+		return login, nil, ""
+	}
+	if len(named) < len(pgAttributes) {
+		return nil, nil, "names only some of SUPERUSER, CREATEDB, CREATEROLE, REPLICATION and BYPASSRLS in role_attr_flags; Ansible leaves the rest as they are, but postgresql_role's attributes is the exact list, so name all five, each as X or NOX, or set attributes by hand"
+	}
+	set = []string{}
+	for _, a := range pgAttributes {
+		if named[a] {
+			set = append(set, a)
+		}
+	}
+	return login, set, ""
 }
 
 func nameOnly(module string) func(*input) ([]step, string) {
