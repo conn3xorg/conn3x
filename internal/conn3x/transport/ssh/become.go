@@ -47,7 +47,7 @@ func (b *Become) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 	var res Result
 	var err error
 	if b.needsPass {
-		res, err = b.runWithPassword(ctx, inner, stdin)
+		res, err = b.runPrompted(ctx, inner, stdin)
 	} else {
 		res, err = b.Client.Run(ctx, "sudo -n -- "+inner, stdin)
 	}
@@ -62,11 +62,11 @@ func (b *Become) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 	return res, nil
 }
 
-// promptPoll is how often runWithPassword looks at stderr for sudo's prompt
+// promptPoll is how often runPrompted looks at stderr for sudo's prompt
 // and the command's start.
 const promptPoll = 2 * time.Millisecond
 
-// runWithPassword runs inner through "sudo -S" and answers its prompt.
+// runPrompted runs inner through "sudo -S" and answers its prompt.
 //
 // sudo is given a random prompt, and the command prints a second random
 // marker to stderr as it starts. The password is written only after the
@@ -78,7 +78,7 @@ const promptPoll = 2 * time.Millisecond
 //
 // -k makes sudo ignore cached credentials and leave none behind, so a run
 // never gives the login user's other sessions a passwordless sudo.
-func (b *Become) runWithPassword(ctx context.Context, inner string, stdin []byte) (Result, error) {
+func (b *Become) runPrompted(ctx context.Context, inner string, stdin []byte) (Result, error) {
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return Result{}, err
