@@ -74,11 +74,23 @@ type Output struct {
 // Run executes the command. A non-zero exit is an error that includes
 // what the command printed.
 func Run(ctx context.Context, r modules.Runner, cmd string) (Output, error) {
-	res, err := r.Run(ctx, cmd, nil)
+	return RunWithInput(ctx, r, cmd, "")
+}
+
+// RunWithInput is Run with secret on the command's standard input. A
+// command line shows in the host's process list while it runs; standard
+// input doesn't. The secret is blanked from the output kept and from the
+// error, in case the command echoes it.
+func RunWithInput(ctx context.Context, r modules.Runner, cmd, secret string) (Output, error) {
+	var stdin []byte
+	if secret != "" {
+		stdin = []byte(secret)
+	}
+	res, err := r.Run(ctx, cmd, stdin)
 	if err != nil {
 		return Output{}, err
 	}
-	out := Output{Stdout: clip(string(res.Stdout)), Stderr: clip(string(res.Stderr)), ExitCode: res.ExitCode}
+	out := Output{Stdout: clip(scrub(string(res.Stdout), secret)), Stderr: clip(scrub(string(res.Stderr), secret)), ExitCode: res.ExitCode}
 	if res.ExitCode != 0 {
 		msg := strings.TrimSpace(out.Stderr)
 		if msg == "" {
@@ -90,6 +102,26 @@ func Run(ctx context.Context, r modules.Runner, cmd string) (Output, error) {
 		return out, fmt.Errorf("command failed with exit status %d:\n%s", res.ExitCode, lastLines(msg, failLines))
 	}
 	return out, nil
+}
+
+const blanked = "(sensitive value)"
+
+// scrub blanks secret from s: all of it, and each of its lines on its own,
+// since a command given several values may print only one. Lines under six
+// characters are left, or a secret with a short line would blank half of
+// everything else.
+func scrub(s, secret string) string {
+	whole := strings.TrimSpace(secret)
+	if whole == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, whole, blanked)
+	for _, line := range strings.Split(whole, "\n") {
+		if line = strings.TrimSpace(line); len(line) >= 6 {
+			s = strings.ReplaceAll(s, line, blanked)
+		}
+	}
+	return s
 }
 
 // failLines is how much of a failed command's output its error shows: the

@@ -7,6 +7,8 @@ package facts
 import (
 	"context"
 	"fmt"
+	"net/netip"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -47,6 +49,33 @@ func Gather(ctx context.Context, r modules.Runner) (Facts, error) {
 	return parse(string(res.Stdout))
 }
 
+// What os-release allows for ID and VERSION_ID, and what uname -m prints.
+var (
+	idWord      = regexp.MustCompile(`^[a-z0-9._-]+$`)
+	versionWord = regexp.MustCompile(`^[A-Za-z0-9._-]*$`)
+	archWord    = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+)
+
+// Plain refuses a fact that isn't the plain word it should be. The host
+// reports its own facts, and a circuit may put one into a command for
+// another host, so a fact never carries shell syntax or control characters.
+func Plain(f Facts) error {
+	switch {
+	case !idWord.MatchString(f.ID):
+		return fmt.Errorf("the host reported an OS id that isn't a plain word: %q", f.ID)
+	case !versionWord.MatchString(f.Version):
+		return fmt.Errorf("the host reported an OS version that isn't a plain word: %q", f.Version)
+	case !archWord.MatchString(f.Arch):
+		return fmt.Errorf("the host reported an architecture that isn't a plain word: %q", f.Arch)
+	}
+	if f.IPv4 != "" {
+		if a, err := netip.ParseAddr(f.IPv4); err != nil || !a.Is4() {
+			return fmt.Errorf("the host reported an IPv4 address that isn't one: %q", f.IPv4)
+		}
+	}
+	return nil
+}
+
 func parse(out string) (Facts, error) {
 	kv := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
@@ -55,6 +84,9 @@ func parse(out string) (Facts, error) {
 		}
 	}
 	f := Facts{ID: kv["id"], Version: kv["version"], Arch: kv["arch"], IPv4: kv["ipv4"]}
+	if err := Plain(f); err != nil {
+		return Facts{}, err
+	}
 	for _, id := range append([]string{f.ID}, strings.Fields(kv["like"])...) {
 		switch id {
 		case "rhel", "fedora", "centos", "rocky", "almalinux":

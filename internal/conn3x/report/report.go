@@ -6,8 +6,11 @@
 // the cloud resources, any drift, and the errors as the terminal showed
 // them. The format is in report.schema.json beside this file.
 //
-// A report holds addresses, actions, timings and errors, and never an
-// attribute's value, since report files get copied to other systems.
+// A report holds addresses, actions, timings and errors, and never reads an
+// attribute's value, since report files get copied to other systems. An
+// error is the text the terminal showed, so it holds whatever the step put
+// in it: a failed command step's error quotes the last lines the command
+// printed.
 package report
 
 import (

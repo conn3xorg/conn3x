@@ -97,3 +97,27 @@ func TestValidateGuards(t *testing.T) {
 		}
 	}
 }
+
+// A secret goes to the command on standard input, and never comes back in
+// the output kept or in the error.
+func TestRunWithInputKeepsTheSecretOut(t *testing.T) {
+	const secret = "hunter2-token\nsecond-secret-line\n"
+	out, err := RunWithInput(ctx, host, "cat; cat /dev/null >&2", secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Stdout != blanked+"\n" {
+		t.Fatalf("stdout %q", out.Stdout)
+	}
+	out, err = RunWithInput(ctx, host, "read a; read b; echo \"got $b\"; echo \"bad $a\" >&2; exit 3", secret)
+	if err == nil || strings.Contains(err.Error(), "hunter2") || strings.Contains(out.Stdout+out.Stderr, "secret-line") {
+		t.Fatalf("err %v, out %+v", err, out)
+	}
+	if !strings.Contains(err.Error(), "bad "+blanked) {
+		t.Fatalf("err %q doesn't show where the secret was", err)
+	}
+	// Without a secret the command has no input to wait for.
+	if out, err := RunWithInput(ctx, host, "cat", ""); err != nil || out.Stdout != "" {
+		t.Fatalf("out %+v, err %v", out, err)
+	}
+}

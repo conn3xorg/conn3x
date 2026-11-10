@@ -1,2 +1,14 @@
 # Default owner for everything in the repository.
 * @jamesconwaydev
+
+# The code that logs in to hosts and runs as root there, the guard that
+# decides where root may write, and the release pipeline. A change to any
+# of these needs a second maintainer's review. Later lines win, so each
+# path lists both owners: the one who didn't write the change reviews it.
+/internal/conn3x/transport/ @jamesconwaydev @foothillsdigital
+/internal/conn3x/agent/ @jamesconwaydev @foothillsdigital
+/cmd/conn3x-agent/ @jamesconwaydev @foothillsdigital
+/internal/conn3x/modules/route.go @jamesconwaydev @foothillsdigital
+/.github/workflows/release.yml @jamesconwaydev @foothillsdigital
+/.goreleaser.yaml @jamesconwaydev @foothillsdigital
+/.github/CODEOWNERS @jamesconwaydev @foothillsdigital

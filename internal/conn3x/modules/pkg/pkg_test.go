@@ -208,6 +208,8 @@ func TestValidate(t *testing.T) {
 		{Name: "", State: Present},
 		{Name: "nginx; rm -rf /", State: Present},
 		{Name: "-x", State: Present},
+		// apt reads "install nginx-" as "remove nginx".
+		{Name: "nginx-", State: Present},
 		{Name: "nginx", State: "installed"},
 		{Name: "nginx", State: Absent, Version: "1"},
 	} {
@@ -217,6 +219,28 @@ func TestValidate(t *testing.T) {
 	}
 	if err := (Desired{Name: "python3.12-libs", State: Present, Version: "3.12.1"}).Validate(); err != nil {
 		t.Errorf("valid desired rejected: %v", err)
+	}
+	if err := (Desired{Name: "g++", State: Present}).Validate(); err != nil {
+		t.Errorf("g++ rejected: %v", err)
+	}
+}
+
+// apt reads "remove x+" as "install x" when no package is named "x+". A
+// name that ends in "+" is checked to be a package of its own first.
+func TestApplyDebChecksANameEndingInPlusIsAPackage(t *testing.T) {
+	for _, d := range []Desired{{Name: "nginx+", State: Absent}, {Name: "g++", State: Present}} {
+		h := &scriptedHost{answers: []answer{{"", ok("")}}}
+		if err := Apply(ctx, h, Deb, d); err != nil {
+			t.Fatal(err)
+		}
+		guard, apt, found := strings.Cut(h.ran[0], "\n")
+		if !found || !strings.Contains(guard, "grep -qxF -- '"+d.Name+"' || {") || !strings.Contains(guard, "Unable to locate package "+d.Name) || !strings.Contains(apt, "apt-get") {
+			t.Errorf("%+v ran %q", d, h.ran[0])
+		}
+	}
+	h := &scriptedHost{answers: []answer{{"", ok("")}}}
+	if err := Apply(ctx, h, Deb, Desired{Name: "nginx", State: Absent}); err != nil || strings.Contains(h.ran[0], "grep") {
+		t.Errorf("a plain name ran %q, %v", h.ran, err)
 	}
 }
 

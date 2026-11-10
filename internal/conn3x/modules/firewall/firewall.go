@@ -195,10 +195,11 @@ func ReadUFW(ctx context.Context, r modules.Runner, u UFWRule) (bool, error) {
 // step with for_each does. flock makes them take turns, and the rule is
 // read back so a lost write fails the step.
 func ApplyUFW(ctx context.Context, r modules.Runner, u UFWRule, present bool) error {
-	if err := u.Validate(); err != nil {
+	cmd, err := u.command(present)
+	if err != nil {
 		return err
 	}
-	res, err := r.Run(ctx, u.command(present), nil)
+	res, err := r.Run(ctx, cmd, nil)
 	if err := check(res, err); err != nil {
 		return err
 	}
@@ -212,15 +213,20 @@ func ApplyUFW(ctx context.Context, r modules.Runner, u UFWRule, present bool) er
 	return nil
 }
 
-func (u UFWRule) command(present bool) string {
-	if present {
-		return "flock /run/conn3x-ufw.lock ufw " + u.Spec()
+// command is the ufw command line. Spec goes into it unquoted, so the rule
+// is validated here, whoever the caller is.
+func (u UFWRule) command(present bool) (string, error) {
+	if err := u.Validate(); err != nil {
+		return "", err
 	}
-	return "flock /run/conn3x-ufw.lock ufw delete " + u.Spec()
+	if present {
+		return "flock /run/conn3x-ufw.lock ufw " + u.Spec(), nil
+	}
+	return "flock /run/conn3x-ufw.lock ufw delete " + u.Spec(), nil
 }
 
 // Undo is what takes back ApplyUFW(u, present).
-func (u UFWRule) Undo(present bool) string {
+func (u UFWRule) Undo(present bool) (string, error) {
 	return u.command(!present)
 }
 

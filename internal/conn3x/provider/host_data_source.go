@@ -97,7 +97,11 @@ func gatherFacts(ctx context.Context, posix modules.Runner, raw ps.Runner, allow
 	if !allowWindows {
 		return f, noWindows, fmt.Errorf("%s is a Windows host, and this circuit doesn't support it. A circuit written for Windows sets allow_windows = true on its conn3x_host data source", w.Hostname)
 	}
-	return facts.Facts{Family: "windows", ID: "windows", Version: w.Version, Arch: w.Arch, CPUs: w.CPUs, MemoryMB: w.MemoryMB, IPv4: w.IPv4},
+	wf := facts.Facts{Family: "windows", ID: "windows", Version: w.Version, Arch: w.Arch, CPUs: w.CPUs, MemoryMB: w.MemoryMB, IPv4: w.IPv4}
+	if err := facts.Plain(wf); err != nil {
+		return f, noWindows, err
+	}
+	return wf,
 		cty.ObjectVal(map[string]cty.Value{
 			"release": cty.StringVal(w.Release), "build": cty.StringVal(w.Build), "update_revision": cty.NumberIntVal(int64(w.UBR)), "edition": cty.StringVal(w.Edition), "installation_type": cty.StringVal(w.InstallationType),
 			"hostname": cty.StringVal(w.Hostname), "domain": cty.StringVal(w.Domain), "domain_role": cty.NumberIntVal(int64(w.DomainRole)),

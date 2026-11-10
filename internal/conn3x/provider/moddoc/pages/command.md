@@ -34,6 +34,17 @@ step "migrate" {
   }
 }
 ```
+Give a command a secret on standard input, not on its command line, passed in at run time:
+
+```hcl
+step "registry_login" {
+  command {
+    command  = "podman login --username ci --password-stdin registry.example.com"
+    stdin_wo = "use an ephemeral variable here"
+    creates  = "/root/.config/containers/auth.json"
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
@@ -45,11 +56,13 @@ step "migrate" {
 
 **Without guards.** A command with no guard runs when the step is created, and again only when `command` or `triggers` changes.
 
-**Changes.** Changing `command`, `creates`, `removes`, `unless` or `triggers` runs the command again, subject to its guards.
+**Secrets.** A command line is visible to every user on the host for as long as the command runs, in `ps` and in `/proc`. So a secret doesn't belong in `command`. Put it in `stdin_wo` and have the command read it from standard input, which most tools can do: `--password-stdin`, `--from-file=-`, a trailing `-`, or `read -r token` in a shell script. `stdin_wo` is write-only: state records only `stdin_hmac`, a keyed hash that tells Conn3x when the value changed. If the command prints the value back, Conn3x blanks it from `stdout`, `stderr` and the error. `unless` never gets it, since a plan doesn't have write-only values, and `unless` is itself a command line, so keep secrets out of it too.
+
+**Changes.** Changing `command`, `stdin_wo`, `creates`, `removes`, `unless` or `triggers` runs the command again, subject to its guards.
 
 **Output.** `stdout` and `stderr` keep the output of the last run, up to 4 KiB each. Both are sensitive, so the plan doesn't print them.
 
-Sensitive hides them from the plan, not from state: the state file keeps both in plain text, so anyone who can read your state can read them. Don't print a secret from a command step. If a command has to produce one, such as a join token, have it write the secret to a file on the host with mode `0600`, and read it there.
+Sensitive hides them from the plan, not from state: the state file keeps both in plain text, so anyone who can read your state can read them. When a command fails, the last ten lines it printed are also in the error, which goes to the terminal, to `-json` output and to a `-report` file. Don't print a secret from a command step. If a command has to produce one, such as a join token, have it write the secret to a file on the host with mode `0600`, and read it there.
 
 ## Removal
 

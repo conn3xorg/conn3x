@@ -27,7 +27,10 @@ const client = `"$(command -v mariadb || command -v mysql)" --protocol=socket -u
 // session comes first in every batch. With NO_BACKSLASH_ESCAPES a string
 // literal is plain text between quotes, so doubling a quote is the only
 // escaping, and the client stops reading backslashes in strings too.
-const session = "SET SESSION sql_mode = CONCAT_WS(',', NULLIF(@@sql_mode, ''), 'NO_BACKSLASH_ESCAPES');\n"
+//
+// Errors are matched and redacted by their English text, so the session
+// asks for English whatever the server's lc_messages is.
+const session = "SET SESSION lc_messages = 'en_US';\nSET SESSION sql_mode = CONCAT_WS(',', NULLIF(@@sql_mode, ''), 'NO_BACKSLASH_ESCAPES');\n"
 
 // System databases the server needs, which no step drops.
 var systemDatabases = []string{"mysql", "information_schema", "performance_schema", "sys"}
@@ -183,6 +186,11 @@ func account(u User) string { return literal(u.Name) + "@" + literal(u.Host) }
 // hold a password.
 var near = regexp.MustCompile(`(?s) near '.*`)
 
+// syntaxQuote is the same for a server that answered in another language
+// all the same: a syntax error (1064) is cut at the first quote, whatever
+// the words around it.
+var syntaxQuote = regexp.MustCompile(`(?s)(ERROR 1064 [^']*)'.*`)
+
 // run runs sql through the client and returns what it printed.
 func run(ctx context.Context, r modules.Runner, sql string) (string, error) {
 	res, err := r.Run(ctx, client, []byte(session+sql+"\n"))
@@ -191,6 +199,7 @@ func run(ctx context.Context, r modules.Runner, sql string) (string, error) {
 	}
 	if res.ExitCode != 0 {
 		msg := near.ReplaceAllString(strings.TrimSpace(string(res.Stderr)+string(res.Stdout)), "")
+		msg = strings.TrimSpace(syntaxQuote.ReplaceAllString(msg, "$1"))
 		switch {
 		case res.ExitCode == 127:
 			return "", errors.New("the mysql client isn't installed on the host; install MySQL or MariaDB before this step")

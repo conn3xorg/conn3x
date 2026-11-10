@@ -139,6 +139,8 @@ func TestRunExplainsFailures(t *testing.T) {
 		"ERROR 1698 (28000): Access denied for user 'root'@'localhost'":                                                                 "set become = true",
 		"ERROR 2002 (HY000): Can't connect to local server through socket '/run/mysqld/mysqld.sock' (2)":                                "start it",
 		"ERROR 1064 (42000) at line 2: You have an error in your SQL syntax; check the manual near 'IDENTIFIED BY 'hunter2'' at line 1": "ERROR 1064",
+		// A server set to German quotes the statement in other words.
+		"ERROR 1064 (42000) at line 2: Fehler in der SQL-Syntax. Bitte die korrekte Syntax im Handbuch nachschlagen bei 'IDENTIFIED BY 'hunter2'' in Zeile 1": "ERROR 1064",
 	} {
 		s := &server{reply: func(string) (string, string, int) { return "", stderr, 1 }}
 		_, err := ReadDatabase(context.Background(), s, "app")
