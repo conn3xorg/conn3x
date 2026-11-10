@@ -1,0 +1,23 @@
+- name: EMEA child domain
+  hosts: emea_dc
+  vars:
+    parent: lab.example.com
+  tasks:
+    - name: Make emea.lab.example.com
+      microsoft.ad.domain_child:
+        dns_domain_name: emea.{{ parent }}
+        domain_admin_user: 'admin@{{ parent }}'
+        domain_admin_password: '{{ enterprise_admin_password }}'
+        safe_mode_password: '{{ dsrm_password }}'
+        database_path: 'D:\NTDS'
+        reboot: true
+        reboot_timeout: 1800
+
+    - name: Same, as a new tree
+      microsoft.ad.domain_child:
+        dns_domain_name: corp.example.net
+        domain_type: tree
+        parent_domain_name: '{{ parent }}'
+        domain_admin_user: 'admin@{{ parent }}'
+        domain_admin_password: '{{ enterprise_admin_password }}'
+        safe_mode_password: '{{ dsrm_password }}'

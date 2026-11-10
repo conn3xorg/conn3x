@@ -367,6 +367,7 @@ var modules = map[string]func(*input) ([]step, string){
 	// microsoft.ad, which replaces win_domain and its kin. By its full name,
 	// as plenty of collections have a module called domain.
 	"microsoft.ad.domain":            winDomainModule,
+	"microsoft.ad.domain_child":      winChildDomainModule,
 	"microsoft.ad.domain_controller": winDCModule,
 	"microsoft.ad.group":             winADGroupModule,
 	"microsoft.ad.membership":        winMembershipModule,
@@ -376,7 +377,7 @@ var modules = map[string]func(*input) ([]step, string){
 
 // exact lists the modules matched by their full name only.
 var exact = map[string]bool{
-	"microsoft.ad.domain": true, "microsoft.ad.domain_controller": true, "microsoft.ad.membership": true,
+	"microsoft.ad.domain": true, "microsoft.ad.domain_child": true, "microsoft.ad.domain_controller": true, "microsoft.ad.membership": true,
 	"microsoft.ad.group": true, "microsoft.ad.ou": true, "microsoft.ad.user": true,
 }
 

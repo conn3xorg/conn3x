@@ -749,6 +749,48 @@ func winDCModule(in *input) ([]step, string) {
 	return in.thenReboot(dc, true)
 }
 
+// winChildDomainModule converts microsoft.ad.domain_child, which makes a
+// child domain under one in the forest, or a new tree in it.
+func winChildDomainModule(in *input) ([]step, string) {
+	if t := in.str("domain_type"); t != "" && t != "child" {
+		return nil, fmt.Sprintf("has domain_type %q; windows_ad_domain only makes a child of an existing domain, not a new tree", t)
+	}
+	if in.has("install_dns") && !in.bool("install_dns", true) {
+		return nil, "makes the domain without DNS; windows_ad_domain always installs it"
+	}
+	for _, k := range []string{"domain_mode", "create_dns_delegation", "site_name", "replication_source_dc", "parent_domain_name"} {
+		if in.has(k) {
+			return nil, "sets " + k + ", which windows_ad_domain doesn't offer yet; make the domain with Windows' defaults or by hand"
+		}
+	}
+	if !in.has("domain_admin_user") {
+		return nil, "has no domain_admin_user; windows_ad_domain makes the domain with an account named in username"
+	}
+	user := in.str("domain_admin_user")
+	if !dnsQualified(user) {
+		return nil, fmt.Sprintf("names the account as %q; windows_ad_domain needs it with its domain's DNS name, such as admin@lab.example.com or lab.example.com\\admin", user)
+	}
+	attrs := []attr{s("domain_name", in.str("dns_domain_name")), s("username", user)}
+	attrs = in.optional(attrs, "database_path", "database_path")
+	attrs = in.optional(attrs, "log_path", "log_path")
+	attrs = in.optional(attrs, "sysvol_path", "sysvol_path")
+	// Never read, so a password can't end up in the output.
+	in.ignore("domain_admin_password", "safe_mode_password", "install_dns", "domain_type")
+	child := step{module: "windows_ad_domain", attrs: attrs, suffix: "domain",
+		notes: []string{"TODO(convert): Set password_wo and safe_mode_password_wo from ephemeral variables. The task's passwords aren't copied here."}}
+	return in.thenReboot(child, true)
+}
+
+// dnsQualified reports whether an account is named by its domain's DNS name,
+// as admin@lab.example.com or lab.example.com\admin, not LAB\admin.
+func dnsQualified(user string) bool {
+	if name, domain, ok := strings.Cut(user, "@"); ok {
+		return name != "" && strings.Contains(domain, ".")
+	}
+	domain, name, ok := strings.Cut(user, `\`)
+	return ok && name != "" && strings.Contains(domain, ".")
+}
+
 func winDNSClientModule(in *input) ([]step, string) {
 	adapters := in.list("adapter_names")
 	if len(adapters) != 1 || strings.ContainsAny(adapters[0], "*?[]`") {
