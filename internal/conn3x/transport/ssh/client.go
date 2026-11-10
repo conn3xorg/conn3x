@@ -453,10 +453,13 @@ func recorded(check gossh.HostKeyCallback, addr string) []gossh.PublicKey {
 	return keys
 }
 
-// algorithmsFor lists the signature algorithms a host key type can use.
+// algorithmsFor lists the signature algorithms a host key type can use. An
+// RSA key signs with SHA-2 only: "ssh-rsa" is the SHA-1 signature, which
+// OpenSSH has refused by default since 8.8 and every sshd since 7.2 can
+// do without.
 func algorithmsFor(keyType string) []string {
 	if keyType == gossh.KeyAlgoRSA {
-		return []string{gossh.KeyAlgoRSASHA512, gossh.KeyAlgoRSASHA256, gossh.KeyAlgoRSA}
+		return []string{gossh.KeyAlgoRSASHA512, gossh.KeyAlgoRSASHA256}
 	}
 	return []string{keyType}
 }

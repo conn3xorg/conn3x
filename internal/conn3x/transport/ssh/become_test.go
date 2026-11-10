@@ -132,3 +132,46 @@ func TestBecomeProbeRetriesAfterCancel(t *testing.T) {
 		t.Fatalf("Run after a cancelled probe = %v", err)
 	}
 }
+
+// A sudoers rule can ask for a password in general and still let the
+// command Run sends start without one. sudo then never reads the password,
+// and it must not become the first line of the command's input, which for
+// a file step is the first line of the file.
+func TestBecomePasswordIsOnlySentToAPrompt(t *testing.T) {
+	s, cfg := becomeServer(t, "password:s3cret")
+	s.Env = append(s.Env, "FAKE_SUDO_NOPASSWD_RUN=1")
+	b := &Become{Client: dial(t, cfg), Password: []byte("s3cret")}
+	res, err := b.Run(context.Background(), "cat; echo warned >&2", []byte("file content"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(res.Stdout) != "file content" || string(res.Stderr) != "warned\n" {
+		t.Fatalf("command read %q, stderr %q", res.Stdout, res.Stderr)
+	}
+}
+
+// The prompt can arrive in pieces; the password waits for all of it.
+func TestBecomeWaitsForTheWholePrompt(t *testing.T) {
+	s, cfg := becomeServer(t, "password:s3cret")
+	s.Env = append(s.Env, "FAKE_SUDO_SPLIT=1")
+	b := &Become{Client: dial(t, cfg), Password: []byte("s3cret")}
+	res, err := b.Run(context.Background(), "cat", []byte("file content"))
+	if err != nil || string(res.Stdout) != "file content" || len(res.Stderr) != 0 {
+		t.Fatalf("got %q, stderr %q, err %v", res.Stdout, res.Stderr, err)
+	}
+}
+
+// Checking a password must not leave credentials cached for the login
+// user's other sessions, which "sudo -v" did on hosts that share them.
+func TestBecomeLeavesNoCachedCredentials(t *testing.T) {
+	s, cfg := becomeServer(t, "password:s3cret")
+	cache := s.Dir + "/timestamp"
+	s.Env = append(s.Env, "FAKE_SUDO_CACHE="+cache)
+	b := &Become{Client: dial(t, cfg), Password: []byte("s3cret")}
+	if _, err := b.Run(context.Background(), "true", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cache); err == nil {
+		t.Fatal("sudo credentials were cached")
+	}
+}

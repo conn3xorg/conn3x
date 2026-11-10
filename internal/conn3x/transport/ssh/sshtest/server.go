@@ -486,6 +486,9 @@ func KnownHostsLine(addr string, key gossh.PublicKey) string {
 // it reads as a password. FAKE_SUDO_CACHE names a file standing for cached
 // credentials shared by every session, as with timestamp_type=global: once
 // a password has been accepted, sudo asks for none unless given -k.
+// FAKE_SUDO_NOPASSWD_RUN=1 stands for a sudoers rule that asks for a
+// password in general but not for the command being run: "sudo -n true"
+// still fails, and the real command starts without a prompt.
 const fakeSudoScript = `#!/bin/sh
 nonint=0; stdin=0; prompt=; kill=0
 while [ $# -gt 0 ]; do
@@ -508,6 +511,7 @@ case "$FAKE_SUDO" in
       [ "${validate:-0}" = 1 ] && exit 0
       SUDO_USER=fake exec "$@"
     fi
+    if [ "$FAKE_SUDO_NOPASSWD_RUN" = 1 ] && [ "$3" != true ]; then SUDO_USER=fake exec "$@"; fi
     if [ $nonint = 1 ]; then echo "sudo: a password is required" >&2; exit 1; fi
     # Like real sudo, read up to three password attempts from stdin.
     tries=0

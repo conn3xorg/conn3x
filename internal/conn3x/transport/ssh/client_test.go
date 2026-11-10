@@ -593,3 +593,12 @@ func TestWindowsShellRefused(t *testing.T) {
 		}
 	}
 }
+
+// An RSA host key is only ever asked to sign with SHA-2.
+func TestRSAHostKeysNeverSignWithSHA1(t *testing.T) {
+	for _, a := range algorithmsFor(gossh.KeyAlgoRSA) {
+		if a == gossh.KeyAlgoRSA {
+			t.Fatalf("%q, the SHA-1 signature, is offered for RSA host keys", a)
+		}
+	}
+}
