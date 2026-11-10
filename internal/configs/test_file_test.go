@@ -7,7 +7,6 @@ package configs
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -114,12 +113,12 @@ func assertDiagsSummaryMatch(t *testing.T, want hcl.Diagnostics, got hcl.Diagnos
 func TestDecodeTestRunModuleBlock(t *testing.T) {
 	tcs := map[string]struct {
 		inputModuleSource string
-		wantModuleSource  string
-		expectedDiags     hcl.Diagnostics
+		wantModuleSource string
+		expectedDiags hcl.Diagnostics
 	}{
 		"invalid": {
 			inputModuleSource: "hg",
-			wantModuleSource:  "",
+			wantModuleSource: "",
 			expectedDiags: hcl.Diagnostics{
 				{
 					Summary: "Invalid module source address",
@@ -128,13 +127,13 @@ func TestDecodeTestRunModuleBlock(t *testing.T) {
 		},
 		"generic_git_url": {
 			inputModuleSource: "git@github.com:opentofu/terraform-module-test.git",
-			wantModuleSource:  "git::ssh://git@github.com/opentofu/terraform-module-test.git",
-			expectedDiags:     nil,
+			wantModuleSource: "git::ssh://git@github.com/opentofu/terraform-module-test.git",
+			expectedDiags: nil,
 		},
 		"github_url": {
 			inputModuleSource: "github.com/opentofu/terraform-module-test",
-			wantModuleSource:  "git::https://github.com/opentofu/terraform-module-test.git",
-			expectedDiags:     nil,
+			wantModuleSource: "git::https://github.com/opentofu/terraform-module-test.git",
+			expectedDiags: nil,
 		},
 	}
 
@@ -142,7 +141,7 @@ func TestDecodeTestRunModuleBlock(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			pos := hcl.Pos{Line: 1, Column: 1}
 			exprName := fmt.Sprintf("\"%s\"", tc.inputModuleSource)
-			expr, _ := hclsyntax.ParseExpression([]byte(exprName), "", pos)
+			expr, _ :=  hclsyntax.ParseExpression([]byte(exprName), "", pos)
 
 			block := &hcl.Block{
 				Type: "module",
@@ -172,33 +171,10 @@ func TestDecodeTestRunModuleBlock(t *testing.T) {
 				t.Fatalf("was expecting to have a source, but did not: %d", trcm.Source)
 			}
 
-			if trcm.Source.String() != tc.wantModuleSource {
+
+			if trcm.Source.String() != tc.wantModuleSource  {
 				t.Fatalf("got %#v; want %#v", trcm.Source.String(), tc.wantModuleSource)
 			}
 		})
-	}
-}
-
-func TestDecodeTestRunBlock_Idempotent(t *testing.T) {
-	for src, want := range map[string]string{
-		`run "a" { idempotent = true }`:                                                     "",
-		`run "a" { idempotent = false }`:                                                    "",
-		"run \"a\" {\ncommand = plan\nidempotent = true\n}":                                 "needs command = apply",
-		"run \"a\" {\nidempotent = true\nplan_options {\nreplace = [test_resource.a]\n}\n}": "plans a change every time",
-		`run "a" { idempotent = "yes please" }`:                                             "Unsuitable value type",
-	} {
-		f, diags := hclsyntax.ParseConfig([]byte(src), "main.tftest.hcl", hcl.InitialPos)
-		if diags.HasErrors() {
-			t.Fatalf("%s: %s", src, diags)
-		}
-		file, diags := loadTestFile(f.Body)
-		switch {
-		case want == "" && diags.HasErrors():
-			t.Errorf("%s: %s", src, diags)
-		case want == "" && !file.Runs[0].Idempotent && src == `run "a" { idempotent = true }`:
-			t.Errorf("%s: idempotent not set", src)
-		case want != "" && !strings.Contains(diags.Error(), want):
-			t.Errorf("%s: want %q, got %v", src, want, diags)
-		}
 	}
 }

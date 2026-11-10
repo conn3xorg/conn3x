@@ -187,8 +187,8 @@ type TestRun struct {
 	// Underlying modules shouldn't be called.
 	OverrideModules []*OverrideModule
 
-	// Idempotent asks for a second plan after the apply, which fails the run
-	// unless it plans no changes.
+	// CONN3X: Idempotent asks for a second plan after the apply, which
+	// fails the run unless it plans no changes.
 	Idempotent bool
 
 	NameDeclRange      hcl.Range
@@ -648,26 +648,8 @@ func decodeTestRunBlock(block *hcl.Block) (*TestRun, hcl.Diagnostics) {
 		r.ExpectFailures = failures
 	}
 
-	if attr, exists := content.Attributes["idempotent"]; exists {
-		valDiags := gohcl.DecodeExpression(attr.Expr, nil, &r.Idempotent)
-		diags = append(diags, valDiags...)
-		if r.Idempotent && r.Command != ApplyTestCommand {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "Invalid \"idempotent\" argument",
-				Detail:   "idempotent plans again after an apply, so it needs command = apply.",
-				Subject:  attr.Expr.Range().Ptr(),
-			})
-		}
-		if r.Idempotent && len(r.Options.Replace) > 0 {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "Invalid \"idempotent\" argument",
-				Detail:   "plan_options sets replace, which plans a change every time, so the second plan could never be empty.",
-				Subject:  attr.Expr.Range().Ptr(),
-			})
-		}
-	}
+	// CONN3X: idempotent on a run block (see conn3x_test_run.go).
+	diags = append(diags, decodeIdempotent(content, &r)...)
 
 	return &r, diags
 }
@@ -1113,7 +1095,7 @@ var testRunBlockSchema = &hcl.BodySchema{
 		{Name: "providers"},
 		// expect_failures indicates whether test failures are expected.
 		{Name: "expect_failures"},
-		// idempotent plans again after the apply and fails on any change.
+		// CONN3X: idempotent plans again after the apply and fails on any change.
 		{Name: "idempotent"},
 	},
 	Blocks: []hcl.BlockHeaderSchema{
