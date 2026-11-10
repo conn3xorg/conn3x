@@ -224,9 +224,11 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   type_handler_version = "1.10"
 
   # Extra settings stay encrypted beside the command, which an audit policy could
-  # record. Only bootstrap.ps1 opens them: the key is on no command line.
+  # record. Only bootstrap.ps1 opens them: the key is on no command line. The
+  # script runs straight from where Azure put it; a copy in a shared folder such
+  # as C:\Windows\Temp is a name any local user could have created first.
   protected_settings = jsonencode({
-    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command Copy-Item C:\\AzureData\\CustomData.bin C:\\Windows\\Temp\\bootstrap.ps1 -Force; C:\\Windows\\Temp\\bootstrap.ps1"
+    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText('C:\\AzureData\\CustomData.bin')))\""
     conn3xHostKey    = base64encode(tls_private_key.host[each.key].private_key_openssh)
   })
 }

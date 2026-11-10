@@ -235,9 +235,11 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   type_handler_version = "1.10"
 
   # Extra settings stay encrypted beside the command, which an audit policy could
-  # record. Only bootstrap.ps1 opens them: the key is on no command line.
+  # record. Only bootstrap.ps1 opens them: the key is on no command line. The
+  # script runs straight from where Azure put it; a copy in a shared folder such
+  # as C:\Windows\Temp is a name any local user could have created first.
   protected_settings = jsonencode({
-    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command Copy-Item C:\\AzureData\\CustomData.bin C:\\Windows\\Temp\\bootstrap.ps1 -Force; C:\\Windows\\Temp\\bootstrap.ps1"
+    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText('C:\\AzureData\\CustomData.bin')))\""
     conn3xHostKey    = base64encode(tls_private_key.host[each.key].private_key_openssh)
   })
 }
@@ -245,7 +247,9 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
 # The domain: dc1 makes the forest and the OUs, and every web server joins it
 # into OU=Web,OU=Fleet.
 module "ad" {
-  source = "github.com/conn3xorg/circuit-active-directory?ref=v0.1.1"
+  # v0.1.1, by commit: this circuit is handed the domain admin's password, and
+  # a commit can't be moved the way a tag can.
+  source = "github.com/conn3xorg/circuit-active-directory?ref=cbfa028e778091203796680bbbd6903aaa77f6c8"
 
   # Nothing connects until the extensions have installed the host keys.
   depends_on = [azurerm_virtual_machine_extension.bootstrap]
@@ -274,7 +278,8 @@ module "ad" {
 # The same baseline on every web server at once: IIS, a site and its app pool,
 # the firewall rule, and a nightly recycle.
 module "iis" {
-  source = "github.com/conn3xorg/circuit-iis?ref=v0.1.0"
+  # v0.1.0, by commit.
+  source = "github.com/conn3xorg/circuit-iis?ref=48baf6ec967d8b2375e7a7c8d503aeb200046176"
 
   # After the join, so the join's reboot can't land in the middle of IIS.
   depends_on = [module.ad]

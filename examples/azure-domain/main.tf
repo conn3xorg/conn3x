@@ -98,6 +98,16 @@ resource "tls_private_key" "host" {
   algorithm = "ED25519"
 }
 
+# win2 joins with an ordinary account made for that, so the domain admin's
+# password never leaves dc1. Any domain user may join ten computers.
+resource "random_password" "join" {
+  length      = 32
+  min_lower   = 1
+  min_upper   = 1
+  min_numeric = 1
+  min_special = 1
+}
+
 # Azure insists on a password for each VM. Steps below replace both.
 resource "random_password" "first_admin" {
   for_each    = local.vms
@@ -223,9 +233,11 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   type_handler_version = "1.10"
 
   # Extra settings stay encrypted beside the command, which an audit policy could
-  # record. Only bootstrap.ps1 opens them: the key is on no command line.
+  # record. Only bootstrap.ps1 opens them: the key is on no command line. The
+  # script runs straight from where Azure put it; a copy in a shared folder such
+  # as C:\Windows\Temp is a name any local user could have created first.
   protected_settings = jsonencode({
-    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command Copy-Item C:\\AzureData\\CustomData.bin C:\\Windows\\Temp\\bootstrap.ps1 -Force; C:\\Windows\\Temp\\bootstrap.ps1"
+    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText('C:\\AzureData\\CustomData.bin')))\""
     conn3xHostKey    = base64encode(tls_private_key.host[each.key].private_key_openssh)
   })
 }
@@ -321,6 +333,17 @@ circuit "dc" {
     }
   }
 
+  # Not an admin of anything. win2 is handed this password, and only this one.
+  step "join_account" {
+    windows_ad_user {
+      name         = "join"
+      path         = "OU=Lab,DC=lab,DC=conn3x,DC=test"
+      upn          = "join@${local.domain}"
+      display_name = "Joins computers to the domain"
+      password_wo  = random_password.join.result
+    }
+  }
+
   step "lab_admins" {
     windows_ad_group {
       name        = "LabAdmins"
@@ -331,11 +354,9 @@ circuit "dc" {
   }
 
   # Promotion made dc1's admin the domain's azadmin, with the password Azure
-  # needed, which state still holds. win2 joined with it; now nobody knows it.
-  # Key login keeps working.
+  # needed, which state still holds. Now nobody knows it. Key login keeps
+  # working.
   step "forget_first_password" {
-    depends_on = [conn3x_windows_reboot.member__joined]
-
     windows_powershell {
       script = <<-PS
         $bytes = New-Object byte[] 48
@@ -368,7 +389,7 @@ circuit "member" {
   }
 
   step "dns" {
-    depends_on = [azurerm_virtual_machine_extension.bootstrap, conn3x_windows_powershell.dc__ad_answers]
+    depends_on = [azurerm_virtual_machine_extension.bootstrap, conn3x_windows_ad_user.dc__join_account]
 
     windows_dns_client {
       servers = [local.vms.dc1]
@@ -378,8 +399,8 @@ circuit "member" {
   step "join" {
     windows_domain_membership {
       domain      = local.domain
-      username    = "LAB\\azadmin"
-      password_wo = random_password.first_admin["dc1"].result
+      username    = "LAB\\join"
+      password_wo = random_password.join.result
     }
   }
 
