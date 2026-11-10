@@ -10,5 +10,7 @@
 /cmd/conn3x-agent/ @jamesconwaydev @foothillsdigital
 /internal/conn3x/modules/route.go @jamesconwaydev @foothillsdigital
 /.github/workflows/release.yml @jamesconwaydev @foothillsdigital
+/.github/workflows/stable.yml @jamesconwaydev @foothillsdigital
+/scripts/stable-channel.sh @jamesconwaydev @foothillsdigital
 /.goreleaser.yaml @jamesconwaydev @foothillsdigital
 /.github/CODEOWNERS @jamesconwaydev @foothillsdigital

@@ -52,6 +52,7 @@ jobs:
           bash scripts/dco-check_test.sh
           bash scripts/no-binaries_test.sh
           bash scripts/build-agent_test.sh
+          bash scripts/stable-channel_test.sh
           python3 scripts/dashboards_test.py
       - name: No executables or oversized files added
         if: github.event_name == 'pull_request'

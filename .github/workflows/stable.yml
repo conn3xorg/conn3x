@@ -1,0 +1,45 @@
+name: Stable channel
+
+# Points the image tag "stable" and the cask conn3x@stable at a release
+# that has been out for a week with every published fix in it. Nothing is
+# built: scripts/stable-channel.sh has the rule. Run it by hand with a
+# version to promote a security fix the day it ships.
+on:
+  schedule:
+    - cron: "40 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to make stable, without the v. Empty picks by the rule.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable
+  cancel-in-progress: false
+
+jobs:
+  stable:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Move stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: bash scripts/stable-channel.sh ${VERSION:+"$VERSION"}
