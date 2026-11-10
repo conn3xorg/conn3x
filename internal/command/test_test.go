@@ -132,6 +132,14 @@ func TestTest(t *testing.T) {
 			expected: "0 passed, 1 failed.",
 			code:     1,
 		},
+		"idempotent_pass": {
+			expected: "1 passed, 0 failed.",
+			code:     0,
+		},
+		"idempotent_fail": {
+			expected: "0 passed, 1 failed.",
+			code:     1,
+		},
 		"custom_condition_checks": {
 			expected: "0 passed, 1 failed.",
 			code:     1,
@@ -533,6 +541,36 @@ func TestTest_ModuleDependencies(t *testing.T) {
 		} else {
 			t.Errorf("should have deleted all resources on completion but left %s", setup.ResourceString())
 		}
+	}
+}
+
+// A run with idempotent = true names what the second plan would change, and
+// still destroys what it made.
+func TestTest_IdempotentNamesTheChange(t *testing.T) {
+	td := t.TempDir()
+	testCopyDir(t, testFixturePath(path.Join("test", "idempotent_fail")), td)
+	t.Chdir(td)
+
+	provider := testing_command.NewProvider(nil)
+	view, done := testView(t)
+
+	c := &TestCommand{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(provider.Provider),
+		View:             view,
+	}
+
+	code := c.Run([]string{"-no-color"})
+	output := done(t)
+
+	if code != 1 {
+		t.Errorf("expected status code 1 but got %d", code)
+	}
+	if got := output.Stderr(); !strings.Contains(got, "Error: Not idempotent") || !strings.Contains(got, "- test_resource.always would be updated in-place") || strings.Contains(got, "test_resource.foo") {
+		t.Errorf("std err doesn't name just the changed resource:\n%s", got)
+	}
+	if provider.ResourceCount() > 0 {
+		t.Errorf("should have deleted all resources on completion but left %v", provider.ResourceString())
 	}
 }
 
