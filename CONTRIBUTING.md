@@ -93,8 +93,9 @@ Run the checks CI runs:
 ```sh
 go test ./internal/conn3x/... ./cmd/conn3x/... ./internal/dag/... ./internal/configs/... ./internal/addrs/...
 go test -run Conn3x ./internal/tofu/
+go test -run TestTest_Idempotent ./internal/command/
 golangci-lint run ./internal/conn3x/... ./cmd/conn3x/... ./cmd/conn3x-agent/...
-bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 5
+bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 7
 bash scripts/upstream/sync_test.sh
 bash scripts/upstream/commit_payload_test.sh
 bash scripts/upstream/hook-budget_test.sh
@@ -105,7 +106,7 @@ bash scripts/build-agent_test.sh
 The `dag`, `configs`, and `addrs` packages are upstream code that Conn3x
 changes or leans on, so their tests run on every PR, along with the Conn3x
 tests in `internal/tofu`. The hook budget caps how many upstream files carry
-a Conn3x change at 5, and all 5 are taken:
+a Conn3x change at 7, and all 7 are taken:
 
 - `internal/addrs/provider.go`: `conn3x` is a built-in provider
 - `internal/configs/parser_config.go`: circuits lower to resources
@@ -114,6 +115,8 @@ a Conn3x change at 5, and all 5 are taken:
 - `internal/command/meta_providers.go`: the built-in providers are registered
 - `internal/tofu/transform_reference.go`: a circuit with
   `strategy = "per_host"` chains its steps per host
+- `internal/configs/test_file.go`: a test `run` block takes `idempotent`
+- `internal/command/test.go`: an `idempotent` run plans again after apply
 
 A new hook has to free one of these slots first.
 
