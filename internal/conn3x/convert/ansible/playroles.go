@@ -40,6 +40,9 @@ type roleCall struct {
 	// family is the one OS family a when on the call allows, such as
 	// "debian": the call passes only that family's hosts. Empty for all.
 	family string
+	// entry is the file include_role's tasks_from, vars_from,
+	// defaults_from and handlers_from name, by the directory it's in.
+	entry map[string]string
 }
 
 // convertedRole is a role written into the result as a circuit directory.
@@ -62,6 +65,31 @@ type convertedRole struct {
 var includeRoleOptions = map[string]bool{
 	"tasks_from": true, "vars_from": true, "defaults_from": true, "handlers_from": true,
 	"apply": true, "public": true, "allow_duplicates": true, "rolespec_validate": true,
+}
+
+// entryOptions are include_role's options that start the role from
+// another file than main, by the directory the file is in.
+var entryOptions = map[string]string{
+	"tasks_from": "tasks", "vars_from": "vars", "defaults_from": "defaults", "handlers_from": "handlers",
+}
+
+// setEntry reads a tasks_from or the like: a file in the role's sub/, with
+// or without its extension, which may be in a directory under it.
+func (call *roleCall) setEntry(opt string, n *yaml.Node) string {
+	v := scalar(n)
+	switch {
+	case v == "" || n.Kind != yaml.ScalarNode:
+		return "sets " + opt + " to something other than a file name"
+	case strings.Contains(v, "{{") || strings.Contains(v, "{%"):
+		return "sets " + opt + " with a Jinja expression, which the converter can't translate"
+	case filepath.IsAbs(v) || !filepath.IsLocal(v):
+		return "sets " + opt + " to " + v + ", which isn't a file inside the role's " + entryOptions[opt] + "/"
+	}
+	if call.entry == nil {
+		call.entry = map[string]string{}
+	}
+	call.entry[entryOptions[opt]] = filepath.ToSlash(filepath.Clean(v))
+	return ""
 }
 
 // setWhen reads a when on a role call. Ansible tests it on each host, and a
@@ -169,7 +197,11 @@ func (c *converter) includeRole(n *yaml.Node, mod string, args map[string]*yaml.
 	call := &roleCall{node: n, role: scalar(args["name"]), vars: map[string]*yaml.Node{}, task: true}
 	why := ""
 	for _, k := range sortedKeys(args) {
-		if k != "name" {
+		switch {
+		case k == "name":
+		case entryOptions[k] != "":
+			why = firstNonEmpty(why, call.setEntry(k, args[k]))
+		default:
 			why = firstNonEmpty(why, "sets "+k+" on "+mod+", which the converter can't translate yet")
 		}
 	}
@@ -202,7 +234,7 @@ func (c *converter) checkCall(call *roleCall, why string) *roleCall {
 	case c.otherUser != "":
 		why = "runs a role in a play where " + c.otherUser + ", which its circuit wouldn't keep; convert the role with -role and set who it runs as"
 	default:
-		_, why = c.convertRole(call.role)
+		_, why = c.convertRole(call.role, call.entry)
 	}
 	if why != "" {
 		c.callWhy[call.node] = why
@@ -211,9 +243,9 @@ func (c *converter) checkCall(call *roleCall, why string) *roleCall {
 	return call
 }
 
-// convertRole converts the named role once, into Result.Files, and returns
-// it, or why it can't.
-func (c *converter) convertRole(name string) (*convertedRole, string) {
+// convertRole converts the named role once for each set of entry files,
+// into Result.Files, and returns it, or why it can't.
+func (c *converter) convertRole(name string, entry map[string]string) (*convertedRole, string) {
 	switch {
 	case name == "":
 		return nil, "runs a role without naming it"
@@ -232,11 +264,26 @@ func (c *converter) convertRole(name string) (*convertedRole, string) {
 	if !strings.Contains(name, "/") && !isRole(rel) && isRole(name) {
 		rel = name
 	}
-	if r, ok := c.roles[rel]; ok {
-		return r, ""
-	}
 	if !isRole(rel) {
 		return nil, fmt.Sprintf("runs the role %s, which isn't at %s beside the playbook; install it there, as with ansible-galaxy role install -p roles, and convert again", name, rel)
+	}
+	// Calls that name the same files, with or without .yml, share one
+	// directory.
+	key, suffix := rel, ""
+	for _, sub := range []string{"tasks", "vars", "defaults", "handlers"} {
+		f, ok := entry[sub]
+		if !ok {
+			continue
+		}
+		file := entryFile(c.path(rel), sub, f)
+		if file == "" {
+			return nil, fmt.Sprintf("runs the role %s from %s/%s, which isn't in the role", name, sub, f)
+		}
+		key += " " + file
+		suffix += "-" + slug(strings.TrimSuffix(f, filepath.Ext(f)))
+	}
+	if r, ok := c.roles[key]; ok {
+		return r, ""
 	}
 	if c.converting[rel] {
 		return nil, fmt.Sprintf("runs the role %s, which depends on itself through meta/ dependencies", name)
@@ -254,12 +301,12 @@ func (c *converter) convertRole(name string) (*convertedRole, string) {
 		dep.file = filepath.ToSlash(filepath.Join(rel, metaFile))
 		deps = append(deps, dep)
 	}
-	res, err := convertRoleDir(c.path(rel), true)
+	res, err := convertRoleDir(c.path(rel), true, entry)
 	if err != nil {
 		return nil, fmt.Sprintf("runs the role %s, which can't be converted: %s", name, err)
 	}
 	base := filepath.Base(rel)
-	dir := unique("circuit-"+strings.ReplaceAll(slug(base[strings.LastIndex(base, ".")+1:]), "_", "-"), c.roleDirs)
+	dir := unique("circuit-"+strings.ReplaceAll(slug(base[strings.LastIndex(base, ".")+1:])+suffix, "_", "-"), c.roleDirs)
 	if c.res.Files == nil {
 		c.res.Files = map[string][]byte{}
 	}
@@ -281,7 +328,7 @@ func (c *converter) convertRole(name string) (*convertedRole, string) {
 	for _, v := range res.Variables {
 		r.vars[v] = true
 	}
-	c.roles[rel] = r
+	c.roles[key] = r
 	return r, ""
 }
 
@@ -291,7 +338,7 @@ func (c *converter) convertRole(name string) (*convertedRole, string) {
 // that the play already ran, with the same vars, runs once, as in Ansible;
 // an include_role always runs.
 func (c *converter) calls(call *roleCall, head *hclwrite.Body, playVars map[string]*yaml.Node, after string) ([]*hclwrite.Block, string) {
-	r, _ := c.convertRole(call.role)
+	r, _ := c.convertRole(call.role, call.entry)
 	if !call.task && !r.again {
 		key := r.dir + " " + callKey(call)
 		if c.ran[key] {
@@ -344,7 +391,7 @@ func callKey(call *roleCall) string {
 // first circuit, whose hosts and login the module takes; after is what it
 // waits for, if anything.
 func (c *converter) module(call *roleCall, head *hclwrite.Body, playVars map[string]*yaml.Node, after string) *hclwrite.Block {
-	r, _ := c.convertRole(call.role)
+	r, _ := c.convertRole(call.role, call.entry)
 	c.called[r.dir] = true
 	if call.file != "" {
 		file := c.file

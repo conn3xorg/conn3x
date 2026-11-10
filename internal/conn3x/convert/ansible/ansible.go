@@ -102,8 +102,9 @@ type converter struct {
 	// those being converted, to catch a role that depends on itself.
 	ran        map[string]bool
 	converting map[string]bool
-	called     map[string]bool // role directories a module calls
-	depsCalled bool            // set on a role's converter when its caller calls its dependencies
+	called     map[string]bool   // role directories a module calls
+	depsCalled bool              // set on a role's converter when its caller calls its dependencies
+	entry      map[string]string // set on a role's converter: the file each of tasks, vars, defaults and handlers starts from, when not main
 	res        Result
 	hostVars   map[string]bool // groups that still need a hosts variable
 	needUser   bool

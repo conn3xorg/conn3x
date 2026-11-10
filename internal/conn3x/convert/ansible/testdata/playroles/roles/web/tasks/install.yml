@@ -1,0 +1,3 @@
+- name: Install nginx only
+  package:
+    name: nginx-light

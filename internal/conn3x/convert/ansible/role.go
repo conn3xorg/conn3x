@@ -58,11 +58,12 @@ var reserved = map[string]bool{
 
 // ConvertRole reads the Ansible role in dir and translates it into the files
 // of a circuit directory.
-func ConvertRole(dir string) (Result, error) { return convertRoleDir(dir, false) }
+func ConvertRole(dir string) (Result, error) { return convertRoleDir(dir, false, nil) }
 
 // convertRoleDir is ConvertRole. depsCalled says the caller calls the role's
-// meta/ dependencies itself, so they aren't left for review.
-func convertRoleDir(dir string, depsCalled bool) (Result, error) {
+// meta/ dependencies itself, so they aren't left for review. entry names
+// the files to start from instead of main, as include_role's tasks_from does.
+func convertRoleDir(dir string, depsCalled bool, entry map[string]string) (Result, error) {
 	if st, err := os.Stat(filepath.Join(dir, "tasks")); err != nil || !st.IsDir() {
 		return Result{}, fmt.Errorf("%s has no tasks/ directory, so it isn't a role; point -role at the role's own directory", dir)
 	}
@@ -74,12 +75,21 @@ func convertRoleDir(dir string, depsCalled bool) (Result, error) {
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
 	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}}
-	c := &converter{dir: dir, role: r, depsCalled: depsCalled}
+	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
 	f := hclwrite.NewEmptyFile()
 	body := f.Body()
-	comment(body, fmt.Sprintf("Converted from the Ansible role %s by conn3x convert ansible.", base))
+	from := ""
+	for _, sub := range []string{"tasks", "vars", "defaults", "handlers"} {
+		if f, ok := entry[sub]; ok {
+			from += ", " + entryFile(dir, sub, f)
+		}
+	}
+	if from != "" {
+		from = " (from " + from[2:] + ")"
+	}
+	comment(body, fmt.Sprintf("Converted from the Ansible role %s%s by conn3x convert ansible.", base, from))
 	comment(body, "Search for TODO(convert) to find what still needs a person.")
 	body.AppendNewline()
 	c.meta(body)
@@ -228,10 +238,32 @@ func (c *converter) otherVarFiles() map[string][]string {
 	return out
 }
 
+// entryFile is the file under the role in dir that sub/f names, as Ansible
+// finds it: f itself when it has an extension, and otherwise f.yml, f.yaml
+// or f. It's empty when there's none.
+func entryFile(dir, sub, f string) string {
+	names := []string{f}
+	if ext := filepath.Ext(f); ext != ".yml" && ext != ".yaml" {
+		names = []string{f + ".yml", f + ".yaml", f}
+	}
+	for _, n := range names {
+		rel := filepath.ToSlash(filepath.Join(sub, n))
+		if st, err := os.Stat(filepath.Join(dir, rel)); err == nil && !st.IsDir() {
+			return rel
+		}
+	}
+	return ""
+}
+
 // main reads a role's sub/main.yml, or .yaml, or main, as Ansible does,
-// returning the document and the file it read.
+// returning the document and the file it read. With an entry for sub, it
+// reads that file instead.
 func (c *converter) main(body *hclwrite.Body, sub string) (*yaml.Node, string) {
-	for _, n := range []string{"main.yml", "main.yaml", "main"} {
+	names := []string{"main.yml", "main.yaml", "main"}
+	if f, ok := c.entry[sub]; ok {
+		names = []string{strings.TrimPrefix(entryFile(c.dir, sub, f), sub+"/")}
+	}
+	for _, n := range names {
 		rel := filepath.ToSlash(filepath.Join(sub, n))
 		st, err := os.Stat(c.path(rel))
 		if err != nil {

@@ -60,8 +60,8 @@ func TestConvertPlayRolesNeedOut(t *testing.T) {
 	}
 }
 
-// A role call that sets what the converter can't carry over, such as
-// tasks_from or when, is left for review where it was.
+// A role call that sets what the converter can't carry over, such as a
+// when or a tasks_from the role hasn't got, is left for review where it was.
 func TestConvertPlayRolesRefuses(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.CopyFS(filepath.Join(dir, "roles"), os.DirFS(filepath.Join("testdata", "playroles", "roles"))); err != nil {
@@ -75,11 +75,50 @@ func TestConvertPlayRolesRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Review) != 2 || !strings.Contains(res.Review[0].Reason, "sets when on the role") || !strings.Contains(res.Review[1].Reason, "sets tasks_from on include_role") {
+	if len(res.Review) != 2 || !strings.Contains(res.Review[0].Reason, "sets when on the role") || !strings.Contains(res.Review[1].Reason, "runs the role web from tasks/other, which isn't in the role") {
 		t.Errorf("review: %+v", res.Review)
 	}
 	if strings.Contains(string(res.HCL), "module ") {
 		t.Errorf("wrote a module:\n%s", res.HCL)
+	}
+}
+
+// include_role's tasks_from and defaults_from start the role from those
+// files, which makes it another circuit directory beside the one a plain
+// call uses. A name with no extension finds the .yml, as in Ansible, and one
+// outside the role, or a Jinja expression, is left for review.
+func TestConvertPlayRolesEntryFiles(t *testing.T) {
+	play := "- hosts: all\n  tasks:\n    - include_role:\n        name: web\n" +
+		"    - import_role:\n        name: web\n        tasks_from: install\n        defaults_from: tls.yml\n" +
+		"    - include_role:\n        name: web\n        tasks_from: install.yml\n        defaults_from: tls\n"
+	res := convertPlay(t, play)
+	if len(res.Review) != 0 {
+		t.Fatalf("review: %+v", res.Review)
+	}
+	plain, entry := string(res.Files["circuit-web/main.circuit.hcl"]), string(res.Files["circuit-web-install-tls/main.circuit.hcl"])
+	if !strings.Contains(plain, "nginx") || strings.Contains(plain, "nginx-light") {
+		t.Errorf("the plain call's circuit should run tasks/main.yml:\n%s", plain)
+	}
+	if !strings.Contains(entry, "(from tasks/install.yml, defaults/tls.yml)") || !strings.Contains(entry, "nginx-light") || strings.Contains(entry, "Listen port") {
+		t.Errorf("the entry call's circuit should run tasks/install.yml:\n%s", entry)
+	}
+	if v := string(res.Files["circuit-web-install-tls/variables.tf"]); !strings.Contains(v, "default     = 8443") {
+		t.Errorf("the entry call's default should come from defaults/tls.yml:\n%s", v)
+	}
+	if n := strings.Count(string(res.HCL), "source = \"./circuit-web-install-tls\""); n != 2 {
+		t.Errorf("both entry calls should use one circuit directory, got %d:\n%s", n, res.HCL)
+	}
+
+	for opt, want := range map[string]string{
+		"tasks_from: ../../x":    "which isn't a file inside the role's tasks/",
+		"tasks_from: /etc/x":     "which isn't a file inside the role's tasks/",
+		"vars_from: \"{{ f }}\"": "sets vars_from with a Jinja expression",
+		"handlers_from: nope":    "runs the role web from handlers/nope, which isn't in the role",
+	} {
+		res := convertPlay(t, "- hosts: all\n  tasks:\n    - include_role:\n        name: web\n        "+opt+"\n")
+		if strings.Contains(string(res.HCL), "module ") || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, want) {
+			t.Errorf("%s: review %+v", opt, res.Review)
+		}
 	}
 }
 
