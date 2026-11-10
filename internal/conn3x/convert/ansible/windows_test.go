@@ -155,7 +155,6 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"resets DNS to DHCP":           `win_dns_client: {adapter_names: Ethernet, dns_servers: []}`,
 		"the domain module":            `community.example.domain: {dns_domain_name: lab.test}`,
 		"uses the domain module":       `domain: {dns_domain_name: lab.test}`,
-		"win_updates module":           `win_updates: {category_names: [SecurityUpdates]}`,
 		"win_chocolatey module":        `win_chocolatey: {name: git}`,
 		"win_dsc module":               `win_dsc: {resource_name: x}`,
 		"removes a task":               `win_scheduled_task: {name: a, state: absent}`,
@@ -354,6 +353,74 @@ func TestWindowsJoinAndDC(t *testing.T) {
 			if strings.Contains(string(res.HCL), secret) {
 				t.Errorf("%s: output has %q:\n%s", task, secret, res.HCL)
 			}
+		}
+	}
+}
+
+// win_updates converts as far as windows_update means the same: its
+// categories matched the way win_updates.ps1 matches them, Ansible's default
+// of three written out, KB-only lists, and reboot as a windows_reboot step
+// with Ansible's 1200 seconds unless the task says otherwise.
+func TestWinUpdates(t *testing.T) {
+	flat := func(b []byte) string { return strings.Join(strings.Fields(string(b)), " ") }
+	for task, wants := range map[string][]string{
+		`ansible.windows.win_updates: {}`: {
+			"windows_update {", `categories = ["CriticalUpdates", "SecurityUpdates", "UpdateRollups"]`,
+		},
+		`win_updates: {category_names: [Security Updates, securityupdates, 'critical updates', Drivers]}`: {
+			`categories = ["SecurityUpdates", "CriticalUpdates", "Drivers"]`,
+		},
+		`win_updates: {category_names: '*'}`: {
+			`categories = ["Applications", "Connectors", "CriticalUpdates", "DefinitionUpdates", "DeveloperKits", "Drivers", "FeaturePacks", "Guidance", "SecurityUpdates", "ServicePacks", "Tools", "UpdateRollups", "Updates", "Upgrades"]`,
+		},
+		`win_updates: {category_names: SecurityUpdates, accept_list: [KB5034441, kb5034439], reject_list: [KB5034122]}`: {
+			`accept_list = ["KB5034441", "KB5034439"]`, `reject_list = ["KB5034122"]`,
+		},
+		`win_updates: {category_names: [SecurityUpdates], reboot: true}`: {
+			"windows_update {", "windows_reboot {", "only_if_pending = true", `timeout = "1200s"`,
+			"Ansible installed, rebooted and searched again until nothing was left",
+		},
+		`win_updates: {reboot: true, reboot_timeout: 3600, server_selection: default}`: {`timeout = "3600s"`},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+			continue
+		}
+		for _, w := range wants {
+			if !strings.Contains(flat(res.HCL), w) {
+				t.Errorf("%s: output lacks %q:\n%s", task, w, res.HCL)
+			}
+		}
+	}
+
+	// The note goes on the windows_update step, where a reader looks for
+	// what gets installed, not on the reboot.
+	res := convertString(t, "- hosts: all\n  tasks:\n    - win_updates: {reboot: true}\n")
+	hcl := string(res.HCL)
+	if note, upd, reboot := strings.Index(hcl, "searched again"), strings.Index(hcl, "windows_update {"), strings.Index(hcl, "windows_reboot {"); note < 0 || note > upd || upd > reboot {
+		t.Errorf("the note should come before the windows_update step, which comes before the reboot:\n%s", hcl)
+	}
+
+	res = convertString(t, "- hosts: all\n  tasks:\n    - win_updates: {state: searched, category_names: '*'}\n")
+	if len(res.Review) != 0 || strings.Contains(string(res.HCL), "windows_update {") || !strings.Contains(string(res.HCL), "state searched only lists updates") {
+		t.Errorf("state searched should be left out with a note: review %+v\n%s", res.Review, res.HCL)
+	}
+
+	for reason, task := range map[string]string{
+		"only downloads updates":               `win_updates: {state: downloaded}`,
+		"names the category \"Application\"":   `win_updates: {category_names: [Application]}`,
+		"also matches products":                `win_updates: {category_names: [Windows Server 2019]}`,
+		"takes titles and patterns there too":  `win_updates: {accept_list: ['Cumulative Update']}`,
+		"has server_selection windows_update":  `win_updates: {server_selection: windows_update}`,
+		"writes Windows Update's log":          `win_updates: {log_path: 'C:\wu.txt'}`,
+		"sets skip_optional":                   `win_updates: {skip_optional: true}`,
+		"retries updates that didn't take":     `win_updates: {reboot: true, maximum_retries_on_failed_updates: 3}`,
+		"reboot_timeout that isn't a positive": `win_updates: {reboot: true, reboot_timeout: soon}`,
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
 		}
 	}
 }

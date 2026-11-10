@@ -667,6 +667,139 @@ func winDomainModule(in *input) ([]step, string) {
 	return in.thenReboot(forest, true)
 }
 
+// winUpdateCategories are Windows Update's classifications by the names
+// win_updates compares them with, lowercased; a windows_update category is
+// the same name without its spaces.
+var winUpdateCategories = []string{
+	"applications", "connectors", "critical updates", "definition updates", "developer kits",
+	"drivers", "feature packs", "guidance", "security updates", "service packs", "tools",
+	"update rollups", "updates", "upgrades",
+}
+
+// winUpdateAliases are the run-together names win_updates.ps1 turns into
+// Windows' own before it compares them.
+var winUpdateAliases = map[string]string{
+	"criticalupdates": "critical updates", "definitionupdates": "definition updates",
+	"developerkits": "developer kits", "featurepacks": "feature packs",
+	"securityupdates": "security updates", "servicepacks": "service packs",
+	"updaterollups": "update rollups",
+}
+
+var winKB = regexp.MustCompile(`(?i)^KB[0-9]{6,8}$`)
+
+// winUpdatesModule converts ansible.windows.win_updates. It installs one
+// round of updates; with reboot, a windows_reboot step follows, but Ansible
+// then searched and installed again until nothing was left, where Conn3x
+// installs the rest at the next apply.
+func winUpdatesModule(in *input) ([]step, string) {
+	switch st := in.str("state"); st {
+	case "", "installed":
+	case "searched":
+		in.ignore("category_names", "accept_list", "reject_list", "whitelist", "blacklist", "reboot", "reboot_timeout",
+			"server_selection", "log_path", "skip_optional", "use_scheduled_task")
+		return []step{{notes: []string{"win_updates with state searched only lists updates, so it changes nothing on hosts and is left out. A windows_update step's plan lists what's waiting in pending."}}}, ""
+	case "downloaded":
+		return nil, "only downloads updates, and windows_update installs them"
+	default:
+		return nil, fmt.Sprintf("state %q has no Conn3x equivalent here", st)
+	}
+	for _, c := range []struct{ key, why string }{
+		{"log_path", "writes Windows Update's log to log_path, which windows_update doesn't"},
+		{"maximum_retries_on_failed_updates", "retries updates that didn't take after a reboot, which windows_update doesn't"},
+	} {
+		if in.has(c.key) {
+			return nil, c.why
+		}
+	}
+	if sel := in.str("server_selection"); sel != "" && sel != "default" {
+		return nil, fmt.Sprintf("has server_selection %s, and windows_update always uses the host's own update source", sel)
+	}
+	if in.bool("skip_optional", false) {
+		return nil, "sets skip_optional, which windows_update has no setting for"
+	}
+	in.ignore("server_selection", "skip_optional", "use_scheduled_task")
+
+	// Ansible's default is these three; windows_update's leaves out rollups.
+	names := []string{"CriticalUpdates", "SecurityUpdates", "UpdateRollups"}
+	if in.has("category_names") {
+		names = in.list("category_names")
+	}
+	var cats []string
+	seen := map[string]bool{}
+	add := func(full string) {
+		c := ""
+		for _, w := range strings.Fields(full) {
+			c += strings.ToUpper(w[:1]) + w[1:]
+		}
+		if !seen[c] {
+			seen[c] = true
+			cats = append(cats, c)
+		}
+	}
+	for _, n := range names {
+		if n == "*" {
+			for _, full := range winUpdateCategories {
+				add(full)
+			}
+			continue
+		}
+		full := strings.ToLower(n)
+		if a, ok := winUpdateAliases[full]; ok {
+			full = a
+		}
+		if !slices.Contains(winUpdateCategories, full) {
+			return nil, fmt.Sprintf("names the category %q, which windows_update has no category for; win_updates also matches products, such as Windows Server 2019, and those have no equivalent", n)
+		}
+		add(full)
+	}
+	vals := make([]cty.Value, len(cats))
+	for i, c := range cats {
+		vals[i] = cty.StringVal(c)
+	}
+	attrs := []attr{{key: "categories", val: cty.ListVal(vals)}}
+
+	for _, l := range []struct {
+		to   string
+		from []string
+	}{
+		{"accept_list", []string{"accept_list", "whitelist"}},
+		{"reject_list", []string{"reject_list", "blacklist"}},
+	} {
+		for _, from := range l.from {
+			if !in.has(from) {
+				continue
+			}
+			var kbs []cty.Value
+			for _, e := range in.list(from) {
+				if !winKB.MatchString(e) {
+					return nil, fmt.Sprintf("has %q in %s; win_updates takes titles and patterns there too, and windows_update only KB numbers", e, from)
+				}
+				kbs = append(kbs, cty.StringVal(strings.ToUpper(e)))
+			}
+			if len(kbs) > 0 {
+				attrs = append(attrs, attr{key: l.to, val: cty.ListVal(kbs)})
+			}
+		}
+	}
+
+	update := step{module: "windows_update", attrs: attrs, suffix: "updates"}
+	if !in.bool("reboot", false) {
+		in.ignore("reboot_timeout")
+		return []step{update}, ""
+	}
+	update.notes = []string{"Ansible installed, rebooted and searched again until nothing was left. This installs one round each apply: what the reboot unlocks shows in pending at the next plan, and the next apply installs it."}
+	steps, why := in.thenReboot(update, false)
+	if why != "" {
+		return nil, why
+	}
+	// win_updates waits 1200 seconds for the host by default, and
+	// windows_reboot 10 minutes, so the default is written out too.
+	if !in.has("reboot_timeout") {
+		steps[1].attrs = append(steps[1].attrs, s("timeout", "1200s"))
+	}
+	return steps, ""
+}
+
 // thenReboot follows a step that leaves a reboot pending with the reboot,
 // when the task asked Ansible to reboot, since Conn3x modules never do. With
 // adws, it then waits for AD, because sshd answers before AD does.
