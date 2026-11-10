@@ -34,18 +34,13 @@ step "migrate" {
   }
 }
 ```
-Give a command a secret without putting it on the command line:
+Give a command a secret on standard input, not on its command line, passed in at run time:
 
 ```hcl
-variable "registry_token" {
-  type      = string
-  ephemeral = true
-}
-
 step "registry_login" {
   command {
     command  = "podman login --username ci --password-stdin registry.example.com"
-    stdin_wo = var.registry_token
+    stdin_wo = "use an ephemeral variable here"
     creates  = "/root/.config/containers/auth.json"
   }
 }
