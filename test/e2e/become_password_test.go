@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -32,6 +33,13 @@ func TestBecomeWithPassword(t *testing.T) {
 			}
 
 			sudoers("deploy ALL=(ALL) ALL")
+			// As in TestFileWithSudoPassword: rootless containers on some CI
+			// runners can't run PAM's password helper, so sudo can't accept
+			// even the right password there.
+			if err := exec.Command("podman", "exec", h.container, "su", "deploy", "-c",
+				"echo Deploy-Pass-123 | sudo -S -p '' -v").Run(); err != nil {
+				t.Skip("this container can't verify sudo passwords (PAM's unix_chkpwd fails in rootless Podman); password sudo is covered on real hosts")
+			}
 			res, err := run("Deploy-Pass-123")
 			if err != nil || string(res.Stdout) != "0\n"+input || len(res.Stderr) != 0 {
 				t.Fatalf("with the password: stdout %q, stderr %q, err %v", res.Stdout, res.Stderr, err)
