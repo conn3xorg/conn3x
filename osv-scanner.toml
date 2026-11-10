@@ -4,7 +4,10 @@
 
 [[IgnoredVulns]]
 id = "GO-2026-5932"
-reason = """golang.org/x/crypto/openpgp is unmaintained and has no fix. Conn3x \
-never imports it: `go list -deps ./... | grep x/crypto/openpgp` is empty. \
+reason = """golang.org/x/crypto/openpgp is unmaintained. The advisory lists a \
+fixed pseudo-version (v0.58.1-0.20261009181718-2f1f834330b2), which removes \
+the package, but no tagged release has it yet: v0.58.0 is the newest. Drop \
+this entry when x/crypto moves past it. Until then Conn3x \
+never imports the package: `go list -deps ./... | grep x/crypto/openpgp` is empty. \
 The module is required only for other packages such as x/crypto/bcrypt; \
 OpenPGP signature checks use github.com/ProtonMail/go-crypto instead."""
