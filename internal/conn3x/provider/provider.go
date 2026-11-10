@@ -8,8 +8,10 @@ package provider
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -227,10 +229,33 @@ func (p *Provider) ReadResource(ctx context.Context, req providers.ReadResourceR
 				return providers.ReadResourceResponse{NewState: req.PriorState, Private: req.Private, Diagnostics: diags}
 			}
 		}
+		start := time.Now()
 		defer lockForReboot(req.TypeName, priorSSH(req.PriorState))()
+		locked := time.Now()
+		defer logStep("read", req.TypeName, req.PriorState, start, locked)
 		return rt.read(ctx, req)
 	}
 	return providers.ReadResourceResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
+}
+
+// logStep logs, at debug, how long a step took on its host, and how much
+// of that it waited for a reboot on the same host, so a slow plan shows
+// which step and host the time went to. It names the step by its id,
+// never by an attribute's value.
+func logStep(op, typeName string, state cty.Value, start, locked time.Time) {
+	name := typeName
+	if !state.IsNull() && state.IsKnown() && state.Type().IsObjectType() && state.Type().HasAttribute("id") {
+		if id := state.GetAttr("id"); id.IsKnown() && !id.IsNull() {
+			name += " " + id.AsString()
+		} else if conn := priorSSH(state); !conn.IsNull() {
+			name += " on " + hostPort(conn)
+		}
+	}
+	msg := fmt.Sprintf("[DEBUG] conn3x: %s %s took %s", op, name, time.Since(start).Round(time.Millisecond))
+	if wait := locked.Sub(start); wait >= time.Millisecond {
+		msg += fmt.Sprintf(", %s of it waiting for a reboot", wait.Round(time.Millisecond))
+	}
+	log.Print(msg)
 }
 
 // priorSSH is a step's recorded ssh block, or null when it has none.
@@ -261,7 +286,14 @@ func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyR
 	if rt, ok := resourceTypes[req.TypeName]; ok {
 		ctx, done := p.withStop(ctx)
 		defer done()
+		start := time.Now()
 		defer lockForReboot(req.TypeName, priorSSH(req.PlannedState))()
+		locked := time.Now()
+		named := req.PlannedState
+		if named.IsNull() {
+			named = req.PriorState // a destroy
+		}
+		defer logStep("apply", req.TypeName, named, start, locked)
 		resp := rt.apply(ctx, req)
 		resp.NewState = applyRevision(req.PlannedState, resp.NewState)
 		resp.Diagnostics = locateApplyErrors(rt.schema().Block, resp.Diagnostics)

@@ -88,7 +88,7 @@ func mysqlUserSchema() providers.Schema {
 			"revision": revisionAttr(),
 			"name":     {Type: cty.String, Required: true, Description: "User name, up to 32 characters. Never root or one of the server's own accounts."},
 			"host":     {Type: cty.String, Optional: true, Computed: true, Description: "Where the user may connect from, such as localhost (the default), 10.0.0.% or %. name and host together are the account."},
-			"grants": {Type: cty.Map(cty.Set(cty.String)), Optional: true, Description: "Exactly the user's database-level privileges, by database, such as { app = [\"SELECT\", \"INSERT\"] } or { app = [\"ALL PRIVILEGES\"] }. A database not listed loses its grant. Unset leaves grants as they are; global and table grants are never changed."},
+			"grants":   {Type: cty.Map(cty.Set(cty.String)), Optional: true, Description: "Exactly the user's database-level privileges, by database, such as { app = [\"SELECT\", \"INSERT\"] } or { app = [\"ALL PRIVILEGES\"] }. A database not listed loses its grant. Unset leaves grants as they are; global and table grants are never changed."},
 			"password_wo": {
 				Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
 				Description: "Password, kept out of plan and state: state records only password_hmac. It reaches the server on the mysql client's stdin, inside the statement, so the server sees it as typed. Required for a new user. It's set when the user is made and whenever this value changes. A password changed on the server isn't detected.",

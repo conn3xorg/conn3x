@@ -167,6 +167,7 @@ func (h *hostConn) attach(ctx context.Context, upload bool) error {
 	h.tried[i] = true
 	var a *agent.Client
 	var err error
+	start := time.Now()
 	if h.become != nil {
 		a, err = h.attachRoot(ctx, upload)
 	} else {
@@ -175,6 +176,7 @@ func (h *hostConn) attach(ctx context.Context, upload bool) error {
 	switch {
 	case err == nil:
 		h.agent = a
+		log.Printf("[DEBUG] conn3x: agent on %s started in %s", h.host, time.Since(start).Round(time.Millisecond))
 	case errors.Is(err, ssh.ErrBecome):
 		h.attachErr = err // sudo refused; the shell would fail the same way
 		return err
@@ -363,6 +365,7 @@ func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostCo
 			cfg.Timeout = wait // or one attempt alone could outlast it
 		}
 	}
+	start := time.Now()
 	client, err := ssh.DialWait(ctx, cfg, wait)
 	if err != nil {
 		entry.err = err
@@ -377,6 +380,7 @@ func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostCo
 		h.become = &ssh.Become{Client: client, Password: password}
 		h.runner = h.become
 	}
+	log.Printf("[DEBUG] conn3x: connected to %s in %s", cfg.Host, time.Since(start).Round(time.Millisecond))
 	entry.conn = h
 	close(entry.ready)
 	return h, nil
