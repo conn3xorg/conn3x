@@ -19,6 +19,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
 )
@@ -318,6 +319,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"sysctl":          sysctlModule,
 	"postgresql_db":   pgDatabaseModule,
 	"postgresql_user": pgRoleModule,
+	"mysql_db":        mysqlDatabaseModule,
+	"mysql_user":      mysqlUserModule,
 	"hostname":        nameOnly("hostname"),
 	"timezone":        nameOnly("timezone"),
 	"firewalld":       firewalldModule,
@@ -782,6 +785,132 @@ func pgFlags(flags string) (login *bool, set []string, why string) {
 		}
 	}
 	return login, set, ""
+}
+
+// mysqlUnmodelled names the first of keys the task sets, or a login_ or
+// connection option, which the steps don't take: they use the client on the
+// server's socket.
+func (in *input) mysqlUnmodelled(keys ...string) string {
+	keys = append(keys, "login_host", "login_user", "login_password", "login_port", "login_unix_socket", "config_file", "client_cert", "client_key", "ca_cert", "check_hostname", "check_implicit_admin", "config_overrides_defaults")
+	for _, k := range keys {
+		if in.has(k) {
+			return k
+		}
+	}
+	return ""
+}
+
+// mysqlDatabaseModule converts community.mysql.mysql_db.
+func mysqlDatabaseModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "" && st != "present" {
+		return nil, fmt.Sprintf("has state %q; mysql_database only makes a database, and drops it only when the step is removed with on_remove = \"delete\"", st)
+	}
+	if k := in.mysqlUnmodelled("target", "single_transaction", "quick", "ignore_tables", "hex_blob", "force", "master_data", "skip_lock_tables", "dump_extra_args", "use_shell", "unsafe_login_password", "restrict_config_file", "chdir", "pipefail", "sql_log_bin"); k != "" {
+		return nil, "sets " + k + ", which mysql_database doesn't offer yet"
+	}
+	attrs := []attr{s("name", in.str("name", "db"))}
+	attrs = in.optional(attrs, "charset", "encoding")
+	attrs = in.optional(attrs, "collation", "collation")
+	return one("mysql_database", attrs)
+}
+
+// mysqlUserModule converts community.mysql.mysql_user. Only database-level
+// privileges convert, since those are what the step's grants holds.
+func mysqlUserModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "" && st != "present" {
+		return nil, fmt.Sprintf("has state %q; mysql_user only makes a user, and drops it only when the step is removed with on_remove = \"delete\"", st)
+	}
+	if in.bool("append_privs", false) {
+		return nil, "sets append_privs, so Ansible adds to the user's privileges; mysql_user's grants is the exact list, so list them all or set grants by hand"
+	}
+	if in.has("encrypted") && in.bool("encrypted", false) {
+		return nil, "gives the password already hashed; mysql_user takes the password itself in password_wo"
+	}
+	if st := in.str("update_password"); st != "" && st != "always" {
+		return nil, fmt.Sprintf("has update_password %q; mysql_user sets the password whenever password_wo changes", st)
+	}
+	if k := in.mysqlUnmodelled("host_all", "plugin", "plugin_hash_string", "plugin_auth_string", "salt", "resource_limits", "tls_requires", "subtract_privs", "column_case_sensitive", "password_expire", "password_expire_interval", "attributes", "force_context", "session_vars", "sql_log_bin"); k != "" {
+		return nil, "sets " + k + ", which mysql_user doesn't offer yet"
+	}
+	name := in.str("name", "user")
+	if l := strings.ToLower(name); l == "root" || strings.HasPrefix(l, "mysql.") || strings.HasPrefix(l, "mariadb.") {
+		return nil, fmt.Sprintf("manages %s, an account the server itself needs, which mysql_user won't touch", name)
+	}
+	attrs := []attr{s("name", name)}
+	attrs = in.optional(attrs, "host", "host")
+	var notes []string
+	if in.has("priv") {
+		grants, why := in.mysqlGrants()
+		if why != "" {
+			return nil, why
+		}
+		attrs = append(attrs, attr{key: "grants", val: grants})
+		notes = append(notes, "Ansible also took away global and table privileges priv didn't list; mysql_user changes only database-level ones.")
+	}
+	if in.has("password") {
+		notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here.")
+	}
+	// Never read, so a password can't end up in the output.
+	in.ignore("password", "encrypted", "update_password", "append_privs")
+	return one("mysql_user", attrs, notes...)
+}
+
+// mysqlGrants reads priv, as "app.*:ALL/logs.*:SELECT,INSERT" or as a map of
+// the same, into grants. *.*:USAGE, which grants nothing, is dropped.
+func (in *input) mysqlGrants() (cty.Value, string) {
+	n := in.args["priv"]
+	in.used["priv"] = true
+	var parts [][2]string
+	switch n.Kind {
+	case yaml.ScalarNode:
+		for _, p := range strings.Split(in.render("priv", n.Value), "/") {
+			on, privs, ok := strings.Cut(p, ":")
+			if !ok {
+				return cty.NilVal, fmt.Sprintf("has a priv part %q with no privileges after a colon", p)
+			}
+			parts = append(parts, [2]string{on, privs})
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			parts = append(parts, [2]string{in.render("priv", n.Content[i].Value), in.render("priv", n.Content[i+1].Value)})
+		}
+	default:
+		return cty.NilVal, "has a priv that isn't a string or a map"
+	}
+	grants := map[string]cty.Value{}
+	for _, p := range parts {
+		on, privs := strings.TrimSpace(p[0]), strings.ToUpper(strings.TrimSpace(p[1]))
+		if on == "*.*" && privs == "USAGE" {
+			continue
+		}
+		db, table, _ := strings.Cut(on, ".")
+		db = strings.Trim(db, "`")
+		if table != "*" || db == "*" || db == "" {
+			return cty.NilVal, fmt.Sprintf("grants on %s; mysql_user's grants holds only database-level privileges, as app.*", on)
+		}
+		if _, dup := grants[db]; dup {
+			return cty.NilVal, fmt.Sprintf("grants on %s twice", on)
+		}
+		var vals []cty.Value
+		for _, pr := range strings.Split(privs, ",") {
+			pr = strings.Join(strings.Fields(pr), " ")
+			if pr == "ALL" {
+				pr = "ALL PRIVILEGES"
+			}
+			if !slices.Contains(mysql.Privileges, pr) {
+				return cty.NilVal, fmt.Sprintf("grants %s on %s, which mysql_user doesn't offer yet", pr, on)
+			}
+			vals = append(vals, cty.StringVal(pr))
+		}
+		if len(vals) > 1 && slices.ContainsFunc(vals, func(v cty.Value) bool { return v.AsString() == "ALL PRIVILEGES" }) {
+			return cty.NilVal, fmt.Sprintf("grants ALL with others on %s; mysql_user needs ALL PRIVILEGES alone", on)
+		}
+		grants[db] = cty.ListVal(vals)
+	}
+	if len(grants) == 0 {
+		return cty.MapValEmpty(cty.List(cty.String)), ""
+	}
+	return cty.MapVal(grants), ""
 }
 
 func nameOnly(module string) func(*input) ([]step, string) {
