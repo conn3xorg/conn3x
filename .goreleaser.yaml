@@ -9,9 +9,11 @@ project_name: conn3x
 
 before:
   hooks:
-    # The branding and pruning overlay that scripts/build-conn3x.sh uses,
-    # written outside the tree so the release sees a clean checkout.
-    - sh -c 'rm -rf /tmp/conn3x-overlay-{{ .ShortCommit }} && env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root . -out /tmp/conn3x-overlay-{{ .ShortCommit }} >/dev/null'
+    # The branding and pruning overlay that scripts/build-conn3x.sh uses.
+    # It goes under tmp/, which git ignores, so the release still sees a
+    # clean checkout. A fixed name in /tmp could be claimed first by another
+    # user of a shared build machine, who would then choose the sources.
+    - sh -c 'rm -rf tmp/overlay && env -u GOOS -u GOARCH go run ./internal/conn3x/brand/brandgen -root . -out tmp/overlay >/dev/null'
     # The host agents conn3x embeds, built for Linux whatever the target.
     - env -u GOOS -u GOARCH bash scripts/build-agent.sh
     # A release without them would quietly run everything over the shell.
@@ -27,7 +29,7 @@ builds:
     goarch: [amd64, arm64]
     flags:
       - -trimpath
-      - -overlay=/tmp/conn3x-overlay-{{ .ShortCommit }}/overlay.json
+      - -overlay=tmp/overlay/overlay.json
     ldflags:
       - -s -w -X github.com/opentofu/opentofu/internal/conn3x/version.Version={{ .Version }} -X github.com/opentofu/opentofu/version.dev=no
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -54,6 +56,12 @@ signs:
     signature: "${artifact}.sigstore.json"
     args: ["sign-blob", "--bundle=${signature}", "${artifact}", "--yes"]
     artifacts: checksum
+
+# Keyless, as for checksums.txt: the signature names the release workflow
+# and is stored in the registry beside the image.
+docker_signs:
+  - cmd: cosign
+    args: ["sign", "${artifact}@${digest}", "--yes"]
 
 dockers_v2:
   - images:
@@ -120,4 +128,12 @@ release:
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       --bundle checksums.txt.sigstore.json checksums.txt
     sha256sum --check --ignore-missing checksums.txt
+    ```
+
+    Verify the container image:
+
+    ```sh
+    cosign verify ghcr.io/conn3xorg/conn3x:v{{ .Version }} \
+      --certificate-identity 'https://github.com/conn3xorg/conn3x/.github/workflows/release.yml@refs/heads/main' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
     ```
