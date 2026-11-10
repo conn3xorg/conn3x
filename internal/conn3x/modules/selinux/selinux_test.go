@@ -3,7 +3,10 @@
 
 package selinux
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestValidate(t *testing.T) {
 	if err := ValidateBoolean("httpd_can_network_connect"); err != nil {
@@ -65,5 +68,12 @@ func TestLocalType(t *testing.T) {
 	}
 	if got := localType(out, "/srv"); got != "" {
 		t.Errorf("matched a prefix: %q", got)
+	}
+}
+
+// The name goes into a path, so ReadBoolean checks it whoever calls.
+func TestReadBooleanValidatesItsName(t *testing.T) {
+	if _, err := ReadBoolean(context.Background(), nil, "x; reboot"); err == nil {
+		t.Fatal("read a boolean with an invalid name")
 	}
 }

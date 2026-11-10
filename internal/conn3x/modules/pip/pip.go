@@ -174,6 +174,9 @@ const pipFlags = "--disable-pip-version-check --no-input"
 // Read reports what the venv holds. A venv that's missing, or that python or
 // pip can't run in, holds nothing; apply builds it.
 func Read(ctx context.Context, r modules.Runner, d Desired) (Actual, error) {
+	if err := d.Validate(); err != nil {
+		return Actual{}, err
+	}
 	out, err := d.run(ctx, r, fmt.Sprintf(`usable || exit 0
 "$py" -I -m pip list %s --format=json`, pipFlags))
 	if err != nil {
@@ -223,6 +226,9 @@ func candidate(ctx context.Context, r modules.Runner, d Desired, installed strin
 // Apply makes the host match. Removing never builds a venv; installing builds
 // one when it's missing or unusable.
 func Apply(ctx context.Context, r modules.Runner, d Desired) error {
+	if err := d.Validate(); err != nil {
+		return err
+	}
 	var body string
 	switch d.State {
 	case Absent:

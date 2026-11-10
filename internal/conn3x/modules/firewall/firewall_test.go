@@ -122,11 +122,16 @@ func TestApplyUFWTakesTurnsAndChecksTheRuleLanded(t *testing.T) {
 
 func TestUndo(t *testing.T) {
 	u := UFWRule{Action: "deny", Port: "22/tcp"}
-	if got := u.Undo(true); got != "flock /run/conn3x-ufw.lock ufw delete deny 22/tcp" {
+	if got, _ := u.Undo(true); got != "flock /run/conn3x-ufw.lock ufw delete deny 22/tcp" {
 		t.Errorf("ufw undo of an add: %q", got)
 	}
-	if got := u.Undo(false); got != "flock /run/conn3x-ufw.lock ufw deny 22/tcp" {
+	if got, _ := u.Undo(false); got != "flock /run/conn3x-ufw.lock ufw deny 22/tcp" {
 		t.Errorf("ufw undo of a delete: %q", got)
+	}
+	// The rule goes into a command line unquoted, so a rule nobody
+	// validated never becomes one.
+	if got, err := (UFWRule{Action: "allow", Port: "80/tcp; reboot"}).Undo(true); err == nil {
+		t.Errorf("an invalid rule became %q", got)
 	}
 	f := Firewalld{Zone: "public", Service: "ssh"}
 	if got := strings.Join(f.Undo(true, true, false), "; "); got != "firewall-cmd --permanent --zone='public' --remove-service='ssh'" {

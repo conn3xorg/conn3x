@@ -193,7 +193,8 @@ func applyUFWRule(ctx context.Context, req providers.ApplyResourceChangeRequest)
 				if err != nil || had == present {
 					return nil, err
 				}
-				return []string{u.Undo(present)}, nil
+				cmd, err := u.Undo(present)
+				return []string{cmd}, err
 			}
 			if err := guardRule(ctx, h, v, undo, func() error { return firewall.ApplyUFW(ctx, h, u, present) }); err != nil {
 				return fmt.Errorf("ufw %s: %w", u.Spec(), err)

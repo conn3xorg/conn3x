@@ -29,6 +29,10 @@ func ValidateBoolean(name string) error {
 
 // ReadBoolean returns a boolean's current value.
 func ReadBoolean(ctx context.Context, r modules.Runner, name string) (bool, error) {
+	// The name goes into a path unquoted.
+	if err := ValidateBoolean(name); err != nil {
+		return false, err
+	}
 	res, err := r.Run(ctx, fmt.Sprintf("%s\ncat /sys/fs/selinux/booleans/%s", enabled, name), nil)
 	if err := check(res, err); err != nil {
 		return false, err

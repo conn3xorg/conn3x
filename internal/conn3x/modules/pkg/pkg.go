@@ -49,7 +49,9 @@ type Actual struct {
 }
 
 var (
-	namePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+_:@-]*$`)
+	// A name never ends in "-": no package does, and apt reads "install x-"
+	// as "remove x". It may end in "+", as g++ does; see exactDeb.
+	namePattern    = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.+_:@-]*[A-Za-z0-9+])?$`)
 	versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+~:_-]*$`)
 )
 
@@ -240,9 +242,10 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			spec += "=" + d.Version
 		}
 		if d.State == Absent {
-			return Run(ctx, r, aptGet+" remove "+ssh.Quote(d.Name))
+			return Run(ctx, r, exactDeb(d.Name, `dpkg-query -W -f '${Package}\n' --`)+aptGet+" remove "+ssh.Quote(d.Name))
 		}
-		err := Run(ctx, r, aptGet+" install "+ssh.Quote(spec))
+		install := exactDeb(d.Name, "apt-cache pkgnames --") + aptGet + " install " + ssh.Quote(spec)
+		err := Run(ctx, r, install)
 		if err != nil && staleLists(err) {
 			// Fresh hosts often have no package lists yet, and an image a few
 			// weeks old has lists naming versions the mirror has since dropped.
@@ -251,11 +254,23 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			if err := Run(ctx, r, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err != nil {
 				return err
 			}
-			err = Run(ctx, r, aptGet+" install "+ssh.Quote(spec))
+			err = Run(ctx, r, install)
 		}
 		return err
 	}
 	return fmt.Errorf("unknown package family %q", family)
+}
+
+// exactDeb guards an apt-get command for a name that ends in "+". When no
+// package has exactly that name, apt takes the "+" as an instruction, and
+// "remove x+" installs x. So the command first checks, with list, that the
+// name is a package of its own, and fails the way apt does when it isn't.
+func exactDeb(name, list string) string {
+	if !strings.HasSuffix(name, "+") {
+		return ""
+	}
+	q := ssh.Quote(name)
+	return fmt.Sprintf("%s %s 2>/dev/null | cut -f1 | grep -qxF -- %s || { echo %s >&2; exit 100; }\n", list, q, q, ssh.Quote("E: Unable to locate package "+name))
 }
 
 // staleLists reports whether apt failed because its package lists are

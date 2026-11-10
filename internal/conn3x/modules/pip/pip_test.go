@@ -132,3 +132,18 @@ func TestUserRunsEverything(t *testing.T) {
 		t.Errorf("no pin in:\n%s", r.cmds[1])
 	}
 }
+
+// Read and Apply check their own arguments; nothing runs for a bad one.
+func TestReadAndApplyValidate(t *testing.T) {
+	bad := Desired{Name: "requests; reboot", Venv: "/opt/venv", State: Present}
+	f := &fakeRunner{}
+	if _, err := Read(context.Background(), f, bad); err == nil {
+		t.Error("Read accepted an invalid name")
+	}
+	if err := Apply(context.Background(), f, bad); err == nil {
+		t.Error("Apply accepted an invalid name")
+	}
+	if len(f.cmds) != 0 {
+		t.Errorf("ran %q", f.cmds)
+	}
+}
