@@ -24,24 +24,8 @@ func TestPostgreSQL(t *testing.T) {
 	for _, image := range linuxImages {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)
-			// The test images keep services from starting at install, so the
-			// cluster is made and started here.
-			install := `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql >/dev/null &&
-				v=$(ls /usr/lib/postgresql) && { [ -d /etc/postgresql/$v/main ] || pg_createcluster $v main >/dev/null; } &&
-				systemctl enable --now postgresql@$v-main`
-			if rpmImage(image) {
-				install = "dnf install -y -q postgresql-server >/dev/null && postgresql-setup --initdb >/dev/null && systemctl enable --now postgresql"
-			}
-			// Red Hat's pg_hba.conf checks 127.0.0.1 with ident, so the role's
-			// password login gets a line of its own above the others.
-			h.exec("", "sh", "-c", install+` &&
-				for i in $(seq 60); do runuser -u postgres -- psql -Xqc 'select 1' >/dev/null 2>&1 && break; sleep 1; done &&
-				hba=$(runuser -u postgres -- psql -XtAc 'show hba_file') &&
-				sed -i '1i host all app 127.0.0.1/32 scram-sha-256' "$hba" &&
-				runuser -u postgres -- psql -Xqc 'select pg_reload_conf()' >/dev/null`)
-			psql := func(sql string) string {
-				return strings.TrimSpace(h.exec("", "runuser", "-u", "postgres", "--", "psql", "-XtAc", sql))
-			}
+			psqlIn := installPostgreSQL(t, h, image)
+			psql := func(sql string) string { return psqlIn("postgres", sql) }
 
 			w := newWorkdir(t, "postgresql")
 			w.writeAs("main.circuit.hcl", postgresqlVars{h.port, h.keyFile, h.knownHosts, `"CREATEDB"`, pgPassword})
@@ -73,5 +57,31 @@ func TestPostgreSQL(t *testing.T) {
 				t.Fatalf("plan after the second apply:\n%s", out)
 			}
 		})
+	}
+}
+
+// installPostgreSQL installs the distribution's PostgreSQL server, starts
+// it, and lets the role app log in from 127.0.0.1 with its password. It
+// returns a way to run SQL in a database as postgres.
+func installPostgreSQL(t *testing.T, h *host, image string) func(db, sql string) string {
+	t.Helper()
+	// The test images keep services from starting at install, so the
+	// cluster is made and started here.
+	install := `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql >/dev/null &&
+		v=$(ls /usr/lib/postgresql) && { [ -d /etc/postgresql/$v/main ] || pg_createcluster $v main >/dev/null; } &&
+		systemctl enable --now postgresql@$v-main`
+	if rpmImage(image) {
+		install = "dnf install -y -q postgresql-server >/dev/null && postgresql-setup --initdb >/dev/null && systemctl enable --now postgresql"
+	}
+	// Red Hat's pg_hba.conf checks 127.0.0.1 with ident, so the role's
+	// password login gets a line of its own above the others.
+	h.exec("", "sh", "-c", install+` &&
+		for i in $(seq 60); do runuser -u postgres -- psql -Xqc 'select 1' >/dev/null 2>&1 && break; sleep 1; done &&
+		hba=$(runuser -u postgres -- psql -XtAc 'show hba_file') &&
+		sed -i '1i host all app 127.0.0.1/32 scram-sha-256' "$hba" &&
+		runuser -u postgres -- psql -Xqc 'select pg_reload_conf()' >/dev/null`)
+	return func(db, sql string) string {
+		t.Helper()
+		return strings.TrimSpace(h.exec("", "runuser", "-u", "postgres", "--", "psql", "-XtA", "-d", db, "-c", sql))
 	}
 }

@@ -140,9 +140,14 @@ func literal(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + 
 
 // run runs sql through psql and returns what it printed.
 func run(ctx context.Context, r modules.Runner, sql string) (string, error) {
+	return runCmd(ctx, r, psql, sql)
+}
+
+// runCmd runs sql through the psql command line cmd.
+func runCmd(ctx context.Context, r modules.Runner, cmd, sql string) (string, error) {
 	// Terse errors don't quote the statement, which can hold a password's
 	// verifier.
-	res, err := r.Run(ctx, psql, []byte("\\set VERBOSITY terse\nSET standard_conforming_strings = on;\n"+sql+"\n"))
+	res, err := r.Run(ctx, cmd, []byte("\\set VERBOSITY terse\nSET standard_conforming_strings = on;\n"+sql+"\n"))
 	if err != nil {
 		return "", err
 	}

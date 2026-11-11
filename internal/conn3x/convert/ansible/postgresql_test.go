@@ -20,6 +20,8 @@ func TestPostgreSQLMappings(t *testing.T) {
 		`postgresql_user: {name: plain, role_attr_flags: 'nosuperuser,nocreatedb,nocreaterole,noreplication,nobypassrls,login'}`: {
 			"attributes = []", "login      = true",
 		},
+		`postgresql_user: {name: app, db: shop, priv: 'CONNECT/TEMP'}`: {`database_grants = {`, `shop = ["CONNECT", "TEMPORARY"]`, "whole list"},
+		`postgresql_user: {name: app, db: shop, priv: ALL}`:            {`shop = ["CONNECT", "CREATE", "TEMPORARY"]`},
 	} {
 		res := convertString(t, "- hosts: all\n  become: true\n  tasks:\n    - "+task+"\n      become_user: postgres\n")
 		if res.Converted != 1 || len(res.Review) != 0 {
@@ -42,7 +44,11 @@ func TestPostgreSQLLeftForAPerson(t *testing.T) {
 		"sets login_host":         `postgresql_db: {name: shop, login_host: db.example.com}`,
 		"unencrypted":             `postgresql_user: {name: a, password: x, encrypted: false}`,
 		"no_password_changes":     `postgresql_user: {name: a, password: x, no_password_changes: true}`,
-		"sets db":                 `postgresql_user: {name: a, db: shop, priv: ALL}`,
+		"single table":            `postgresql_user: {name: a, db: shop, priv: 'CONNECT/orders:SELECT'}`,
+		"without db":              `postgresql_user: {name: a, priv: CONNECT}`,
+		"isn't a database":        `postgresql_user: {name: a, db: shop, priv: SELECT}`,
+		"on its postgresql_role":  `community.postgresql.postgresql_privs: {db: shop, roles: a, privs: SELECT, objs: ALL_IN_SCHEMA}`,
+		"grant_option":            `postgresql_privs: {db: shop, roles: a, type: database, privs: CONNECT, grant_option: true}`,
 		"names only some":         `postgresql_user: {name: a, role_attr_flags: CREATEDB}`,
 		"role flag NOINHERIT":     `postgresql_user: {name: a, role_attr_flags: NOINHERIT}`,
 		`has state "absent", and`: `postgresql_user: {name: a, state: absent}`,

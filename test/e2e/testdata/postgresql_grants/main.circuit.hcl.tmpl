@@ -1,0 +1,20 @@
+circuit "db" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "app_role" {
+    postgresql_role {
+      name            = "app"
+      password_wo     = "s3cret"
+      database_grants = { shop = ["CONNECT"] }
+      schema_grants   = { "shop.sales" = ["USAGE"] }
+      table_grants    = { "shop.sales" = [{{.Tables}}] }
+    }
+  }
+}
