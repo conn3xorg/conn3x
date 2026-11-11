@@ -20,7 +20,9 @@ func TestPackagesAndServicesData(t *testing.T) {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)
 			h.exec("", "sh", "-c", `printf '[Unit]\nDescription=demo\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=multi-user.target\n' >/etc/systemd/system/conn3x-demo.service
-systemctl daemon-reload && systemctl mask conn3x-masked.service`)
+printf '[Unit]\nDescription=instance\n[Service]\nExecStart=/bin/sleep infinity\n' >/etc/systemd/system/conn3x-inst@.service
+systemctl daemon-reload && systemctl mask conn3x-masked.service
+systemctl start "conn3x-inst@$(systemd-escape a-b).service"`)
 			w := newWorkdir(t, "inventory")
 			w.write(circuitVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts})
 			w.mustConn3x("init", "-no-color")
@@ -60,6 +62,10 @@ systemctl daemon-reload && systemctl mask conn3x-masked.service`)
 			}
 			if s := read("demo"); s.Enabled || s.State != "inactive" || s.UnitFileState != "disabled" {
 				t.Errorf("a disabled unit: %+v", s)
+			}
+			// systemd escapes the instance name a-b as a\x2db.
+			if s := read("instance"); s.State != "active" {
+				t.Errorf("an instance with an escaped name: %+v", s)
 			}
 
 			// Enabled and started by hand: the next plan reads it so.

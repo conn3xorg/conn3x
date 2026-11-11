@@ -28,14 +28,16 @@ func (u UnitState) Enabled() bool {
 
 // inventoryScript prints every service unit's name, from the unit files
 // (templates left out) and from what's loaded (their instances), then a
-// line with only "--", then systemctl show's properties for each name in
-// the same order, each block ending in a blank line.
+// line with only "--", then systemctl show's properties for them, a block
+// each. Names are passed one per line as they are: systemd escapes
+// instance names with backslashes, such as dev-disk-by\x2duuid, which
+// xargs would otherwise read as escapes.
 const inventoryScript = `names=$({
   systemctl list-unit-files --type=service --no-legend --no-pager --plain
   systemctl list-units --all --type=service --no-legend --no-pager --plain
 } | awk '{ u = $1; if (u == "●") u = $2; if (u ~ /\.service$/ && u !~ /@\.service$/) print u }' | LC_ALL=C sort -u) || exit 1
 printf '%s\n--\n' "$names"
-[ -z "$names" ] || printf '%s\n' "$names" | xargs systemctl show -p Id,LoadState,ActiveState,UnitFileState --`
+[ -z "$names" ] || printf '%s\n' "$names" | xargs -d '\n' systemctl show -p Id,Names,LoadState,ActiveState,UnitFileState --`
 
 // Inventory returns every service on the host by name, without ".service",
 // as a service step takes it.
@@ -61,25 +63,27 @@ func parseInventory(out string) (map[string]UnitState, error) {
 			names = append(names, n)
 		}
 	}
-	var blocks []map[string]string
+	// Each block is found by the names it answers to: its Id, and every
+	// alias in Names, such as sshd for ssh on Debian. Not by position,
+	// which only holds while each name gets exactly one block.
+	byName := map[string]map[string]string{}
 	for _, b := range strings.Split(strings.TrimSpace(body), "\n\n") {
-		if strings.TrimSpace(b) == "" {
-			continue
-		}
 		props := map[string]string{}
 		for _, l := range strings.Split(b, "\n") {
 			if k, v, ok := strings.Cut(l, "="); ok {
 				props[k] = v
 			}
 		}
-		blocks = append(blocks, props)
-	}
-	if len(blocks) != len(names) {
-		return nil, fmt.Errorf("listing services: %d names but %d answers from systemctl show", len(names), len(blocks))
+		for _, n := range append(strings.Fields(props["Names"]), props["Id"]) {
+			byName[n] = props
+		}
 	}
 	got := map[string]UnitState{}
-	for i, n := range names {
-		p := blocks[i]
+	for _, n := range names {
+		p, ok := byName[n]
+		if !ok {
+			return nil, fmt.Errorf("listing services: systemctl show said nothing about %s", n)
+		}
 		// A unit something refers to but nothing provides isn't a service.
 		if p["LoadState"] == "not-found" {
 			continue

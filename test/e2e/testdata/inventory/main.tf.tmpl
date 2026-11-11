@@ -41,3 +41,7 @@ output "masked" {
 output "demo" {
   value = data.conn3x_services.box.services["conn3x-demo"]
 }
+
+output "instance" {
+  value = data.conn3x_services.box.services["conn3x-inst@a\\x2db"]
+}
