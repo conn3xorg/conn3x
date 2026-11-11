@@ -185,11 +185,17 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer lockHost(h, "eos")()
+	circuit := eosCircuit(target)
 	st := stagedOn(h)
-	if st.failed != nil {
-		return fail(fmt.Errorf("not applied: %w", st.failed))
+	unlock, err := st.turn(ctx, h, circuit, lockHost(h, "eos"))
+	defer func() { unlock() }()
+	if err != nil {
+		return fail(err)
 	}
+	if err := st.failed[circuit]; err != nil {
+		return fail(fmt.Errorf("not applied: %w", err))
+	}
+	defer func() { st.touched = time.Now() }()
 	var base string
 	if st.session != nil {
 		base, err = st.session.Config(ctx, h.client)
@@ -212,7 +218,7 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	}
 	switch {
 	case len(cmds) == 0:
-	case removing && st.session == nil && !st.batch:
+	case removing && st.session == nil && !st.batch[circuit]:
 		diff, err := eos.Apply(ctx, h.client, eosReconnect(conn), base, cmds, confirmAfter(conn))
 		if diff != "" {
 			log.Printf("[INFO] conn3x: eos_%s on %s: lines added:\n%s", k.name, h.host, eos.Mask(diff))
@@ -225,6 +231,7 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 			if st.session, err = eos.Open(ctx, h.client, base); err != nil {
 				return fail(err)
 			}
+			st.owner = circuit
 		}
 		if err := st.session.Add(ctx, h.client, cmds); err != nil {
 			return fail(st.abort(ctx, h, err))
@@ -244,16 +251,58 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 // a run sees the same one. Callers hold lockHost(h, "eos").
 type staged struct {
 	h        *hostConn
-	session  *eos.Session // nil: nothing staged yet
-	failed   error        // a step's session was aborted: nothing more goes in
-	removals [][]string   // removals in the session: their steps are already forgotten
-	conn     cty.Value    // the ssh block they came with, to commit them again
-	batch    bool         // destroying: removals stage for conn3x_eos_removals
-	// committed: a commit already made lines live in this run. Circuits on
-	// one switch share its session, so the first circuit's commit takes the
-	// lines the others have added so far with it.
+	session  *eos.Session     // nil: nothing staged yet
+	failed   map[string]error // by circuit: its session was aborted, and nothing more of it goes in
+	removals [][]string       // removals in the session: their steps are already forgotten
+	conn     cty.Value        // the ssh block they came with, to commit them again
+	// owner is the circuit whose steps opened the session, "" for steps
+	// outside a circuit. A switch has one session at a time, so until the
+	// owner's commit, or an abort, other circuits' steps wait: a commit
+	// then makes live one circuit's lines and nobody else's.
+	owner   string
+	touched time.Time       // when the owner last added to the session or finished a step
+	batch   map[string]bool // circuits being destroyed: their removals stage for conn3x_eos_removals
+	// committed: a commit already made lines live in this run.
 	committed bool
 }
+
+// eosTurnIdle is how long a circuit's steps wait for another circuit that
+// has lines staged on the switch and does nothing with them. That circuit
+// has most likely stopped at an error of its own, short of its commit.
+var eosTurnIdle = 2 * time.Minute
+
+// eosCircuitAttr is how a step, a commit or the removals know their circuit.
+func eosCircuitAttr() *configschema.Attribute {
+	return &configschema.Attribute{Type: cty.String, Optional: true, Description: "The circuit this belongs to. Circuits set it: a switch's config session holds one circuit's lines at a time."}
+}
+
+func eosCircuit(v cty.Value) string {
+	if c := v.GetAttr("circuit"); known(c) {
+		return c.AsString()
+	}
+	return ""
+}
+
+// turn waits until the switch has no session of another circuit's. The
+// caller holds lockHost(h, "eos") through unlock, which turn gives up
+// while it waits; it returns the unlock to call in the end.
+func (st *staged) turn(ctx context.Context, h *hostConn, circuit string, unlock func()) (func(), error) {
+	for st.session != nil && st.owner != circuit {
+		if idle := time.Since(st.touched); idle > eosTurnIdle {
+			return unlock, fmt.Errorf("not applied: circuit %q has lines waiting on %s that it has neither committed nor added to for %s, so this circuit's turn on the switch never came. If %q stopped at an error, fix that and apply again", st.owner, h.host, eosTurnIdle, st.owner)
+		}
+		unlock()
+		select {
+		case <-ctx.Done():
+			return func() {}, ctx.Err()
+		case <-time.After(eosTurnPoll):
+		}
+		unlock = lockHost(h, "eos")
+	}
+	return unlock, nil
+}
+
+const eosTurnPoll = 50 * time.Millisecond
 
 var stagedSessions = struct {
 	sync.Mutex
@@ -272,9 +321,9 @@ func stagedOn(h *hostConn) *staged {
 }
 
 // abort drops the session after err, and every line staged with it, and
-// marks the switch failed for the rest of the run. With nothing staged, it
-// returns err as it is. Removals in it are made live on their own, since
-// their steps are already gone from state.
+// marks its circuit failed on the switch for the rest of the run. With
+// nothing staged, it returns err as it is. Removals in it are made live on
+// their own, since their steps are already gone from state.
 func (st *staged) abort(ctx context.Context, h *hostConn, err error) error {
 	if st.session == nil {
 		return err
@@ -283,13 +332,16 @@ func (st *staged) abort(ctx context.Context, h *hostConn, err error) error {
 		err = fmt.Errorf("%w; %v", err, abortErr)
 	} else {
 		if st.committed {
-			err = fmt.Errorf("%w. The lines steps added since this apply's last commit on %s were dropped too; what that commit made live, lines of this circuit's earlier steps among them, stays", err, h.host)
+			err = fmt.Errorf("%w. The lines steps added since this apply's last commit on %s were dropped too; what earlier commits made live stays", err, h.host)
 		} else {
 			err = fmt.Errorf("%w. Nothing was changed on %s: the lines earlier steps added in this apply were dropped too", err, h.host)
 		}
 		err, _ = st.salvage(ctx, h, st.removals, err)
 	}
-	st.session, st.removals, st.failed = nil, nil, err
+	if st.failed == nil {
+		st.failed = map[string]error{}
+	}
+	st.session, st.removals, st.failed[st.owner] = nil, nil, err
 	return err
 }
 
@@ -422,6 +474,7 @@ func eosConfigSchema() providers.Schema {
 			"match":     {Type: cty.String, Optional: true, Description: "\"lines\" (default): these lines must be there, and others under the parent are left alone. \"block\": the block must be exactly these lines, so others under it are removed. Needs parents."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the switch when this resource is removed: \"forget\" (default) leaves the lines, \"delete\" removes them with \"no\" and leaves the parent."},
 			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the switch had these lines at the last refresh."},
+			"circuit":   eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -449,6 +502,7 @@ func eosHostnameSchema() providers.Schema {
 	s := singletonSchema(eosExperimental+"An Arista EOS switch's hostname. Removing this step leaves the name as it is.",
 		"Hostname, such as leaf1. EOS takes letters, digits, hyphens and dots.")
 	s.Block.Attributes["in_sync"].Description = "Whether the switch had this name at the last refresh."
+	s.Block.Attributes["circuit"] = eosCircuitAttr()
 	return s
 }
 
@@ -480,6 +534,7 @@ func eosVLANSchema() providers.Schema {
 			"name":      {Type: cty.String, Optional: true, Description: "VLAN name: one word, up to 32 characters. Leave unset for the switch's default, such as VLAN0010; a name set by hand is then removed."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the switch when this resource is removed: \"delete\" (default) removes the VLAN, \"forget\" leaves it."},
 			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the VLAN was there, with this name, at the last refresh."},
+			"circuit":   eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -538,6 +593,7 @@ func eosCommitSchema() providers.Schema {
 			"id":       {Type: cty.String, Computed: true},
 			"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "The revisions of the circuit's eos steps on this switch; the commit runs when they change."},
 			"removals": {Type: cty.String, Optional: true, Description: "The id of the circuit's conn3x_eos_removals on this switch. With one, destroying the circuit stages the steps' removals for it to commit once."},
+			"circuit":  eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -578,17 +634,21 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 	}
 	defer lockHost(h, "eos")()
 	st := stagedOn(h)
+	circuit := eosCircuit(obj)
 	if destroying {
 		// The steps' removals come next, then conn3x_eos_removals commits them.
-		st.batch = true
+		if st.batch == nil {
+			st.batch = map[string]bool{}
+		}
+		st.batch[circuit] = true
 		return resp
 	}
-	if st.failed != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos commit: nothing was committed: %w", st.failed))
+	if err := st.failed[circuit]; err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos commit: nothing was committed: %w", err))
 		return resp
 	}
-	if st.session == nil {
-		return resp // no step changed anything on this switch
+	if st.session == nil || st.owner != circuit {
+		return resp // no step of this circuit changed anything on this switch
 	}
 	s, removed := st.session, st.removals
 	st.session, st.removals = nil, nil // committed or rolling back: either way, gone
@@ -612,7 +672,7 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 func eosRemovalsSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: eosExperimental + "Commits, once, the removals a destroyed circuit's eos_* steps added to the switch's config session. Circuits add it; it isn't a step.",
-		Attributes:  map[string]*configschema.Attribute{"id": {Type: cty.String, Computed: true}},
+		Attributes:  map[string]*configschema.Attribute{"id": {Type: cty.String, Computed: true}, "circuit": eosCircuitAttr()},
 		BlockTypes:  map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
 }
@@ -642,12 +702,13 @@ func applyEOSRemovals(ctx context.Context, req providers.ApplyResourceChangeRequ
 	}
 	defer lockHost(h, "eos")()
 	st := stagedOn(h)
-	st.batch = false // a removal after this, out of order, commits on its own
-	if st.failed != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos removals: nothing was committed: %w", st.failed))
+	circuit := eosCircuit(req.PriorState)
+	delete(st.batch, circuit) // a removal after this, out of order, commits on its own
+	if err := st.failed[circuit]; err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos removals: nothing was committed: %w", err))
 		return resp
 	}
-	if st.session == nil {
+	if st.session == nil || st.owner != circuit {
 		return resp
 	}
 	s, removed := st.session, st.removals
@@ -719,6 +780,7 @@ func eosInterfaceSchema() providers.Schema {
 			"mtu":           {Type: cty.Number, Optional: true, Description: "MTU, 68 to 9214."},
 			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens when this resource is removed: \"forget\" (default) leaves the interface as it is, \"delete\" takes the settings it owns back to EOS's defaults. The interface itself stays."},
 			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the interface had these settings at the last refresh."},
+			"circuit":       eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -819,6 +881,7 @@ func eosUserSchema() providers.Schema {
 			"ssh_key":       {Type: cty.String, Optional: true, Description: "One public key line, such as \"ssh-ed25519 AAAA... alice@laptop\". \"\" removes the account's key."},
 			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) removes the account when the step goes, as with every step that grants access; \"forget\" leaves it."},
 			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the account matched at the last refresh."},
+			"circuit":       eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}

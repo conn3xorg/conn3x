@@ -1130,6 +1130,13 @@ func TestEOSCircuitLowersOneCommit(t *testing.T) {
 	if len(c.DependsOn) != 1 || traversalString(c.DependsOn[0]) != "conn3x_eos_config.leafs__commit" {
 		t.Errorf("commit should wait for the circuit's last step, depends_on = %v", c.DependsOn)
 	}
+	// Every eos step, the commit and the removals say which circuit's they are.
+	for _, addr := range []string{"conn3x_eos_commit.leafs__commit", "conn3x_eos_removals.leafs__removals", "conn3x_eos_hostname.leafs__name", "conn3x_eos_vlan.leafs__vlans", "conn3x_eos_config.leafs__commit"} {
+		a, _ := mod.ManagedResources[addr].Config.JustAttributes()
+		if v, _ := a["circuit"].Expr.Value(nil); !v.RawEquals(cty.StringVal("leafs")) {
+			t.Errorf("%s: circuit = %#v", addr, v)
+		}
+	}
 	var removalsRef []string
 	for _, tr := range attrs["removals"].Expr.Variables() {
 		removalsRef = append(removalsRef, traversalString(tr))

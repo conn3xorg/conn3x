@@ -95,7 +95,7 @@ var generateSeeds = map[string]map[string]cty.Value{
 }
 
 // generateSkip are attributes a step never sets from generate's output.
-var generateSkip = map[string]bool{"id": true, "revision": true, "in_sync": true, "content_hmac": true, "validate": true, "content_wo": true, "on_remove": true}
+var generateSkip = map[string]bool{"id": true, "revision": true, "in_sync": true, "content_hmac": true, "validate": true, "content_wo": true, "on_remove": true, "circuit": true}
 
 func runGenerateStep(ctx context.Context, o generateOptions, stdout, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {

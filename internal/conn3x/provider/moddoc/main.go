@@ -92,7 +92,7 @@ func page(name, rt string, b *configschema.Block) string {
 	var args, readOnly []string
 	for _, a := range sortedAttrs(b) {
 		at := b.Attributes[a]
-		if a == "id" {
+		if a == "id" || a == "circuit" { // circuit: the lowering sets it on eos steps
 			continue
 		}
 		desc := escape(at.Description)

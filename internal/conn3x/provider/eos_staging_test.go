@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -496,29 +497,166 @@ func TestEOSUserSendsThePasswordTheSwitchLacks(t *testing.T) {
 	}
 }
 
-// Two circuits on one switch share its session, so the first circuit's
-// commit makes the other's lines so far live. When the other then fails,
-// the error mustn't say nothing changed.
-func TestEOSRefusalAfterAnotherCircuitsCommit(t *testing.T) {
+// The lowering sets circuit on every eos step, the commit and the removals,
+// so each of their schemas has to take it.
+func TestEOSSchemasTakeTheCircuit(t *testing.T) {
+	for name, schema := range map[string]func() providers.Schema{
+		"config": eosConfigSchema, "hostname": eosHostnameSchema, "vlan": eosVLANSchema, "interface": eosInterfaceSchema,
+		"user": eosUserSchema, "commit": eosCommitSchema, "removals": eosRemovalsSchema,
+	} {
+		if a := schema().Block.Attributes["circuit"]; a == nil || !a.Optional {
+			t.Errorf("conn3x_eos_%s has no optional circuit attribute", name)
+		}
+	}
+}
+
+// inCircuit marks a step, a commit or the removals as the lowering does.
+func inCircuit(v cty.Value, circuit string) cty.Value {
+	vals := v.AsValueMap()
+	vals["circuit"] = cty.StringVal(circuit)
+	return cty.ObjectVal(vals)
+}
+
+// Two circuits on one switch take turns at its session: the second one's
+// steps wait for the first one's commit, so that commit makes live the
+// first circuit's lines and nothing of the second's. When the second then
+// fails, none of its lines are on the switch.
+func TestEOSCircuitsTakeTurnsOnASwitch(t *testing.T) {
 	f, ssh := newFakeEOS(t)
 	f.refuse = "vlan 30"
-	for _, id := range []int{10, 20} { // 10 is circuit A's, 20 circuit B's first
+	if err := create(vlanApply, inCircuit(vlanStep(10, "", ssh), "a")); err != nil {
+		t.Fatal(err)
+	}
+	first := make(chan error, 1)
+	go func() { first <- create(vlanApply, inCircuit(vlanStep(20, "", ssh), "b")) }()
+	select {
+	case err := <-first:
+		t.Fatalf("b's step didn't wait for a's commit: %v", err)
+	case <-time.After(4 * eosTurnPoll):
+	}
+	// b's commit has nothing of b's to commit, and leaves a's session alone.
+	if err := create(commitApply, inCircuit(commitFor(ssh, true), "b")); err != nil {
+		t.Fatal(err)
+	}
+	if running, commits, _, pending := f.state(); commits != 0 || pending != 1 || strings.Contains(running, "vlan 10") {
+		t.Fatalf("after b's empty commit: %d commits, %d pending, running:\n%s", commits, pending, running)
+	}
+	if err := create(commitApply, inCircuit(commitFor(ssh, true), "a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if running, _, _, pending := f.state(); pending != 1 || !strings.Contains(running, "vlan 10") || strings.Contains(running, "vlan 20") {
+		t.Fatalf("after a's commit: %d pending sessions, running:\n%s", pending, running)
+	}
+	err := create(vlanApply, inCircuit(vlanStep(30, "", ssh), "b"))
+	if err == nil || strings.Contains(err.Error(), "Nothing was changed") || !strings.Contains(err.Error(), "stays") {
+		t.Fatalf("err = %v", err)
+	}
+	if running, _, _, pending := f.state(); pending != 0 || !strings.Contains(running, "vlan 10") || strings.Contains(running, "vlan 20") {
+		t.Errorf("%d pending sessions, running:\n%s", pending, running)
+	}
+	// b is done for on this switch in this run; a third circuit is not.
+	if err := create(vlanApply, inCircuit(vlanStep(21, "", ssh), "b")); err == nil || !strings.Contains(err.Error(), "not applied") {
+		t.Fatalf("b's next step: err = %v", err)
+	}
+	if err := create(vlanApply, inCircuit(vlanStep(40, "", ssh), "c")); err != nil {
+		t.Fatal(err)
+	}
+	if err := create(commitApply, inCircuit(commitFor(ssh, true), "c")); err != nil {
+		t.Fatal(err)
+	}
+	if running, _, _, _ := f.state(); !strings.Contains(running, "vlan 40") || strings.Contains(running, "vlan 21") {
+		t.Errorf("after c's commit, running:\n%s", running)
+	}
+}
+
+// A circuit that stopped short of its commit mustn't hold the others up
+// for good: after a while their steps fail, and say whose lines are waiting.
+func TestEOSTurnGivesUpOnAnIdleCircuit(t *testing.T) {
+	defer func(d time.Duration) { eosTurnIdle = d }(eosTurnIdle)
+	eosTurnIdle = 3 * eosTurnPoll
+	f, ssh := newFakeEOS(t)
+	if err := create(vlanApply, inCircuit(vlanStep(10, "", ssh), "a")); err != nil {
+		t.Fatal(err)
+	}
+	err := create(vlanApply, inCircuit(vlanStep(20, "", ssh), "b"))
+	if err == nil || !strings.Contains(err.Error(), `circuit "a" has lines waiting`) {
+		t.Fatalf("err = %v", err)
+	}
+	// a is not disturbed, and can still commit.
+	if err := create(commitApply, inCircuit(commitFor(ssh, true), "a")); err != nil {
+		t.Fatal(err)
+	}
+	if running, _, _, pending := f.state(); pending != 0 || !strings.Contains(running, "vlan 10") || strings.Contains(running, "vlan 20") {
+		t.Errorf("%d pending sessions, running:\n%s", pending, running)
+	}
+}
+
+// Steps outside a circuit share the switch's session as before, so a
+// commit takes every line staged so far: the error mustn't say nothing
+// changed when a later step fails.
+func TestEOSRefusalAfterAnotherCommit(t *testing.T) {
+	f, ssh := newFakeEOS(t)
+	f.refuse = "vlan 30"
+	for _, id := range []int{10, 20} {
 		if err := create(vlanApply, vlanStep(id, "", ssh)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := create(commitApply, commitFor(ssh, true)); err != nil { // A's commit
+	if err := create(commitApply, commitFor(ssh, true)); err != nil {
 		t.Fatal(err)
 	}
 	if err := create(vlanApply, vlanStep(40, "", ssh)); err != nil {
 		t.Fatal(err)
 	}
-	err := create(vlanApply, vlanStep(30, "", ssh)) // B's later step
+	err := create(vlanApply, vlanStep(30, "", ssh))
 	if err == nil || strings.Contains(err.Error(), "Nothing was changed") || !strings.Contains(err.Error(), "stays") {
 		t.Fatalf("err = %v", err)
 	}
 	if running, _, _, pending := f.state(); pending != 0 || !strings.Contains(running, "vlan 20") || strings.Contains(running, "vlan 40") {
 		t.Errorf("%d pending sessions, running:\n%s", pending, running)
+	}
+}
+
+// Two circuits destroyed on one switch: each one's removals wait for its
+// own conn3x_eos_removals, and the second circuit's still commit once.
+func TestEOSTwoCircuitsDestroyedOnASwitch(t *testing.T) {
+	f, ssh := newFakeEOS(t, block{head: "vlan 10"}, block{head: "vlan 11"}, block{head: "vlan 20"}, block{head: "vlan 21"})
+	removals := func(c string) cty.Value {
+		return inCircuit(onSwitch(eosStep("conn3x_eos_removals", map[string]cty.Value{"id": cty.StringVal("eos-removals")}, nil), ssh), c)
+	}
+	for _, c := range []string{"a", "b"} {
+		if err := destroy(commitApply, inCircuit(commitFor(ssh, true), c)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := destroy(vlanApply, inCircuit(vlanStep(10, "", ssh), "a")); err != nil {
+		t.Fatal(err)
+	}
+	waiting := make(chan error, 1)
+	go func() { waiting <- destroy(vlanApply, inCircuit(vlanStep(20, "", ssh), "b")) }()
+	if err := destroy(vlanApply, inCircuit(vlanStep(11, "", ssh), "a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := destroy(removalsApply, removals("a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-waiting; err != nil {
+		t.Fatal(err)
+	}
+	if running, commits, _, pending := f.state(); commits != 1 || pending != 1 || strings.Contains(running, "vlan 10") || strings.Contains(running, "vlan 11") || !strings.Contains(running, "vlan 20") {
+		t.Fatalf("after a's removals: %d commits, %d pending, running:\n%s", commits, pending, running)
+	}
+	if err := destroy(vlanApply, inCircuit(vlanStep(21, "", ssh), "b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := destroy(removalsApply, removals("b")); err != nil {
+		t.Fatal(err)
+	}
+	if running, commits, _, pending := f.state(); commits != 2 || pending != 0 || strings.Contains(running, "vlan 2") {
+		t.Fatalf("after b's removals: %d commits, %d pending, running:\n%s", commits, pending, running)
 	}
 }
 

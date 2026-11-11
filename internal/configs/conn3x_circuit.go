@@ -287,6 +287,11 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	if len(eosSteps) > 0 {
 		removals := lowerEOSRemovals(name, block, hosts, sshAttrs, sshRange)
 		for _, r := range eosSteps {
+			// A switch's config session holds one circuit's lines at a
+			// time: the steps and the commit say whose they are.
+			if body, ok := r.Config.(*hclsyntax.Body); ok {
+				body.Attributes["circuit"] = eosCircuitAttr(name, block.TypeRange)
+			}
 			rng := block.TypeRange
 			if perHost {
 				rng = r.DeclRange // so Conn3xHostEdge keeps it to the step's host
@@ -740,6 +745,7 @@ func lowerEOSCommit(circuit string, block *hcl.Block, hosts hcl.Expression, sshA
 			Attributes: hclsyntax.Attributes{
 				"triggers": {Name: "triggers", Expr: hostRevisions(eosSteps, rng), SrcRange: rng, NameRange: rng},
 				"removals": {Name: "removals", Expr: removalsID, SrcRange: rng, NameRange: rng},
+				"circuit":  eosCircuitAttr(circuit, rng),
 			},
 			Blocks:   hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})},
 			SrcRange: block.DefRange,
@@ -759,6 +765,11 @@ func lowerEOSCommit(circuit string, block *hcl.Block, hosts hcl.Expression, sshA
 	return r
 }
 
+// eosCircuitAttr is the circuit attribute of an eos step, commit or removals.
+func eosCircuitAttr(circuit string, rng hcl.Range) *hclsyntax.Attribute {
+	return &hclsyntax.Attribute{Name: "circuit", Expr: &hclsyntax.LiteralValueExpr{Val: cty.StringVal(circuit), SrcRange: rng}, SrcRange: rng, NameRange: rng}
+}
+
 // lowerEOSRemovals adds a circuit's conn3x_eos_removals: one per switch,
 // before every eos step, so that destroying the circuit removes it last.
 // Destroy runs the commit first, and each step's removal after it, so the
@@ -770,9 +781,10 @@ func lowerEOSRemovals(circuit string, block *hcl.Block, hosts hcl.Expression, ss
 		Type: "conn3x_eos_removals",
 		Name: circuit + "__removals",
 		Config: &hclsyntax.Body{
-			Blocks:   hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})},
-			SrcRange: block.DefRange,
-			EndRange: block.DefRange,
+			Attributes: hclsyntax.Attributes{"circuit": eosCircuitAttr(circuit, block.TypeRange)},
+			Blocks:     hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})},
+			SrcRange:   block.DefRange,
+			EndRange:   block.DefRange,
 		},
 		ForEach:   hosts,
 		DeclRange: block.DefRange,

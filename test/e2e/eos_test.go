@@ -315,6 +315,37 @@ func TestEOSRefusedStepLeavesNothing(t *testing.T) {
 	w.mustConn3x("destroy", "-auto-approve", "-no-color")
 }
 
+// TestEOSTwoCircuitsOneSwitch has two circuits on one switch, the second
+// with a refused last step. A switch's session holds one circuit's lines at
+// a time, so the first circuit's commit takes none of the second's along:
+// the first is live, and nothing of the second is.
+func TestEOSTwoCircuitsOneSwitch(t *testing.T) {
+	sw := eosSwitch(t)
+	w := newWorkdir(t, "eos2")
+	w.writeAs("main.circuit.hcl", sw)
+	w.mustConn3x("init", "-no-color")
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color")
+	if code == 0 || !strings.Contains(out, "% Invalid input") {
+		t.Fatalf("an apply with a refused line in the second circuit exited %d:\n%s", code, out)
+	}
+	running := sw.mustCLI(t, "show running-config\n")
+	if !strings.Contains(running, "vlan 231") {
+		t.Errorf("the first circuit's VLAN isn't live:\n%s", out)
+	}
+	for _, gone := range []string{"vlan 241", "vlan 242", "Loopback3"} {
+		if strings.Contains(running, gone) {
+			t.Errorf("running-config has the second circuit's %q", gone)
+		}
+	}
+	if sessions := sw.mustCLI(t, "show configuration sessions\n"); strings.Contains(sessions, "conn3x-") {
+		t.Fatalf("a conn3x session was left pending:\n%s", sessions)
+	}
+	w.mustConn3x("destroy", "-auto-approve", "-no-color")
+	if running := sw.mustCLI(t, "show running-config\n"); strings.Contains(running, "vlan 231") {
+		t.Errorf("vlan 231 is still there after the destroy")
+	}
+}
+
 func stripComments(config string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(config, "\n") {

@@ -176,7 +176,7 @@ func moduleDocs(_ context.Context, args json.RawMessage) (any, error) {
 	}
 	var attrs []map[string]any
 	for name, a := range b.Attributes {
-		if name == "id" || name == "revision" {
+		if name == "id" || name == "revision" || name == "circuit" {
 			continue
 		}
 		attrs = append(attrs, map[string]any{

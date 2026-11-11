@@ -1,0 +1,52 @@
+circuit "first" {
+  hosts = { leaf1 = "{{.Host}}" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "admin"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+    confirm_after    = "5s"
+  }
+
+  step "vlan" {
+    eos_vlan {
+      vlan_id = 231
+      name    = "first"
+    }
+  }
+}
+
+# The same switch. Its last step is refused, after two that aren't.
+circuit "second" {
+  hosts = { leaf1 = "{{.Host}}" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "admin"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+    confirm_after    = "5s"
+  }
+
+  step "a" {
+    eos_vlan {
+      vlan_id = 241
+      name    = "second"
+    }
+  }
+
+  step "b" {
+    eos_vlan {
+      vlan_id = 242
+      name    = "second"
+    }
+  }
+
+  step "refused" {
+    eos_config {
+      parents = ["interface Loopback3"]
+      lines   = ["this is not a command"]
+    }
+  }
+}
