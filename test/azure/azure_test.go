@@ -108,23 +108,31 @@ func monthCost(ctx context.Context, sub string) (float64, error) {
 		}
 		time.Sleep(time.Minute)
 	}
-	out, cerr := az(ctx, "rest", "--method", "get",
-		"--url", "https://management.azure.com/subscriptions/"+sub+"/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01",
-		"--query", "{next: nextLink, modern: sum(value[].properties.costInBillingCurrency), legacy: sum(value[].properties.cost)}", "-o", "json")
-	if cerr != nil {
-		return 0, fmt.Errorf("%v; then %v", err, cerr)
+	// The usage list comes a page at a time; every page counts.
+	url := "https://management.azure.com/subscriptions/" + sub + "/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01"
+	var modern, legacy float64
+	for page := 0; ; page++ {
+		if page == 100 {
+			return 0, errors.New("usage runs past 100 pages")
+		}
+		out, cerr := az(ctx, "rest", "--method", "get", "--url", url,
+			"--query", "{next: nextLink, modern: sum(value[].properties.costInBillingCurrency), legacy: sum(value[].properties.cost)}", "-o", "json")
+		if cerr != nil {
+			return 0, fmt.Errorf("%v; then %v", err, cerr)
+		}
+		var u struct {
+			Next           *string
+			Modern, Legacy float64
+		}
+		if err := json.Unmarshal([]byte(out), &u); err != nil {
+			return 0, err
+		}
+		modern, legacy = modern+u.Modern, legacy+u.Legacy
+		if u.Next == nil || *u.Next == "" {
+			return max(modern, legacy), nil
+		}
+		url = *u.Next
 	}
-	var u struct {
-		Next           *string
-		Modern, Legacy float64
-	}
-	if err := json.Unmarshal([]byte(out), &u); err != nil {
-		return 0, err
-	}
-	if u.Next != nil {
-		return 0, errors.New("usage runs past one page")
-	}
-	return max(u.Modern, u.Legacy), nil
 }
 
 func myIP(t *testing.T) string {
@@ -318,6 +326,11 @@ func TestExample(t *testing.T) {
 	// The bootstrap installed this key and removed the others it replaced.
 	if got := host(`(Get-Content -LiteralPath 'C:\ProgramData\ssh\ssh_host_ed25519_key.pub' -Raw).Trim()`, nil); !strings.HasPrefix(got, strings.Join(strings.Fields(hostKey)[:2], " ")) {
 		t.Errorf("host key on disk: %s", got)
+	}
+	// The bootstrap reached the VM only inside the extension's command, so
+	// there is no script on disk for anyone to have changed before it ran.
+	if got := host(`$f = 'C:\AzureData\CustomData.bin'; if ([IO.File]::Exists($f)) { (Get-Item -LiteralPath $f).Length } else { 'none' }`, nil); got != "none" && got != "0" {
+		t.Errorf("C:\\AzureData\\CustomData.bin holds %s bytes; the example should pass no custom data", got)
 	}
 	// None of this landed in a log or a leftover on the host.
 	hits := host(`param($A)

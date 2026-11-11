@@ -1,7 +1,8 @@
-# Runs once on first boot, through the Custom Script Extension. It reads the
-# host's private key from the extension's protected settings, which Windows holds
-# encrypted, so the key is never on a command line, and the public keys from its
-# own text, which Conn3x fills in. It never logs a key.
+# Runs once on first boot. load-bootstrap.ps1 runs it from the Custom Script
+# Extension's protected settings, which Windows holds encrypted. It reads the
+# host's private key from the same settings, so the key is never on a command
+# line, and the public keys from its own text, which Conn3x fills in. It never
+# logs a key.
 $ErrorActionPreference = 'Stop'
 
 $d = 'C:\ProgramData\ssh'

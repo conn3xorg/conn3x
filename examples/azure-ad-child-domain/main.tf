@@ -195,12 +195,6 @@ resource "azurerm_windows_virtual_machine" "this" {
   automatic_updates_enabled = false
   tags                      = var.tags
 
-  # Windows doesn't run this by itself. The extension below does. It holds only
-  # public keys, as anyone who can read the VM's settings can read it.
-  custom_data = base64encode(replace(replace(file("${path.module}/bootstrap.ps1"),
-    "__HOST_PUB__", trimspace(tls_private_key.host[each.key].public_key_openssh)),
-  "__ADMIN_PUB__", trimspace(file(var.admin_public_key_file))))
-
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "StandardSSD_LRS"
@@ -223,13 +217,16 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   type                 = "CustomScriptExtension"
   type_handler_version = "1.10"
 
-  # Extra settings stay encrypted beside the command, which an audit policy could
-  # record. Only bootstrap.ps1 opens them: the key is on no command line. The
-  # script runs straight from where Azure put it; a copy in a shared folder such
-  # as C:\Windows\Temp is a name any local user could have created first.
+  # Only SYSTEM can decrypt protected settings. The command runs
+  # load-bootstrap.ps1, which opens them and runs bootstrap.ps1 from there: the
+  # script is never a file on the VM that someone else could change before it
+  # runs, and the host's private key is on no command line.
   protected_settings = jsonencode({
-    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText('C:\\AzureData\\CustomData.bin')))\""
-    conn3xHostKey    = base64encode(tls_private_key.host[each.key].private_key_openssh)
+    commandToExecute = "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${textencodebase64(file("${path.module}/load-bootstrap.ps1"), "UTF-16LE")}"
+    conn3xBootstrap = base64encode(replace(replace(file("${path.module}/bootstrap.ps1"),
+      "__HOST_PUB__", trimspace(tls_private_key.host[each.key].public_key_openssh)),
+    "__ADMIN_PUB__", trimspace(file(var.admin_public_key_file))))
+    conn3xHostKey = base64encode(tls_private_key.host[each.key].private_key_openssh)
   })
 }
 
