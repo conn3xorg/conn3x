@@ -143,8 +143,11 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 	return providers.GetProviderSchemaResponse{
 		Provider:      providers.Schema{Block: emptyBlock()},
 		ResourceTypes: resourceSchemas(),
-		DataSources:   map[string]providers.Schema{"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema()},
-		Functions:     functions,
+		DataSources: map[string]providers.Schema{
+			"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema(),
+			"conn3x_packages": packagesDataSchema(), "conn3x_services": servicesDataSchema(),
+		},
+		Functions: functions,
 	}
 }
 
@@ -172,6 +175,9 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
 	if req.TypeName == "conn3x_eos_device" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateEOSSSH(req.Config))}
+	}
+	if req.TypeName == "conn3x_packages" || req.TypeName == "conn3x_services" {
+		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateNotEOS(req.Config))}
 	}
 	if req.TypeName != "conn3x_host" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: unsupported("data source " + req.TypeName)}
@@ -344,15 +350,16 @@ func locateApplyErrors(block *configschema.Block, diags tfdiags.Diagnostics) tfd
 }
 
 func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
-	if req.TypeName != "conn3x_host" && req.TypeName != "conn3x_eos_device" {
+	read, ok := map[string]func(context.Context, providers.ReadDataSourceRequest) providers.ReadDataSourceResponse{
+		"conn3x_host": readHostData, "conn3x_eos_device": readEOSDevice,
+		"conn3x_packages": readPackagesData, "conn3x_services": readServicesData,
+	}[req.TypeName]
+	if !ok {
 		return providers.ReadDataSourceResponse{Diagnostics: unsupported("data source " + req.TypeName)}
 	}
 	ctx, done := p.withStop(ctx)
 	defer done()
-	if req.TypeName == "conn3x_eos_device" {
-		return readEOSDevice(ctx, req)
-	}
-	return readHostData(ctx, req)
+	return read(ctx, req)
 }
 
 func (p *Provider) OpenEphemeralResource(context.Context, providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {

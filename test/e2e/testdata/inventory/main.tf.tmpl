@@ -1,0 +1,43 @@
+data "conn3x_packages" "box" {
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
+
+data "conn3x_services" "box" {
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
+
+output "bash" {
+  value = data.conn3x_packages.box.packages["bash"]
+}
+
+output "bash_versions" {
+  value = join(",", data.conn3x_packages.box.versions["bash"])
+}
+
+output "packages" {
+  value = length(data.conn3x_packages.box.packages)
+}
+
+output "sshd" {
+  value = try(data.conn3x_services.box.services["sshd"], data.conn3x_services.box.services["ssh"])
+}
+
+output "masked" {
+  value = data.conn3x_services.box.services["conn3x-masked"]
+}
+
+output "demo" {
+  value = data.conn3x_services.box.services["conn3x-demo"]
+}
