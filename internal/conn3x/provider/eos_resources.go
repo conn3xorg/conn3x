@@ -268,7 +268,10 @@ type staged struct {
 
 // eosTurnIdle is how long a circuit's steps wait for another circuit that
 // has lines staged on the switch and does nothing with them. That circuit
-// has most likely stopped at an error of its own, short of its commit.
+// has most likely stopped at an error of its own, short of its commit. It
+// measures quiet, not stuck: the provider can't see whether the owner has a
+// step still to come, so an owner waiting on something slow elsewhere looks
+// the same.
 var eosTurnIdle = 2 * time.Minute
 
 // eosCircuitAttr is how a step, a commit or the removals know their circuit.
@@ -289,7 +292,7 @@ func eosCircuit(v cty.Value) string {
 func (st *staged) turn(ctx context.Context, h *hostConn, circuit string, unlock func()) (func(), error) {
 	for st.session != nil && st.owner != circuit {
 		if idle := time.Since(st.touched); idle > eosTurnIdle {
-			return unlock, fmt.Errorf("not applied: circuit %q has lines waiting on %s that it has neither committed nor added to for %s, so this circuit's turn on the switch never came. If %q stopped at an error, fix that and apply again", st.owner, h.host, eosTurnIdle, st.owner)
+			return unlock, fmt.Errorf("not applied: circuit %q has lines waiting on %s that it has neither committed nor added to for %s, so this circuit's turn on the switch never came. %q may have stopped at an error, or its next step may be waiting on something slow that isn't on the switch. Apply again once it has committed or its error is fixed", st.owner, h.host, eosTurnIdle, st.owner)
 		}
 		unlock()
 		select {
