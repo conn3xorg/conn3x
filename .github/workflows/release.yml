@@ -77,6 +77,8 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.deb
+            dist/*.rpm
             dist/checksums.txt
       # The attestation also lives in GitHub's attestation store; attaching
       # it to the release lets anyone verify offline, and lets OpenSSF

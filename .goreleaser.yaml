@@ -45,11 +45,57 @@ archives:
       - NOTICE
       - README.md
 
+# A .deb and an .rpm for each Linux build, so `apt install ./…deb` and
+# `dnf install ./…rpm` work. They go in checksums.txt, which cosign signs,
+# and the release workflow attests them like the archives. The packages
+# themselves aren't signed with a key yet; that comes with a repository to
+# install from.
+nfpms:
+  - id: packages
+    ids: [conn3x]
+    package_name: conn3x
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: The Conn3x Authors
+    homepage: https://conn3x.org
+    maintainer: The Conn3x Authors <security@conn3x.org>
+    description: One plan for your cloud and the servers it creates.
+    license: MPL-2.0
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    mtime: "{{ .CommitDate }}"
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/conn3x/LICENSE
+        file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+      - src: NOTICE
+        dst: /usr/share/doc/conn3x/NOTICE
+        file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+      - src: README.md
+        dst: /usr/share/doc/conn3x/README.md
+        file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+      # Where Debian looks for the licence, and the one file under
+      # /usr/share/doc that Ubuntu's minimal images keep.
+      - src: LICENSE
+        dst: /usr/share/doc/conn3x/copyright
+        packager: deb
+        file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+
 checksum:
   name_template: checksums.txt
 
 sboms:
   - artifacts: archive
+  # syft doesn't look inside a .deb or an .rpm, so it would list the
+  # package and none of the modules in it. Each package holds the binary
+  # that's in the archive for its architecture, so that archive is what's
+  # scanned, under the package's name.
+  - id: packages
+    artifacts: package
+    args:
+      - "{{ .ProjectName }}_{{ .Version }}_linux_{{ .Arch }}.tar.gz"
+      - "--source-name=${artifact}"
+      - "--output=spdx-json=${document}"
+      - "--enrich=all"
 
 signs:
   - cmd: cosign

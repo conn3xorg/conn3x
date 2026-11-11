@@ -42,6 +42,19 @@ jobs:
           tar -xzf dist/conn3x_*_linux_amd64.tar.gz conn3x
           ./conn3x version | tee version.txt
           scripts/brand-check.sh ./conn3x
+      # The .deb holds the archive's binary, installs it on the PATH, and
+      # its SBOM lists the modules in it, not just the package.
+      - name: The .deb installs the release binary
+        run: |
+          sudo apt-get install -y ./dist/conn3x_*_amd64.deb
+          cmp /usr/bin/conn3x ./conn3x
+          /usr/bin/conn3x version
+          sudo apt-get remove -y conn3x
+          test ! -e /usr/bin/conn3x
+          for sbom in dist/*.deb.sbom.json dist/*.rpm.sbom.json; do
+            n=$(jq '.packages | length' "$sbom")
+            [ "$n" -gt 100 ] || { echo "$sbom lists $n packages" >&2; exit 1; }
+          done
       - name: The release binary embeds both agents
         run: |
           grep -Eq '^agent: linux/amd64 [0-9a-f]{12}, linux/arm64 [0-9a-f]{12}$' version.txt \
