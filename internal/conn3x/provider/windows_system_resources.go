@@ -551,7 +551,8 @@ func planWinUpdateReads(ctx context.Context, req providers.PlanResourceChangeReq
 	pending, err := windows.PendingUpdates(ctx, h.client, winUpdateFrom(planned))
 	switch {
 	case err != nil:
-		log.Printf("[DEBUG] conn3x: windows_update on %s: can't list the updates in the plan: %v", h.host, err)
+		// The host answered, so this is worth saying; the apply searches again.
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(fmt.Sprintf("windows_update on %s: couldn't list the updates for this plan, so the apply will find out what it installs: %v", h.host, err)))
 	case len(pending) == 0:
 		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(fmt.Sprintf("windows_update on %s: no updates wait in these categories now, so the apply installs nothing", h.host)))
 	default:
