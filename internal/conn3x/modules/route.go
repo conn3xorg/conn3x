@@ -116,7 +116,10 @@ else
 fi
 route_rc=$?
 [ "$route_rc" = 0 ] || echo "Conn3x ran this as $route_as, because $route_dir belongs to $route_as" >&2
-if [ "$route_rc" = 0 ] && [ -n "$route_later" ]; then
+`)
+	// Only a step that names an owner or group can leave one for root to set.
+	if w.Owner != "" || w.Group != "" {
+		b.WriteString(`if [ "$route_rc" = 0 ] && [ -n "$route_later" ]; then
   route_path=$route_target
   route_own=${route_owner:-}${route_group:+:$route_group}
   # What counts is checked on an open descriptor, not on the name. The open
@@ -156,7 +159,9 @@ if [ "$route_rc" = 0 ] && [ -n "$route_later" ]; then
   [ -z "${route_hold:-}" ] || rm -rf -- "$route_hold"
   case $route_own_rc in 0) ;; 124 | 125) route_stop "it isn't the file or directory $route_as wrote any more" ;; *) exit 1 ;; esac
 fi
-exit "$route_rc"
+`)
+	}
+	b.WriteString(`exit "$route_rc"
 `)
 	return b.String()
 }
