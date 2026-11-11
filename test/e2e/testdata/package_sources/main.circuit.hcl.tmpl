@@ -1,0 +1,17 @@
+circuit "sources" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "only_our_sources" {
+    package_sources {
+      keep   = ["kept{{.Ext}}"]
+      remove = [{{.Remove}}]
+    }
+  }
+}

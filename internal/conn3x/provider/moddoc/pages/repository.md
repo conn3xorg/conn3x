@@ -44,6 +44,8 @@ In a real configuration, paste the repository's whole ASCII-armored key, or read
 
 **Debian and Ubuntu.** Conn3x writes the key to `/etc/apt/keyrings/conn3x-<name>.asc` and a deb822 file to `/etc/apt/sources.list.d/<name>.sources`, with `Signed-By` set to the key, so apt trusts the key for this repository only. `components` defaults to `["main"]`. A flat repository, whose suite ends in `/` such as `"./"`, gets no components. Conn3x then runs `apt-get update`, waiting up to five minutes if another apt holds its lock, so the next step can install from the repository. Repository and package steps on one host take turns, so another circuit's install never runs beside this `apt-get update`.
 
+**Marked as Conn3x's.** The `.repo` and `.sources` files start with `# Managed by Conn3x.`, so a [`package_sources`](/modules/package_sources) step, in this circuit or another, keeps them.
+
 **Validation.** `url` must start with `http://` or `https://`, and `key` must be an ASCII-armored public key. Conn3x only learns the host's family when it connects, so a missing `suites` on Debian or Ubuntu fails at apply.
 
 **Changes.** Changing `url`, `key`, `suites` or `components` rewrites the files. Changing `name` replaces the step, and `on_remove` decides what happens to the old files.
