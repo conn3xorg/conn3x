@@ -56,6 +56,32 @@ func TestGather(t *testing.T) {
 	}
 }
 
+// A host reports its own facts, and a circuit may put one into a command
+// for another host.
+func TestGatherRefusesFactsThatAreNotPlainWords(t *testing.T) {
+	plain := map[string]any{
+		"version": "10.0.26100", "build": "26100", "product_type": 3, "arch": "AMD64", "edition": "ServerDatacenter",
+		"installation_type": "Server Core", "hostname": "wéb-1", "domain": "HOME LAB", "powershell": "5.1.26100.1",
+	}
+	if _, err := Gather(context.Background(), &fake{answers: []map[string]any{{"ok": true, "value": plain}}}); err != nil {
+		t.Fatalf("plain facts: %v", err)
+	}
+	for name, bad := range map[string]string{
+		"build": "26100;x", "edition": "Server$(id)", "installation_type": "Server\nCore", "hostname": "web1`id`",
+		"domain": "corp.example.com'; x", "powershell": "5.1 | x",
+	} {
+		value := map[string]any{}
+		for k, v := range plain {
+			value[k] = v
+		}
+		value[name] = bad
+		_, err := Gather(context.Background(), &fake{answers: []map[string]any{{"ok": true, "value": value}}})
+		if err == nil || !strings.Contains(err.Error(), "isn't a plain word") {
+			t.Errorf("%s = %q: err = %v", name, bad, err)
+		}
+	}
+}
+
 func TestValidatePath(t *testing.T) {
 	for _, ok := range []string{`C:\app`, `c:/app/x`, `C:\sp ace\[x]`} {
 		if err := ValidatePath("p", ok); err != nil {

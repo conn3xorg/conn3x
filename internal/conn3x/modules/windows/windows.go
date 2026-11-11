@@ -87,6 +87,15 @@ var serverReleases = map[string]string{"26100": "2025", "20348": "2022", "17763"
 
 var archNames = map[string]string{"AMD64": "x86_64", "ARM64": "aarch64"}
 
+// What a fact may hold. A hostname or domain may have letters of any
+// script, a workgroup's name may have spaces, and the installation type
+// is "Server Core" on Core.
+var (
+	factWord  = regexp.MustCompile(`^[A-Za-z0-9._-]*$`)
+	factName  = regexp.MustCompile(`^[\p{L}\p{N}._-]*$`)
+	factWords = regexp.MustCompile(`^[\p{L}\p{N} ._-]*$`)
+)
+
 // Gather reads the facts from a host, failing on anything but Windows Server.
 func Gather(ctx context.Context, r ps.Runner) (Facts, error) {
 	res, err := ps.Read(ctx, r, script("read_facts.ps1"), nil)
@@ -112,6 +121,21 @@ func Gather(ctx context.Context, r ps.Runner) (Facts, error) {
 	}
 	if err := json.Unmarshal(res.Value, &raw); err != nil {
 		return Facts{}, fmt.Errorf("reading Windows facts: %w", err)
+	}
+	// The host reports its own facts, and a circuit may put one into a
+	// command for another host: none carries shell syntax or control
+	// characters. Version, arch and ipv4 are checked with the Linux facts.
+	for _, f := range []struct {
+		name, value string
+		plain       *regexp.Regexp
+	}{
+		{"build", raw.Build, factWord}, {"edition", raw.Edition, factWord}, {"PowerShell version", raw.PowerShell, factWord},
+		{"hostname", raw.Hostname, factName}, {"domain", raw.Domain, factWords},
+		{"installation type", raw.InstallationType, factWords},
+	} {
+		if !f.plain.MatchString(f.value) {
+			return Facts{}, fmt.Errorf("the host reported a %s that isn't a plain word: %q", f.name, f.value)
+		}
 	}
 	if raw.ProductType == 1 {
 		return Facts{}, fmt.Errorf("%s is Windows client %s; Conn3x manages Windows Server only", raw.Hostname, raw.Version)
