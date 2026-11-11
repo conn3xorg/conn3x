@@ -570,7 +570,7 @@ func (c *Client) exec(ctx context.Context, cmd string, stdin []byte) (Result, er
 		return Result{}, ctx.Err()
 	case err := <-done:
 		if over.Load() {
-			return Result{}, fmt.Errorf("ssh %s: the command printed more than %d MiB, the most conn3x reads from one command on a host", c.addr, MaxOutput>>20)
+			return Result{}, c.overOutput()
 		}
 		res := Result{Stdout: stdout.buf.Bytes(), Stderr: stderr.buf.Bytes()}
 		var exitErr *gossh.ExitError
@@ -669,6 +669,11 @@ func (p *Process) Close() error {
 // and of its standard error. It leaves room for the largest file the agent
 // returns, 255 MiB, in base64.
 var MaxOutput = 384 << 20
+
+// overOutput is the error for a command killed at MaxOutput.
+func (c *Client) overOutput() error {
+	return fmt.Errorf("ssh %s: the command printed more than %d MiB, the most conn3x reads from one command on a host", c.addr, MaxOutput>>20)
+}
 
 // capped is a buffer that calls stop, once, when a write would take it
 // past MaxOutput, and keeps nothing more.

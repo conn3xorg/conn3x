@@ -175,3 +175,19 @@ func TestBecomeLeavesNoCachedCredentials(t *testing.T) {
 		t.Fatal("sudo credentials were cached")
 	}
 }
+
+// A command run with a sudo password is held to MaxOutput like any other.
+func TestBecomeWithPasswordStopsAtTheOutputLimit(t *testing.T) {
+	saved := MaxOutput
+	MaxOutput = 64 << 10
+	defer func() { MaxOutput = saved }()
+	_, cfg := becomeServer(t, "password:s3cret")
+	b := &Become{Client: dial(t, cfg), Password: []byte("s3cret")}
+	if _, err := b.Run(context.Background(), "head -c 4194304 /dev/zero", nil); err == nil || !strings.Contains(err.Error(), "printed more than") {
+		t.Fatalf("a flood of output: err = %v, want the limit named", err)
+	}
+	res, err := b.Run(context.Background(), "head -c 65536 /dev/zero", nil)
+	if err != nil || len(res.Stdout) != MaxOutput {
+		t.Fatalf("output at the limit: %d bytes, err = %v", len(res.Stdout), err)
+	}
+}

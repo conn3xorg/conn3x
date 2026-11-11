@@ -96,11 +96,19 @@ func (b *Become) runPrompted(ctx context.Context, inner string, stdin []byte) (R
 	type exit struct {
 		stdout []byte
 		err    error
+		over   bool
 	}
 	done := make(chan exit, 1)
 	go func() {
-		out, _ := io.ReadAll(p)
-		done <- exit{out, p.session.Wait()}
+		// The same limit as exec: past MaxOutput the command is killed.
+		out, _ := io.ReadAll(io.LimitReader(p, int64(MaxOutput)+1))
+		if len(out) > MaxOutput {
+			_ = p.session.Signal(gossh.SIGKILL)
+			_ = p.session.Close()
+			done <- exit{over: true}
+			return
+		}
+		done <- exit{stdout: out, err: p.session.Wait()}
 	}()
 
 	tick := time.NewTicker(promptPoll)
@@ -113,6 +121,9 @@ func (b *Become) runPrompted(ctx context.Context, inner string, stdin []byte) (R
 			_ = p.session.Signal(gossh.SIGKILL)
 			return Result{}, ctx.Err()
 		case e := <-done:
+			if e.over {
+				return Result{}, b.Client.overOutput()
+			}
 			// What sudo wrote comes before the start marker; the command's
 			// own stderr is what follows it.
 			stderr := p.Stderr()
