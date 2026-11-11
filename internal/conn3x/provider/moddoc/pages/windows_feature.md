@@ -36,6 +36,8 @@ Features install one at a time per host. An install can take several minutes, an
 
 Windows Server only: Windows client has no such feature list. An `InstallPending` feature counts as installed, and shows `reboot_required`.
 
+**The first plan after a big apply can be slow.** For ten minutes or so after a host's last reboot, a domain join or a promotion, Windows servicing is busy, and a feature read that normally takes a second can take a minute or more. On twenty Windows Server 2025 hosts, one plan straight after a 400-step apply spent 24 minutes of read time on features; the same plan run again straight after spent 5, with no apply in between. It's the host, not the read: wait a few minutes and plan again.
+
 ## Removal
 
 Deleting a `windows_feature` step leaves the feature as it is. Use `state = "absent"` to remove one.
