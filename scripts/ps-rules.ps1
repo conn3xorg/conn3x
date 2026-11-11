@@ -15,7 +15,8 @@ param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Files)
 
 $readCommands = 'Get-Acl', 'Get-ADDomain', 'Get-ADGroup', 'Get-ADObject', 'Get-ADOrganizationalUnit', 'Get-ADUser', 'Get-CimInstance', 'Get-DnsClientServerAddress', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Get-NetIPAddress', 'Get-NetRoute', 'Get-WindowsFeature',
   'Get-LocalGroup', 'Get-LocalGroupMember', 'Get-LocalUser', 'Get-NetFirewallAddressFilter', 'Get-NetFirewallPortFilter', 'Get-NetFirewallRule',
-  'Get-NetTCPConnection', 'Get-ScheduledTask', 'Get-Service', 'Import-Module', 'Select-Object', 'Sort-Object', 'Test-Path', 'Where-Object', 'ForEach-Object'
+  'Get-NetTCPConnection', 'Get-ScheduledTask', 'Get-Service', 'Import-Module', 'Select-Object', 'Sort-Object', 'Start-Sleep', 'Test-Path', 'Where-Object', 'ForEach-Object'
+# Start-Sleep only waits: read_pending_reboot.ps1 waits out Windows servicing.
 $readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity', 'NetTCPIP', 'ScheduledTasks', 'ServerManager'
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
