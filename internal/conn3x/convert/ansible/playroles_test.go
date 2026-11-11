@@ -412,7 +412,7 @@ func TestConvertPlayRolesWhen(t *testing.T) {
 	}
 	// base for the Debian call, then web; base again for the Red Hat call,
 	// since the filter makes it a different call; the != call passes every
-	// host, base already ran unfiltered never, so it runs.
+	// host, and base hasn't run unfiltered yet, so it runs again.
 	if n := strings.Count(hcl, `source = "./circuit-base"`); n != 3 {
 		t.Errorf("base is called %d times, want once per distinct filter:\n%s", n, hcl)
 	}
@@ -421,5 +421,80 @@ func TestConvertPlayRolesWhen(t *testing.T) {
 	}
 	if len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "no Debian or Red Hat family host meets") {
 		t.Errorf("review: %+v", res.Review)
+	}
+}
+
+// A role call in a file pulled in with import_tasks, even two imports deep,
+// takes its place in the play's order, as it would written in place. The
+// tasks around it still come from their own file, so what's left for review
+// names that file. An import that can't be inlined keeps its call for
+// review, and one with no role call converts as before.
+func TestConvertPlayRolesInImports(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(filepath.Join(dir, "roles"), os.DirFS(filepath.Join("testdata", "playroles", "roles"))); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"p.yml": `- hosts: web
+  tasks:
+    - name: Before
+      copy: {content: "a\n", dest: /etc/a}
+    - import_tasks: more.yml
+    - name: After
+      copy: {content: "c\n", dest: /etc/c}
+    - import_tasks: plain.yml
+    - import_tasks: deeper.yml
+      when: x
+  handlers:
+    - name: Reload app
+      service: {name: app, state: reloaded}
+`,
+		"more.yml": `- name: In the import
+  copy: {content: "b\n", dest: /etc/b}
+  notify: Reload app
+- import_tasks: deeper.yml
+- name: Odd one
+  community.example.nothing: {}
+`,
+		"deeper.yml": "- include_role:\n    name: web\n",
+		"plain.yml":  "- name: Plain\n  copy: {content: \"d\\n\", dest: /etc/d}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := ConvertWith(filepath.Join(dir, "p.yml"), Options{Roles: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := strings.Join(strings.Fields(string(res.HCL)), " ")
+	order := []string{`path = "/etc/a"`, `path = "/etc/b"`, `module "web"`, "Odd one", `path = "/etc/c"`, `path = "/etc/d"`}
+	last := -1
+	for _, w := range order {
+		i := strings.Index(hcl, w)
+		if i < 0 || i < last {
+			t.Fatalf("%q is missing or out of order:\n%s", w, hcl)
+		}
+		last = i
+	}
+	if n := strings.Count(hcl, `module "web"`); n != 1 {
+		t.Errorf("%d calls to web, want the one in the import (the one behind when stays for review):\n%s", n, hcl)
+	}
+	// The part after the call waits for it.
+	if !strings.Contains(hcl, "depends_on = [module.web]") {
+		t.Errorf("the part after the call doesn't wait for it:\n%s", hcl)
+	}
+	if len(res.Review) != 2 {
+		t.Fatalf("review: %+v", res.Review)
+	}
+	// A task in the import notifies the play's handler, which its part has.
+	if call := strings.Index(hcl, `module "web"`); !strings.Contains(hcl[:call], "notify = [handler.reload_app]") || !strings.Contains(hcl[:call], `handler "reload_app"`) {
+		t.Errorf("the task in the import should notify the play's handler in its own part:\n%s", hcl)
+	}
+	if r := res.Review[0]; r.File != "more.yml" || r.Line != 5 {
+		t.Errorf("the task left in the import is reported at %s line %d, want more.yml line 5: %+v", r.File, r.Line, r)
+	}
+	if r := res.Review[1]; r.File != "p.yml" || !strings.Contains(r.Reason, "sets when on import_tasks") {
+		t.Errorf("the import behind when: %+v", r)
 	}
 }

@@ -276,7 +276,7 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 		for _, key := range []string{"pre_tasks", "tasks", "post_tasks"} {
 			tasks = append(tasks, seq(p[key])...)
 		}
-		c.steps(cb, tasks, seq(p["handlers"]), c.file, become, vars)
+		c.steps(cb, at(tasks, c.file), seq(p["handlers"]), c.file, become, vars)
 		return []*hclwrite.Block{circuit}
 	}
 
@@ -292,7 +292,7 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 		c.factsTail = false
 		for _, later := range segs[i+1:] {
 			for _, t := range later.tasks {
-				c.factsTail = c.factsTail || readsFacts(t)
+				c.factsTail = c.factsTail || readsFacts(t.node)
 			}
 		}
 		if seg.call != nil {
@@ -344,7 +344,7 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 
 // steps converts tasks, read from c.file, and the handlers they notify into
 // a circuit's steps and handlers, inlining import_tasks first.
-func (c *converter) steps(cb *hclwrite.Body, taskNodes, handlerNodes []*yaml.Node, handlerFile string, become bool, vars map[string]string) {
+func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []*yaml.Node, handlerFile string, become bool, vars map[string]string) {
 	file := c.file
 	defer func() { c.file = file }()
 	c.file = handlerFile
@@ -372,7 +372,12 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes, handlerNodes []*yaml.Nod
 	}
 	c.file = file
 
-	tasks := c.flatten(taskNodes, file, []string{file})
+	// Each task flattens from its own file: a role call in an imported file
+	// splits the play, and the tasks around it still come from that file.
+	var tasks []taskAt
+	for _, t := range taskNodes {
+		tasks = append(tasks, c.flatten([]*yaml.Node{t.node}, t.file, t.stack)...)
+	}
 	// Handlers run after every task, so they count as later for all of them.
 	c.factsAfter = map[*yaml.Node]bool{}
 	later := c.factsTail

@@ -1,0 +1,14 @@
+- hosts: box
+  vars:
+    greeting: from the play
+  tasks:
+    - name: Make the directory
+      file:
+        path: /opt/greet
+        state: directory
+        mode: "0755"
+    - import_tasks: calls.yml
+    - name: After the role
+      copy:
+        content: "after\n"
+        dest: /opt/greet/after.txt

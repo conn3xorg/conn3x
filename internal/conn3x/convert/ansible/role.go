@@ -154,7 +154,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
 	r.defaultTasks, r.defaultOf = c.familyDefaults(seq(tasks), vars)
 	r.defaultUsed = map[string]bool{}
-	c.steps(cb, seq(tasks), seq(handlers), handlersFile, false, vars)
+	c.steps(cb, at(seq(tasks), c.file), seq(handlers), handlersFile, false, vars)
 	if r.familyUsed {
 		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
 	}

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -26,7 +27,7 @@ import (
 
 // segment is a run of tasks, or one role call.
 type segment struct {
-	tasks []*yaml.Node
+	tasks []taskAt
 	call  *roleCall
 }
 
@@ -134,36 +135,72 @@ func (call *roleCall) setBecome(n *yaml.Node) string {
 // convert stays among the tasks, and flatten leaves it for review.
 func (c *converter) segments(p map[string]*yaml.Node) []segment {
 	var segs []segment
-	var tasks []*yaml.Node
-	add := func(n *yaml.Node, call *roleCall) {
-		if call == nil {
-			tasks = append(tasks, n)
-			return
-		}
-		if len(tasks) > 0 {
-			segs = append(segs, segment{tasks: tasks})
-			tasks = nil
-		}
-		segs = append(segs, segment{call: call})
-	}
+	var tasks []taskAt
 	for _, key := range []string{"pre_tasks", "roles", "tasks", "post_tasks"} {
-		for _, n := range seq(p[key]) {
-			if key == "roles" {
-				add(n, c.playRole(n))
+		var items []segItem
+		if key == "roles" {
+			for _, n := range seq(p[key]) {
+				items = append(items, segItem{task: taskAt{node: n, file: c.file, stack: []string{c.file}}, call: c.playRole(n)})
+			}
+		} else {
+			items = c.splitCalls(seq(p[key]), c.file, []string{c.file})
+		}
+		for _, it := range items {
+			if it.call == nil {
+				tasks = append(tasks, it.task)
 				continue
 			}
-			mod, args := moduleOf(mapping(n))
-			if mod != "include_role" && mod != "import_role" {
-				add(n, nil)
-				continue
+			if len(tasks) > 0 {
+				segs = append(segs, segment{tasks: tasks})
+				tasks = nil
 			}
-			add(n, c.includeRole(n, mod, args))
+			segs = append(segs, segment{call: it.call})
 		}
 	}
 	if len(tasks) > 0 || len(segs) == 0 {
 		segs = append(segs, segment{tasks: tasks})
 	}
 	return segs
+}
+
+// segItem is a task, or a role call in its place.
+type segItem struct {
+	task taskAt
+	call *roleCall
+}
+
+// splitCalls goes through tasks written in file and finds the role calls
+// among them. An import_tasks whose file, or a file it imports, calls a
+// role is read here, the way flatten reads it, so the call takes its place
+// in the play's order. Any other import is left as it is for flatten, and
+// not counted twice.
+func (c *converter) splitCalls(nodes []*yaml.Node, file string, stack []string) []segItem {
+	var out []segItem
+	for _, n := range nodes {
+		task := taskAt{node: n, file: file, stack: stack}
+		mod, args := moduleOf(mapping(n))
+		switch mod {
+		case "include_role", "import_role":
+			call := c.includeRole(n, mod, args)
+			if call != nil && file != c.file {
+				call.file = file
+			}
+			out = append(out, segItem{task: task, call: call})
+			continue
+		case "import_tasks":
+			before := c.imports
+			if sub, tasks, why := c.importFile(n, args, file, stack); why == "" {
+				items := c.splitCalls(tasks, sub, append(slices.Clone(stack), sub))
+				if slices.ContainsFunc(items, func(it segItem) bool { return it.call != nil }) {
+					out = append(out, items...)
+					continue
+				}
+			}
+			c.imports = before
+		}
+		out = append(out, segItem{task: task})
+	}
+	return out
 }
 
 // playRole reads an entry of a play's roles list.

@@ -15,10 +15,21 @@ import (
 
 // taskAt is a task and the file it came from, relative to the converter's
 // dir. reason is set when it's an include the converter can't inline.
+// stack holds the files being imported to reach it, for flatten.
 type taskAt struct {
 	node   *yaml.Node
 	file   string
 	reason string
+	stack  []string
+}
+
+// at gives each of nodes, written in file, as a task still to flatten.
+func at(nodes []*yaml.Node, file string) []taskAt {
+	out := make([]taskAt, len(nodes))
+	for i, n := range nodes {
+		out[i] = taskAt{node: n, file: file, stack: []string{file}}
+	}
+	return out
 }
 
 // maxImports is how many files one conversion reads through import_tasks.
