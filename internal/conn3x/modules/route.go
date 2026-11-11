@@ -118,16 +118,43 @@ route_rc=$?
 [ "$route_rc" = 0 ] || echo "Conn3x ran this as $route_as, because $route_dir belongs to $route_as" >&2
 if [ "$route_rc" = 0 ] && [ -n "$route_later" ]; then
   route_path=$route_target
-  # The checks by name only keep root from opening something that isn't a
-  # file; what counts is checked on the descriptor. The user can still put
-  # a FIFO there between the look and the open, which would wait for a
-  # writer for ever, so the open has ten seconds.
-  timeout 10 sh -c '
-    { [ -f "$1" ] || [ -d "$1" ]; } && [ ! -L "$1" ] && exec 3<"$1" || exit 125
-    set -- "$2" "$3" $(stat -L -c "%u %h %F" /proc/self/fd/3 2>/dev/null)
-    case "${3:-} ${4:-} ${5:-}" in "$1 1 regular" | "$1 "*" directory") ;; *) exit 125 ;; esac
-    chown -- "$2" /proc/self/fd/3' sh "$route_target" "$route_uid" "${route_owner:-}${route_group:+:$route_group}"
-  case $? in 0) ;; 124 | 125) route_stop "it isn't the file or directory $route_as wrote any more" ;; *) exit 1 ;; esac
+  route_own=${route_owner:-}${route_group:+:$route_group}
+  # What counts is checked on an open descriptor, not on the name. The open
+  # itself mustn't follow a link the user put there since, to a device
+  # whose open has an effect, or wait on a FIFO. sh can't open that way and
+  # dd can: it opens the path as its input, then waits to open its output,
+  # a FIFO of root's own that nobody reads, with the path still open.
+  if route_hold=$(mktemp -d) && mkfifo "$route_hold/w" && dd iflag=nofollow,nonblock if=/dev/null of=/dev/null count=0 2>/dev/null; then
+    dd iflag=nofollow,nonblock if="$route_target" of="$route_hold/w" count=0 </dev/null 2>/dev/null &
+    route_dd=$!
+    route_null=$(stat -L -c %d:%i /dev/null)
+    route_n=0
+    # Until dd has opened the path its input is still /dev/null. A dd that
+    # couldn't open it has gone, and stat fails.
+    while route_fd=$(stat -L -c '%d:%i %u %h %F' "/proc/$route_dd/fd/0" 2>/dev/null) && [ "${route_fd%% *}" = "$route_null" ] && [ "$route_n" -lt 500 ]; do
+      route_n=$((route_n + 1))
+      sleep 0.01
+    done
+    set -- $route_fd
+    case "${1:-$route_null} ${2:-} ${3:-} ${4:-}" in
+      "$route_null "*) route_own_rc=125 ;;
+      *" $route_uid 1 regular" | *" $route_uid "*" directory") chown -- "$route_own" "/proc/$route_dd/fd/0"; route_own_rc=$? ;;
+      *) route_own_rc=125 ;;
+    esac
+    kill "$route_dd" 2>/dev/null
+    wait "$route_dd" 2>/dev/null
+  else
+    # Without such a dd the path is looked at by name first, and the open
+    # has ten seconds, in case a FIFO took its place in between.
+    timeout 10 sh -c '
+      { [ -f "$1" ] || [ -d "$1" ]; } && [ ! -L "$1" ] && exec 3<"$1" || exit 125
+      set -- "$2" "$3" $(stat -L -c "%u %h %F" /proc/self/fd/3 2>/dev/null)
+      case "${3:-} ${4:-} ${5:-}" in "$1 1 regular" | "$1 "*" directory") ;; *) exit 125 ;; esac
+      chown -- "$2" /proc/self/fd/3' sh "$route_target" "$route_uid" "$route_own"
+    route_own_rc=$?
+  fi
+  [ -z "${route_hold:-}" ] || rm -rf -- "$route_hold"
+  case $route_own_rc in 0) ;; 124 | 125) route_stop "it isn't the file or directory $route_as wrote any more" ;; *) exit 1 ;; esac
 fi
 exit "$route_rc"
 `)

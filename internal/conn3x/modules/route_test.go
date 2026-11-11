@@ -152,41 +152,55 @@ func TestGuardWriteGroup(t *testing.T) {
 	}
 }
 
-// Root looks at what the user left by name before it opens it, and the user
-// can swap in a FIFO in between. Opening one would wait for a writer for
-// ever: the step has to come back.
-func TestGuardWriteComesBackFromAFIFO(t *testing.T) {
-	dir := moduletest.RootDir(t)
-	moduletest.Sh(t, dir, "mkdir d; chown nobody d; : > d/f; chown nobody d/f")
-	// The user swaps a file and a FIFO at the path, over and over.
-	swap := exec.Command("runuser", "-u", "nobody", "--", "sh", "-c", "cd "+dir+"/d && while :; do mkfifo p; mv -f p f; : > r; mv -f r f; done")
-	if err := swap.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = swap.Process.Kill(); _, _ = swap.Process.Wait() })
-	f := dir + "/d/f"
-	guarded := modules.GuardWrite("true", modules.Write{Group: "root", Path: f}, modules.Parent(f))
-	for start := time.Now(); time.Since(start) < 30*time.Second; {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		began := time.Now()
-		res, err := moduletest.Local{}.Run(ctx, guarded, nil)
-		late := ctx.Err() != nil
-		cancel()
-		if late {
-			t.Fatal("root is still waiting on the FIFO after a minute")
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Only an open that had to be given up takes this long.
-		if time.Since(began) > 5*time.Second {
-			if res.ExitCode != 125 {
-				t.Fatalf("root gave up on the FIFO with exit %d: %s", res.ExitCode, res.Stderr)
+// Root sets the group on what the user wrote through an open descriptor,
+// and the user can swap something else in at the path at any moment. The
+// open mustn't wait on a FIFO, or follow a link to one: before, the first
+// hung the step for ever, and the second is how a link to a device would
+// be opened.
+func TestGuardWriteNeverWaitsOnWhatWasSwappedIn(t *testing.T) {
+	for name, other := range map[string]string{
+		"a FIFO":           "mkfifo p",
+		"a link to a FIFO": "ln -s ../q p",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := moduletest.RootDir(t)
+			moduletest.Sh(t, dir, "mkfifo q; mkdir d; chown nobody d; : > d/f; chown nobody d/f")
+			// The user swaps their file and the other thing at the path, over and over.
+			swap := exec.Command("runuser", "-u", "nobody", "--", "sh", "-c", "cd "+dir+"/d && while :; do "+other+"; mv -f p f; : > r; mv -f r f; done")
+			if err := swap.Start(); err != nil {
+				t.Fatal(err)
 			}
-			return
-		}
+			t.Cleanup(func() { _ = swap.Process.Kill(); _, _ = swap.Process.Wait() })
+			f := dir + "/d/f"
+			guarded := modules.GuardWrite("true", modules.Write{Group: "root", Path: f}, modules.Parent(f))
+			refused := 0
+			for start := time.Now(); time.Since(start) < 15*time.Second; {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+				began := time.Now()
+				res, err := moduletest.Local{}.Run(ctx, guarded, nil)
+				cancel()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if took := time.Since(began); took > 5*time.Second {
+					t.Fatalf("root waited %s on what was swapped in", took.Round(time.Second))
+				}
+				switch res.ExitCode {
+				case 0:
+				case 125:
+					refused++
+				default:
+					t.Fatalf("exit %d: %s", res.ExitCode, res.Stderr)
+				}
+			}
+			if refused == 0 {
+				t.Error("the swap was never refused, so it never landed: nothing was tested")
+			}
+			if got := moduletest.Sh(t, dir, "stat -c %G q"); got != "root" {
+				t.Errorf("the FIFO outside the directory now has the group %s", got)
+			}
+		})
 	}
-	t.Log("the swap never landed between root's look and its open: nothing was tested")
 }
 
 // A directory of root's that one service account's group can write to is
