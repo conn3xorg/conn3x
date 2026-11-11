@@ -125,6 +125,19 @@ jobs:
             go test -run Conn3x ./internal/tofu/
             go test -run TestTest_Idempotent ./internal/command/
           fi
+      - name: Test as root
+        run: |
+          # What root does on a path another account can write is tested
+          # only as root: without it these packages skip those tests.
+          for p in agent agent/server modules modules/fetch modules/file modules/fsobj modules/pip provider; do
+            echo "::group::$p"
+            (cd "internal/conn3x/$p" && go test -c -o /tmp/root.test . && sudo env "PATH=$PATH" /tmp/root.test -test.count=1 -test.v) | tee /tmp/root.out
+            echo "::endgroup::"
+            if grep -q "needs root" /tmp/root.out; then
+              echo "$p skipped a test that needs root" >&2
+              exit 1
+            fi
+          done
 
   build:
     runs-on: ubuntu-24.04
