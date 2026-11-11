@@ -59,4 +59,21 @@ if out=$(run 1.1.0 2>&1); then fail "a release older than the fix was accepted";
 echo "$out" | grep -q "older than v1.2.0" || fail "no reason given: $out"
 if run 3.0.0 >/dev/null 2>&1; then fail "a version that was never released was accepted"; fi
 
+# A fix written as "v1.1.0" or ">= 1.1.0" is read as 1.1.0.
+for v in v1.1.0 ">= 1.1.0"; do
+  advisory "$v"
+  out=$(run) || fail "patched version '$v' failed: $out"
+  echo "$out" | grep -qx "stable: v1.1.0" || fail "patched version '$v': expected v1.1.0: $out"
+done
+
+# A range can't be read as one version: say so, don't quietly stop moving.
+advisory ">= 1.1.0, < 1.2.0"
+if out=$(run 2>&1); then fail "a range as the patched version was accepted: $out"; fi
+echo "$out" | grep -q "isn't a plain version: <1.2.0" || fail "no reason given: $out"
+
+# An advisory with no fix yet doesn't hold stable back.
+jq -n '[{vulnerabilities: [{patched_versions: null}]}]' >"$work/advisories"
+out=$(run) || fail "an unfixed advisory failed the run: $out"
+echo "$out" | grep -qx "stable: v1.1.0" || fail "an unfixed advisory: expected v1.1.0: $out"
+
 echo "PASS: stable-channel_test.sh"

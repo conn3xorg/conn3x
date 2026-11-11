@@ -31,9 +31,17 @@ releases=$(gh api --paginate "repos/$repo/releases" \
   --jq '.[] | select(.draft or .prerelease | not) | [.tag_name[1:], .published_at] | @tsv')
 
 # The newest version any published advisory names as its fix. Releases are
-# one line, so everything from there on has every fix.
-floor=$(gh api --paginate "repos/$repo/security-advisories?state=published" \
-  --jq '.[].vulnerabilities[].patched_versions // empty' | tr -d ' ' | tr ',' '\n' | sort -V | tail -1)
+# one line, so everything from there on has every fix. An advisory with no
+# fix yet names no release to wait for, and doesn't hold stable back.
+fixes=$(gh api --paginate "repos/$repo/security-advisories?state=published" \
+  --jq '.[].vulnerabilities[].patched_versions // empty' | tr -d ' ' | tr ',' '\n' | sed -E 's/^(>=)?v?//')
+# Anything but a plain version would sort above every release and stop
+# stable for good, without a word.
+if bad=$(printf '%s\n' "$fixes" | grep -Evx '([0-9]+(\.[0-9]+)*)?'); then
+  echo "an advisory's patched version isn't a plain version: $bad" >&2
+  exit 1
+fi
+floor=$(printf '%s\n' "$fixes" | sort -V | tail -1)
 floor=${floor:-0}
 
 if [ $# -gt 0 ]; then

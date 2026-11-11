@@ -119,12 +119,15 @@ route_rc=$?
 if [ "$route_rc" = 0 ] && [ -n "$route_later" ]; then
   route_path=$route_target
   # The checks by name only keep root from opening something that isn't a
-  # file; what counts is checked on the descriptor.
-  { [ -f "$route_target" ] || [ -d "$route_target" ]; } && [ ! -L "$route_target" ] && exec 3<"$route_target" || route_stop "it isn't the file or directory $route_as wrote any more"
-  set -- $(stat -L -c '%u %h %F' /proc/self/fd/3 2>/dev/null)
-  case "${1:-} ${2:-} ${3:-}" in "$route_uid 1 regular" | "$route_uid "*" directory") ;; *) route_stop "it isn't the file or directory $route_as wrote any more" ;; esac
-  chown -- "${route_owner:-}${route_group:+:$route_group}" /proc/self/fd/3 || exit 1
-  exec 3<&-
+  # file; what counts is checked on the descriptor. The user can still put
+  # a FIFO there between the look and the open, which would wait for a
+  # writer for ever, so the open has ten seconds.
+  timeout 10 sh -c '
+    { [ -f "$1" ] || [ -d "$1" ]; } && [ ! -L "$1" ] && exec 3<"$1" || exit 125
+    set -- "$2" "$3" $(stat -L -c "%u %h %F" /proc/self/fd/3 2>/dev/null)
+    case "${3:-} ${4:-} ${5:-}" in "$1 1 regular" | "$1 "*" directory") ;; *) exit 125 ;; esac
+    chown -- "$2" /proc/self/fd/3' sh "$route_target" "$route_uid" "${route_owner:-}${route_group:+:$route_group}"
+  case $? in 0) ;; 124 | 125) route_stop "it isn't the file or directory $route_as wrote any more" ;; *) exit 1 ;; esac
 fi
 exit "$route_rc"
 `)
