@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -94,9 +95,16 @@ func pgRoleSchema() providers.Schema {
 				Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
 				Description: "Password, kept out of plan and state: state records only password_hmac. Conn3x hashes it into a SCRAM-SHA-256 verifier before it leaves this machine, so the plain text never reaches the host or its logs. It's set when the role is made and whenever this value changes. Printable ASCII only. A password changed on the server isn't detected.",
 			},
-			"password_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of password_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null without password_wo."},
-			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the role, \"delete\" drops it, which PostgreSQL refuses while it owns anything."},
-			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the role matched at the last refresh."},
+			"password_hmac":   {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of password_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null without password_wo."},
+			"database_grants": {Type: cty.Map(cty.Set(cty.String)), Optional: true, Description: "Exactly the role's database privileges, by database, from CONNECT, CREATE and TEMPORARY, such as { app = [\"CONNECT\"] }. A database not listed loses the role's privileges on it. Grants to PUBLIC aren't touched. Unset leaves them as they are."},
+			"schema_grants":   {Type: cty.Map(cty.Set(cty.String)), Optional: true, Description: "Exactly the role's privileges on schemas, from USAGE and CREATE, keyed database.schema, such as { \"app.public\" = [\"USAGE\"] }. With table_grants, whole-list in the databases either names: a schema there not listed loses the role's privileges. Other databases aren't read."},
+			"table_grants":    {Type: cty.Map(cty.Set(cty.String)), Optional: true, Description: "Exactly the role's privileges on every table in a schema, keyed database.schema, from SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER, for the tables there now and, by default privileges, those tables_created_by makes later."},
+			"tables_created_by": {
+				Type: cty.Map(cty.String), Optional: true, Computed: true,
+				Description: "Whose new tables get table_grants' privileges by default, keyed database.schema. Unset, it's the schema's owner when the step first grants there, and the plan shows it.",
+			},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the role, \"delete\" drops it, which PostgreSQL refuses while it owns anything."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the role matched at the last refresh."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -115,6 +123,54 @@ func pgRoleFrom(v cty.Value) postgresql.Role {
 		slices.Sort(r.Attributes)
 	}
 	return r
+}
+
+// stringSetMap reads a map of sets of strings; nil when it's null.
+func stringSetMap(v cty.Value) map[string][]string {
+	if !known(v) {
+		return nil
+	}
+	out := map[string][]string{}
+	for k, set := range v.AsValueMap() {
+		out[k] = []string{}
+		if known(set) {
+			for _, e := range set.AsValueSlice() {
+				out[k] = append(out[k], e.AsString())
+			}
+		}
+	}
+	return out
+}
+
+// pgGrantsFrom reads the grants a role step lists. schema_grants and
+// table_grants together are the whole list in the databases they name,
+// so either set makes it whole-list there; tables_created_by comes from
+// state, where apply resolved it, or the configuration.
+func pgGrantsFrom(v cty.Value) postgresql.Grants {
+	g := postgresql.Grants{Databases: stringSetMap(v.GetAttr("database_grants"))}
+	schemas, tables := stringSetMap(v.GetAttr("schema_grants")), stringSetMap(v.GetAttr("table_grants"))
+	if schemas == nil && tables == nil {
+		return g
+	}
+	// An element apply hasn't resolved yet stays empty: the schema's owner.
+	creators := map[string]string{}
+	if c := v.GetAttr("tables_created_by"); c.IsKnown() && !c.IsNull() {
+		for k, e := range c.AsValueMap() {
+			if known(e) {
+				creators[k] = e.AsString()
+			}
+		}
+	}
+	g.Schemas = map[string]postgresql.SchemaGrant{}
+	for k, ps := range schemas {
+		g.Schemas[k] = postgresql.SchemaGrant{Schema: ps, Tables: tables[k], CreatedBy: creators[k]}
+	}
+	for k, ps := range tables {
+		if _, ok := g.Schemas[k]; !ok {
+			g.Schemas[k] = postgresql.SchemaGrant{Tables: ps, CreatedBy: creators[k]}
+		}
+	}
+	return g
 }
 
 func validatePgRole(cfg cty.Value) tfdiags.Diagnostics {
@@ -140,6 +196,20 @@ func validatePgRole(cfg cty.Value) tfdiags.Diagnostics {
 	if err := pgRoleFrom(cfg).Validate(); err != nil {
 		diags = diags.Append(attrError("name", err.Error()))
 	}
+	grants := []string{"database_grants", "schema_grants", "table_grants", "tables_created_by"}
+	if slices.IndexFunc(grants, func(a string) bool { return !cfg.GetAttr(a).IsWhollyKnown() }) < 0 {
+		if err := pgGrantsFrom(cfg).Validate(); err != nil {
+			diags = diags.Append(attrError("database_grants", err.Error()))
+		}
+		if c := cfg.GetAttr("tables_created_by"); !c.IsNull() {
+			tables := cfg.GetAttr("table_grants")
+			for k := range c.AsValueMap() {
+				if tables.IsNull() || !tables.Type().IsMapType() || !tables.HasIndex(cty.StringVal(k)).True() {
+					diags = diags.Append(attrError("tables_created_by", fmt.Sprintf("tables_created_by names %s, which table_grants doesn't list", k)))
+				}
+			}
+		}
+	}
 	if r := cfg.GetAttr("on_remove"); known(r) && r.AsString() == onRemoveDelete && stringOr(cfg.GetAttr("name"), "") == postgresql.Superuser {
 		diags = diags.Append(attrError("on_remove", "postgres is the superuser Conn3x runs psql as, so it can't be dropped"))
 	}
@@ -148,18 +218,72 @@ func validatePgRole(cfg cty.Value) tfdiags.Diagnostics {
 
 func planPgRole(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	// Role names are case-sensitive, so they're compared exactly.
-	return planPassword(req, "postgresql_role", []string{"login", "attributes", "password_hmac"}, planSynced)
+	resp := planPassword(req, "postgresql_role", []string{"login", "attributes", "password_hmac", "database_grants", "schema_grants", "table_grants", "tables_created_by"}, planSynced)
+	if resp.PlannedState.IsNull() || resp.Diagnostics.HasErrors() {
+		return resp
+	}
+	vals := resp.PlannedState.AsValueMap()
+	vals["tables_created_by"] = planCreators(req.Config.GetAttr("tables_created_by"), vals["table_grants"], req.PriorState)
+	resp.PlannedState = cty.ObjectVal(vals)
+	return resp
+}
+
+// planCreators is tables_created_by as planned: for each schema with table
+// grants, the configured role, or the one apply resolved before, or
+// unknown until apply reads the schema's owner.
+func planCreators(cfg, tables, prior cty.Value) cty.Value {
+	if !tables.IsWhollyKnown() || !cfg.IsWhollyKnown() {
+		return cty.UnknownVal(cty.Map(cty.String))
+	}
+	if tables.IsNull() || tables.LengthInt() == 0 {
+		return cty.NullVal(cty.Map(cty.String))
+	}
+	out := map[string]cty.Value{}
+	for k := range tables.AsValueMap() {
+		key := cty.StringVal(k)
+		switch {
+		case !cfg.IsNull() && cfg.HasIndex(key).True():
+			out[k] = cfg.Index(key)
+		case !prior.IsNull():
+			if p := prior.GetAttr("tables_created_by"); p.IsWhollyKnown() && !p.IsNull() && p.HasIndex(key).True() {
+				out[k] = p.Index(key)
+				continue
+			}
+			out[k] = cty.UnknownVal(cty.String)
+		default:
+			out[k] = cty.UnknownVal(cty.String)
+		}
+	}
+	return cty.MapVal(out)
 }
 
 func readPgRole(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
-	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+	var extra []string
+	resp := readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
 		r := pgRoleFrom(prior)
 		s, err := postgresql.ReadRole(ctx, h, r.Name)
 		if err != nil {
 			return cty.NilVal, fmt.Errorf("postgresql_role %s: %w", r.Name, err)
 		}
-		return withSync(prior, r.Matches(s)), nil
+		ok := r.Matches(s)
+		if g := pgGrantsFrom(prior); ok && s.Exists && (g.Databases != nil || g.Schemas != nil) {
+			gs, err := postgresql.ReadGrants(ctx, h, r.Name, g.SchemaDatabases())
+			if err != nil {
+				return cty.NilVal, fmt.Errorf("postgresql_role %s: %w", r.Name, err)
+			}
+			g = g.WithCreators(gs)
+			if extra, err = g.Extra(gs); err != nil {
+				return cty.NilVal, fmt.Errorf("postgresql_role %s: %w", r.Name, err)
+			}
+			ok = g.Matches(gs)
+		}
+		return withSync(prior, ok), nil
 	})
+	if len(extra) > 0 && !resp.Diagnostics.HasErrors() {
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(fmt.Sprintf(
+			"role %s has privileges the postgresql_role step doesn't list, which apply revokes: %s", req.PriorState.GetAttr("name").AsString(), strings.Join(extra, "; "))))
+	}
+	return resp
 }
 
 func applyPgRole(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
@@ -206,6 +330,20 @@ func applyPgRole(ctx context.Context, req providers.ApplyResourceChangeRequest) 
 	if password != nil || !r.Matches(s) {
 		if err := postgresql.ApplyRole(ctx, h, r, password); err != nil {
 			return fail(fmt.Errorf("%s: %w", r.Name, err))
+		}
+	}
+	if g := pgGrantsFrom(planned); g.Databases != nil || g.Schemas != nil {
+		g, err := postgresql.ApplyGrants(ctx, h, r.Name, g)
+		if err != nil {
+			return fail(fmt.Errorf("%s: %w", r.Name, err))
+		}
+		// Record whose new tables the defaults are for, as resolved.
+		if t := planned.GetAttr("table_grants"); !t.IsNull() && t.LengthInt() > 0 {
+			creators := map[string]cty.Value{}
+			for k := range t.AsValueMap() {
+				creators[k] = cty.StringVal(g.Schemas[k].CreatedBy)
+			}
+			vals["tables_created_by"] = cty.MapVal(creators)
 		}
 	}
 	vals["in_sync"] = cty.True

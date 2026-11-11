@@ -338,54 +338,55 @@ func one(module string, attrs []attr, notes ...string) ([]step, string) {
 
 // modules maps Ansible module names to their translations.
 var modules = map[string]func(*input) ([]step, string){
-	"copy":            copyModule,
-	"file":            fileModule,
-	"lineinfile":      lineModule,
-	"blockinfile":     blockModule,
-	"ini_file":        iniFileModule,
-	"replace":         replaceModule,
-	"template":        templateModule,
-	"package":         packageModule,
-	"dnf":             packageModule,
-	"yum":             packageModule,
-	"apt":             packageModule,
-	"pip":             pipModule,
-	"service":         serviceModule,
-	"systemd":         serviceModule,
-	"systemd_service": serviceModule,
-	"user":            userModule,
-	"group":           groupModule,
-	"authorized_key":  authorizedKeyModule,
-	"known_hosts":     knownHostsModule,
-	"pam_limits":      pamLimitsModule,
-	"debug":           debugModule,
-	"ping":            pingModule,
-	"setup":           factsModule("setup", "gather_subset", "gather_timeout", "filter", "fact_path"),
-	"service_facts":   factsModule("service_facts"),
-	"package_facts":   factsModule("package_facts", "manager", "strategy"),
-	"cron":            cronModule,
-	"sysctl":          sysctlModule,
-	"postgresql_db":   pgDatabaseModule,
-	"postgresql_user": pgRoleModule,
-	"mysql_db":        mysqlDatabaseModule,
-	"mysql_user":      mysqlUserModule,
-	"hostname":        nameOnly("hostname"),
-	"timezone":        nameOnly("timezone"),
-	"firewalld":       firewalldModule,
-	"ufw":             ufwModule,
-	"seboolean":       sebooleanModule,
-	"sefcontext":      sefcontextModule,
-	"get_url":         getURLModule,
-	"unarchive":       unarchiveModule,
-	"git":             gitModule,
-	"mount":           mountModule,
-	"command":         commandModule,
-	"shell":           commandModule,
-	"reboot":          rebootModule,
-	"wait_for":        waitForModule,
-	"apt_repository":  aptRepositoryModule,
-	"yum_repository":  yumRepositoryModule,
-	"locale_gen":      localeGenModule,
+	"copy":             copyModule,
+	"file":             fileModule,
+	"lineinfile":       lineModule,
+	"blockinfile":      blockModule,
+	"ini_file":         iniFileModule,
+	"replace":          replaceModule,
+	"template":         templateModule,
+	"package":          packageModule,
+	"dnf":              packageModule,
+	"yum":              packageModule,
+	"apt":              packageModule,
+	"pip":              pipModule,
+	"service":          serviceModule,
+	"systemd":          serviceModule,
+	"systemd_service":  serviceModule,
+	"user":             userModule,
+	"group":            groupModule,
+	"authorized_key":   authorizedKeyModule,
+	"known_hosts":      knownHostsModule,
+	"pam_limits":       pamLimitsModule,
+	"debug":            debugModule,
+	"ping":             pingModule,
+	"setup":            factsModule("setup", "gather_subset", "gather_timeout", "filter", "fact_path"),
+	"service_facts":    factsModule("service_facts"),
+	"package_facts":    factsModule("package_facts", "manager", "strategy"),
+	"cron":             cronModule,
+	"sysctl":           sysctlModule,
+	"postgresql_db":    pgDatabaseModule,
+	"postgresql_user":  pgRoleModule,
+	"postgresql_privs": pgPrivsModule,
+	"mysql_db":         mysqlDatabaseModule,
+	"mysql_user":       mysqlUserModule,
+	"hostname":         nameOnly("hostname"),
+	"timezone":         nameOnly("timezone"),
+	"firewalld":        firewalldModule,
+	"ufw":              ufwModule,
+	"seboolean":        sebooleanModule,
+	"sefcontext":       sefcontextModule,
+	"get_url":          getURLModule,
+	"unarchive":        unarchiveModule,
+	"git":              gitModule,
+	"mount":            mountModule,
+	"command":          commandModule,
+	"shell":            commandModule,
+	"reboot":           rebootModule,
+	"wait_for":         waitForModule,
+	"apt_repository":   aptRepositoryModule,
+	"yum_repository":   yumRepositoryModule,
+	"locale_gen":       localeGenModule,
 
 	"win_acl":               winACLModule,
 	"win_acl_inheritance":   winACLInheritanceModule,
@@ -770,10 +771,20 @@ func pgRoleModule(in *input) ([]step, string) {
 	if in.bool("no_password_changes", false) {
 		return nil, "sets no_password_changes, so Ansible sets the password only on a new role; postgresql_role sets it whenever password_wo changes"
 	}
-	if k := in.pgUnmodelled("db", "priv", "expires", "conn_limit", "comment", "groups", "fail_on_user", "trust_input"); k != "" {
+	if k := in.pgUnmodelled("expires", "conn_limit", "comment", "groups", "fail_on_user", "trust_input"); k != "" {
 		return nil, "sets " + k + ", which postgresql_role doesn't offer yet"
 	}
 	attrs := []attr{s("name", in.str("name", "user"))}
+	var notes []string
+	if in.has("priv") {
+		grants, why := pgPriv(in.str("db"), in.str("priv"))
+		if why != "" {
+			return nil, why
+		}
+		attrs = append(attrs, attr{key: "database_grants", val: grants})
+		notes = append(notes, "database_grants is the role's whole list: privileges it has on other databases are revoked, where Ansible only added these.")
+	}
+	in.ignore("db")
 	if in.has("role_attr_flags") {
 		login, set, why := pgFlags(in.str("role_attr_flags"))
 		if why != "" {
@@ -794,13 +805,53 @@ func pgRoleModule(in *input) ([]step, string) {
 			attrs = append(attrs, attr{key: "attributes", val: v})
 		}
 	}
-	var notes []string
 	if in.has("password") {
 		notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here.")
 	}
 	// Never read, so a password can't end up in the output.
 	in.ignore("password", "encrypted", "no_password_changes")
 	return one("postgresql_role", attrs, notes...)
+}
+
+// pgPriv reads postgresql_user's priv, such as "CONNECT/TEMP", on db as
+// database_grants. A table:PRIV element is for one table, which
+// postgresql_role doesn't grant on, and stays for a person.
+func pgPriv(db, priv string) (cty.Value, string) {
+	if db == "" {
+		return cty.NilVal, "sets priv without db, which Ansible needs to know where to grant"
+	}
+	var privs []cty.Value
+	for _, p := range strings.Split(strings.ToUpper(priv), "/") {
+		if strings.Contains(p, ":") {
+			return cty.NilVal, "grants privileges on a single table with priv, which postgresql_role doesn't manage; table_grants covers every table in a schema"
+		}
+		for _, one := range strings.Split(p, ",") {
+			switch one = strings.TrimSpace(one); one {
+			case "ALL", "ALL PRIVILEGES":
+				privs = append(privs, cty.StringVal("CONNECT"), cty.StringVal("CREATE"), cty.StringVal("TEMPORARY"))
+			case "TEMP", "TEMPORARY":
+				privs = append(privs, cty.StringVal("TEMPORARY"))
+			case "CONNECT", "CREATE":
+				privs = append(privs, cty.StringVal(one))
+			case "":
+			default:
+				return cty.NilVal, fmt.Sprintf("grants %s with priv, which isn't a database privilege postgresql_role grants", one)
+			}
+		}
+	}
+	if len(privs) == 0 {
+		return cty.NilVal, "sets an empty priv"
+	}
+	return cty.MapVal(map[string]cty.Value{db: cty.ListVal(privs)}), ""
+}
+
+// pgPrivsModule leaves community.postgresql.postgresql_privs for a person:
+// its grants belong on the role's own step, which owns the whole list.
+func pgPrivsModule(in *input) ([]step, string) {
+	if in.has("grant_option") {
+		return nil, "sets grant_option, which Conn3x doesn't manage yet"
+	}
+	return nil, "grants privileges in a task of its own; Conn3x keeps a role's grants on its postgresql_role step, as database_grants, schema_grants and table_grants, so move them there"
 }
 
 // pgUnmodelled names the first of keys the task sets, or a login_ or
