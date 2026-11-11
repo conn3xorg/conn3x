@@ -5,8 +5,11 @@ package fsobj
 
 import (
 	"context"
+	"encoding/binary"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/moduletest"
 )
@@ -50,5 +53,34 @@ touch nobody/mine/f nobody/roots; chown nobody nobody/mine/f; chmod 644 nobody/m
 	}
 	if got := moduletest.Sh(t, dir, "stat -c %a nobody/mine/f nobody/roots"); got != "640\n644" {
 		t.Errorf("modes:\n%s", got)
+	}
+}
+
+// A directory of root's with an ACL is refused as root's chmod walk goes
+// in, and the error says it's the ACL.
+func TestApplyTreeModeRefusesAnACL(t *testing.T) {
+	dir := moduletest.RootDir(t)
+	moduletest.Sh(t, dir, `mkdir -p -m 0755 app/conf; touch app/conf/x; chmod 0644 app/conf/x`)
+	// What setfacl -m u:nobody:rwx writes, set directly since the test
+	// images have no setfacl: version 2, then tag, permissions and id for
+	// the owner, nobody, the group, the mask and others.
+	acl := binary.LittleEndian.AppendUint32(nil, 2)
+	for _, e := range [][3]uint32{{0x01, 7, ^uint32(0)}, {0x02, 7, 65534}, {0x04, 5, ^uint32(0)}, {0x10, 7, ^uint32(0)}, {0x20, 5, ^uint32(0)}} {
+		acl = binary.LittleEndian.AppendUint16(acl, uint16(e[0]))
+		acl = binary.LittleEndian.AppendUint16(acl, uint16(e[1]))
+		acl = binary.LittleEndian.AppendUint32(acl, e[2])
+	}
+	if err := unix.Setxattr(dir+"/app/conf", "system.posix_acl_access", acl, 0); err != nil {
+		t.Skipf("can't set an ACL here: %v", err)
+	}
+	if got := moduletest.Sh(t, dir, "ls -ld app/conf | cut -c1-11"); got != "drwxrwxr-x+" {
+		t.Fatalf("the ACL didn't take: %s", got)
+	}
+	err := ApplyTree(context.Background(), moduletest.Local{}, Directory{Path: dir + "/app", Mode: "o=", Recurse: true})
+	if err == nil || !strings.Contains(err.Error(), "app/conf as root: it has an ACL") {
+		t.Errorf("root changed modes in a directory with an ACL: %v", err)
+	}
+	if got := moduletest.Sh(t, dir, "stat -c %a app/conf/x"); got != "644" {
+		t.Errorf("x is now %s", got)
 	}
 }

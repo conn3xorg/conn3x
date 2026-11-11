@@ -137,6 +137,10 @@ func normalizeMode(m string) string {
 // follows a link that might have taken a name's place since find looked.
 const treeBatch = `cmd=$1 arg=$2; shift 2
 if [ "$cmd" = chmod ] && [ "$(id -u)" = 0 ]; then
+  # The mode bits don't show who a POSIX ACL names, which can let someone
+  # else write here too; ls marks one with a + after the mode, as route_acl
+  # in route.go reads it.
+  case $(ls -ld . 2>/dev/null) in ??????????+*) echo "refusing to change modes in $(pwd) as root: it has an ACL, which may let someone else change what's in it" >&2; exit 1 ;; esac
   s=$(stat -c '%u %a' .)
   m=$((0${s#* }))
   [ "${s%% *}" = 0 ] && [ $((m & 022)) -eq 0 ] || { echo "refusing to change modes in $(pwd) as root: someone else can change what's in it" >&2; exit 1; }

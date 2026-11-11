@@ -89,8 +89,8 @@ With `recurse = true`, `owner`, `group` and `mode` go to everything under the di
 - **Files with another hard link:** a file with more than one link that isn't already the new owner's is left as it is, since its other link could be anywhere, such as `/etc/shadow`. The warning counts them.
 
 **Who does the walk.** Root does only what it must:
-- **Owner:** only root can give files away. It does so with `chown -h`, from inside each directory, so a name swapped for a link on the way is never followed. Before that it checks `fs.protected_hardlinks`, and refuses if it's off. With it off, a user could hard-link a file of root's into the tree and have it handed to them.
-- **Mode:** `chmod` always follows a link, so it runs as the user the tree then belongs to, and the kernel stops it at anything that isn't theirs. When that's root, `chmod` only runs in directories nobody else can change, and the step stops with an error naming any other.
+- **Owner:** only root can give files away. It does so with `chown -h`, from inside each directory, so a name swapped for a link on the way is never followed. That holds even in a directory others can write to, through its mode or an ACL: a link swapped in gets a new owner itself, and what it points to doesn't. Before that it checks `fs.protected_hardlinks`, and refuses if it's off. With it off, a user could hard-link a file of root's into the tree and have it handed to them.
+- **Mode:** `chmod` always follows a link, so it runs as the user the tree then belongs to, and the kernel stops it at anything that isn't theirs. When that's root, `chmod` only runs in directories nobody else can change: root's, with no group or other write bit, and no ACL, since an ACL can let a user write there without showing in the mode. The step stops with an error naming any other directory.
 - **Group:** without an `owner`, and with a `group` the owner is in, the whole walk runs as the owner, and root does nothing under the directory at all.
 
 ## Removal
