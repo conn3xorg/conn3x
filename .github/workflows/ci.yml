@@ -130,13 +130,23 @@ jobs:
         shell: bash
         run: |
           # What root does on a path another account can write is tested
-          # only as root: without it these packages skip those tests.
-          for p in agent agent/server modules modules/fetch modules/file modules/fsobj modules/pip provider; do
+          # only as root: without it these packages skip those tests. The
+          # packages are the ones with a test that asks for root.
+          pkgs=$(grep -rlE 'moduletest\.RootDir|needs root' --include='*_test.go' internal/conn3x | xargs -n1 dirname | sort -u)
+          [ -n "$pkgs" ] || { echo "no package has a test that needs root" >&2; exit 1; }
+          for p in $pkgs; do
             echo "::group::$p"
-            (cd "internal/conn3x/$p" && go test -c -o /tmp/root.test . && sudo env "PATH=$PATH" /tmp/root.test -test.count=1 -test.v) | tee /tmp/root.out
+            # No binary is written for a package without tests: don't run the last one again.
+            rm -f /tmp/root.test
+            (cd "$p" && go test -c -o /tmp/root.test . && sudo env "PATH=$PATH" /tmp/root.test -test.count=1 -test.v) | tee /tmp/root.out
             echo "::endgroup::"
-            if grep -q "needs root" /tmp/root.out; then
-              echo "$p skipped a test that needs root" >&2
+            # A skipped test that printed "needs root", not any line with those words.
+            skipped=$(go tool test2json </tmp/root.out | jq -rs '
+              ([.[] | select(.Action == "skip") | .Test]) as $skips
+              | [.[] | select(.Action == "output" and (.Output | test("needs root"))) | .Test | select(. as $t | $skips | index($t))]
+              | unique | .[]')
+            if [ -n "$skipped" ]; then
+              echo "$p skipped tests that need root: $skipped" >&2
               exit 1
             fi
           done
