@@ -126,6 +126,8 @@ jobs:
             go test -run TestTest_Idempotent ./internal/command/
           fi
       - name: Test as root
+        # bash, for pipefail: a failed test mustn't hide behind tee.
+        shell: bash
         run: |
           # What root does on a path another account can write is tested
           # only as root: without it these packages skip those tests.
