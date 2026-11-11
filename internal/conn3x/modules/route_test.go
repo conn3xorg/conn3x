@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/moduletest"
@@ -148,6 +149,43 @@ func TestGuardWriteGroup(t *testing.T) {
 	if _, code, stderr := run("true", modules.Write{Owner: "root"}, f); code != 125 || !strings.Contains(stderr, "can't give a file to root") {
 		t.Fatalf("owner root in nobody's directory, exit %d: %s", code, stderr)
 	}
+}
+
+// Root looks at what the user left by name before it opens it, and the user
+// can swap in a FIFO in between. Opening one would wait for a writer for
+// ever: the step has to come back.
+func TestGuardWriteComesBackFromAFIFO(t *testing.T) {
+	dir := moduletest.RootDir(t)
+	moduletest.Sh(t, dir, "mkdir d; chown nobody d; : > d/f; chown nobody d/f")
+	// The user swaps a file and a FIFO at the path, over and over.
+	swap := exec.Command("runuser", "-u", "nobody", "--", "sh", "-c", "cd "+dir+"/d && while :; do mkfifo p; mv -f p f; : > r; mv -f r f; done")
+	if err := swap.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = swap.Process.Kill(); _, _ = swap.Process.Wait() })
+	f := dir + "/d/f"
+	guarded := modules.GuardWrite("true", modules.Write{Group: "root", Path: f}, modules.Parent(f))
+	for start := time.Now(); time.Since(start) < 30*time.Second; {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		began := time.Now()
+		res, err := moduletest.Local{}.Run(ctx, guarded, nil)
+		late := ctx.Err() != nil
+		cancel()
+		if late {
+			t.Fatal("root is still waiting on the FIFO after a minute")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Only an open that had to be given up takes this long.
+		if time.Since(began) > 5*time.Second {
+			if res.ExitCode != 125 {
+				t.Fatalf("root gave up on the FIFO with exit %d: %s", res.ExitCode, res.Stderr)
+			}
+			return
+		}
+	}
+	t.Log("the swap never landed between root's look and its open: nothing was tested")
 }
 
 // A directory of root's that one service account's group can write to is
