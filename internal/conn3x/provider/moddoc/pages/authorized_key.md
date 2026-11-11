@@ -74,6 +74,8 @@ step "old_laptop" {
 - **The plan:** every plan reads the file, and the step's `unlisted` holds each key it would remove, by type and SHA-256 fingerprint. The plan shows them going, and a warning names them with their comments. The comments aren't kept in state, since they're often email addresses.
 - **Changing the list:** adding or removing a key is an update, not a replacement, so the step never removes the old keys first.
 - **The key Conn3x logs in with:** if `user` is the account Conn3x logs in as, and the key that logged it in isn't listed, the apply is refused, because the next run couldn't log in.
+  - **Options:** the check compares keys, not their options. A listed login key with a `from=` that leaves out the address Conn3x connects from still locks it out, as it would without `exclusive`.
+  - **Certificates:** if Conn3x logs in with an SSH certificate, an exclusive step for that account is refused. `sshd` trusts a certificate through its CA, not through a line for the key, so there's nothing in the list to check it against. Log in as another account to make this one's keys exclusive.
 - **Two steps for one user:** a circuit can't have an exclusive step and another `authorized_key` step for the same `user`, or an exclusive step with `for_each`, since each would remove the other's keys on every apply. That's checked when `user` is written out, such as `"deploy"`. Two steps whose `user` is computed, from a variable or `each.value`, aren't checked, so keep each user's keys in one step.
 - **Not with `state = "absent"`.**
 

@@ -194,6 +194,11 @@ func keepsLogin(h *hostConn, v cty.Value, ids []string) error {
 	if k == nil {
 		return fmt.Errorf("Conn3x logs in as %s, and can't tell which key it used, so it won't make that account's keys exclusive", cfg.User)
 	}
+	if _, ok := k.(*gossh.Certificate); ok {
+		// sshd takes a certificate through its CA, not an authorized_keys
+		// line for the key, so no list could be checked against it.
+		return fmt.Errorf("Conn3x logs in as %s with an SSH certificate, which sshd trusts through its CA rather than a line in authorized_keys, so Conn3x can't tell whether the list keeps it in; make another account's keys exclusive, or log in as another account to do this one", cfg.User)
+	}
 	if slices.Contains(ids, string(gossh.MarshalAuthorizedKey(k))) {
 		return nil
 	}

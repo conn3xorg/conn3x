@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"crypto/ed25519"
+	"os"
 	"strings"
 	"testing"
 
@@ -87,6 +88,28 @@ func TestAuthorizedKeyExclusive(t *testing.T) {
 			}
 			if got := keysOf("root"); got != before {
 				t.Fatalf("root's keys changed after the refusal:\n%s", got)
+			}
+
+			// With the login key listed, root's keys can be exclusive, and the
+			// next run still logs in.
+			pemKey, err := os.ReadFile(h.keyFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			signer, err := gossh.ParsePrivateKey(pemKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			login := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(signer.PublicKey()))) + " conn3x-login"
+			h.exec("", "sh", "-c", "printf '%s\\n' '"+extra+"' >> ~root/.ssh/authorized_keys")
+			vars.Keys = heredoc(login, a)
+			w.writeAs("main.circuit.hcl", vars)
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+			if got := keysOf("root"); strings.Contains(got, "x@by-hand") || !strings.Contains(got, strings.Fields(login)[1]) {
+				t.Fatalf("root's keys with the login key listed:\n%s", got)
+			}
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+				t.Fatalf("plan after making root's keys exclusive:\n%s", out)
 			}
 
 			// Removing the step leaves deploy's file as it was.
