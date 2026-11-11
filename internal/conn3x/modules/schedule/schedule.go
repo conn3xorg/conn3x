@@ -34,15 +34,8 @@ func (c Cron) Validate() error {
 	if !cronName.MatchString(c.Name) {
 		return fmt.Errorf("name %q may only use letters, digits, - and _ (cron ignores other file names)", c.Name)
 	}
-	if fields := strings.Fields(c.Schedule); len(fields) != 1 || !cronMacros[fields[0]] {
-		if len(fields) != 5 {
-			return fmt.Errorf("schedule %q needs five fields, or a macro such as @daily", c.Schedule)
-		}
-		for _, f := range fields {
-			if !cronField.MatchString(f) {
-				return fmt.Errorf("schedule field %q is not valid", f)
-			}
-		}
+	if err := validSchedule(c.Schedule); err != nil {
+		return err
 	}
 	if c.User != "" {
 		if err := (account.UserSpec{Name: c.User}).Validate(); err != nil {
@@ -50,6 +43,24 @@ func (c Cron) Validate() error {
 		}
 	}
 	return singleLine("command", c.Command)
+}
+
+// validSchedule checks a cron schedule: five fields, or a macro such as
+// @daily.
+func validSchedule(schedule string) error {
+	fields := strings.Fields(schedule)
+	if len(fields) == 1 && cronMacros[fields[0]] {
+		return nil
+	}
+	if len(fields) != 5 {
+		return fmt.Errorf("schedule %q needs five fields, or a macro such as @daily", schedule)
+	}
+	for _, f := range fields {
+		if !cronField.MatchString(f) {
+			return fmt.Errorf("schedule field %q is not valid", f)
+		}
+	}
+	return nil
 }
 
 // Content renders the cron.d file.

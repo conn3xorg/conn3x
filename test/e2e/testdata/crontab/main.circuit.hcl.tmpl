@@ -1,0 +1,33 @@
+circuit "cron" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .Present}}
+  step "deploy_cron" {
+    crontab {
+      user = "deploy"
+      env  = { MAILTO = "ops@example.com" }
+{{- if .OnRemove}}
+      on_remove = "{{.OnRemove}}"
+{{- end}}
+
+      job {
+        name     = "backup"
+        schedule = "0 3 * * *"
+        command  = "/opt/app/backup --at 50%"
+      }
+
+      job {
+        name     = "boot"
+        schedule = "@reboot"
+        command  = "/opt/app/start"
+      }
+    }
+  }
+{{end}}
+}

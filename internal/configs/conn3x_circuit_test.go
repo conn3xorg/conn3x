@@ -1252,3 +1252,25 @@ func TestExclusiveAuthorizedKeyClash(t *testing.T) {
 		t.Errorf("a computed user was compared: %s", diags.Error())
 	}
 }
+
+// Two crontab steps for one user would each remove the other's jobs, and so
+// would one crontab step repeated with for_each.
+func TestCrontabClash(t *testing.T) {
+	step := func(name, user, extra string) string {
+		return "step \"" + name + "\" {\n" + extra + "    crontab {\n      user = " + user + "\n      job {\n        name = \"a\"\n        schedule = \"@daily\"\n        command = \"true\"\n      }\n    }\n  }\n"
+	}
+	for want, steps := range map[string]string{
+		"Two crontab steps for one user": step("one", `"deploy"`, "") + step("two", `"deploy"`, ""),
+		"can't repeat":                   step("one", `"deploy"`, "    for_each = [\"a\", \"b\"]\n"),
+		"":                               step("one", `"deploy"`, "") + step("two", `"ops"`, ""),
+	} {
+		src := "circuit \"web\" {\n  hosts = { web1 = \"203.0.113.10\" }\n  ssh {\n    user = \"root\"\n  }\n  " + steps + "}\n"
+		_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+		switch {
+		case want == "" && diags.HasErrors():
+			t.Errorf("different users: %s", diags.Error())
+		case want != "" && (!diags.HasErrors() || !strings.Contains(diags.Error(), want)):
+			t.Errorf("%s: %v", want, diags)
+		}
+	}
+}

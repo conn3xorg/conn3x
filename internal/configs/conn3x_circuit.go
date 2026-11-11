@@ -40,6 +40,7 @@ var circuitModules = map[string]string{
 	"limit":               "conn3x_limit",
 	"command":             "conn3x_command",
 	"cron":                "conn3x_cron",
+	"crontab":             "conn3x_crontab",
 	"timer":               "conn3x_timer",
 	"sysctl":              "conn3x_sysctl",
 	"hostname":            "conn3x_hostname",
@@ -1056,9 +1057,16 @@ func CircuitStepType(module string) (string, bool) {
 // exclusiveKeyClash refuses an exclusive authorized_key step whose user
 // another authorized_key step in the circuit also has keys for, or that
 // repeats with for_each: on every apply each would take away the other's
-// keys. Only a user written as a literal can be told apart here; steps
-// whose user is computed aren't checked.
+// keys. A crontab step owns a user's whole crontab, so it's held to the same
+// rule against another crontab step. Only a user written as a literal can
+// be told apart here; steps whose user is computed aren't checked.
 func exclusiveKeyClash(steps hcl.Blocks) hcl.Diagnostics {
+	return append(ownerClash(steps, "authorized_key"), ownerClash(steps, "crontab")...)
+}
+
+// ownerClash is exclusiveKeyClash for one module. Every crontab step is
+// exclusive; an authorized_key step is when it says so.
+func ownerClash(steps hcl.Blocks, module string) hcl.Diagnostics {
 	type keyStep struct {
 		name      string
 		user      string
@@ -1073,7 +1081,7 @@ func exclusiveKeyClash(steps hcl.Blocks) hcl.Diagnostics {
 			continue
 		}
 		for _, b := range body.Blocks {
-			if b.Type != "authorized_key" {
+			if b.Type != module {
 				continue
 			}
 			ua, ok := b.Body.Attributes["user"]
@@ -1084,7 +1092,7 @@ func exclusiveKeyClash(steps hcl.Blocks) hcl.Diagnostics {
 			if d.HasErrors() || !v.IsWhollyKnown() || v.IsNull() || !v.Type().Equals(cty.String) {
 				continue
 			}
-			ks := keyStep{name: step.Labels[0], user: v.AsString(), rng: step.DefRange}
+			ks := keyStep{name: step.Labels[0], user: v.AsString(), rng: step.DefRange, exclusive: module == "crontab"}
 			if ea, ok := b.Body.Attributes["exclusive"]; ok {
 				if e, d := ea.Expr.Value(nil); !d.HasErrors() && e.IsWhollyKnown() && !e.IsNull() && e.Type().Equals(cty.Bool) && e.True() {
 					ks.exclusive = true
@@ -1101,23 +1109,21 @@ func exclusiveKeyClash(steps hcl.Blocks) hcl.Diagnostics {
 		}
 		rng := ex.rng
 		if ex.repeated {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "An exclusive authorized_key step can't repeat",
-				Detail:   fmt.Sprintf("Step %q makes %s's keys exclusive and repeats with for_each, so each instance would remove the others' keys. Put all of %s's keys in key, one per line, and drop for_each.", ex.name, ex.user, ex.user),
-				Subject:  &rng,
-			})
+			summary, detail := "An exclusive authorized_key step can't repeat", fmt.Sprintf("Step %q makes %s's keys exclusive and repeats with for_each, so each instance would remove the others' keys. Put all of %s's keys in key, one per line, and drop for_each.", ex.name, ex.user, ex.user)
+			if module == "crontab" {
+				summary, detail = "A crontab step can't repeat", fmt.Sprintf("Step %q is %s's whole crontab and repeats with for_each, so each instance would remove the others' jobs. Put all of %s's jobs in one crontab step, and drop for_each.", ex.name, ex.user, ex.user)
+			}
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: summary, Detail: detail, Subject: &rng})
 		}
 		for _, other := range all {
 			if other.name == ex.name || other.user != ex.user {
 				continue
 			}
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "Two authorized_key steps for one user, one of them exclusive",
-				Detail:   fmt.Sprintf("Step %q makes %s's keys exclusive, and step %q (%s) also adds a key for %s, so each apply would remove the other's key. Put all of %s's keys in step %q.", ex.name, ex.user, other.name, other.rng, ex.user, ex.user, ex.name),
-				Subject:  &rng,
-			})
+			summary, detail := "Two authorized_key steps for one user, one of them exclusive", fmt.Sprintf("Step %q makes %s's keys exclusive, and step %q (%s) also adds a key for %s, so each apply would remove the other's key. Put all of %s's keys in step %q.", ex.name, ex.user, other.name, other.rng, ex.user, ex.user, ex.name)
+			if module == "crontab" {
+				summary, detail = "Two crontab steps for one user", fmt.Sprintf("Step %q is %s's whole crontab, and so is step %q (%s), so each apply would remove the other's jobs. Put all of %s's jobs in one crontab step.", ex.name, ex.user, other.name, other.rng, ex.user)
+			}
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: summary, Detail: detail, Subject: &rng})
 		}
 	}
 	return diags
