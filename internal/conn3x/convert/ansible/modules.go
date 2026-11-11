@@ -19,6 +19,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules/fsobj"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
@@ -498,11 +499,19 @@ func fileModule(in *input) ([]step, string) {
 	switch in.state("file", "directory", "link", "file", "absent", "touch") {
 	case "directory":
 		attrs := []attr{s("path", path)}
+		if in.bool("recurse", false) {
+			// A numeric mode would give every file a directory's execute
+			// bit; a symbolic one says with X which paths get it.
+			if m := in.str("mode"); m != "" {
+				if !fsobj.IsSymbolic(m) {
+					return nil, "sets recurse with a numeric mode, which would make every file under it executable too; give the directory step a symbolic mode, such as \"u=rwX,g=rX,o=\""
+				}
+				attrs = append(attrs, s("mode", m))
+			}
+			return one("directory", in.owners(append(attrs, attr{key: "recurse", val: cty.True})))
+		}
 		if m, ok := in.mode("mode"); ok {
 			attrs = append(attrs, m)
-		}
-		if in.bool("recurse", false) {
-			return nil, "sets recurse, which the converter can't translate yet"
 		}
 		in.ignore("recurse")
 		return one("directory", in.owners(attrs))

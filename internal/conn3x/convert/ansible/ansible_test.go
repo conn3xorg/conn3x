@@ -1030,3 +1030,21 @@ func TestCopyValidateCarriesOver(t *testing.T) {
 		}
 	}
 }
+
+// recurse carries over with a symbolic mode, or with owner and group only;
+// a numeric mode stays for review.
+func TestFileRecurse(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  become: true\n  tasks:\n    - file: {path: /srv/app, state: directory, recurse: yes, owner: deploy, mode: \"u=rwX,g=rX,o=\"}\n    - file: {path: /srv/data, state: directory, recurse: true, group: app}\n")
+	if res.Converted != 2 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	for _, want := range []string{`mode    = "u=rwX,g=rX,o="`, "recurse = true", `group   = "app"`} {
+		if !strings.Contains(string(res.HCL), want) {
+			t.Errorf("no %s in:\n%s", want, res.HCL)
+		}
+	}
+	res = convertString(t, "- hosts: all\n  become: true\n  tasks:\n    - file: {path: /srv/app, state: directory, recurse: yes, mode: \"0755\"}\n")
+	if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "numeric mode") {
+		t.Errorf("numeric mode: converted %d, review %+v", res.Converted, res.Review)
+	}
+}

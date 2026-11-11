@@ -19,6 +19,9 @@ import (
 // Directory is a directory as it should be. Empty Owner and Group leave them.
 type Directory struct {
 	Path, Mode, Owner, Group string
+	// Recurse sets owner, group and a symbolic mode on everything under
+	// Path too. A numeric Mode then applies to Path alone.
+	Recurse bool
 }
 
 // DirectoryState is a directory as it is.
@@ -29,6 +32,15 @@ type DirectoryState struct {
 
 // Validate checks a Directory before anything runs on a host.
 func (d Directory) Validate() error {
+	if d.Recurse && path.Clean(d.Path) == "/" {
+		return errors.New("recurse can't be set on /, which would change every file on the host")
+	}
+	if d.Recurse && IsSymbolic(d.Mode) {
+		return (file.Desired{Path: d.Path, Mode: "0755"}).Validate()
+	}
+	if !d.Recurse && IsSymbolic(d.Mode) {
+		return fmt.Errorf("mode %q is symbolic, which only goes with recurse = true; use four octal digits, like \"0755\"", d.Mode)
+	}
 	return (file.Desired{Path: d.Path, Mode: d.Mode}).Validate()
 }
 
@@ -66,7 +78,7 @@ stat -c '%%a %%U %%G' -- "$p" 2>/dev/null || stat -f '%%Lp %%Su %%Sg' "$p"`, ssh
 
 // DirectoryNeedsChange reports whether ApplyDirectory would change anything.
 func DirectoryNeedsChange(d Directory, s DirectoryState) bool {
-	return !s.Exists || file.NormalizeMode(d.Mode) != s.Mode ||
+	return !s.Exists || d.WantMode(s.Mode, true) != s.Mode ||
 		d.Owner != "" && d.Owner != s.Owner || d.Group != "" && d.Group != s.Group
 }
 
@@ -88,7 +100,7 @@ func ApplyDirectory(ctx context.Context, r modules.Runner, d Directory) error {
   [ -e "$p" ] || route_mkdir "$p"
 else route_mkdir "$p"; fi`,
 		`[ -d "$p" ] && [ ! -L "$p" ] || { echo "$p exists but is not a directory" >&2; exit 3; }`,
-		"chmod -- " + file.NormalizeMode(d.Mode) + " " + q}
+		"chmod -- " + ssh.Quote(d.chmodMode()) + " " + q}
 	if d.Group != "" {
 		cmds = append(cmds, `[ -n "${CONN3X_ROUTE_OWN:-}" ] || chgrp -h -- `+ssh.Quote(d.Group)+" "+q)
 	}

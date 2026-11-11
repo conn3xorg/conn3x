@@ -20,15 +20,17 @@ func directorySchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "A directory, created with its parents.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":        {Type: cty.String, Computed: true},
-			"revision":  revisionAttr(),
-			"path":      {Type: cty.String, Required: true, Description: "Absolute path."},
-			"mode":      {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0755\"."},
-			"owner":     {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
-			"group":     {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
-			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the directory, \"delete\" removes it when it is empty."},
-			"state":     {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which removes the directory when it is empty and keeps it gone."},
-			"in_sync":   {Type: cty.Bool, Computed: true, Description: "With state \"absent\", whether the directory is already gone. Null otherwise."},
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"path":          {Type: cty.String, Required: true, Description: "Absolute path."},
+			"mode":          {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0755\". With recurse, a symbolic mode such as \"u=rwX,g=rX,o=\", for the directory and everything under it."},
+			"owner":         {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
+			"group":         {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
+			"recurse":       {Type: cty.Bool, Optional: true, Description: "Sets owner, group and a symbolic mode on everything under the directory too, without following links or crossing into another filesystem."},
+			"changes_under": {Type: cty.Number, Computed: true, Description: "With recurse, how many paths under the directory had another owner, group or mode at the last refresh. Apply changes them."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the directory, \"delete\" removes it when it is empty."},
+			"state":         {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which removes the directory when it is empty and keeps it gone."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "With state \"absent\", whether the directory is already gone. Null otherwise."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -38,8 +40,11 @@ func directoryFrom(v cty.Value) fsobj.Directory {
 	return fsobj.Directory{
 		Path: v.GetAttr("path").AsString(), Mode: stringOr(v.GetAttr("mode"), "0755"),
 		Owner: stringOr(v.GetAttr("owner"), ""), Group: stringOr(v.GetAttr("group"), ""),
+		Recurse: isTrue(v.GetAttr("recurse")),
 	}
 }
+
+func isTrue(v cty.Value) bool { return v.IsKnown() && !v.IsNull() && v.True() }
 
 func validateDirectory(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
@@ -47,7 +52,13 @@ func validateDirectory(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	diags = diags.Append(validateState(cfg, "mode", "owner", "group"))
+	diags = diags.Append(validateState(cfg, "mode", "owner", "group", "recurse"))
+	if m := cfg.GetAttr("mode"); isTrue(cfg.GetAttr("recurse")) && !m.IsNull() && !fsobj.IsSymbolic(m.AsString()) {
+		// A numeric mode means one thing for files and another for
+		// directories, so it can't be given to a whole tree.
+		diags = diags.Append(attrError("mode", fmt.Sprintf("with recurse, mode must be symbolic, such as \"u=rwX,g=rX,o=\", not %q: X gives directories their execute bit without making every file executable", m.AsString())))
+		return diags
+	}
 	if err := directoryFrom(cfg).Validate(); err != nil {
 		diags = diags.Append(attrError("path", err.Error()))
 	}
@@ -63,24 +74,31 @@ func planDirectory(req providers.PlanResourceChangeRequest) providers.PlanResour
 			if req.Config.GetAttr("mode").IsNull() {
 				vals["mode"] = cty.UnknownVal(cty.String)
 			}
-			vals["in_sync"] = cty.UnknownVal(cty.Bool)
+			vals["in_sync"], vals["changes_under"] = cty.UnknownVal(cty.Bool), cty.UnknownVal(cty.Number)
 			return
 		case isAbsent(req.ProposedNewState):
-			vals["mode"], vals["in_sync"] = cty.NullVal(cty.String), absentInSync(req)
+			vals["mode"], vals["in_sync"], vals["changes_under"] = cty.NullVal(cty.String), absentInSync(req), cty.NullVal(cty.Number)
 			return
 		}
 		vals["in_sync"] = cty.NullVal(cty.Bool)
 		if req.Config.GetAttr("mode").IsNull() { // the proposal carries the refreshed mode
 			vals["mode"] = cty.StringVal("0755")
 		}
-		if m := vals["mode"]; m.IsKnown() {
+		if m := vals["mode"]; m.IsKnown() && !fsobj.IsSymbolic(m.AsString()) {
 			vals["mode"] = cty.StringVal(file.NormalizeMode(m.AsString()))
+		}
+		vals["changes_under"] = cty.NullVal(cty.Number)
+		if r := vals["recurse"]; !r.IsKnown() {
+			vals["changes_under"] = cty.UnknownVal(cty.Number)
+		} else if isTrue(r) {
+			vals["changes_under"] = cty.Zero
 		}
 	})
 }
 
 func readDirectory(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
-	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+	var tree fsobj.Tree
+	resp := readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
 		s, err := fsobj.ReadDirectory(ctx, h, prior.GetAttr("path").AsString())
 		if err == nil && isAbsent(prior) {
 			vals := prior.AsValueMap()
@@ -90,8 +108,34 @@ func readDirectory(ctx context.Context, req providers.ReadResourceRequest) provi
 		if err != nil || !s.Exists {
 			return cty.NullVal(prior.Type()), err
 		}
-		return directoryState(prior, s), nil
+		state := directoryState(prior, s)
+		if d := directoryFrom(prior); d.Recurse {
+			if tree, err = fsobj.ReadTree(ctx, h, d, treeOwner(d, s)); err != nil {
+				return cty.NilVal, err
+			}
+			vals := state.AsValueMap()
+			vals["changes_under"] = cty.NumberIntVal(int64(tree.Changes))
+			state = cty.ObjectVal(vals)
+		}
+		return state, nil
 	})
+	if (tree.Changes > 0 || tree.Skipped > 0) && !resp.Diagnostics.HasErrors() {
+		p := req.PriorState.GetAttr("path").AsString()
+		msg := fmt.Sprintf("%d path(s) under %s have another owner, group or mode, which apply changes", tree.Changes, p)
+		if tree.Skipped > 0 {
+			msg += fmt.Sprintf("; %d file(s) with another hard link elsewhere are left as they are, since the other link could be anywhere", tree.Skipped)
+		}
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(msg))
+	}
+	return resp
+}
+
+// treeOwner is who a recursive directory's tree ends up belonging to.
+func treeOwner(d fsobj.Directory, s fsobj.DirectoryState) string {
+	if d.Owner != "" {
+		return d.Owner
+	}
+	return s.Owner
 }
 
 func applyDirectory(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
@@ -110,6 +154,19 @@ func applyDirectory(ctx context.Context, req providers.ApplyResourceChangeReques
 			}
 			if fsobj.DirectoryNeedsChange(d, s) {
 				return cty.NilVal, fmt.Errorf("directory %s does not match the configuration after applying", d.Path)
+			}
+			if !d.Recurse {
+				return directoryState(planned, s), nil
+			}
+			if err := fsobj.ApplyTree(ctx, h, d); err != nil {
+				return cty.NilVal, fmt.Errorf("directory %s: %w", d.Path, err)
+			}
+			tree, err := fsobj.ReadTree(ctx, h, d, treeOwner(d, s))
+			if err != nil {
+				return cty.NilVal, err
+			}
+			if tree.Changes > 0 {
+				return cty.NilVal, fmt.Errorf("directory %s: %d path(s) under it still have another owner, group or mode after applying", d.Path, tree.Changes)
 			}
 			return directoryState(planned, s), nil
 		},
@@ -136,7 +193,11 @@ func removeDirectory(ctx context.Context, h *hostConn, planned cty.Value) (cty.V
 
 func directoryState(base cty.Value, s fsobj.DirectoryState) cty.Value {
 	vals := base.AsValueMap()
-	vals["mode"] = cty.StringVal(s.Mode)
+	// A symbolic mode stays in state while the directory's mode is what it
+	// makes, so it isn't planned as a change every time.
+	if m := vals["mode"]; !m.IsKnown() || m.IsNull() || !fsobj.IsSymbolic(m.AsString()) || directoryFrom(base).WantMode(s.Mode, true) != s.Mode {
+		vals["mode"] = cty.StringVal(s.Mode)
+	}
 	if !vals["owner"].IsNull() {
 		vals["owner"] = cty.StringVal(s.Owner)
 	}
