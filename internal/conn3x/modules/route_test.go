@@ -64,7 +64,8 @@ func TestGuardRoutes(t *testing.T) {
 		{"sticky, leaf of someone", "mkdir -m 1777 s; mkdir s/d; chown nobody s/d", modules.Follow, "$T/s/d", asNobody},
 		{"sticky, missing leaf", "mkdir -m 1777 s", modules.Follow, "$T/s/f", root},
 		{"sticky, missing parent", "mkdir -m 1777 s", modules.Parent, "$T/s/d/f", refused},
-		{"group-writable, the group of one service account", "mkdir d; chgrp daemon d; chmod 0775 d", modules.Parent, "$T/d/f", "daemon"},
+		// An account made for it: on some hosts daemon's group has other members.
+		{"group-writable, the group of one service account", "id conn3xsolo >/dev/null 2>&1 || useradd -r -U -M -s /bin/sh conn3xsolo; mkdir d; chgrp conn3xsolo d; chmod 0775 d", modules.Parent, "$T/d/f", "conn3xsolo"},
 		{"group-writable, one service account is in the group", "groupadd -f -g 971 conn3xsvc; usermod -aG conn3xsvc daemon; mkdir d; chgrp 971 d; chmod 0775 d", modules.Parent, "$T/d/f", "daemon"},
 		{"group-writable, two accounts are in the group", "groupadd -f -g 972 conn3xtwo; usermod -aG conn3xtwo daemon; usermod -aG conn3xtwo bin; mkdir d; chgrp 972 d; chmod 0775 d", modules.Parent, "$T/d/f", refused},
 		{"group-writable, one account's group with an ACL too", "command -v setfacl >/dev/null || exit 77; mkdir d; chgrp daemon d; chmod 0775 d; setfacl -m u:nobody:rwx d", modules.Parent, "$T/d/f", refused},
@@ -154,14 +155,14 @@ func TestGuardWriteGroup(t *testing.T) {
 // worked in as that account, and root gives the result the owner asked for.
 func TestGuardWriteInAServiceGroupsDirectory(t *testing.T) {
 	dir := moduletest.RootDir(t)
-	moduletest.Sh(t, dir, "mkdir d; chgrp daemon d; chmod 0775 d")
+	moduletest.Sh(t, dir, "id conn3xsolo >/dev/null 2>&1 || useradd -r -U -M -s /bin/sh conn3xsolo; mkdir d; chgrp conn3xsolo d; chmod 0775 d")
 	f := dir + "/d/zone"
-	res, err := moduletest.Local{}.Run(context.Background(), modules.GuardWrite("id -un; : > "+f+"; chmod 4755 "+f, modules.Write{Owner: "root", Group: "daemon", Path: f}, modules.Parent(f)), nil)
-	if err != nil || res.ExitCode != 0 || strings.TrimSpace(string(res.Stdout)) != "daemon" {
+	res, err := moduletest.Local{}.Run(context.Background(), modules.GuardWrite("id -un; : > "+f+"; chmod 4755 "+f, modules.Write{Owner: "root", Group: "conn3xsolo", Path: f}, modules.Parent(f)), nil)
+	if err != nil || res.ExitCode != 0 || strings.TrimSpace(string(res.Stdout)) != "conn3xsolo" {
 		t.Fatalf("ran as %q, exit %d, %v: %s", res.Stdout, res.ExitCode, err, res.Stderr)
 	}
 	// Changing the owner drops the setuid bit the account could have set.
-	if got := moduletest.Sh(t, dir, "stat -c '%U:%G %a' d/zone"); got != "root:daemon 755" {
+	if got := moduletest.Sh(t, dir, "stat -c '%U:%G %a' d/zone"); got != "root:conn3xsolo 755" {
 		t.Fatalf("the file is %s", got)
 	}
 }
