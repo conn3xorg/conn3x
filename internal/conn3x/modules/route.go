@@ -138,6 +138,13 @@ route_rc=$?
       route_n=$((route_n + 1))
       sleep 0.01
     done
+    # A dd that failed is gone, and its process id may by now be someone
+    # else's, with a file of theirs as its input. The answer above counts
+    # only if that process is still this shell's child: then it was dd all
+    # along, and with the path open it stays until it is killed below.
+    route_st=$(cat "/proc/$route_dd/stat" 2>/dev/null) || route_st=
+    set -- ${route_st##*) }
+    [ "${2:-}" = "$$" ] || route_fd=
     set -- $route_fd
     case "${1:-$route_null} ${2:-} ${3:-} ${4:-}" in
       "$route_null "*) route_own_rc=125 ;;
