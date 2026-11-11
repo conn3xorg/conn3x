@@ -97,12 +97,14 @@ func newChainProvider() *chainProvider {
 			}),
 			"conn3x_eos_vlan": block(map[string]*configschema.Attribute{
 				"vlan_id": {Type: cty.Number, Optional: true},
+				"circuit": {Type: cty.String, Optional: true},
 			}),
 			"conn3x_eos_commit": block(map[string]*configschema.Attribute{
 				"triggers": {Type: cty.DynamicPseudoType, Optional: true},
 				"removals": {Type: cty.String, Optional: true},
+				"circuit":  {Type: cty.String, Optional: true},
 			}),
-			"conn3x_eos_removals": block(map[string]*configschema.Attribute{}),
+			"conn3x_eos_removals": block(map[string]*configschema.Attribute{"circuit": {Type: cty.String, Optional: true}}),
 			"conn3x_service_action": block(map[string]*configschema.Attribute{
 				"name":     {Type: cty.String, Optional: true},
 				"action":   {Type: cty.String, Optional: true},
