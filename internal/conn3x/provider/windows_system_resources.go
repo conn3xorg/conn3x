@@ -534,6 +534,31 @@ func planWinUpdate(req providers.PlanResourceChangeRequest) providers.PlanResour
 	return resp
 }
 
+// planWinUpdateReads names, in the plan of a new step, the updates its
+// apply would install. The planned state can't hold them: pending is what
+// is still waiting after the apply. So they go in a warning, and only when
+// the host can be reached: one that is made in the same apply can't say.
+func planWinUpdateReads(ctx context.Context, req providers.PlanResourceChangeRequest, resp *providers.PlanResourceChangeResponse) {
+	planned := resp.PlannedState
+	if !req.PriorState.IsNull() || planned.IsNull() || !req.ProposedNewState.IsWhollyKnown() {
+		return
+	}
+	h, err := winHost(ctx, planned.GetAttr("ssh"))
+	if err != nil {
+		log.Printf("[DEBUG] conn3x: windows_update: can't list the updates in the plan: %v", err)
+		return
+	}
+	pending, err := windows.PendingUpdates(ctx, h.client, winUpdateFrom(planned))
+	switch {
+	case err != nil:
+		log.Printf("[DEBUG] conn3x: windows_update on %s: can't list the updates in the plan: %v", h.host, err)
+	case len(pending) == 0:
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(fmt.Sprintf("windows_update on %s: no updates wait in these categories now, so the apply installs nothing", h.host)))
+	default:
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(fmt.Sprintf("windows_update on %s: the apply installs these %d updates, as of this plan:\n  %s", h.host, len(pending), strings.Join(pending, "\n  "))))
+	}
+}
+
 func readWinUpdate(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	resp := providers.ReadResourceResponse{NewState: req.PriorState}
 	if req.PriorState.IsNull() {

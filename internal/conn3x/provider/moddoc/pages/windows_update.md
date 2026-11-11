@@ -1,6 +1,6 @@
 **Experimental.** Windows support is new, and this module may change between releases.
 
-Use `windows_update` to keep a Windows Server patched. Each refresh asks Windows Update what's waiting in the categories you name, and when anything is, the plan says which KBs it will install. Apply downloads and installs them, and a second plan says `No changes.` until next month's updates arrive.
+Use `windows_update` to keep a Windows Server patched. Each refresh asks Windows Update what's waiting in the categories you name, and when anything is, the plan says which KBs it will install. A step's very first plan has no refresh before it, so there the plan asks Windows Update itself and names the KBs in a warning, as long as it can reach the host. A host made in the same apply can't be asked yet. Apply downloads and installs them, and a second plan says `No changes.` until next month's updates arrive.
 
 It never reboots a host. When an update wants one, `reboot_required` says so, and a [`windows_reboot`](windows_reboot.md) step does it, so the reboot shows in the plan.
 

@@ -270,9 +270,21 @@ func priorSSH(prior cty.Value) cty.Value {
 	return conn
 }
 
-func (p *Provider) PlanResourceChange(_ context.Context, req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+// planReads add to a resource's plan what only the host can say, such as
+// the updates a new windows_update step would install. They may not change
+// the planned state: the apply has to match it.
+var planReads = map[string]func(context.Context, providers.PlanResourceChangeRequest, *providers.PlanResourceChangeResponse){
+	"conn3x_windows_update": planWinUpdateReads,
+}
+
+func (p *Provider) PlanResourceChange(ctx context.Context, req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
 		resp := rt.plan(req)
+		if read, ok := planReads[req.TypeName]; ok && !resp.Diagnostics.HasErrors() {
+			ctx, done := p.withStop(ctx)
+			read(ctx, req, &resp)
+			done()
+		}
 		resp.PlannedState = planRevision(req.PriorState, resp.PlannedState)
 		if anotherMachine(req.PriorState, resp.PlannedState) {
 			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("port"))

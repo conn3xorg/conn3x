@@ -201,4 +201,14 @@ func TestUpdateReadOnly(t *testing.T) {
 	if !strings.Contains(out, "conn3x_windows_update.win__definitions") {
 		t.Errorf("the plan doesn't name the step:\n%s", out)
 	}
+	// A new step's plan says what its apply would install, read from the
+	// host, though the step has never been applied.
+	if !strings.Contains(out, "the apply installs these") && !strings.Contains(out, "no updates wait in these categories") {
+		t.Errorf("the plan of a new step doesn't say what it installs:\n%s", out)
+	}
+	for _, p := range pending {
+		if kb := strings.Fields(p)[0]; !strings.Contains(out, kb) {
+			t.Logf("%s was waiting before the plan and isn't in it; it may have installed in between", kb)
+		}
+	}
 }
