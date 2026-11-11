@@ -224,6 +224,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	var earlier []*Resource               // every step so far, for a reboot that watches them
 	notifiers := map[string][]*Resource{} // handler name => steps that notify it
 	notifyRefs := map[string][]hcl.Range{}
+	diags = append(diags, exclusiveKeyClash(content.Blocks.OfType("step"))...)
 	for _, step := range content.Blocks.OfType("step") {
 		stepName := step.Labels[0]
 		if !validCircuitName(stepName) {
@@ -1050,4 +1051,74 @@ func CircuitStepType(module string) (string, bool) {
 	}
 	t, ok := circuitModules[module]
 	return t, ok
+}
+
+// exclusiveKeyClash refuses an exclusive authorized_key step whose user
+// another authorized_key step in the circuit also has keys for, or that
+// repeats with for_each: on every apply each would take away the other's
+// keys. Only a user written as a literal can be told apart here; steps
+// whose user is computed aren't checked.
+func exclusiveKeyClash(steps hcl.Blocks) hcl.Diagnostics {
+	type keyStep struct {
+		name      string
+		user      string
+		exclusive bool
+		repeated  bool
+		rng       hcl.Range
+	}
+	var all []keyStep
+	for _, step := range steps {
+		body, ok := step.Body.(*hclsyntax.Body)
+		if !ok || len(step.Labels) == 0 {
+			continue
+		}
+		for _, b := range body.Blocks {
+			if b.Type != "authorized_key" {
+				continue
+			}
+			ua, ok := b.Body.Attributes["user"]
+			if !ok {
+				continue
+			}
+			v, d := ua.Expr.Value(nil)
+			if d.HasErrors() || !v.IsWhollyKnown() || v.IsNull() || !v.Type().Equals(cty.String) {
+				continue
+			}
+			ks := keyStep{name: step.Labels[0], user: v.AsString(), rng: step.DefRange}
+			if ea, ok := b.Body.Attributes["exclusive"]; ok {
+				if e, d := ea.Expr.Value(nil); !d.HasErrors() && e.IsWhollyKnown() && !e.IsNull() && e.Type().Equals(cty.Bool) && e.True() {
+					ks.exclusive = true
+				}
+			}
+			_, ks.repeated = body.Attributes["for_each"]
+			all = append(all, ks)
+		}
+	}
+	var diags hcl.Diagnostics
+	for _, ex := range all {
+		if !ex.exclusive {
+			continue
+		}
+		rng := ex.rng
+		if ex.repeated {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "An exclusive authorized_key step can't repeat",
+				Detail:   fmt.Sprintf("Step %q makes %s's keys exclusive and repeats with for_each, so each instance would remove the others' keys. Put all of %s's keys in key, one per line, and drop for_each.", ex.name, ex.user, ex.user),
+				Subject:  &rng,
+			})
+		}
+		for _, other := range all {
+			if other.name == ex.name || other.user != ex.user {
+				continue
+			}
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Two authorized_key steps for one user, one of them exclusive",
+				Detail:   fmt.Sprintf("Step %q makes %s's keys exclusive, and step %q (%s) also adds a key for %s, so each apply would remove the other's key. Put all of %s's keys in step %q.", ex.name, ex.user, other.name, other.rng, ex.user, ex.user, ex.name),
+				Subject:  &rng,
+			})
+		}
+	}
+	return diags
 }

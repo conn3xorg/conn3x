@@ -7,6 +7,8 @@ package sshkey
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -59,6 +61,83 @@ func Edit(content, key string, present bool) (string, error) {
 		return "", nil
 	}
 	return strings.Join(kept, "\n") + "\n", nil
+}
+
+// Keys reads the keys an exclusive step lists, one per line; blank lines
+// are skipped. It returns each key's line, as written, and its identity.
+func Keys(key string) (lines, ids []string, err error) {
+	for i, l := range strings.Split(key, "\n") {
+		if l = strings.TrimSpace(l); l == "" {
+			continue
+		}
+		id, err := parse(l)
+		if err != nil {
+			return nil, nil, fmt.Errorf("line %d: %w", i+1, err)
+		}
+		lines, ids = append(lines, l), append(ids, id)
+	}
+	if len(lines) == 0 {
+		return nil, nil, fmt.Errorf("key lists no keys")
+	}
+	return lines, ids, nil
+}
+
+// Unlisted is a key in authorized_keys that an exclusive step doesn't list.
+type Unlisted struct {
+	Type, Fingerprint string // such as ssh-ed25519 and SHA256:...
+	Comment           string // what follows the key, often an address: never kept in state
+}
+
+// String is the type and fingerprint, what state keeps of the key.
+func (u Unlisted) String() string { return u.Type + " " + u.Fingerprint }
+
+// EditExclusive returns authorized_keys content holding exactly the keys an
+// exclusive step lists: listed keys already there stay as written, with
+// their options and comments, missing ones are added, and every other key is
+// taken out and returned. Blank and comment lines stay. A line that isn't a
+// key Conn3x can read goes too, since sshd might still take it.
+func EditExclusive(content, key string) (string, []Unlisted, error) {
+	lines, ids, err := Keys(key)
+	if err != nil {
+		return "", nil, err
+	}
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	var kept []string
+	var gone []Unlisted
+	have := map[string]bool{}
+	if content != "" {
+		for _, l := range strings.Split(strings.TrimSuffix(content, "\n"), "\n") {
+			if t := strings.TrimSpace(l); t == "" || strings.HasPrefix(t, "#") {
+				kept = append(kept, l)
+				continue
+			}
+			pub, comment, _, _, err := gossh.ParseAuthorizedKey([]byte(l))
+			if err != nil {
+				sum := sha256.Sum256([]byte(l))
+				gone = append(gone, Unlisted{Type: "unreadable", Fingerprint: "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])})
+				continue
+			}
+			id := string(gossh.MarshalAuthorizedKey(pub))
+			if !want[id] || have[id] {
+				if !want[id] {
+					gone = append(gone, Unlisted{Type: pub.Type(), Fingerprint: gossh.FingerprintSHA256(pub), Comment: comment})
+				}
+				continue
+			}
+			have[id] = true
+			kept = append(kept, l)
+		}
+	}
+	for i, id := range ids {
+		if !have[id] {
+			have[id] = true
+			kept = append(kept, lines[i])
+		}
+	}
+	return strings.Join(kept, "\n") + "\n", gone, nil
 }
 
 // Location is where a user's authorized_keys lives and who owns it.
@@ -120,6 +199,12 @@ func Apply(ctx context.Context, r modules.Runner, loc Location, key string, pres
 	if err != nil {
 		return err
 	}
+	return Write(ctx, r, loc, edited)
+}
+
+// Write replaces authorized_keys with content, creating ~/.ssh (0700) and
+// the file (0600) as Apply does, as the user.
+func Write(ctx context.Context, r modules.Runner, loc Location, content string) error {
 	script := fmt.Sprintf(`set -e
 d=%[1]s
 f=%[2]s
@@ -133,7 +218,7 @@ mv -f -- "$tmp" "$f"
 trap - EXIT
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$d" "$f" 2>/dev/null || true; fi`,
 		ssh.Quote(loc.Dir), ssh.Quote(loc.File))
-	res, err := r.Run(ctx, modules.AsUser(loc.Owner, script), []byte(edited))
+	res, err := r.Run(ctx, modules.AsUser(loc.Owner, script), []byte(content))
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,21 @@
+circuit "keys" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .Present}}
+  step "keys" {
+    authorized_key {
+      user      = "{{.User}}"
+      exclusive = true
+      key       = <<-EOT
+{{.Keys}}
+      EOT
+    }
+  }
+{{end}}
+}

@@ -1223,3 +1223,32 @@ circuit "win" {
 		t.Errorf("watches %s", got)
 	}
 }
+
+// An exclusive authorized_key step can't share its user with another
+// authorized_key step in the circuit, or repeat: they'd take each other's
+// keys away. A computed user isn't checked.
+func TestExclusiveAuthorizedKeyClash(t *testing.T) {
+	step := func(name, user, extra string) string {
+		return "step \"" + name + "\" {\n" + extra + "    authorized_key {\n      user = " + user + "\n      key  = \"ssh-ed25519 AAAA\"\n      exclusive = true\n    }\n  }\n"
+	}
+	plain := "step \"extra\" {\n    authorized_key {\n      user = \"deploy\"\n      key  = \"ssh-ed25519 BBBB\"\n    }\n  }\n"
+	for want, steps := range map[string]string{
+		"also adds a key for deploy": step("keys", `"deploy"`, "") + plain,
+		"repeats with for_each":      step("keys", `"deploy"`, "    for_each = [\"a\", \"b\"]\n"),
+		"":                           step("keys", `"deploy"`, "") + strings.Replace(plain, `"deploy"`, `"ops"`, 1),
+	} {
+		src := "circuit \"web\" {\n  hosts = { web1 = \"203.0.113.10\" }\n  ssh {\n    user = \"root\"\n  }\n  " + steps + "}\n"
+		_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+		switch {
+		case want == "" && diags.HasErrors():
+			t.Errorf("different users: %s", diags.Error())
+		case want != "" && (!diags.HasErrors() || !strings.Contains(diags.Error(), want)):
+			t.Errorf("%s: %v", want, diags)
+		}
+	}
+	// A user from a variable can't be compared before planning, so it passes.
+	src := "variable \"who\" {\n  default = \"deploy\"\n}\ncircuit \"web\" {\n  hosts = { web1 = \"203.0.113.10\" }\n  ssh {\n    user = \"root\"\n  }\n  " + step("keys", "var.who", "") + plain + "}\n"
+	if _, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src}); diags.HasErrors() {
+		t.Errorf("a computed user was compared: %s", diags.Error())
+	}
+}

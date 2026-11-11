@@ -6,9 +6,12 @@ package sshkey
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"strings"
 	"testing"
+
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
@@ -130,4 +133,53 @@ func TestEditRejectsInvalidKeys(t *testing.T) {
 			t.Errorf("accepted %q", bad)
 		}
 	}
+}
+
+// An exclusive step leaves exactly its keys: listed ones stay as written,
+// missing ones are added, the rest are reported and removed, and blank and
+// comment lines stay.
+func TestEditExclusive(t *testing.T) {
+	a := genKey(t, "a@example.com")
+	b := genKey(t, "b@example.com")
+	c := genKey(t, "c@example.com")
+	content := "# managed by hand\nfrom=\"10.0.0.0/8\" " + a + "\n\n" + c + "\nnot a key at all\n" + a + "\n"
+	got, gone, err := EditExclusive(content, a+"\n\n"+b+"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# managed by hand\nfrom=\"10.0.0.0/8\" " + a + "\n\n" + b + "\n"
+	if got != want {
+		t.Errorf("content:\n%s\nwant:\n%s", got, want)
+	}
+	if len(gone) != 2 || gone[0].Comment != "c@example.com" || !strings.HasPrefix(gone[0].Fingerprint, "SHA256:") || gone[1].Type != "unreadable" {
+		t.Errorf("unlisted: %+v", gone)
+	}
+	if strings.Contains(gone[0].String(), "c@example.com") {
+		t.Errorf("what state keeps names the comment: %s", gone[0])
+	}
+	// Already exact: nothing changes.
+	again, gone, err := EditExclusive(got, a+"\n"+b)
+	if err != nil || again != got || len(gone) != 0 {
+		t.Errorf("second pass changed it: %q %v %v", again, gone, err)
+	}
+	if _, _, err := EditExclusive("", "\n\n"); err == nil {
+		t.Error("an exclusive key with no keys was accepted")
+	}
+	if _, _, err := EditExclusive("", a+"\nnot a key"); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Errorf("a bad line: %v", err)
+	}
+}
+
+// genKey is a fresh ed25519 public key line with comment.
+func genKey(t *testing.T, comment string) string {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := gossh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(gossh.MarshalAuthorizedKey(k))) + " " + comment
 }

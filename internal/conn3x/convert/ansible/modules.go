@@ -684,7 +684,13 @@ func groupModule(in *input) ([]step, string) {
 
 func authorizedKeyModule(in *input) ([]step, string) {
 	in.state("present", "present")
-	return one("authorized_key", []attr{s("user", in.str("user")), s("key", in.str("key"))})
+	attrs := []attr{s("user", in.str("user")), s("key", in.str("key"))}
+	// exclusive keeps only this task's keys, which key may hold one per
+	// line, as Ansible reads it.
+	if in.has("exclusive") && in.bool("exclusive", false) {
+		attrs = append(attrs, attr{key: "exclusive", val: cty.True})
+	}
+	return one("authorized_key", attrs)
 }
 
 var cronName = regexp.MustCompile(`[^A-Za-z0-9_-]+`)

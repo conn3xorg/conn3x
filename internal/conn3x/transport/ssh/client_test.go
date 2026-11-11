@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"io"
 	"net"
@@ -620,5 +621,88 @@ func TestRSAHostKeysNeverSignWithSHA1(t *testing.T) {
 		if a == gossh.KeyAlgoRSA {
 			t.Fatalf("%q, the SHA-1 signature, is offered for RSA host keys", a)
 		}
+	}
+}
+
+// LoginKey is the key the target accepted: the private key when one is
+// given, and with an agent, the one key of several that the server let in.
+// A key the server turns down is only asked about, never asked to sign.
+func TestLoginKeyIsTheKeyThatLoggedIn(t *testing.T) {
+	s := sshtest.New(t)
+	accepted, err := gossh.ParsePrivateKey(s.ClientKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := func(k gossh.PublicKey) bool {
+		return k != nil && string(k.Marshal()) == string(accepted.PublicKey().Marshal())
+	}
+	if c := dial(t, testConfig(t, s)); !same(c.LoginKey()) {
+		t.Fatalf("with private_key, LoginKey = %v", c.LoginKey())
+	}
+
+	raw, err := gossh.ParseRawPrivateKey(s.ClientKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, other, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring := agent.NewKeyring()
+	// The key the server doesn't know is offered first.
+	for _, k := range []any{other, raw} {
+		if err := keyring.Add(agent.AddedKey{PrivateKey: k}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir, err := os.MkdirTemp("", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	l, err := net.Listen("unix", filepath.Join(dir, "sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() { _ = agent.ServeAgent(keyring, conn); conn.Close() }()
+		}
+	}()
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(dir, "sock"))
+	cfg := testConfig(t, s)
+	cfg.PrivateKey = nil
+	if c := dial(t, cfg); !same(c.LoginKey()) {
+		t.Fatalf("with the agent, LoginKey = %v, want the key the server accepted", c.LoginKey())
+	}
+}
+
+// A wrapped RSA key still signs with SHA-2: x/crypto finds that only through
+// AlgorithmSigner, and would otherwise offer the SHA-1 signature.
+func TestLoginRecordKeepsAlgorithmSigners(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := gossh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &loginRecord{}
+	wrapped, ok := rec.wrap(signer).(gossh.AlgorithmSigner)
+	if !ok {
+		t.Fatal("the wrapped RSA signer lost SignWithAlgorithm")
+	}
+	sig, err := wrapped.SignWithAlgorithm(rand.Reader, []byte("data"), gossh.KeyAlgoRSASHA256)
+	if err != nil || sig.Format != gossh.KeyAlgoRSASHA256 {
+		t.Fatalf("signature %v, %v", sig, err)
+	}
+	if rec.get() == nil {
+		t.Fatal("signing didn't record the key")
 	}
 }

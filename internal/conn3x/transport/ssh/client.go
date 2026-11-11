@@ -106,7 +106,14 @@ type Client struct {
 	pinging  bool // a goroutine is giving them back
 
 	alive singleflight.Group // the keepalive Alive callers share
+
+	// loginKey is the public key the target accepted for this login.
+	loginKey gossh.PublicKey
 }
+
+// LoginKey is the public key this connection logged in to the target with,
+// or nil when that isn't known.
+func (c *Client) LoginKey() gossh.PublicKey { return c.loginKey }
 
 // defaultMaxSessions caps the sessions open at once on one connection.
 // sshd's MaxSessions defaults to 10 and refuses the eleventh. 8 keeps two
@@ -282,7 +289,8 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 15 * time.Second
 	}
-	auth, agentConn, err := authMethod(cfg)
+	login := &loginRecord{}
+	auth, agentConn, err := authMethod(cfg, login)
 	if err != nil {
 		return nil, fmt.Errorf("ssh %s: %w", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), err)
 	}
@@ -324,7 +332,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		hopAuth := auth
 		if i < len(cfg.Jumps) && len(hop.PrivateKey) > 0 {
 			// A hop's own key never opens the agent.
-			if hopAuth, _, err = authMethod(hop); err != nil {
+			if hopAuth, _, err = authMethod(hop, nil); err != nil {
 				closeAll()
 				return nil, fmt.Errorf("ssh %s: %w", addr, err)
 			}
@@ -357,7 +365,10 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		via = append(via, gossh.NewClient(conn, chans, reqs))
 	}
 	target := via[len(via)-1]
-	return newClient(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), target, via[:len(via)-1]), nil
+	c := newClient(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), target, via[:len(via)-1])
+	// The target authenticates last, so what signed last is its login key.
+	c.loginKey = login.get()
+	return c, nil
 }
 
 // hostKeyCheck returns the verification callback and, for known_hosts, the
@@ -475,20 +486,100 @@ func (probeKey) Verify([]byte, *gossh.Signature) error { return errors.New("prob
 // authMethod returns how to authenticate as cfg says and, when that is the
 // SSH agent, the connection to it. The agent is needed only during the
 // handshake, so the caller closes that connection once it is done.
-func authMethod(cfg Config) (gossh.AuthMethod, net.Conn, error) {
+//
+// login, when not nil, learns which key logged in: public key
+// authentication asks a key to sign only once the server has accepted it,
+// so the key that signed is the one the server let in.
+func authMethod(cfg Config, login *loginRecord) (gossh.AuthMethod, net.Conn, error) {
 	if len(cfg.PrivateKey) > 0 {
 		signer, err := gossh.ParsePrivateKey(cfg.PrivateKey)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parsing private_key: %w", err)
 		}
-		return gossh.PublicKeys(signer), nil, nil
+		return gossh.PublicKeys(login.wrap(signer)), nil, nil
 	}
 	conn, err := dialAgent(strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK")))
 	if err != nil {
 		return nil, nil, agentError{err}
 	}
-	return gossh.PublicKeysCallback(agent.NewClient(conn).Signers), conn, nil
+	agentSigners := agent.NewClient(conn).Signers
+	return gossh.PublicKeysCallback(func() ([]gossh.Signer, error) {
+		signers, err := agentSigners()
+		for i, s := range signers {
+			signers[i] = login.wrap(s)
+		}
+		return signers, err
+	}), conn, nil
 }
+
+// loginRecord remembers the last key that signed for a login.
+type loginRecord struct {
+	mu  sync.Mutex
+	key gossh.PublicKey
+}
+
+func (l *loginRecord) set(k gossh.PublicKey) {
+	l.mu.Lock()
+	l.key = k
+	l.mu.Unlock()
+}
+
+func (l *loginRecord) get() gossh.PublicKey {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.key
+}
+
+// wrap returns s, recording into l each time it signs. It keeps the
+// interfaces s has: x/crypto picks an RSA key's SHA-2 signature only
+// through AlgorithmSigner and MultiAlgorithmSigner, and without them would
+// fall back to the SHA-1 one servers now refuse.
+func (l *loginRecord) wrap(s gossh.Signer) gossh.Signer {
+	if l == nil {
+		return s
+	}
+	base := recordingSigner{Signer: s, login: l}
+	switch t := s.(type) {
+	case gossh.MultiAlgorithmSigner:
+		return recordingMultiSigner{recordingAlgSigner{base, t}, t}
+	case gossh.AlgorithmSigner:
+		return recordingAlgSigner{base, t}
+	}
+	return base
+}
+
+type recordingSigner struct {
+	gossh.Signer
+	login *loginRecord
+}
+
+func (r recordingSigner) Sign(rand io.Reader, data []byte) (*gossh.Signature, error) {
+	sig, err := r.Signer.Sign(rand, data)
+	if err == nil {
+		r.login.set(r.PublicKey())
+	}
+	return sig, err
+}
+
+type recordingAlgSigner struct {
+	recordingSigner
+	alg gossh.AlgorithmSigner
+}
+
+func (r recordingAlgSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
+	sig, err := r.alg.SignWithAlgorithm(rand, data, algorithm)
+	if err == nil {
+		r.login.set(r.PublicKey())
+	}
+	return sig, err
+}
+
+type recordingMultiSigner struct {
+	recordingAlgSigner
+	multi gossh.MultiAlgorithmSigner
+}
+
+func (r recordingMultiSigner) Algorithms() []string { return r.multi.Algorithms() }
 
 // agentError is a failure to reach the SSH agent. It can wrap a net.Error,
 // but waiting for the host won't start an agent, so DialWait doesn't retry it.
