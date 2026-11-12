@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   stable:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.repository == 'conn3xorg/conn3x'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
