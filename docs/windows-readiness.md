@@ -20,14 +20,14 @@ A module drops the experimental label when all of these hold:
 | --- | --- | --- | --- | --- | --- |
 | `windows_acl` | yes | yes | yes | yes | |
 | `windows_ad_domain` | no | no | yes, through `azure-ad-child-domain` | no | A tree domain, a new tree in the forest, isn't offered |
-| `windows_ad_domain_controller` | no | no | yes, through `azure-ad-lab` | no | Promoting straight from a workgroup server is untested (#395) |
+| `windows_ad_domain_controller` | no | no | yes, through `azure-ad-lab`, and from a workgroup server (#395) | no | `import`; a runner test |
 | `windows_ad_forest` | no | yes | yes | no | `import` |
-| `windows_ad_group` | no | module-level | yes | yes | Members from a trust to another forest are untested; changing scope or category on a real DC (#408); groups of 5,000+ (#407) |
+| `windows_ad_group` | no | module-level | yes, including scope and category changes (#408) and 5,000 members (#407) | yes | Members from a trust to another forest are untested |
 | `windows_ad_ou` | no | module-level | yes | yes | `import` on a real domain controller: it's unit-tested only |
 | `windows_ad_user` | no | module-level | yes | yes | `import` on a real domain controller: it's unit-tested only |
 | `windows_directory` | yes | yes | yes | yes | |
 | `windows_dns_client` | yes | yes | yes | yes | |
-| `windows_domain_membership` | no | no | yes | no | The `ou` argument (#396); joining a 2022 host (#394) |
+| `windows_domain_membership` | no | no | yes, including `ou` (#396) and a 2022 host (#394) | no | `import`; a runner test |
 | `windows_feature` | yes | yes | yes | yes | |
 | `windows_file` | yes | yes | yes | yes | |
 | `windows_firewall_rule` | yes | yes | yes, through `azure-windows-fleet` | yes | |
@@ -52,4 +52,4 @@ A module drops the experimental label when all of these hold:
 
 Windows Server 2022 runs in CI since #568, on the first try for every runner test.
 
-Testers with their own Windows servers help with everything in the "Azure" column and with #351, #394, #395 and #464.
+Testers with their own Windows servers help with everything in the "Azure" column and with #351 and #464.
