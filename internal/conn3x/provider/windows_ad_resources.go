@@ -123,7 +123,7 @@ const defaultForestTimeout = 30 * time.Minute
 
 func winForestSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A new Active Directory forest, with this Windows host as its first domain controller and DNS server. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the forest; nothing is demoted.",
+		Description: "A new Active Directory forest, with this Windows host as its first domain controller and DNS server. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the forest; nothing is demoted.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":            {Type: cty.String, Computed: true},
 			"revision":      revisionAttr(),
