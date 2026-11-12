@@ -12,6 +12,7 @@ import (
 	cli "github.com/urfave/cli/v3"
 
 	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/configs"
 	"github.com/opentofu/opentofu/internal/conn3x/hostpattern"
 	"github.com/opentofu/opentofu/internal/tofu"
 )
@@ -42,10 +43,18 @@ func withLimit(cmd *command.Command) {
 			fmt.Fprintf(stderr, "Error: -limit=%s: %s\n", raw, err)
 			return 1
 		}
+		var rescues map[string][]string
+		if v := os.Getenv(rescueHostsEnv); v != "" {
+			if err := json.Unmarshal([]byte(v), &rescues); err != nil {
+				fmt.Fprintf(stderr, "Error: %s: %s\n", rescueHostsEnv, err)
+				return 1
+			}
+		}
 		tofu.Conn3xCLILimit = limit
-		// Set only by a batched apply, for its own plans.
+		// Set only by apply, for its own batch and rescue plans.
 		tofu.Conn3xCLILimitCircuit = os.Getenv(batchCircuitEnv)
-		defer func() { tofu.Conn3xCLILimit, tofu.Conn3xCLILimitCircuit = nil, "" }()
+		configs.Conn3xRescueHosts = rescues
+		defer func() { tofu.Conn3xCLILimit, tofu.Conn3xCLILimitCircuit, configs.Conn3xRescueHosts = nil, "", nil }()
 		return run(m)
 	}
 }
