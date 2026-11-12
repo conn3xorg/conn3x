@@ -44,4 +44,4 @@ When you delete a `tls_private_key` step, `on_remove` decides what happens on th
 
 ## From Ansible
 
-This is `community.crypto.openssl_privatekey`. `conn3x convert ansible` doesn't translate it yet.
+`conn3x convert ansible` turns `community.crypto.openssl_privatekey` tasks into `tls_private_key` steps. Ansible's default, RSA 4096, becomes `bits = 4096`, and ECC keys on `secp256r1` or `secp384r1` become `ecdsa` on `P-256` or `P-384`. A task with a `passphrase`, a `format`, a `regenerate` other than the default, a mode others can read, or another key type stays a TODO.
