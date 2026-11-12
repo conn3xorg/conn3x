@@ -87,7 +87,7 @@ func winFileInSync(s windows.PathState, entries []windows.Entry) (bool, error) {
 
 func winFileSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A file on a Windows host, written byte for byte: no line ending conversion. It never writes through a link, and refuses a folder on the way that another account could change.",
+		Description: "A file on a Windows host, written byte for byte: no line ending conversion. It never writes through a link, and refuses a folder on the way that another account could change.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),
@@ -325,7 +325,7 @@ func applyWinFile(ctx context.Context, req providers.ApplyResourceChangeRequest)
 
 func winDirectorySchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A folder on a Windows host, with any missing above it. Removing the step leaves the folder.",
+		Description: "A folder on a Windows host, with any missing above it. Removing the step leaves the folder.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),

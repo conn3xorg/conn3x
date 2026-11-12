@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_directory` to make a folder, and any missing above it, on a Windows host. With `acl` the folder has its rules from the moment it exists, so there's no moment when anyone else can get in.
 
 ## Example usage

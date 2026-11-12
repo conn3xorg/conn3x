@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_powershell` for what no Windows module covers yet. Values go in `args`, and the script reads them as `$A.name`: they arrive as data, so a quote or a `$(...)` in one is just text.
 
 ## Example usage

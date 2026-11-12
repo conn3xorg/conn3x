@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_service` to say how an existing service starts and whether it's running. Conn3x doesn't create services here.
 
 ## Example usage

@@ -201,8 +201,9 @@ It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu 
 and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian 13.
 Windows Server 2022 and 2025 are in preview, with tested Azure examples for one server,
 a small domain, a whole Active Directory lab, and a domain controller with up to five
-IIS servers. Arista EOS switches are experimental. Windows at scale is the work now,
-then more network devices.
+IIS servers. Nine Windows modules, the file, service, feature and package kind, are
+out of experimental; the Active Directory ones aren't yet. Arista EOS switches are
+experimental. Windows at scale is the work now, then more network devices.
 See the [roadmap](ROADMAP.md).
 
 ## Built on OpenTofu

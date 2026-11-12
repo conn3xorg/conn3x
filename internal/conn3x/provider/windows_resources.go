@@ -86,7 +86,7 @@ func winHost(ctx context.Context, conn cty.Value) (*hostConn, error) {
 
 func winWaitForSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. Waits until a path exists, a service is running or a TCP port is listening on a Windows host. Refresh checks again, so a later apply waits again if it stopped.",
+		Description: "Waits until a path exists, a service is running or a TCP port is listening on a Windows host. Refresh checks again, so a later apply waits again if it stopped.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),
@@ -216,7 +216,7 @@ func applyWinWaitFor(ctx context.Context, req providers.ApplyResourceChangeReque
 
 func winRebootSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. Reboots a Windows host when created and whenever triggers change, then waits for it to come back. With only_if_pending it reboots only when Windows is waiting for one. Removing it does nothing.",
+		Description: "Reboots a Windows host when created and whenever triggers change, then waits for it to come back. With only_if_pending it reboots only when Windows is waiting for one. Removing it does nothing.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":                {Type: cty.String, Computed: true},
 			"revision":          revisionAttr(),
@@ -368,7 +368,7 @@ var winPowershellRerun = []string{"script", "args", "args_hmac", "creates", "rem
 
 func winPowershellSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A PowerShell script on a Windows host, for what no module covers yet. Guards say when it has already done its job.",
+		Description: "A PowerShell script on a Windows host, for what no module covers yet. Guards say when it has already done its job.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),

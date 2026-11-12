@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_reboot` when a change needs a restart before the next step can run. No other Windows module reboots a host by itself, so reboots always show in the plan.
 
 ## Example usage

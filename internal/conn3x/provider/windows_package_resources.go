@@ -20,7 +20,7 @@ const defaultPackageTimeout = 30 * time.Minute
 
 func winPackageSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. An MSI package on a Windows host, found by its product code. It never reboots: reboot_required says whether Windows wants one, and windows_reboot with only_if_pending does it.",
+		Description: "An MSI package on a Windows host, found by its product code. It never reboots: reboot_required says whether Windows wants one, and windows_reboot with only_if_pending does it.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":              {Type: cty.String, Computed: true},
 			"revision":        revisionAttr(),

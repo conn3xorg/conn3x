@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_wait_for` to pause a circuit until a path exists, a service is running or a TCP port is listening on a Windows host. It keeps trying through a reboot, so it's the natural step to follow `windows_reboot`.
 
 ## Example usage

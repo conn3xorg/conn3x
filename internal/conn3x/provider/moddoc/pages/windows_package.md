@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_package` to install an MSI, or remove one, by its product code. Nothing installs unless the file matches the SHA-256 you give, and Conn3x never reboots on its own: when msiexec asks for a reboot, a `windows_reboot` step with `only_if_pending` does it.
 
 ## Example usage

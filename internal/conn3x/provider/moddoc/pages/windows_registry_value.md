@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_registry_value` to set one value under `HKLM` on a Windows host. A value of type `expand_string` is compared as stored, with `%PATH%` left as `%PATH%`, so it doesn't show as changed on every plan.
 
 ## Example usage
