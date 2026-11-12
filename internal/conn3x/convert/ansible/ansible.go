@@ -8,6 +8,7 @@ package ansible
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -118,6 +119,9 @@ type converter struct {
 	// factsAfter marks the current play's tasks that a later task or handler
 	// reads facts after.
 	factsAfter map[*yaml.Node]bool
+	// block is the task being converted's place in a block with rescue or
+	// always, if it has one.
+	block taskAt
 }
 
 func (c *converter) run(plays *yaml.Node) Result {
@@ -398,8 +402,10 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 			c.issue(cb, scalar(mapping(t.node)["name"]), t.node, t.reason)
 			continue
 		}
+		c.block = t
 		c.task(cb, t.node, become, vars, handlers, used)
 	}
+	c.block = taskAt{}
 	for _, hb := range handlerBlocks {
 		cb.AppendNewline()
 		cb.AppendBlock(hb)
@@ -937,6 +943,16 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		notify = append(notify, "handler."+h)
 	}
+	if kind := c.block.kind; kind != "" {
+		switch {
+		case len(notify) > 0:
+			c.issue(body, name, node, "notifies a handler from a block's "+kind+", which Conn3x can't do yet; put the restart in the task itself")
+			return
+		case len(c.block.group.steps) == 0:
+			c.issue(body, name, node, "is in the "+kind+" of a block none of whose tasks became a step, so there's nothing for it to watch")
+			return
+		}
+	}
 
 	if c.role != nil {
 		for _, n := range in.commaFree {
@@ -967,6 +983,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			stepName = base + "_" + slug(s.suffix)
 		}
 		stepName = unique(stepName, used)
+		// A rescue or always block can't share a handler's name.
+		for c.block.kind != "" && slices.Contains(slices.Collect(maps.Values(handlers)), stepName) {
+			stepName = unique(stepName, used)
+		}
 		body.AppendNewline()
 		for _, note := range s.notes {
 			comment(body, note)
@@ -979,7 +999,16 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		} else if delegate != "" {
 			comment(body, fmt.Sprintf("Runs on %s, as delegate_to had it: %s must be a key of the circuit's hosts.", delegate, delegate))
 		}
-		sb := body.AppendNewBlock("step", []string{stepName}).Body()
+		blockType := "step"
+		if c.block.kind != "" {
+			blockType = c.block.kind
+		} else if c.block.group != nil {
+			c.block.group.steps = append(c.block.group.steps, "step."+stepName)
+		}
+		sb := body.AppendNewBlock(blockType, []string{stepName}).Body()
+		if c.block.kind != "" {
+			sb.SetAttributeRaw("watches", rawTokens("["+strings.Join(c.block.group.steps, ", ")+"]"))
+		}
 		if delegate != "" {
 			sb.SetAttributeValue("on", cty.StringVal(delegate))
 		}

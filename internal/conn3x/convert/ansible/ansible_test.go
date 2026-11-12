@@ -843,16 +843,16 @@ func TestDebugLeftForReviewDoesntCopyItsMessage(t *testing.T) {
 	const secret = "hunter2"
 	msg := "msg: '" + secret + "'"
 	for task, reason := range map[string]string{
-		"debug: {" + msg + "}\n      when: x":               "uses when",
-		"debug: {" + msg + "}\n      register: r":           "uses register",
-		"debug: {" + msg + "}\n      failed_when: true":     "uses failed_when",
-		"debug: {" + msg + "}\n      loop: [a, b]":          "doesn't use item",
-		"debug: {" + msg + ", var: x}":                      "both msg and var",
-		"debug: {" + msg + ", bogus: 1}":                    "sets bogus",
-		"action: debug msg=" + secret:                       "uses action",
-		"action: {module: debug, " + msg + "}":              "uses action",
-		"local_action: ansible.builtin.debug msg=" + secret: "uses local_action",
-		"block:\n        - debug: {" + msg + "}":            "uses block",
+		"debug: {" + msg + "}\n      when: x":                   "uses when",
+		"debug: {" + msg + "}\n      register: r":               "uses register",
+		"debug: {" + msg + "}\n      failed_when: true":         "uses failed_when",
+		"debug: {" + msg + "}\n      loop: [a, b]":              "doesn't use item",
+		"debug: {" + msg + ", var: x}":                          "both msg and var",
+		"debug: {" + msg + ", bogus: 1}":                        "sets bogus",
+		"action: debug msg=" + secret:                           "uses action",
+		"action: {module: debug, " + msg + "}":                  "uses action",
+		"local_action: ansible.builtin.debug msg=" + secret:     "uses local_action",
+		"block:\n        - debug: {" + msg + "}\n      when: x": "sets when on a block",
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
