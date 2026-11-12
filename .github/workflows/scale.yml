@@ -24,6 +24,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # crun makes a kernel keyring for every container, and an ordinary
+      # user may hold only 200 keys by default.
+      - name: Let one user hold a keyring per container
+        run: sudo sysctl -w kernel.keys.maxkeys=20000 kernel.keys.maxbytes=4000000
       - name: Plan and apply at each host count
         env:
           CONN3X_SCALE: ${{ inputs.hosts }}
