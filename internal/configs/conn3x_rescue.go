@@ -82,8 +82,8 @@ func (f *rescueFilter) Functions() []hcl.Traversal {
 	}
 	return nil
 }
-func (f *rescueFilter) Range() hcl.Range           { return f.instances.Range() }
-func (f *rescueFilter) StartRange() hcl.Range      { return f.instances.StartRange() }
+func (f *rescueFilter) Range() hcl.Range      { return f.instances.Range() }
+func (f *rescueFilter) StartRange() hcl.Range { return f.instances.StartRange() }
 
 // Conn3xRescueResource reports whether r is a circuit's rescue.
 func Conn3xRescueResource(r *Resource) bool {
