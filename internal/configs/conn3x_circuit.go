@@ -128,6 +128,8 @@ var circuitSchema = &hcl.BodySchema{
 	Attributes: []hcl.AttributeSchema{
 		{Name: "hosts", Required: true},
 		{Name: "strategy"},
+		{Name: "batch_size"},
+		{Name: "max_failures"},
 	},
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "ssh"},
@@ -179,6 +181,13 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	diags = append(diags, strategyDiags...)
 	if strategyDiags.HasErrors() {
 		return nil, nil, diags
+	}
+	if batch, batchDiags := circuitBatch(name, content, perHost); batch != nil || batchDiags.HasErrors() {
+		diags = append(diags, batchDiags...)
+		diags = append(diags, batchRefusesRunOnce(content.Blocks.OfType("step"))...)
+		if diags.HasErrors() {
+			return nil, nil, diags
+		}
 	}
 
 	var sshAttrs hclsyntax.Attributes
