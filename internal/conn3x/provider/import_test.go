@@ -76,6 +76,10 @@ func TestImportPriorPerModule(t *testing.T) {
 		{"conn3x_windows_ad_ou", `{"name":"Servers","path":"DC=corp,DC=example"}`, "203.0.113.10:2222:windows_ad_ou:Servers:DC=corp,DC=example", nil},
 		{"conn3x_windows_ad_group", `{"name":"AppOps","members":["alice"]}`, "203.0.113.10:2222:windows_ad_group:AppOps", nil},
 		{"conn3x_windows_ad_user", `{"name":"alice","given_name":"Alice"}`, "203.0.113.10:2222:windows_ad_user:alice", nil},
+		{"conn3x_windows_ad_forest", `{"domain_name":"lab.example.com","netbios_name":"LAB"}`, "203.0.113.10:2222:windows_ad_forest:lab.example.com", nil},
+		{"conn3x_windows_ad_domain", `{"domain_name":"emea.lab.example.com","username":"admin@lab.example.com"}`, "203.0.113.10:2222:windows_ad_domain:emea.lab.example.com", nil},
+		{"conn3x_windows_ad_domain_controller", `{"domain_name":"lab.example.com","username":"LAB\\admin"}`, "203.0.113.10:2222:windows_ad_domain_controller:lab.example.com", nil},
+		{"conn3x_windows_domain_membership", `{"domain":"lab.example.com","username":"LAB\\joiner","ou":"OU=Servers,DC=lab,DC=example,DC=com"}`, "203.0.113.10:2222:windows_domain_membership:lab.example.com", nil},
 		{"conn3x_windows_iis_site", `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`, "203.0.113.10:2222:windows_iis_site:app", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
@@ -287,15 +291,19 @@ func TestImportUnsupportedType(t *testing.T) {
 // a replace: its id is the one the plan writes.
 func TestImportedWindowsStepPlansWithoutReplace(t *testing.T) {
 	for typ, args := range map[string]string{
-		"conn3x_windows_firewall_rule":  `{"name":"web","protocol":"tcp","local_ports":["443"]}`,
-		"conn3x_windows_scheduled_task": `{"name":"cleanup","execute":"C:/tools/cleanup.exe","user":"SYSTEM","trigger":[{"type":"boot"}]}`,
-		"conn3x_windows_iis_app_pool":   `{"name":"app"}`,
-		"conn3x_windows_acl":            `{"path":"C:/srv/app","entry":[{"principal":"S-1-5-32-544","rights":["FullControl"]}]}`,
-		"conn3x_windows_dns_client":     `{"servers":["10.0.0.4"]}`,
-		"conn3x_windows_ad_ou":          `{"name":"Servers"}`,
-		"conn3x_windows_ad_group":       `{"name":"AppOps","members":["alice"]}`,
-		"conn3x_windows_ad_user":        `{"name":"alice"}`,
-		"conn3x_windows_iis_site":       `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`,
+		"conn3x_windows_firewall_rule":        `{"name":"web","protocol":"tcp","local_ports":["443"]}`,
+		"conn3x_windows_scheduled_task":       `{"name":"cleanup","execute":"C:/tools/cleanup.exe","user":"SYSTEM","trigger":[{"type":"boot"}]}`,
+		"conn3x_windows_iis_app_pool":         `{"name":"app"}`,
+		"conn3x_windows_acl":                  `{"path":"C:/srv/app","entry":[{"principal":"S-1-5-32-544","rights":["FullControl"]}]}`,
+		"conn3x_windows_dns_client":           `{"servers":["10.0.0.4"]}`,
+		"conn3x_windows_ad_ou":                `{"name":"Servers"}`,
+		"conn3x_windows_ad_group":             `{"name":"AppOps","members":["alice"]}`,
+		"conn3x_windows_ad_user":              `{"name":"alice"}`,
+		"conn3x_windows_ad_forest":            `{"domain_name":"lab.example.com"}`,
+		"conn3x_windows_ad_domain":            `{"domain_name":"emea.lab.example.com","username":"admin@lab.example.com"}`,
+		"conn3x_windows_ad_domain_controller": `{"domain_name":"lab.example.com","username":"LAB\\admin"}`,
+		"conn3x_windows_domain_membership":    `{"domain":"lab.example.com","username":"LAB\\joiner"}`,
+		"conn3x_windows_iis_site":             `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`,
 	} {
 		_, v, err := importPrior(typ, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+args+`}`)
 		if err != nil {

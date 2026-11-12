@@ -126,3 +126,26 @@ func fillWinFile(ctx context.Context, h *hostConn, v cty.Value) (cty.Value, erro
 	vals["content"] = cty.StringVal(content)
 	return cty.ObjectVal(vals), nil
 }
+
+// hasWinForest and the three below: the host is already what the step
+// would make it, by the same test a refresh uses. A promotion still
+// waiting for its reboot counts, as it does for in_sync.
+func hasWinForest(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadForest(ctx, h.client)
+	return winForestFrom(v).Matches(a), err
+}
+
+func hasWinChildDomain(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadForest(ctx, h.client)
+	return winChildDomainFrom(v).Matches(a), err
+}
+
+func hasWinDC(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadForest(ctx, h.client)
+	return winDCFrom(v).Matches(a), err
+}
+
+func hasWinMembership(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadForest(ctx, h.client)
+	return winMembershipFrom(v).Matches(a), err
+}

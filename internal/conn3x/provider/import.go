@@ -99,6 +99,12 @@ var importable = map[string]struct {
 	"conn3x_windows_ad_group":       {nameID("windows_ad_group", nil), notNull, "Active Directory group %s", hasWinADGroup},
 	"conn3x_windows_ad_user":        {nameID("windows_ad_user", nil), notNull, "Active Directory user %s", hasWinADUser},
 
+	// Promotions and joins: what's adopted is that the host already is one.
+	"conn3x_windows_ad_forest":            {keysID("windows_ad_forest", "domain_name"), notNull, "forest %s, with this host as a domain controller", hasWinForest},
+	"conn3x_windows_ad_domain":            {keysID("windows_ad_domain", "domain_name"), notNull, "domain %s, with this host as a domain controller", hasWinChildDomain},
+	"conn3x_windows_ad_domain_controller": {keysID("windows_ad_domain_controller", "domain_name"), notNull, "domain controller in %s", hasWinDC},
+	"conn3x_windows_domain_membership":    {keysID("windows_domain_membership", "domain"), notNull, "membership of domain %s", hasWinMembership},
+
 	// A host always has a hostname, time zone and locale, so there's
 	// nothing to find first: a different one imports and plans an update.
 	"conn3x_hostname": {singleID("hostname"), notNull, "%s", nil},
