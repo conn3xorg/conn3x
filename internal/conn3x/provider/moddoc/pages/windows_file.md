@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_file` to put a file on a Windows host, byte for byte. Line endings stay as you wrote them, and the file appears all at once, so nothing ever reads half of it.
 
 ## Example usage

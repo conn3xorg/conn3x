@@ -20,7 +20,7 @@ import (
 
 func winRegistrySchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. One registry value under HKLM on a Windows host. The value's type and data are compared with what's there, without expanding environment names.",
+		Description: "One registry value under HKLM on a Windows host. The value's type and data are compared with what's there, without expanding environment names.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),
@@ -251,7 +251,7 @@ func applyWinRegistry(ctx context.Context, req providers.ApplyResourceChangeRequ
 
 func winServiceSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A service that already exists on a Windows host: how it starts and whether it's running. Removing the step leaves it as it is.",
+		Description: "A service that already exists on a Windows host: how it starts and whether it's running. Removing the step leaves it as it is.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":         {Type: cty.String, Computed: true},
 			"revision":   revisionAttr(),
@@ -348,7 +348,7 @@ const defaultFeatureTimeout = 30 * time.Minute
 
 func winFeatureSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A Windows Server role or feature. It never reboots: reboot_required says whether Windows wants one, and windows_reboot does it.",
+		Description: "A Windows Server role or feature. It never reboots: reboot_required says whether Windows wants one, and windows_reboot does it.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":                       {Type: cty.String, Computed: true},
 			"revision":                 revisionAttr(),
