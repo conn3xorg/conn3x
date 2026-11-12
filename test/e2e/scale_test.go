@@ -39,7 +39,7 @@ type scaleVars struct {
 // for #524. It runs only with CONN3X_SCALE set to host counts, such as
 // "50,200", and appends a JSON line per count to CONN3X_SCALE_OUT if set.
 // With CONN3X_SCALE_PROFILE set to a directory, one more plan per count
-// writes a CPU profile there. The hosts are sshd-only containers (test/images/scale), so hundreds fit
+// writes a CPU profile and a Go execution trace there. The hosts are sshd-only containers (test/images/scale), so hundreds fit
 // on one machine; they measure Conn3x and SSH, not a real host's disk.
 func TestScalePlan(t *testing.T) {
 	counts := os.Getenv("CONN3X_SCALE")
@@ -81,9 +81,11 @@ func TestScalePlan(t *testing.T) {
 			res["plan"] = timed("plan", "-no-color").Seconds()
 			res["plan_parallelism_50"] = timed("plan", "-no-color", "-parallelism=50").Seconds()
 			res["plan_refresh_false"] = timed("plan", "-no-color", "-refresh=false").Seconds()
-			// One more plan with a CPU profile, for where the time goes.
+			// One more plan with a CPU profile and an execution trace, for where
+			// the time goes and where it waits.
 			if dir := os.Getenv("CONN3X_SCALE_PROFILE"); dir != "" {
 				t.Setenv("TOFU_CPU_PROFILE", filepath.Join(dir, fmt.Sprintf("plan-%d.pprof", n)))
+				t.Setenv("CONN3X_TRACE", filepath.Join(dir, fmt.Sprintf("plan-%d.trace", n)))
 				w.mustConn3x("plan", "-no-color")
 			}
 			line, _ := json.Marshal(res)
