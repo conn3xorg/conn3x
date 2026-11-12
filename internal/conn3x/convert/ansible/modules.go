@@ -521,8 +521,13 @@ func fileModule(in *input) ([]step, string) {
 			return nil, "sets owner, group or mode on a link, which a Conn3x link step doesn't manage"
 		}
 		return one("link", []attr{s("path", path), s("target", in.str("src"))})
+	case "absent":
+		// Ansible removes whatever is there; a file step refuses anything
+		// but a file, so a wrong guess stops the plan instead of deleting.
+		return one("file", []attr{s("path", path), s("state", "absent")},
+			"Ansible removes whatever is at path, even a directory and everything in it. This step removes a file and stops with an error at anything else: make it a directory or link step if that's what's there.")
 	}
-	return nil, "changes an existing file's attributes or removes it, which the converter can't translate yet"
+	return nil, "changes an existing file's attributes or touches it, which the converter can't translate yet"
 }
 
 func editTarget(in *input) []attr {

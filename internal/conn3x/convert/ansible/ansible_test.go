@@ -1048,3 +1048,38 @@ func TestFileRecurse(t *testing.T) {
 		t.Errorf("numeric mode: converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// Ansible's state: absent removes whatever is at the path. A file step
+// removes a file and refuses anything else, and its note says so.
+func TestFileAbsentBecomesAFileStep(t *testing.T) {
+	for _, task := range []string{
+		"file: {path: /etc/app/legacy.conf, state: absent}",
+		"ansible.builtin.file: dest=/etc/app/legacy.conf state=absent",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+			continue
+		}
+		for _, want := range []string{"file {", `path  = "/etc/app/legacy.conf"`, `state = "absent"`, "even a directory and everything in it"} {
+			if !strings.Contains(string(res.HCL), want) {
+				t.Errorf("%q: output lacks %q:\n%s", task, want, res.HCL)
+			}
+		}
+	}
+}
+
+// Arguments beside state: absent still go to review, and so do the states
+// the converter doesn't translate.
+func TestFileAbsentWithMoreIsLeft(t *testing.T) {
+	for task, reason := range map[string]string{
+		"file: {path: /etc/a, state: absent, mode: '0644'}": "sets mode",
+		"file: {path: /etc/a, state: touch}":                "touches it",
+		"file: {path: /etc/a, mode: '0600'}":                "touches it",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}
