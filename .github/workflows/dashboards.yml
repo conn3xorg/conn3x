@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   refresh:
+    # A fork has none of the credentials this needs.
+    if: github.repository == 'conn3xorg/conn3x'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
