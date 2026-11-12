@@ -1,0 +1,36 @@
+variable "fail_on" {
+  type    = string
+  default = ""
+}
+
+variable "run" {
+  type = string
+}
+
+circuit "web" {
+  hosts = {
+    web1 = { address = "127.0.0.1", port = {{.PortA}} }
+    web2 = { address = "127.0.0.1", port = {{.PortB}} }
+    web10 = { address = "127.0.0.1", port = {{.PortSlow}} }
+  }
+  strategy   = "per_host"
+  batch_size = 1
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "start" {
+    command {
+      command = "${each.key == var.fail_on ? "false" : "date +%s.%N > /tmp/start; sleep 1"} # ${var.run}"
+    }
+  }
+
+  step "finish" {
+    command {
+      command = "date +%s.%N > /tmp/finish # ${var.run}"
+    }
+  }
+}

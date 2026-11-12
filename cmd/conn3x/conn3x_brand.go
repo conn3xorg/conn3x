@@ -175,6 +175,9 @@ func brandTree(cmd *command.Command) {
 	if (cmd.Name == "plan" || cmd.Name == "apply" || cmd.Name == "refresh") && cmd.Run != nil {
 		withLimit(cmd)
 	}
+	if cmd.Name == "apply" && cmd.Run != nil {
+		withBatch(cmd) // outermost: a batched apply runs its own plans and applies
+	}
 	if cmd.Name == "init" && cmd.Run != nil {
 		cmd.Run = suggestEncryption(cmd.Run, cmd.CommandLine.View)
 	}
