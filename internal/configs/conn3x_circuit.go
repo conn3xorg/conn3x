@@ -139,6 +139,7 @@ var circuitSchema = &hcl.BodySchema{
 		{Type: "step", LabelNames: []string{"name"}},
 		{Type: "handler", LabelNames: []string{"name"}},
 		{Type: "rescue", LabelNames: []string{"name"}},
+		{Type: "always", LabelNames: []string{"name"}},
 	},
 }
 
@@ -376,9 +377,12 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	for n := range steps {
 		stepNames[n] = true
 	}
-	rescues, rescueDiags := lowerRescues(name, content.Blocks.OfType("rescue"), stepNames, handlers, hosts, sshAttrs, sshRange, perHost)
-	diags = append(diags, rescueDiags...)
-	resources = append(resources, rescues...)
+	taken := map[string]bool{}
+	for _, kind := range []string{"rescue", "always"} {
+		rs, rsDiags := lowerRescues(name, content.Blocks.OfType(kind), stepNames, handlers, taken, hosts, sshAttrs, sshRange, perHost)
+		diags = append(diags, rsDiags...)
+		resources = append(resources, rs...)
+	}
 	for hName, ranges := range notifyRefs {
 		if !handlers[hName] {
 			for _, rng := range ranges {

@@ -16,28 +16,35 @@ import (
 )
 
 // A rescue runs on a host only when a step or handler it watches failed
-// there, like a step in Ansible's rescue:
+// there, like a task in Ansible's rescue, and an always block runs on every
+// host where one of them ran, failed or not, like Ansible's always:
 //
 //	rescue "restore" {
 //	  watches = [step.config, handler.restart]
 //	  command { command = "cp /var/backups/app.conf /etc/app/app.conf" }
 //	}
 //
-// It lowers like a step, but has no instances in a plan: conn3x apply runs
-// the rescues in a plan of their own after an apply in which a watched step
-// failed, on the hosts where it failed, and then drops them from state (see
+//	always "lb_enable" {
+//	  watches = [step.config, handler.restart]
+//	  command { command = "lb-enable ${each.key}" }
+//	}
+//
+// Each lowers like a step, but has no instances in a plan: conn3x apply
+// runs the rescues in a plan of their own after an apply in which a watched
+// step failed, on the hosts where it failed, then the always blocks on the
+// hosts where a watched step ran, and drops them from state (see
 // cmd/conn3x/conn3x_rescue.go and docs/rescue-design.md).
 
-// Conn3xRescueHosts is set in the plan a rescue phase makes: each rescue's
-// resource name to the hosts it runs on. While it's nil, a rescue has no
-// instances.
+// Conn3xRescueHosts is set in the plan a rescue or always phase makes:
+// each rescue or always block's resource name to the hosts it runs on.
+// While it's nil, neither has instances.
 var Conn3xRescueHosts map[string][]string
 
-// rescueFilter is a rescue's for_each: no instances, or in a rescue phase
-// the instances on the hosts Conn3xRescueHosts gives it.
+// rescueFilter is a rescue or always block's for_each: no instances, or in
+// its phase the instances on the hosts Conn3xRescueHosts gives it.
 type rescueFilter struct {
 	instances hcl.Expression
-	name      string // the rescue's resource name, circuit__rescue
+	name      string // the resource name, circuit__name
 	looping   bool
 }
 
@@ -85,32 +92,36 @@ func (f *rescueFilter) Functions() []hcl.Traversal {
 func (f *rescueFilter) Range() hcl.Range      { return f.instances.Range() }
 func (f *rescueFilter) StartRange() hcl.Range { return f.instances.StartRange() }
 
-// Conn3xRescueResource reports whether r is a circuit's rescue.
+// Conn3xRescueResource reports whether r is a circuit's rescue or always
+// block.
 func Conn3xRescueResource(r *Resource) bool {
 	_, ok := r.ForEach.(*rescueFilter)
 	return ok
 }
 
-// Conn3xRescue is one rescue, as conn3x apply needs it.
+// Conn3xRescue is one rescue or always block, as conn3x apply needs it.
 type Conn3xRescue struct {
 	Circuit, Name string
+	Always        bool
 	// Watches are the step and handler names it watches, in the order
 	// written. A step and a handler can't share a name.
 	Watches []string
 }
 
-// Resource is the rescue's resource name.
+// Resource is its resource name.
 func (r Conn3xRescue) Resource() string { return r.Circuit + "__" + r.Name }
 
-// rescueRefuses are the step arguments a rescue doesn't take, and why.
+// rescueRefuses are the step arguments a rescue or always block doesn't
+// take, and why.
 var rescueRefuses = map[string]string{
-	"depends_on": "A rescue runs after the steps it watches, in a plan of its own, so it can't wait for anything else.",
-	"run_once":   "A rescue runs on each host where a watched step failed.",
-	"import":     "A rescue is dropped from state once it has run, so there's nothing to import into.",
-	"notify":     "A rescue can't notify a handler yet. Put the restart in the rescue itself.",
+	"depends_on": "It runs after the steps it watches, in a plan of its own, so it can't wait for anything else.",
+	"run_once":   "It runs on each host where a step it watches did.",
+	"import":     "It's dropped from state once it has run, so there's nothing to import into.",
+	"notify":     "It can't notify a handler yet. Put the restart in the block itself.",
 }
 
-// rescueWatches reads a rescue's watches = [step.<name>, handler.<name>, ...].
+// rescueWatches reads a rescue or always block's watches =
+// [step.<name>, handler.<name>, ...].
 func rescueWatches(rescue *hcl.Block) ([]string, hcl.Diagnostics) {
 	body, ok := rescue.Body.(*hclsyntax.Body)
 	if !ok {
@@ -120,8 +131,8 @@ func rescueWatches(rescue *hcl.Block) ([]string, hcl.Diagnostics) {
 	if !ok {
 		return nil, hcl.Diagnostics{{
 			Severity: hcl.DiagError,
-			Summary:  "Missing watches in rescue",
-			Detail:   "A rescue runs on a host where a step or handler it watches failed: watches = [step.config, handler.restart].",
+			Summary:  "Missing watches in " + rescue.Type,
+			Detail:   "A " + rescue.Type + " block runs on a host after a step or handler it watches: watches = [step.config, handler.restart].",
 			Subject:  rescue.DefRange.Ptr(),
 		}}
 	}
@@ -132,7 +143,7 @@ func rescueWatches(rescue *hcl.Block) ([]string, hcl.Diagnostics) {
 		if tDiags.HasErrors() || len(t) != 2 || (t.RootName() != "step" && t.RootName() != "handler") {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  "Invalid watches in rescue",
+				Summary:  "Invalid watches in " + rescue.Type,
 				Detail:   "watches takes a list of step.<name> and handler.<name> references to steps and handlers in the same circuit.",
 				Subject:  e.Range().Ptr(),
 			})
@@ -143,42 +154,42 @@ func rescueWatches(rescue *hcl.Block) ([]string, hcl.Diagnostics) {
 	if len(exprs) == 0 && !diags.HasErrors() {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  "Empty watches in rescue",
-			Detail:   "A rescue that watches nothing never runs. Name the steps and handlers it rescues.",
+			Summary:  "Empty watches in " + rescue.Type,
+			Detail:   "A " + rescue.Type + " block that watches nothing never runs. Name the steps and handlers it follows.",
 			Subject:  attr.SrcRange.Ptr(),
 		})
 	}
 	return names, diags
 }
 
-// lowerRescues lowers a circuit's rescues. steps and handlers are the
-// circuit's, by name, to check watches against; a rescue's name must not
-// be one of theirs, since they share resource names.
-func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers map[string]bool, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, perHost bool) ([]*Resource, hcl.Diagnostics) {
+// lowerRescues lowers a circuit's rescue or always blocks, which run in
+// the order written. steps and handlers are the circuit's, by name, to
+// check watches against; taken holds the names rescue and always blocks
+// already have, since they all share resource names.
+func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers, taken map[string]bool, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, perHost bool) ([]*Resource, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	var out, chain []*Resource
-	seen := map[string]bool{}
 	for _, rescue := range rescues {
 		name := rescue.Labels[0]
 		switch {
 		case !validCircuitName(name):
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  "Invalid rescue name",
-				Detail:   "A rescue name must be a valid identifier without a double underscore.",
+				Summary:  "Invalid " + rescue.Type + " name",
+				Detail:   "A " + rescue.Type + " name must be a valid identifier without a double underscore.",
 				Subject:  &rescue.LabelRanges[0],
 			})
 			continue
-		case steps[name] || handlers[name] || seen[name]:
+		case steps[name] || handlers[name] || taken[name]:
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  "Duplicate rescue",
-				Detail:   fmt.Sprintf("Circuit %q already has a step, handler or rescue named %q. They share names.", circuit, name),
+				Summary:  "Duplicate " + rescue.Type,
+				Detail:   fmt.Sprintf("Circuit %q already has a step, handler, rescue or always block named %q. They share names.", circuit, name),
 				Subject:  &rescue.DefRange,
 			})
 			continue
 		}
-		seen[name] = true
+		taken[name] = true
 		body, ok := rescue.Body.(*hclsyntax.Body)
 		if !ok {
 			diags = append(diags, nativeSyntaxRequired(rescue.DefRange))
@@ -192,7 +203,7 @@ func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers map[string
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  fmt.Sprintf("No step or handler %q", w),
-					Detail:   fmt.Sprintf("Circuit %q has no step or handler named %q for rescue %q to watch.", circuit, w, name),
+					Detail:   fmt.Sprintf("Circuit %q has no step or handler named %q for %s %q to watch.", circuit, w, rescue.Type, name),
 					Subject:  e[i].Range().Ptr(),
 				})
 			}
@@ -202,7 +213,7 @@ func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers map[string
 			if why, refused := rescueRefuses[k]; refused {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("Unsupported argument %q in rescue", k),
+					Summary:  fmt.Sprintf("Unsupported argument %q in %s", k, rescue.Type),
 					Detail:   why,
 					Subject:  a.SrcRange.Ptr(),
 				})
@@ -229,8 +240,8 @@ func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers map[string
 	return out, diags
 }
 
-// Conn3xRescues reads the rescues of the circuits in the root module in
-// dir. It reads only what conn3x apply needs; the full checks run when the
+// Conn3xRescues reads the rescue and always blocks of the circuits in the
+// root module in dir, rescues first. It reads only what conn3x apply needs; the full checks run when the
 // configuration loads.
 func Conn3xRescues(dir string) ([]Conn3xRescue, hcl.Diagnostics) {
 	entries, err := os.ReadDir(dir)
@@ -252,10 +263,10 @@ func Conn3xRescues(dir string) ([]Conn3xRescue, hcl.Diagnostics) {
 		top, _, _ := f.Body.PartialContent(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "circuit", LabelNames: []string{"name"}}}})
 		for _, block := range top.Blocks {
 			content, _, _ := block.Body.PartialContent(circuitSchema)
-			for _, rescue := range content.Blocks.OfType("rescue") {
+			for _, rescue := range append(content.Blocks.OfType("rescue"), content.Blocks.OfType("always")...) {
 				watches, wDiags := rescueWatches(rescue)
 				diags = append(diags, wDiags...)
-				out = append(out, Conn3xRescue{Circuit: block.Labels[0], Name: rescue.Labels[0], Watches: watches})
+				out = append(out, Conn3xRescue{Circuit: block.Labels[0], Name: rescue.Labels[0], Always: rescue.Type == "always", Watches: watches})
 			}
 		}
 	}

@@ -7,6 +7,11 @@ variable "fail_on" {
   default = ""
 }
 
+variable "always_fails" {
+  type    = bool
+  default = false
+}
+
 circuit "app" {
   hosts = {
     web1 = { address = "127.0.0.1", port = {{.PortA}} }
@@ -43,6 +48,13 @@ circuit "app" {
     watches = [step.later]
     command {
       command = "touch /tmp/never"
+    }
+  }
+
+  always "after" {
+    watches = [step.config]
+    command {
+      command = "[ ${var.always_fails} = false ] && echo always ${var.run} > /tmp/always"
     }
   }
 }
