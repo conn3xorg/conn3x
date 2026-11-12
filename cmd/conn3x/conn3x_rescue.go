@@ -139,14 +139,27 @@ func (r *batchRun) rescue(stream string) {
 	fmt.Fprintf(r.out, "\nRescued %s. The apply still fails, because a step failed.\n", strings.Join(hosts, ", "))
 }
 
-// forget drops resources from state, as conn3x state rm does.
+// forget drops resources from state, as conn3x state rm does. Those that
+// failed on every host never reached state, and are passed over.
 func (r *batchRun) forget(addrs []string) error {
 	if len(addrs) == 0 {
 		return nil
 	}
 	global, _ := r.split()
+	var list bytes.Buffer
+	if r.run(append(slices.Clone(global), "state", "list"), &list) != 0 {
+		return fmt.Errorf("%s", strings.TrimSpace(list.String()))
+	}
+	inState := slices.DeleteFunc(slices.Clone(addrs), func(a string) bool {
+		return !slices.ContainsFunc(strings.Split(list.String(), "\n"), func(line string) bool {
+			return line == a || strings.HasPrefix(line, a+"[")
+		})
+	})
+	if len(inState) == 0 {
+		return nil
+	}
 	var out bytes.Buffer
-	if r.run(append(append(slices.Clone(global), "state", "rm"), addrs...), &out) != 0 {
+	if r.run(append(append(slices.Clone(global), "state", "rm"), inState...), &out) != 0 {
 		return fmt.Errorf("%s", strings.TrimSpace(out.String()))
 	}
 	return nil
