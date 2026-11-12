@@ -116,3 +116,33 @@ func TestReadInventoryVarsDirs(t *testing.T) {
 		t.Errorf("an encrypted group_vars file: %v", err)
 	}
 }
+
+func TestInventoryHostRanges(t *testing.T) {
+	for pattern, want := range map[string]string{
+		"web[01:03]":            "web01,web02,web03",
+		"web[8:10].example.com": "web8.example.com,web9.example.com,web10.example.com",
+		"db-[a:c]":              "db-a,db-b,db-c",
+		"n[1:9:4]":              "n1,n5,n9",
+		"r[1:2]-[a:b]":          "r1-a,r1-b,r2-a,r2-b",
+		"plain":                 "plain",
+	} {
+		got, err := expandRange(pattern)
+		if err != nil || strings.Join(got, ",") != want {
+			t.Errorf("%s = %v, %v; want %s", pattern, got, err, want)
+		}
+	}
+	for _, bad := range []string{"web[3:1]", "web[1:x]", "web[01]", "web[1:2", "web]", "web[1:5:0]", "web[0:99999]", "db-[a:cc]"} {
+		if _, err := expandRange(bad); err == nil {
+			t.Errorf("%s should be refused", bad)
+		}
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "hosts.ini"), "[web]\nweb[1:2] ansible_user=deploy\n")
+	inv, err := ReadInventory(filepath.Join(dir, "hosts.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := inv.Group("web").Names(); strings.Join(got, ",") != "web1,web2" || inv.Group("web").Vars("web2")["ansible_user"] != "deploy" {
+		t.Errorf("web = %v", got)
+	}
+}

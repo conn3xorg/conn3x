@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -158,22 +159,99 @@ func (inv *Inventory) group(name string) *groupDef {
 	return g
 }
 
-func (inv *Inventory) addHost(group, name string, vars map[string]string) error {
-	if strings.ContainsAny(name, "[]") {
-		return fmt.Errorf("host pattern %q: ranges aren't supported yet; list the hosts one by one", name)
+func (inv *Inventory) addHost(group, pattern string, vars map[string]string) error {
+	names, err := expandRange(pattern)
+	if err != nil {
+		return fmt.Errorf("host pattern %q: %w", pattern, err)
 	}
 	g := inv.group(group)
-	g.hosts = append(g.hosts, name)
-	hv, ok := inv.hostVars[name]
-	if !ok {
-		hv = map[string]string{}
-		inv.hostVars[name] = hv
-	}
-	for k, v := range vars {
-		hv[k] = v
+	for _, name := range names {
+		g.hosts = append(g.hosts, name)
+		hv, ok := inv.hostVars[name]
+		if !ok {
+			hv = map[string]string{}
+			inv.hostVars[name] = hv
+		}
+		for k, v := range vars {
+			hv[k] = v
+		}
 	}
 	return nil
 }
+
+// maxRange is how many hosts one pattern may expand to.
+const maxRange = 10000
+
+// expandRange expands a host pattern's ranges as Ansible does:
+// web[01:03] is web01, web02 and web03, keeping the leading zeros;
+// db-[a:c] is db-a, db-b and db-c; [1:9:2] counts in twos. A name can
+// hold several ranges.
+func expandRange(pattern string) ([]string, error) {
+	open := strings.Index(pattern, "[")
+	if open < 0 {
+		if strings.Contains(pattern, "]") {
+			return nil, fmt.Errorf("a ] without a [")
+		}
+		return []string{pattern}, nil
+	}
+	end := strings.Index(pattern[open:], "]")
+	if end < 0 {
+		return nil, fmt.Errorf("a [ without a ]")
+	}
+	prefix, spec, rest := pattern[:open], pattern[open+1:open+end], pattern[open+end+1:]
+	parts := strings.Split(spec, ":")
+	if len(parts) != 2 && len(parts) != 3 {
+		return nil, fmt.Errorf("a range is [start:end] or [start:end:step], not [%s]", spec)
+	}
+	step := 1
+	if len(parts) == 3 {
+		n, err := strconv.Atoi(parts[2])
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("the step in [%s] must be a whole number above 0", spec)
+		}
+		step = n
+	}
+	var items []string
+	lo, hi := parts[0], parts[1]
+	if a, errA := strconv.Atoi(lo); errA == nil {
+		b, errB := strconv.Atoi(hi)
+		if errB != nil || a > b {
+			return nil, fmt.Errorf("[%s] doesn't count up from one number to another", spec)
+		}
+		if (b-a)/step >= maxRange {
+			return nil, fmt.Errorf("[%s] makes more than %d hosts", spec, maxRange)
+		}
+		for i := a; i <= b; i += step {
+			items = append(items, fmt.Sprintf("%0*d", len(lo), i))
+		}
+	} else {
+		if len(lo) != 1 || len(hi) != 1 || lo > hi || !isLetter(lo[0]) || !isLetter(hi[0]) {
+			return nil, fmt.Errorf("[%s] isn't a range of numbers or of single letters", spec)
+		}
+		for c := lo[0]; c <= hi[0]; c += byte(step) {
+			items = append(items, string(c))
+			if int(c)+step > 'z' {
+				break
+			}
+		}
+	}
+	tails, err := expandRange(rest)
+	if err != nil {
+		return nil, err
+	}
+	if len(items)*len(tails) > maxRange {
+		return nil, fmt.Errorf("it makes more than %d hosts", maxRange)
+	}
+	var out []string
+	for _, it := range items {
+		for _, t := range tails {
+			out = append(out, prefix+it+t)
+		}
+	}
+	return out, nil
+}
+
+func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
 func (inv *Inventory) readINI(src string) error {
 	section, kind := "ungrouped", ""
