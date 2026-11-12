@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -18,6 +19,10 @@ import (
 type Inventory struct {
 	hostVars map[string]map[string]string
 	groups   map[string]*groupDef
+	// dirGroupVars and dirHostVars are what group_vars/ and host_vars/
+	// beside the inventory set, which outrank the inventory file's own.
+	dirGroupVars map[string]map[string]string
+	dirHostVars  map[string]map[string]string
 }
 
 type groupDef struct {
@@ -51,7 +56,83 @@ func ReadInventory(path string) (*Inventory, error) {
 			return nil, fmt.Errorf("%s: group %q is a child of itself", path, name)
 		}
 	}
+	dir := filepath.Dir(path)
+	if inv.dirGroupVars, err = readVarsDir(filepath.Join(dir, "group_vars")); err != nil {
+		return nil, err
+	}
+	if inv.dirHostVars, err = readVarsDir(filepath.Join(dir, "host_vars")); err != nil {
+		return nil, err
+	}
 	return inv, nil
+}
+
+// readVarsDir reads a group_vars or host_vars directory as Ansible does:
+// for each name, a file called name, name.yml, name.yaml or name.json, or
+// every such file under a directory called name, in lexical order, later
+// files winning. Only plain values are kept: a list or a map isn't, and
+// neither is a value encrypted with Ansible Vault, which a whole encrypted
+// file stops on.
+func readVarsDir(dir string) (map[string]map[string]string, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]map[string]string{}
+	add := func(name, path string) error {
+		ext := filepath.Ext(path)
+		if ext != "" && ext != ".yml" && ext != ".yaml" && ext != ".json" {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(string(src), "$ANSIBLE_VAULT") {
+			return fmt.Errorf("%s is encrypted with Ansible Vault, which Conn3x can't read", path)
+		}
+		var doc yaml.Node
+		if err := parse(src, &doc); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if out[name] == nil {
+			out[name] = map[string]string{}
+		}
+		if len(doc.Content) == 0 {
+			return nil
+		}
+		for k, v := range mapping(doc.Content[0]) {
+			if v.Kind == yaml.ScalarNode && v.Value != vaultMark {
+				out[name][k] = v.Value
+			}
+		}
+		return nil
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		if !e.IsDir() {
+			if err := add(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())), path); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		var files []string
+		_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				files = append(files, p)
+			}
+			return nil
+		})
+		sort.Strings(files)
+		for _, f := range files {
+			if err := add(e.Name(), f); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
 }
 
 // descends reports whether target is below name in the group tree.
@@ -206,8 +287,9 @@ func (inv *Inventory) depth(name string) int {
 	return best
 }
 
-// varsFor resolves a host's variables: groups from the outermost in, then
-// the host's own.
+// varsFor resolves a host's variables, in Ansible's order: the inventory
+// file's groups from the outermost in, then group_vars/ the same way, then
+// the host's own from the file, then host_vars/.
 func (inv *Inventory) varsFor(host string) map[string]string {
 	type held struct {
 		name  string
@@ -238,7 +320,23 @@ func (inv *Inventory) varsFor(host string) map[string]string {
 			out[k] = v
 		}
 	}
+	// group_vars/ outranks every group's vars in the inventory file, with
+	// all first and the deepest group last, as there.
+	for k, v := range inv.dirGroupVars["all"] {
+		out[k] = v
+	}
+	for _, g := range groups {
+		if g.name == "all" {
+			continue
+		}
+		for k, v := range inv.dirGroupVars[g.name] {
+			out[k] = v
+		}
+	}
 	for k, v := range inv.hostVars[host] {
+		out[k] = v
+	}
+	for k, v := range inv.dirHostVars[host] {
 		out[k] = v
 	}
 	return out
@@ -268,6 +366,10 @@ func (inv *Inventory) Group(name string) *Group {
 	}
 	return g
 }
+
+// Encrypted reports whether an inventory value stands for one encrypted
+// with Ansible Vault, which can't be read.
+func Encrypted(v string) bool { return v == vaultMark }
 
 // Names lists the group's hosts, sorted.
 func (g *Group) Names() []string {

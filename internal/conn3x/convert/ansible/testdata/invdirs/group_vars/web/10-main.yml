@@ -1,0 +1,5 @@
+role: from-web
+list: [a, b]
+secret: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  3132

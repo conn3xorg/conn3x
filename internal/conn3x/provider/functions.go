@@ -40,7 +40,7 @@ var functions = map[string]providers.FunctionSpec{
 		Summary: "A group's hosts from an Ansible inventory, as a circuit's hosts.",
 		Description: "Each host's key is its inventory name. Its address is ansible_host, or the name. " +
 			"ansible_port, ansible_user and ansible_ssh_private_key_file become port, user and private_key_file, where they're set. " +
-			"vars holds every variable the host has, resolved as Ansible resolves them, from the outermost group in, then the host's own.",
+			"vars holds every plain variable the host has, from the inventory file and the group_vars and host_vars directories beside it, resolved as Ansible resolves them.",
 	},
 	"import_id": {
 		Parameters: []providers.FunctionParameterSpec{
@@ -107,12 +107,12 @@ func inventory(args []cty.Value) providers.CallFunctionResponse {
 	for _, h := range g.Names() {
 		vars := g.Vars(h)
 		obj := map[string]cty.Value{"address": cty.StringVal(h)}
-		if a := vars["ansible_host"]; a != "" {
+		if a := vars["ansible_host"]; a != "" && !ansible.Encrypted(a) {
 			obj["address"] = cty.StringVal(a)
 		}
 		for from, to := range sshVars {
 			v, ok := vars[from]
-			if !ok || v == "" {
+			if !ok || v == "" || ansible.Encrypted(v) {
 				continue
 			}
 			obj[to] = cty.StringVal(v)
@@ -126,7 +126,9 @@ func inventory(args []cty.Value) providers.CallFunctionResponse {
 		}
 		vm := map[string]cty.Value{}
 		for k, v := range vars {
-			vm[k] = cty.StringVal(v)
+			if !ansible.Encrypted(v) {
+				vm[k] = cty.StringVal(v)
+			}
 		}
 		obj["vars"] = cty.MapValEmpty(cty.String)
 		if len(vm) > 0 {

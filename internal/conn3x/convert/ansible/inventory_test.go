@@ -88,3 +88,31 @@ func TestConvertWithInventory(t *testing.T) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// group_vars/ and host_vars/ beside the inventory outrank the inventory
+// file's own variables, as in Ansible: group_vars/all over every group in
+// the file, a deeper group over a shallower one, and host_vars over all.
+func TestReadInventoryVarsDirs(t *testing.T) {
+	inv, err := ReadInventory(filepath.Join("testdata", "invdirs", "hosts.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := inv.Group("web")
+	want := map[string]string{"ansible_host": "203.0.113.10", "role": "from-web", "region": "us", "port": "8080", "tier": "host_vars"}
+	if got := web.Vars("web1"); !reflect.DeepEqual(got, want) {
+		t.Errorf("web1 = %v, want %v", got, want)
+	}
+	if got := web.Vars("web2")["tier"]; got != "" {
+		t.Errorf("web2's tier = %q, want none", got)
+	}
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "hosts.ini"), "[web]\nweb1\n")
+	if err := os.Mkdir(filepath.Join(dir, "group_vars"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "group_vars", "web.yml"), "$ANSIBLE_VAULT;1.1;AES256\n3132\n")
+	if _, err := ReadInventory(filepath.Join(dir, "hosts.ini")); err == nil || !strings.Contains(err.Error(), "encrypted with Ansible Vault") {
+		t.Errorf("an encrypted group_vars file: %v", err)
+	}
+}
