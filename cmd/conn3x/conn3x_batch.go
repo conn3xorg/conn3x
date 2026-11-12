@@ -211,13 +211,16 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 	if len(rollouts) == 0 {
 		return r.applyPlan(whole.path) // only outputs change
 	}
+	// Everything else applies first, in one go, so long as none of it needs
+	// a batched circuit's steps.
+	var first *batchPlan
 	if others := whole.outside(bs); len(others) > 0 {
-		names := make([]string, len(bs))
-		for i, b := range bs {
-			names[i] = fmt.Sprintf("%q", b.Circuit)
+		if first, code = r.planFirst(whole, bs, others); code == 1 {
+			return 1
 		}
-		r.errorf("a batched apply changes only %s %s, and this plan also changes:\n  %s\nApply those first, with -target or without batch_size.", plural(len(bs), "circuit", "circuits"), strings.Join(names, ", "), strings.Join(others, "\n  "))
-		return 1
+		if first != nil {
+			fmt.Fprintf(r.out, "\nFirst, %d other %s in one go:\n  %s\n", len(others), plural(len(others), "change applies", "changes apply"), strings.Join(others, "\n  "))
+		}
 	}
 	for _, ro := range rollouts {
 		hosts := 0
@@ -233,6 +236,13 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 	if !r.approved() {
 		fmt.Fprintln(r.errOut, "\nApply cancelled.")
 		return 1
+	}
+	if first != nil {
+		fmt.Fprintln(r.out, "\nThe other changes:")
+		if r.applyPlan(first.path) != 0 {
+			r.errorf("the changes outside the batched circuits failed, so no batch starts.")
+			return 1
+		}
 	}
 
 	for i, ro := range rollouts {
@@ -255,6 +265,42 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 	}
 	fmt.Fprintf(r.out, "\nAll %d %s applied.\n", total, plural(total, "batch", "batches"))
 	return 0
+}
+
+// planFirst plans the changes outside bs's circuits with -target, to apply
+// before the rollout. It refuses, with code 1, when they need a batched
+// circuit's steps: -target brings a target's dependencies along. A nil plan
+// with code 0 means there was nothing to change after all.
+func (r *batchRun) planFirst(whole *batchPlan, bs []configs.Conn3xBatch, others []string) (*batchPlan, int) {
+	targets := make([]string, len(others))
+	for i, o := range others {
+		targets[i] = "-target=" + o
+	}
+	var planOut bytes.Buffer
+	plan, code := r.plan(nil, "", &planOut, targets...)
+	if code == 1 {
+		_, _ = io.Copy(r.errOut, &planOut)
+		return nil, 1
+	}
+	if code == 0 {
+		return nil, 0
+	}
+	if extra := plan.notIn(whole); len(extra) > 0 {
+		r.errorf("the plan for the changes outside the batched circuits has changes the approved plan didn't:\n  %s\nSomething changed since the plan; run the apply again to see it.", strings.Join(extra, "\n  "))
+		return nil, 1
+	}
+	outside := plan.outside(bs)
+	var steps []string
+	for _, c := range plan.changes {
+		if c.changes() && !slices.Contains(outside, c.addr) {
+			steps = append(steps, c.addr)
+		}
+	}
+	if len(steps) > 0 {
+		r.errorf("this plan changes resources outside the batched circuits that need batched steps first:\n  %s\nSo they can't apply before the rollout, and the steps can't apply all at once. Apply them after the rollout with -target, or take batch_size off.", strings.Join(steps, "\n  "))
+		return nil, 1
+	}
+	return plan, 2
 }
 
 // rollOut applies ro batch by batch. It returns the hosts that failed
@@ -447,13 +493,17 @@ func (r *batchRun) applyArgs(plan string) []string {
 	return append(args, plan)
 }
 
-// plan runs a plan, limited to circuit's steps on hosts if any, shows it on
-// out, and reads it back. Its code is plan -detailed-exitcode's: 0 for no
-// changes, 2 for changes, 1 for errors.
-func (r *batchRun) plan(hosts []string, circuit string, out io.Writer) (*batchPlan, int) {
+// plan runs a plan, limited to circuit's steps on hosts if any, with extra
+// arguments, shows it on out, and reads it back. Its code is plan
+// -detailed-exitcode's: 0 for no changes, 2 for changes, 1 for errors.
+func (r *batchRun) plan(hosts []string, circuit string, out io.Writer, extra ...string) (*batchPlan, int) {
 	r.runs++
 	path := filepath.Join(r.tmp, fmt.Sprintf("plan-%d.tfplan", r.runs))
-	code := r.run(r.planArgs(hosts, path), out, batchCircuitEnv+"="+circuit)
+	args := r.planArgs(hosts, path)
+	if len(extra) > 0 {
+		args = withoutFlag(args, "limit") // -target and -limit don't mix
+	}
+	code := r.run(append(args, extra...), out, batchCircuitEnv+"="+circuit)
 	if code != 2 {
 		return nil, code
 	}

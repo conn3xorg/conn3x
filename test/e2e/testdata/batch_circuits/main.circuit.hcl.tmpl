@@ -2,6 +2,23 @@ variable "run" {
   type = string
 }
 
+variable "after" {
+  type    = bool
+  default = false
+}
+
+# web's steps need this, so it applies before the rollout.
+resource "terraform_data" "before" {
+  input = var.run
+}
+
+# This needs web's steps, so it can't apply before the rollout.
+resource "terraform_data" "after" {
+  count      = var.after ? 1 : 0
+  input      = var.run
+  depends_on = [conn3x_command.web__start]
+}
+
 # Declared first, but its steps depend on db's, so db rolls out first.
 circuit "web" {
   hosts = {
@@ -21,7 +38,7 @@ circuit "web" {
     depends_on = [conn3x_command.db__start]
 
     command {
-      command = "date +%s.%N > /tmp/web # ${var.run}"
+      command = "date +%s.%N > /tmp/web # ${terraform_data.before.output}"
     }
   }
 }

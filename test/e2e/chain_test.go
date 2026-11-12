@@ -231,10 +231,18 @@ func TestBatchTwoCircuits(t *testing.T) {
 
 	out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=1")
 	db, web := strings.Index(out, `Circuit "db", batch 1 of 1: web1`), strings.Index(out, `Circuit "web", batch 1 of 2: web1`)
+	if !strings.Contains(out, "First, 1 other change applies in one go:\n  terraform_data.before") {
+		t.Errorf("the change outside the circuits should apply first:\n%s", out)
+	}
 	if db < 0 || web < db || !strings.Contains(out, `Circuit "web", batch 2 of 2: web2`) || !strings.Contains(out, "All 3 batches applied") {
 		t.Errorf("db should roll out, then web, one batch at a time:\n%s", out)
 	}
 	if out := w.mustConn3x("plan", "-no-color", "-var=run=1"); !strings.Contains(out, "No changes") {
 		t.Errorf("every circuit should be applied:\n%s", out)
+	}
+
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=2", "-var=after=true")
+	if code == 0 || !strings.Contains(out, "need batched steps first") || !strings.Contains(out, `conn3x_command.web__start["web2"]`) || strings.Contains(out, "Batch") {
+		t.Errorf("a change that needs batched steps should stop the apply before anything runs (exit %d):\n%s", code, out)
 	}
 }
