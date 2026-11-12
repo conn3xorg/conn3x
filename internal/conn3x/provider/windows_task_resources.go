@@ -18,7 +18,7 @@ import (
 
 func winTaskSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A scheduled task on a Windows host that runs one program.",
+		Description: "A scheduled task on a Windows host that runs one program.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":                {Type: cty.String, Computed: true},
 			"revision":          revisionAttr(),

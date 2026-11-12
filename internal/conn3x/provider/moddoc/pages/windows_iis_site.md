@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_iis_site` to serve a folder from IIS on the ports and host names you choose. It needs IIS installed, the folder made admin-only, and, if you name one, its application pool in place first.
 
 ## Example usage

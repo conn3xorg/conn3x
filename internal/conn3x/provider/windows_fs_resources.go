@@ -426,7 +426,7 @@ func applyWinDirectory(ctx context.Context, req providers.ApplyResourceChangeReq
 
 func winACLSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. Access rules on a file or folder that already exists on a Windows host. Rules are compared by SID, so names and case cause no difference. It won't follow a link. Removing the step leaves the rules as they are.",
+		Description: "Access rules on a file or folder that already exists on a Windows host. Rules are compared by SID, so names and case cause no difference. It won't follow a link. Removing the step leaves the rules as they are.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":            {Type: cty.String, Computed: true},
 			"revision":      revisionAttr(),

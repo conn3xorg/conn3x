@@ -67,6 +67,38 @@ func hasWinSite(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	return a.Installed && a.Exists, err
 }
 
+// hasWinPath: an ACL step's file or folder is there, and not behind a
+// link, which the step won't follow. Its rules are what the step manages.
+func hasWinPath(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	s, err := windows.ReadPath(ctx, h.client, v.GetAttr("path").AsString(), nil, false)
+	return (s.Kind == "file" || s.Kind == "directory") && s.LinkOnWay == "", err
+}
+
+// hasWinInterface: the network interface is there. Its DNS servers are
+// what the step manages.
+func hasWinInterface(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadDNSClient(ctx, h.client, winDNSClientFrom(v))
+	return a.Found, err
+}
+
+// hasWinADOU and hasWinADGroup run on a domain controller, as the steps do.
+func hasWinADOU(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadOU(ctx, h.client, winADOUFrom(v))
+	return a.Exists, err
+}
+
+func hasWinADGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadADGroup(ctx, h.client, winADGroupFrom(v))
+	return a.Exists, err
+}
+
+// hasWinADUser: the domain has the user. Its password stays as it is until
+// a step sets one, since password_wo never goes into an import ID.
+func hasWinADUser(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadADUser(ctx, h.client, winADUserFrom(v))
+	return a.Exists, err
+}
+
 func hasWinGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	a, err := windows.ReadGroup(ctx, h.client, winGroupFrom(v))
 	return a.Exists, err

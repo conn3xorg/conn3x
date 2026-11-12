@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_scheduled_task` to run one program on a schedule, at boot or at logon. Conn3x compares the settings you give, not the task's XML, which Windows rewrites in its own way.
 
 ## Example usage

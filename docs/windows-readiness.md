@@ -1,6 +1,6 @@
 # Windows modules: what each needs before it leaves experimental
 
-Each `windows_*` module starts out experimental. That's honest, but it's also a reason teams won't try them, so this page says what "ready" means and where each module stands. Nine modules meet every point and have left experimental; the rest are marked in the table. Pick a gap, and the linked issue says how to close it.
+Each `windows_*` module starts out experimental. That's honest, but it's also a reason teams won't try them, so this page says what "ready" means and where each module stands. Fifteen modules meet every point and have left experimental; the rest are marked in the table. Pick a gap, and the linked issue says how to close it.
 
 ## What "ready" means
 
@@ -18,27 +18,27 @@ A module drops the experimental label when all of these hold:
 
 | Module | Ready | Runner | Azure | Import | What's missing |
 | --- | --- | --- | --- | --- | --- |
-| `windows_acl` | no | yes | yes | no |`import` |
+| `windows_acl` | yes | yes | yes | yes | |
 | `windows_ad_domain` | no | no | yes, through `azure-ad-child-domain` | no | A tree domain, a new tree in the forest, isn't offered |
 | `windows_ad_domain_controller` | no | no | yes, through `azure-ad-lab` | no | Promoting straight from a workgroup server is untested (#395) |
-| `windows_ad_forest` | no | yes | yes | no |`import` |
-| `windows_ad_group` | no | module-level | yes | no | Members from a trust to another forest are untested; changing scope or category on a real DC (#408); groups of 5,000+ (#407) |
-| `windows_ad_ou` | no | module-level | yes | no |`import` |
-| `windows_ad_user` | no | module-level | yes | no |`import` |
+| `windows_ad_forest` | no | yes | yes | no | `import` |
+| `windows_ad_group` | no | module-level | yes | yes | Members from a trust to another forest are untested; changing scope or category on a real DC (#408); groups of 5,000+ (#407) |
+| `windows_ad_ou` | no | module-level | yes | yes | `import` on a real domain controller: it's unit-tested only |
+| `windows_ad_user` | no | module-level | yes | yes | `import` on a real domain controller: it's unit-tested only |
 | `windows_directory` | yes | yes | yes | yes | |
-| `windows_dns_client` | no | yes | yes | no |`import` |
+| `windows_dns_client` | yes | yes | yes | yes | |
 | `windows_domain_membership` | no | no | yes | no | The `ou` argument (#396); joining a 2022 host (#394) |
 | `windows_feature` | yes | yes | yes | yes | |
 | `windows_file` | yes | yes | yes | yes | |
-| `windows_firewall_rule` | no | yes | yes, through `azure-windows-fleet` | no |`import` |
+| `windows_firewall_rule` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_group` | no | yes | no | yes | An Azure run |
-| `windows_iis_app_pool` | no | yes | yes, through `azure-windows-fleet` | no |`import` |
-| `windows_iis_site` | no | yes | yes, through `azure-windows-fleet` | no |`import` |
+| `windows_iis_app_pool` | yes | yes | yes, through `azure-windows-fleet` | yes | |
+| `windows_iis_site` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_package` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_powershell` | yes | yes | yes | n/a | |
 | `windows_reboot` | yes | yes | yes | n/a | |
 | `windows_registry_value` | yes | yes | yes | yes | |
-| `windows_scheduled_task` | no | yes | yes, through `azure-windows-fleet` | no |`import` |
+| `windows_scheduled_task` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_service` | yes | yes | yes | yes | |
 | `windows_update` | no | reads only | run by hand once | n/a | An install on the runner is slow and pointless; a large cumulative update on a real host |
 | `windows_user` | no | yes | no | yes | An Azure run |
@@ -48,7 +48,7 @@ A module drops the experimental label when all of these hold:
 
 ## What's left across the board
 
-- **`import` on the rest** (#417): eight modules import now (#563, #567, and `windows_package` by its product code). The less common ones are next.
+- **`import` on the rest**: seventeen modules import now. The forest, domain, domain controller and membership modules are next, and the AD object ones want a run on a real domain controller.
 
 Windows Server 2022 runs in CI since #568, on the first try for every runner test.
 

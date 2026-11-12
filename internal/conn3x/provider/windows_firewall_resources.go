@@ -17,7 +17,7 @@ import (
 
 func winFirewallRuleSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A Windows Firewall rule, found by its name.",
+		Description: "A Windows Firewall rule, found by its name.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":               {Type: cty.String, Computed: true},
 			"revision":         revisionAttr(),

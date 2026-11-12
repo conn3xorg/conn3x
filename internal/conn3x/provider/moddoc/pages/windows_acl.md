@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_acl` for access rules on a file or folder that already exists on a Windows host. By default it only adds what's listed. Rules are compared by SID, so a name in another case or another display language never shows as a change.
 
 ## Example usage

@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_dns_client` to point a Windows host at the DNS servers it should ask, such as a domain controller before the host joins its domain.
 
 ## Example usage

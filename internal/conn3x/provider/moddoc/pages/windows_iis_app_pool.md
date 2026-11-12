@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_iis_app_pool` to create an IIS application pool and keep it started or stopped. IIS must be installed first, which a `windows_feature` step for `Web-Server` does.
 
 ## Example usage
