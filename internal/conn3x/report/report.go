@@ -48,6 +48,9 @@ type Report struct {
 // Host is what happened on one host, in the order steps were planned.
 type Host struct {
 	Steps []Step `json:"steps"`
+	// Rescued is set when a step failed and the circuit's rescues for it
+	// then ran without failing. The run still failed.
+	Rescued bool `json:"rescued,omitempty"`
 }
 
 // Step is one instance of a circuit step.

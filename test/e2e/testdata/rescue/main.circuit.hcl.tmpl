@@ -1,0 +1,48 @@
+variable "run" {
+  type = string
+}
+
+variable "fail_on" {
+  type    = string
+  default = ""
+}
+
+circuit "app" {
+  hosts = {
+    web1 = { address = "127.0.0.1", port = {{.PortA}} }
+    web2 = { address = "127.0.0.1", port = {{.PortB}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "config" {
+    command {
+      command = "[ ${each.key} != '${var.fail_on}' ] && echo ${var.run} > /tmp/config"
+    }
+  }
+
+  step "later" {
+    command {
+      command = "echo ${var.run} > /tmp/later"
+    }
+  }
+
+  rescue "restore" {
+    watches = [step.config]
+    command {
+      command = "echo rescued ${var.run} > /tmp/rescued"
+    }
+  }
+
+  # later is skipped where config fails, so this never runs.
+  rescue "never" {
+    watches = [step.later]
+    command {
+      command = "touch /tmp/never"
+    }
+  }
+}

@@ -32,6 +32,14 @@ func withLimit(cmd *command.Command) {
 	}
 	run := cmd.Run
 	cmd.Run = func(m command.Meta) int {
+		// Set only by apply, for its own rescue plans and their applies.
+		if v := os.Getenv(rescueHostsEnv); v != "" {
+			if err := json.Unmarshal([]byte(v), &configs.Conn3xRescueHosts); err != nil {
+				fmt.Fprintf(stderr, "Error: %s: %s\n", rescueHostsEnv, err)
+				return 1
+			}
+			defer func() { configs.Conn3xRescueHosts = nil }()
+		}
 		if raw == "" {
 			return run(m)
 		}
@@ -43,18 +51,10 @@ func withLimit(cmd *command.Command) {
 			fmt.Fprintf(stderr, "Error: -limit=%s: %s\n", raw, err)
 			return 1
 		}
-		var rescues map[string][]string
-		if v := os.Getenv(rescueHostsEnv); v != "" {
-			if err := json.Unmarshal([]byte(v), &rescues); err != nil {
-				fmt.Fprintf(stderr, "Error: %s: %s\n", rescueHostsEnv, err)
-				return 1
-			}
-		}
 		tofu.Conn3xCLILimit = limit
-		// Set only by apply, for its own batch and rescue plans.
+		// Set only by a batched apply, for its own plans.
 		tofu.Conn3xCLILimitCircuit = os.Getenv(batchCircuitEnv)
-		configs.Conn3xRescueHosts = rescues
-		defer func() { tofu.Conn3xCLILimit, tofu.Conn3xCLILimitCircuit, configs.Conn3xRescueHosts = nil, "", nil }()
+		defer func() { tofu.Conn3xCLILimit, tofu.Conn3xCLILimitCircuit = nil, "" }()
 		return run(m)
 	}
 }
