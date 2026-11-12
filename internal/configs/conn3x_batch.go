@@ -20,10 +20,37 @@ import (
 // Conn3xBatch is how a circuit rolls out: batch by batch, as with Ansible's
 // serial, stopping once more than MaxFailures hosts have failed.
 type Conn3xBatch struct {
-	Circuit     string
-	Size        int // hosts per batch, when Percent is 0
-	Percent     int // hosts per batch as a percentage of the hosts that change
-	MaxFailures int
+	Circuit       string
+	Size          int // hosts per batch, when Percent is 0
+	Percent       int // hosts per batch as a percentage of the hosts that change
+	MaxFailures   int // when FailedPercent is 0
+	FailedPercent int // MaxFailures as a percentage of the hosts that change
+}
+
+// FailuresOf is how many of n hosts that change may fail: FailedPercent
+// of them, rounded down, as Ansible's max_fail_percentage does.
+func (b Conn3xBatch) FailuresOf(n int) int {
+	if b.FailedPercent > 0 {
+		return n * b.FailedPercent / 100
+	}
+	return b.MaxFailures
+}
+
+// ParseConn3xMaxFailures reads max_failures: a whole number of hosts, 0 or
+// more, or a percentage such as "20%". "0%" is 0 hosts.
+func ParseConn3xMaxFailures(s string) (n, percent int, err error) {
+	if p, ok := strings.CutSuffix(s, "%"); ok {
+		percent, err = strconv.Atoi(p)
+		if err != nil || percent < 0 || percent > 100 {
+			return 0, 0, fmt.Errorf("%q isn't a percentage from 0%% to 100%%", s)
+		}
+		return 0, percent, nil
+	}
+	n, err = strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, 0, fmt.Errorf("%q isn't a number of hosts, 0 or more, or a percentage such as \"20%%\"", s)
+	}
+	return n, 0, nil
 }
 
 // Of is the batch size for n hosts that change: at least one.
@@ -74,30 +101,39 @@ func circuitBatch(name string, content *hcl.BodyContent, perHost bool) (*Conn3xB
 	if !perHost {
 		return bad(sizeAttr, `A circuit runs in batches only with strategy = "per_host", where each host's steps run on their own.`)
 	}
-	v, diags := sizeAttr.Expr.Value(nil)
-	if diags.HasErrors() || !v.IsKnown() || v.IsNull() {
+	raw, ok := constantText(sizeAttr)
+	if !ok {
 		return bad(sizeAttr, `batch_size must be a constant: a number of hosts, or a percentage such as "20%".`)
-	}
-	raw := ""
-	switch v.Type() {
-	case cty.Number:
-		raw = v.AsBigFloat().Text('f', -1)
-	case cty.String:
-		raw = v.AsString()
 	}
 	var err error
 	if b.Size, b.Percent, err = ParseConn3xBatchSize(raw); err != nil {
 		return bad(sizeAttr, "batch_size: "+err.Error()+".")
 	}
 	if failAttr != nil {
-		v, diags := failAttr.Expr.Value(nil)
-		if diags.HasErrors() || !v.IsKnown() || v.IsNull() || v.Type() != cty.Number || !v.AsBigFloat().IsInt() || v.AsBigFloat().Sign() < 0 {
-			return bad(failAttr, "max_failures must be a constant whole number, 0 or more.")
+		raw, ok := constantText(failAttr)
+		if !ok {
+			return bad(failAttr, `max_failures must be a constant: a number of hosts, 0 or more, or a percentage such as "20%".`)
 		}
-		n, _ := v.AsBigFloat().Int64()
-		b.MaxFailures = int(n)
+		if b.MaxFailures, b.FailedPercent, err = ParseConn3xMaxFailures(raw); err != nil {
+			return bad(failAttr, "max_failures: "+err.Error()+".")
+		}
 	}
 	return b, nil
+}
+
+// constantText is a constant number or string attribute as text.
+func constantText(attr *hcl.Attribute) (string, bool) {
+	v, diags := attr.Expr.Value(nil)
+	if diags.HasErrors() || !v.IsKnown() || v.IsNull() {
+		return "", false
+	}
+	switch v.Type() {
+	case cty.Number:
+		return v.AsBigFloat().Text('f', -1), true
+	case cty.String:
+		return v.AsString(), true
+	}
+	return "", false
 }
 
 // batchRefusesRunOnce refuses a run_once step in a batched circuit: it runs

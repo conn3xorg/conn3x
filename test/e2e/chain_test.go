@@ -220,6 +220,11 @@ func TestBatchApply(t *testing.T) {
 	if !strings.Contains(out, "changes 2 hosts, which roll out in 2 batches") || !strings.Contains(out, "Batch 2 of 2: web10") {
 		t.Errorf("-limit should batch only the hosts it matches:\n%s", out)
 	}
+	// 34% of the 3 hosts that change is 1, rounded down.
+	out, code = w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=5", "-var=fail_on=web2", "-max-failures=34%")
+	if code == 0 || !strings.Contains(out, "within max_failures = 34% (1 of 3 hosts)") || !strings.Contains(out, "Batch 3 of 3: web10") {
+		t.Errorf("-max-failures=34%% should let one of three hosts fail (exit %d):\n%s", code, out)
+	}
 }
 
 func TestBatchTwoCircuits(t *testing.T) {
