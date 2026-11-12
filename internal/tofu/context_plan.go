@@ -20,6 +20,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/addrs"
 	"github.com/opentofu/opentofu/internal/configs"
+	"github.com/opentofu/opentofu/internal/conn3x/hostpattern"
 	"github.com/opentofu/opentofu/internal/instances"
 	"github.com/opentofu/opentofu/internal/lang/globalref"
 	"github.com/opentofu/opentofu/internal/plans"
@@ -79,6 +80,12 @@ type PlanOpts struct {
 	// and so populating this field will cause OpenTofu to generate extra
 	// warnings as part of the planning result.
 	Excludes []addrs.Targetable
+
+	// CONN3X: Limit runs circuit steps only on the hosts it matches. See
+	// conn3x_limit.go.
+	Limit *hostpattern.Pattern
+	// conn3xLimitTargeted says Targets came from Limit, not -target.
+	conn3xLimitTargeted bool
 
 	// ForceReplace is a set of resource instance addresses whose corresponding
 	// objects should be forced planned for replacement if the provider's
@@ -218,7 +225,12 @@ func (c *Context) Plan(ctx context.Context, config *configs.Config, prevRunState
 	// variables that are deprecated
 	diags = diags.Append(warnOnUsedDeprecatedVars(opts.SetVariables, config.Module.Variables))
 
-	if len(opts.Targets) > 0 || len(opts.Excludes) > 0 {
+	limitDiags := conn3xLimitTargets(config, prevRunState, opts) // CONN3X
+	diags = diags.Append(limitDiags)
+	if limitDiags.HasErrors() {
+		return nil, diags
+	}
+	if (len(opts.Targets) > 0 || len(opts.Excludes) > 0) && !opts.conn3xLimitTargeted {
 		diags = diags.Append(tfdiags.Sourceless(
 			tfdiags.Warning,
 			"Resource targeting is in effect",
@@ -241,6 +253,7 @@ The -target and -exclude options are not for routine use, and are provided only 
 		panic(fmt.Sprintf("unsupported plan mode %s", opts.Mode))
 	}
 	diags = diags.Append(planDiags)
+	diags = diags.Append(conn3xLimitMatched(opts)) // CONN3X
 	// NOTE: We're intentionally not returning early when diags.HasErrors
 	// here because we'll still populate other metadata below on a best-effort
 	// basis to try to give the UI some extra context to return alongside the
@@ -790,7 +803,7 @@ func (c *Context) planWalk(ctx context.Context, config *configs.Config, prevRunS
 
 	// If resource targeting is in effect then it might conflict with the
 	// move result.
-	diags = diags.Append(c.prePlanVerifyTargetedMoves(moveResults, opts.Targets, opts.Excludes))
+	diags = diags.Append(conn3xLimitMoves(opts, c.prePlanVerifyTargetedMoves(moveResults, opts.Targets, opts.Excludes))) // CONN3X
 	if diags.HasErrors() {
 		// We'll return early here, because if we have any moved resource
 		// instances excluded by targeting then planning is likely to encounter
@@ -811,7 +824,7 @@ func (c *Context) planWalk(ctx context.Context, config *configs.Config, prevRunS
 	// If we get here then we should definitely have a non-nil "graph", which
 	// we can now walk.
 	changes := plans.NewChanges()
-	walker, walkDiags := c.walk(ctx, graph, walkOp, &graphWalkOpts{
+	walker, walkDiags := c.conn3xWalk(ctx, graph, walkOp, opts.Targets, &graphWalkOpts{ // CONN3X: -limit reads hosts from this walk
 		Config:                  config,
 		InputState:              prevRunState,
 		Changes:                 changes,

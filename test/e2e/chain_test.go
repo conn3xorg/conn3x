@@ -99,3 +99,39 @@ func TestStepOnAnotherHost(t *testing.T) {
 	}
 }
 
+// -limit runs a circuit on some hosts only, and leaves the others as they
+// are until a run without it.
+func TestLimitHosts(t *testing.T) {
+	web, db := startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web, db)
+	w := newWorkdir(t, "limit_hosts")
+	w.writeAs("main.circuit.hcl", chainVars{PortA: web.port, PortB: db.port, Key: web.keyFile, KnownHosts: knownFile})
+	w.mustConn3x("init", "-no-color")
+	motd := func(h *host) string {
+		return strings.TrimSpace(h.exec("", "sh", "-c", "cat /etc/motd 2>/dev/null || true"))
+	}
+
+	out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=motd=one", "-limit=web*")
+	if !strings.Contains(out, "Limited to some hosts") || strings.Contains(out, "Resource targeting is in effect") {
+		t.Errorf("a limited apply should say so, in its own words:\n%s", out)
+	}
+	if motd(web) != "one" || motd(db) != "" {
+		t.Fatalf("after -limit=web*: web1 has %q and db1 %q, want one and nothing", motd(web), motd(db))
+	}
+
+	w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=motd=one")
+	w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=motd=two", "-limit=all:!web1")
+	if motd(web) != "one" || motd(db) != "two" {
+		t.Fatalf("after -limit=all:!web1: web1 has %q and db1 %q, want one and two", motd(web), motd(db))
+	}
+	if out := w.mustConn3x("plan", "-no-color", "-var=motd=two"); !strings.Contains(out, "1 to change") || !strings.Contains(out, `["web1"]`) {
+		t.Errorf("a plan without -limit should catch web1 up:\n%s", out)
+	}
+	if out, code := w.conn3x("plan", "-no-color", "-var=motd=two", "-limit=web9"); code != 0 || !strings.Contains(out, "-limit matched no host") {
+		t.Errorf("a -limit that matches nothing should warn (exit %d):\n%s", code, out)
+	}
+	w.mustConn3x("plan", "-no-color", "-var=motd=two", "-limit=web1", "-out=web1.tfplan")
+	if out, code := w.conn3x("apply", "-no-color", "-limit=web1", "web1.tfplan"); code == 0 || !strings.Contains(out, "saved plan") {
+		t.Errorf("-limit on applying a saved plan should be refused (exit %d):\n%s", code, out)
+	}
+}

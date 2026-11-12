@@ -17,10 +17,16 @@ import (
 // lowering generated (the chain to the step before, or a handler's
 // depends_on and triggers). Those only need the same host's instances.
 func Conn3xHostEdge(r *Resource, rng hcl.Range) bool {
-	if r == nil || !strings.Contains(r.Name, "__") || !strings.HasPrefix(r.Type, "conn3x_") {
+	if !Conn3xCircuitResource(r) {
 		return false
 	}
 	return rng.Filename == r.DeclRange.Filename && rng.Start == r.DeclRange.Start && rng.End == r.DeclRange.End
+}
+
+// Conn3xCircuitResource reports whether r is one a circuit's lowering made:
+// a step, a handler or an EOS commit, each repeated over the hosts.
+func Conn3xCircuitResource(r *Resource) bool {
+	return r != nil && r.Mode == addrs.ManagedResourceMode && strings.Contains(r.Name, "__") && strings.HasPrefix(r.Type, "conn3x_")
 }
 
 // Conn3xStepOnHost reports whether instance key of circuit resource r runs
