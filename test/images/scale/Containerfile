@@ -1,0 +1,14 @@
+# Debian 13 with sshd and nothing else, no systemd, so a benchmark can run
+# hundreds of hosts on one machine. Every container has the same host key;
+# the key to log in with comes from AUTHORIZED_KEY.
+FROM docker.io/library/debian:trixie
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-server \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /run/sshd \
+ && mkdir -p -m 700 /root/.ssh \
+ && ssh-keygen -A
+
+EXPOSE 22
+CMD ["sh", "-c", "printf '%s\\n' \"$AUTHORIZED_KEY\" > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && exec /usr/sbin/sshd -D -e"]
