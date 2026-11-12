@@ -17,6 +17,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/opentofu/opentofu/internal/configs"
 	"gopkg.in/yaml.v3"
 )
 
@@ -248,6 +250,7 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 		c.hostVars[hosts] = true
 		cb.SetAttributeRaw("hosts", rawTokens("var."+hostsVar(hosts)))
 	}
+	c.serial(cb, name, p, node)
 	cb.AppendNewline()
 	ssh := cb.AppendNewBlock("ssh", nil).Body()
 	c.login(cb, ssh, name, node, group)
@@ -400,6 +403,34 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	for _, hb := range handlerBlocks {
 		cb.AppendNewline()
 		cb.AppendBlock(hb)
+	}
+}
+
+// serial carries a play's serial over as batch_size, which rolls out the
+// circuit a batch at a time; batch_size needs strategy = "per_host".
+func (c *converter) serial(cb *hclwrite.Body, name string, p map[string]*yaml.Node, node *yaml.Node) {
+	n := p["serial"]
+	if n == nil {
+		return
+	}
+	v := scalar(n)
+	size, _, err := configs.ParseConn3xBatchSize(v)
+	switch {
+	case n.Kind != yaml.ScalarNode || err != nil:
+		c.playIssue(cb, name, node, "sets serial to something other than one number of hosts or one percentage; set batch_size and max_failures on the circuit yourself")
+		return
+	case c.roleCalls && p["roles"] != nil:
+		c.playIssue(cb, name, node, "sets serial and calls roles, which become several circuits, and a batched apply rolls out one; set batch_size on the circuit to batch")
+		return
+	}
+	cb.SetAttributeValue("strategy", cty.StringVal("per_host"))
+	if size > 0 {
+		cb.SetAttributeValue("batch_size", cty.NumberIntVal(int64(size)))
+	} else {
+		cb.SetAttributeValue("batch_size", cty.StringVal(v))
+	}
+	if p["max_fail_percentage"] != nil {
+		c.playIssue(cb, name, node, "sets max_fail_percentage, and Conn3x counts failed hosts instead: set max_failures to how many hosts may fail, or leave it at 0 to stop at the first")
 	}
 }
 
