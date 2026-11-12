@@ -105,6 +105,8 @@ func (o *onceFilter) Variables() []hcl.Traversal {
 	return out
 }
 
+func (o *onceFilter) Functions() []hcl.Traversal { return exprFunctions(o.instances, o.on) }
+
 func (o *onceFilter) Range() hcl.Range {
 	if o.on != nil {
 		return o.on.Range()

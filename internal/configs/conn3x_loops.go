@@ -126,6 +126,8 @@ func (p *hostItemProduct) Variables() []hcl.Traversal {
 	return append(append([]hcl.Traversal{}, p.hosts.Variables()...), p.items.Variables()...)
 }
 
+func (p *hostItemProduct) Functions() []hcl.Traversal { return exprFunctions(p.hosts, p.items) }
+
 func (p *hostItemProduct) Range() hcl.Range      { return p.items.Range() }
 func (p *hostItemProduct) StartRange() hcl.Range { return p.items.StartRange() }
 
@@ -297,6 +299,8 @@ func eachMeansHost(expr hclsyntax.Expression, rng hcl.Range) hclsyntax.Expressio
 type checkedHosts struct {
 	hcl.Expression
 }
+
+func (h *checkedHosts) Functions() []hcl.Traversal { return exprFunctions(h.Expression) }
 
 func (h *checkedHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 	v, diags := h.Expression.Value(ctx)

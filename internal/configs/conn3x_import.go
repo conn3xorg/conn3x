@@ -297,5 +297,7 @@ func (h *importHosts) Variables() []hcl.Traversal {
 	return append(append([]hcl.Traversal{}, h.all.Variables()...), h.keys.Variables()...)
 }
 
+func (h *importHosts) Functions() []hcl.Traversal { return exprFunctions(h.all, h.keys) }
+
 func (h *importHosts) Range() hcl.Range      { return h.keys.Range() }
 func (h *importHosts) StartRange() hcl.Range { return h.keys.StartRange() }
