@@ -81,6 +81,24 @@ func hasWinInterface(ctx context.Context, h *hostConn, v cty.Value) (bool, error
 	return a.Found, err
 }
 
+// hasWinADOU and hasWinADGroup run on a domain controller, as the steps do.
+func hasWinADOU(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadOU(ctx, h.client, winADOUFrom(v))
+	return a.Exists, err
+}
+
+func hasWinADGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadADGroup(ctx, h.client, winADGroupFrom(v))
+	return a.Exists, err
+}
+
+// hasWinADUser: the domain has the user. Its password stays as it is until
+// a step sets one, since password_wo never goes into an import ID.
+func hasWinADUser(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadADUser(ctx, h.client, winADUserFrom(v))
+	return a.Exists, err
+}
+
 func hasWinGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	a, err := windows.ReadGroup(ctx, h.client, winGroupFrom(v))
 	return a.Exists, err

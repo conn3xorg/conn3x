@@ -95,6 +95,9 @@ var importable = map[string]struct {
 	"conn3x_windows_iis_site":       {nameID("windows_iis_site", nil), notNull, "IIS site %s", hasWinSite},
 	"conn3x_windows_acl":            {pathID("windows_acl"), notNull, "file or folder %s", hasWinPath},
 	"conn3x_windows_dns_client":     {keysID("windows_dns_client", "interface"), notNull, "network interface %s", hasWinInterface},
+	"conn3x_windows_ad_ou":          {keysID("windows_ad_ou", "name", "path"), notNull, "organizational unit %s", hasWinADOU},
+	"conn3x_windows_ad_group":       {nameID("windows_ad_group", nil), notNull, "Active Directory group %s", hasWinADGroup},
+	"conn3x_windows_ad_user":        {nameID("windows_ad_user", nil), notNull, "Active Directory user %s", hasWinADUser},
 
 	// A host always has a hostname, time zone and locale, so there's
 	// nothing to find first: a different one imports and plans an update.

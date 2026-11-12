@@ -205,6 +205,17 @@ func TestStepImportSyncedModules(t *testing.T) {
 		"conn3x_windows_dns_client": `windows_dns_client {
       servers = ["10.0.0.4"]
     }`,
+		"conn3x_windows_ad_ou": `windows_ad_ou {
+      name = "Servers"
+    }`,
+		"conn3x_windows_ad_group": `windows_ad_group {
+      name    = "AppOps"
+      members = ["alice"]
+    }`,
+		"conn3x_windows_ad_user": `windows_ad_user {
+      name        = "alice"
+      password_wo = "s3cret"
+    }`,
 		"conn3x_windows_iis_site": `windows_iis_site {
       name          = "app"
       physical_path = "C:/sites/app"

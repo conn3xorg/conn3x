@@ -77,6 +77,9 @@ var importModules = map[string]string{
 	"conn3x_windows_iis_site":       "windows_iis_site",
 	"conn3x_windows_acl":            "windows_acl",
 	"conn3x_windows_dns_client":     "windows_dns_client",
+	"conn3x_windows_ad_ou":          "windows_ad_ou",
+	"conn3x_windows_ad_group":       "windows_ad_group",
+	"conn3x_windows_ad_user":        "windows_ad_user",
 }
 
 // ImportableType is the resource type a module's step lowers to, when the

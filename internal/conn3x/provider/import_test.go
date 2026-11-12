@@ -73,6 +73,9 @@ func TestImportPriorPerModule(t *testing.T) {
 		{"conn3x_windows_iis_app_pool", `{"name":"app"}`, "203.0.113.10:2222:windows_iis_app_pool:app", nil},
 		{"conn3x_windows_acl", `{"path":"C:/srv/app","entry":[{"principal":"S-1-5-32-544","rights":["FullControl"]}]}`, "203.0.113.10:2222:windows_acl:C:/srv/app", nil},
 		{"conn3x_windows_dns_client", `{"interface":"Ethernet","servers":["10.0.0.4"]}`, "203.0.113.10:2222:windows_dns_client:Ethernet", nil},
+		{"conn3x_windows_ad_ou", `{"name":"Servers","path":"DC=corp,DC=example"}`, "203.0.113.10:2222:windows_ad_ou:Servers:DC=corp,DC=example", nil},
+		{"conn3x_windows_ad_group", `{"name":"AppOps","members":["alice"]}`, "203.0.113.10:2222:windows_ad_group:AppOps", nil},
+		{"conn3x_windows_ad_user", `{"name":"alice","given_name":"Alice"}`, "203.0.113.10:2222:windows_ad_user:alice", nil},
 		{"conn3x_windows_iis_site", `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`, "203.0.113.10:2222:windows_iis_site:app", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
@@ -289,6 +292,9 @@ func TestImportedWindowsStepPlansWithoutReplace(t *testing.T) {
 		"conn3x_windows_iis_app_pool":   `{"name":"app"}`,
 		"conn3x_windows_acl":            `{"path":"C:/srv/app","entry":[{"principal":"S-1-5-32-544","rights":["FullControl"]}]}`,
 		"conn3x_windows_dns_client":     `{"servers":["10.0.0.4"]}`,
+		"conn3x_windows_ad_ou":          `{"name":"Servers"}`,
+		"conn3x_windows_ad_group":       `{"name":"AppOps","members":["alice"]}`,
+		"conn3x_windows_ad_user":        `{"name":"alice"}`,
 		"conn3x_windows_iis_site":       `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`,
 	} {
 		_, v, err := importPrior(typ, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+args+`}`)
