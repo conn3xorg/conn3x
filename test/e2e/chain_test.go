@@ -8,6 +8,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -96,6 +97,31 @@ func TestStepOnAnotherHost(t *testing.T) {
 	}
 	if out := w.mustConn3x("plan", "-no-color", "-detailed-exitcode"); !strings.Contains(out, "No changes") {
 		t.Errorf("a second plan should find both files on lb:\n%s", out)
+	}
+}
+
+// on = "controller" runs each host's step on the machine Conn3x runs on, in
+// its working directory, and never on the host.
+func TestStepOnController(t *testing.T) {
+	web1, web2 := startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web1, web2)
+	w := newWorkdir(t, "on_controller")
+	w.writeAs("main.circuit.hcl", chainVars{PortA: web1.port, PortB: web2.port, Key: web1.keyFile, KnownHosts: knownFile})
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	raw, err := os.ReadFile(filepath.Join(w.dir, "announced.txt"))
+	lines := strings.Fields(string(raw))
+	slices.Sort(lines)
+	if err != nil || strings.Join(lines, " ") != "web1 web2" {
+		t.Errorf("announced.txt = %q, %v; want a line for each host", raw, err)
+	}
+	for _, h := range []*host{web1, web2} {
+		if got := strings.TrimSpace(h.exec("", "sh", "-c", "ls ~/announced.txt / 2>/dev/null | grep -c announced || true")); got != "0" {
+			t.Errorf("a host has announced.txt: the step ran there")
+		}
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes") {
+		t.Errorf("a second plan should have nothing to do:\n%s", out)
 	}
 }
 

@@ -228,6 +228,16 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			})
 			return nil, nil, diags
 		}
+		if attr, ok := body.Attributes["controller"]; ok {
+			rng := attr.SrcRange
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unexpected controller in a circuit's ssh block",
+				Detail:   `A step runs on the machine Conn3x runs on with on = "controller", not through the circuit's ssh block.`,
+				Subject:  &rng,
+			})
+			return nil, nil, diags
+		}
 		sshAttrs = body.Attributes
 	}
 
@@ -479,7 +489,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	if a, ok := body.Attributes["on"]; ok && !once {
 		// Without run_once, on delegates: each host's step runs over the
 		// connection of the host on names, like Ansible's delegate_to.
-		block, onDiags := delegatedSSH(a, hosts, sshAttrs, sshRange)
+		block, onDiags := delegatedSSH(a, hosts, sshAttrs, sshRange, module.Type)
 		diags = append(diags, onDiags...)
 		if onDiags.HasErrors() {
 			return nil, nil, diags
@@ -541,7 +551,7 @@ var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "ju
 // sshOnly are the ssh settings a host object can't set. Naming one in a host
 // object is an error, because it would otherwise do nothing; any other field
 // is the user's own data, read with each.value.
-var sshOnly = []string{"host", "ssh_config_file", "known_hosts_file", "become", "become_password_file", "agent", "timeout", "confirm_after"}
+var sshOnly = []string{"host", "controller", "ssh_config_file", "known_hosts_file", "become", "become_password_file", "agent", "timeout", "confirm_after"}
 
 // Conn3xSSHSettings lists every ssh setting circuits know about, so the
 // provider can check it against its schema.
@@ -1087,11 +1097,14 @@ func stepRunOnce(body *hclsyntax.Body) (bool, hcl.Diagnostics) {
 }
 
 // delegatedSSH is the ssh block for a step with on and no run_once. The
-// name "controller" is kept for running on the machine Conn3x runs on.
-func delegatedSSH(on *hclsyntax.Attribute, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range) (*hclsyntax.Block, hcl.Diagnostics) {
+// name "controller" means the machine Conn3x runs on.
+func delegatedSSH(on *hclsyntax.Attribute, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, module string) (*hclsyntax.Block, hcl.Diagnostics) {
 	if v, diags := on.Expr.Value(nil); !diags.HasErrors() && v.Type() == cty.String && v.IsKnown() && !v.IsNull() && v.AsString() == "controller" {
-		return nil, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "Steps can't run on the controller yet",
-			Detail: `on = "controller" is kept for running a step on the machine Conn3x runs on, which isn't supported yet. on can name another host in hosts.`, Subject: on.Expr.Range().Ptr()}}
+		if module != "command" {
+			return nil, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "Only command steps run on the controller",
+				Detail: fmt.Sprintf(`on = "controller" runs a step on the machine Conn3x runs on, and works on command steps for now, not %s. Use a command step, or on to name another host in hosts.`, module), Subject: on.Expr.Range().Ptr()}}
+		}
+		return controllerSSH(sshRange), nil
 	}
 	if c, ok := hosts.(*checkedHosts); ok {
 		hosts = c.Expression
@@ -1111,6 +1124,23 @@ func delegatedSSH(on *hclsyntax.Attribute, hosts hcl.Expression, sshAttrs hclsyn
 		}
 	}
 	return sshBlockOn(sshAttrs, sshRange, h, on.Expr), nil
+}
+
+// controllerSSH is the ssh block of a step that runs on the controller. It
+// has no connection, so nothing of the circuit's ssh block carries over,
+// become included: the command runs as whoever runs Conn3x.
+func controllerSSH(rng hcl.Range) *hclsyntax.Block {
+	attr := func(name string, v cty.Value) *hclsyntax.Attribute {
+		return &hclsyntax.Attribute{Name: name, Expr: &hclsyntax.LiteralValueExpr{Val: v, SrcRange: rng}, SrcRange: rng, NameRange: rng}
+	}
+	return &hclsyntax.Block{
+		Type: "ssh",
+		Body: &hclsyntax.Body{Attributes: hclsyntax.Attributes{
+			"host":       attr("host", cty.StringVal("controller")),
+			"controller": attr("controller", cty.True),
+		}, SrcRange: rng, EndRange: rng},
+		TypeRange: rng, OpenBraceRange: rng, CloseBraceRange: rng,
+	}
 }
 
 // CircuitStepType is the resource type a step's module block becomes, such

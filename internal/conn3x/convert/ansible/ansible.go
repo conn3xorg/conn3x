@@ -941,6 +941,14 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 	}
 
+	if delegate == "controller" {
+		for _, s := range steps {
+			if s.module != "" && s.module != "command" {
+				c.issue(body, name, node, "delegates to the controller, where Conn3x runs only command steps for now, and this task becomes a "+s.module+" step")
+				return
+			}
+		}
+	}
 	base := slug(firstNonEmpty(name, mod))
 	for i, s := range steps {
 		if s.module == "" {
@@ -960,7 +968,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				c.res.Notes = append(c.res.Notes, Issue{Task: firstNonEmpty(name, mod), File: c.file, Line: node.Line, Reason: r})
 			}
 		}
-		if delegate != "" {
+		if delegate == "controller" {
+			comment(body, "Runs on the machine Conn3x runs on, as delegate_to: localhost had it, as whoever runs Conn3x and without sudo.")
+		} else if delegate != "" {
 			comment(body, fmt.Sprintf("Runs on %s, as delegate_to had it: %s must be a key of the circuit's hosts.", delegate, delegate))
 		}
 		sb := body.AppendNewBlock("step", []string{stepName}).Body()
@@ -1002,7 +1012,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 var digits = regexp.MustCompile(`^[0-9]+$`)
 
 // delegateHost reads a task's delegate_to: a host name, which becomes the
-// step's on. The controller and templated names don't convert yet.
+// step's on, or the controller. Templated names don't convert yet.
 func delegateHost(n *yaml.Node) (string, string) {
 	h := scalar(n)
 	switch {
@@ -1011,7 +1021,7 @@ func delegateHost(n *yaml.Node) (string, string) {
 	case strings.Contains(h, "{{"):
 		return "", "uses a delegate_to the converter can't read, " + h + "; set on to the host it means"
 	case h == "localhost" || h == "127.0.0.1" || h == "::1":
-		return "", "delegates to the controller, which Conn3x can't run steps on yet"
+		return "controller", ""
 	}
 	return h, ""
 }

@@ -64,7 +64,6 @@ func TestStepRunOnceInALoopingStep(t *testing.T) {
 func TestStepRunOnceErrors(t *testing.T) {
 	for want, step := range map[string]string{
 		"run_once with when":         `run_once = true` + "\n    " + `when = true`,
-		"Steps can't run on the controller yet": `on = "controller"`,
 		"Invalid run_once in step":   `run_once = "yes"`,
 		"isn't one of the circuit's": `run_once = true` + "\n    " + `on = "db9"`,
 	} {
