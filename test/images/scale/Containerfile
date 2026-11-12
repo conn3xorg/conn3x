@@ -1,6 +1,7 @@
 # Debian 13 with sshd and nothing else, no systemd, so a benchmark can run
 # hundreds of hosts on one machine. Every container has the same host key;
-# the key to log in with comes from AUTHORIZED_KEY.
+# the key to log in with comes from AUTHORIZED_KEY, and sshd listens on PORT
+# (default 22), so the benchmark can run them on the host's network.
 FROM docker.io/library/debian:trixie
 
 RUN apt-get update \
@@ -11,4 +12,4 @@ RUN apt-get update \
  && ssh-keygen -A
 
 EXPOSE 22
-CMD ["sh", "-c", "printf '%s\\n' \"$AUTHORIZED_KEY\" > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && exec /usr/sbin/sshd -D -e"]
+CMD ["sh", "-c", "printf '%s\\n' \"$AUTHORIZED_KEY\" > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && exec /usr/sbin/sshd -D -e -p \"${PORT:-22}\""]
