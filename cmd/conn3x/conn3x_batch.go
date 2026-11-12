@@ -187,7 +187,7 @@ type batchRun struct {
 	errors         []string      // what the rollout said went wrong, for the report
 	rescues        []configs.Conn3xRescue
 	rescued        map[string]bool // hosts every rescue ran on without failing
-	blockFailed    bool            // a rescue or always block failed, or couldn't run
+	blockFailed    bool            // a prereq, rescue or always block failed, or couldn't run
 }
 
 type batchStream struct {
@@ -241,7 +241,7 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 			fmt.Fprintln(r.errOut, "\nApply cancelled.")
 			return 1
 		}
-		return r.applyPlan(whole.path)
+		return r.applyPlan(whole)
 	}
 	// Everything else applies first, in one go, so long as none of it needs
 	// a batched circuit's steps.
@@ -271,7 +271,7 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 	}
 	if first != nil {
 		fmt.Fprintln(r.out, "\nThe other changes:")
-		if r.applyPlan(first.path) != 0 {
+		if r.applyPlan(first) != 0 {
 			r.errorf("the changes outside the batched circuits failed, so no batch starts.")
 			return 1
 		}
@@ -297,7 +297,7 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 	}
 	fmt.Fprintf(r.out, "\nAll %d %s applied.\n", total, plural(total, "batch", "batches"))
 	if r.blockFailed {
-		return 1 // an always block failed, and said so
+		return 1 // a prereq or always block failed, and said so
 	}
 	return 0
 }
@@ -369,7 +369,7 @@ func (r *batchRun) rollOut(whole *batchPlan, ro rollout, named bool, later []str
 			r.errorf("batch %d's plan changes more than circuit %q:\n  %s\nApply those first, with -target or without batch_size.", i+1, ro.Circuit, strings.Join(others, "\n  "))
 			return nil, false
 		}
-		if r.applyPlan(plan.path) == 0 {
+		if r.applyPlan(plan) == 0 {
 			continue
 		}
 		// What's still to change on the batch's hosts is what failed there.
@@ -408,10 +408,19 @@ func (r *batchRun) errorf(format string, args ...any) {
 	r.errors = append(r.errors, "Error: "+msg)
 }
 
-// applyPlan applies a saved plan, then runs the rescues if it failed, and
-// the always blocks. An always block that fails fails the apply.
-func (r *batchRun) applyPlan(plan string) int {
-	code, stream := r.applySaved(plan)
+// applyPlan runs the prereqs for what p changes, applies p, then runs the
+// rescues if it failed, and the always blocks. A prereq or always block
+// that fails fails the apply.
+func (r *batchRun) applyPlan(p *batchPlan) int {
+	p, ok := r.prereqs(p)
+	if !ok {
+		r.blockFailed = true
+		return 1
+	}
+	if p == nil {
+		return 0 // the prereqs left nothing to change
+	}
+	code, stream := r.applySaved(p.path)
 	if stream != "" && len(r.rescues) > 0 && !r.afterApply(stream, code != 0) {
 		r.blockFailed = true
 		if code == 0 {
@@ -580,7 +589,7 @@ func (r *batchRun) plan(hosts []string, env string, out io.Writer, extra ...stri
 		fmt.Fprintf(r.errOut, "Error: reading the plan back: %s\n", err)
 		return nil, 1
 	}
-	p.path = path
+	p.path, p.hosts, p.env, p.extra = path, hosts, env, extra
 	return p, 2
 }
 
@@ -604,9 +613,13 @@ func (r *batchRun) run(args []string, out io.Writer, env ...string) int {
 	return 0
 }
 
-// batchPlan is what a batched apply reads from a plan.
+// batchPlan is what a batched apply reads from a plan, and how it was
+// planned, to plan it again.
 type batchPlan struct {
 	path    string
+	hosts   []string
+	env     string
+	extra   []string
 	changes []batchChange
 	deps    map[string][]string // each root module resource's references and depends_on
 }

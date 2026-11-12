@@ -27,19 +27,28 @@ func TestRescueHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &batchRun{rescues: []configs.Conn3xRescue{
-		{Circuit: "app", Name: "restore", Watches: []string{"config", "restart"}},
-		{Circuit: "app", Name: "page", Watches: []string{"restart"}},
+		{Circuit: "app", Name: "restore", Kind: "rescue", Watches: []string{"config", "restart"}},
+		{Circuit: "app", Name: "page", Kind: "rescue", Watches: []string{"restart"}},
 	}}
-	by, all, err := r.rescueHosts(stream, false)
+	ph, err := r.rescueHosts(stream, "rescue")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(all, []string{"web2", "web3", "web10"}) || !slices.Equal(by["app__restore"], all) || !slices.Equal(by["app__page"], []string{"web3"}) || len(by) != 2 {
-		t.Errorf("got %v, %v", by, all)
+	if !slices.Equal(ph.all, []string{"web2", "web3", "web10"}) || !slices.Equal(ph.byBlock["app__restore"], ph.all) || !slices.Equal(ph.byBlock["app__page"], []string{"web3"}) || len(ph.byBlock) != 2 {
+		t.Errorf("got %+v", ph)
 	}
-	r.rescues = append(r.rescues, configs.Conn3xRescue{Circuit: "app", Name: "lb", Always: true, Watches: []string{"config"}})
-	if by, all, err := r.rescueHosts(stream, true); err != nil || !slices.Equal(all, []string{"web1", "web2", "web10"}) || len(by) != 1 {
-		t.Errorf("always: %v, %v, %v", by, all, err)
+	r.rescues = append(r.rescues, configs.Conn3xRescue{Circuit: "app", Name: "lb", Kind: "always", Watches: []string{"config"}})
+	if ph, err := r.rescueHosts(stream, "always"); err != nil || !slices.Equal(ph.all, []string{"web1", "web2", "web10"}) || len(ph.byBlock) != 1 {
+		t.Errorf("always: %+v, %v", ph, err)
+	}
+	r.rescues = append(r.rescues, configs.Conn3xRescue{Circuit: "app", Name: "drain", Kind: "prereq", Watches: []string{"config"}})
+	p, _ := readBatchPlan([]byte(`{"resource_changes": [
+		{"address": "a", "mode": "managed", "type": "conn3x_file", "name": "app__config", "index": "web2", "change": {"actions": ["update"]}},
+		{"address": "b", "mode": "managed", "type": "conn3x_file", "name": "app__config", "index": "web1", "change": {"actions": ["no-op"]}},
+		{"address": "c", "mode": "managed", "type": "conn3x_file", "name": "app__other", "index": "web3", "change": {"actions": ["create"]}}
+	]}`))
+	if ph := r.prereqHosts(p); !slices.Equal(ph.all, []string{"web2"}) || len(ph.byBlock) != 1 {
+		t.Errorf("prereq: %+v", ph)
 	}
 	if got := orList([]string{"a", "b", "c"}); got != "a, b or c" {
 		t.Errorf("orList = %q", got)
