@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_ad_domain_controller` to add a domain controller to a domain that already exists. Two DCs mean the domain keeps answering when one is down. It never reboots the host, and promotion always needs a reboot, so follow it with a [`windows_reboot`](windows_reboot.md) step, then wait for AD to answer.
 
 ## Example usage
