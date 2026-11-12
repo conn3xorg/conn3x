@@ -68,6 +68,10 @@ func TestImportPriorPerModule(t *testing.T) {
 			return nil
 		}},
 		{"conn3x_mysql_user", `{"name":"app","host":"%"}`, "203.0.113.10:2222:mysql_user:app:%", nil},
+		{"conn3x_windows_firewall_rule", `{"name":"web","protocol":"tcp","local_ports":["443"]}`, "203.0.113.10:2222:windows_firewall_rule:web", nil},
+		{"conn3x_windows_scheduled_task", `{"name":"cleanup","path":"\\Conn3x\\","execute":"C:/tools/cleanup.exe","user":"SYSTEM","trigger":[{"type":"daily","at":"2026-01-01T03:00:00"}]}`, "203.0.113.10:2222:windows_scheduled_task:\\Conn3x\\:cleanup", nil},
+		{"conn3x_windows_iis_app_pool", `{"name":"app"}`, "203.0.113.10:2222:windows_iis_app_pool:app", nil},
+		{"conn3x_windows_iis_site", `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`, "203.0.113.10:2222:windows_iis_site:app", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
 			_, v, err := importPrior(tc.typeName, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+tc.args+`}`)
@@ -271,5 +275,29 @@ func TestImportUnsupportedType(t *testing.T) {
 	resp := p.ImportResourceState(ctx, providers.ImportResourceStateRequest{TypeName: "conn3x_command", Target: providers.ImportTarget{ID: "{}"}})
 	if !resp.Diagnostics.HasErrors() {
 		t.Fatal("importing a command should fail")
+	}
+}
+
+// An imported Windows rule, task, pool or site plans from the step without
+// a replace: its id is the one the plan writes.
+func TestImportedWindowsStepPlansWithoutReplace(t *testing.T) {
+	for typ, args := range map[string]string{
+		"conn3x_windows_firewall_rule":  `{"name":"web","protocol":"tcp","local_ports":["443"]}`,
+		"conn3x_windows_scheduled_task": `{"name":"cleanup","execute":"C:/tools/cleanup.exe","user":"SYSTEM","trigger":[{"type":"boot"}]}`,
+		"conn3x_windows_iis_app_pool":   `{"name":"app"}`,
+		"conn3x_windows_iis_site":       `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`,
+	} {
+		_, v, err := importPrior(typ, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+args+`}`)
+		if err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		v = withSync(v, false)
+		resp := resourceTypes[typ].plan(providers.PlanResourceChangeRequest{TypeName: typ, PriorState: v, ProposedNewState: v, Config: v})
+		if resp.Diagnostics.HasErrors() {
+			t.Fatalf("%s: %s", typ, resp.Diagnostics.Err())
+		}
+		if len(resp.RequiresReplace) > 0 || !resp.PlannedState.GetAttr("id").RawEquals(v.GetAttr("id")) {
+			t.Errorf("%s: id %#v, replace %v; want %#v kept", typ, resp.PlannedState.GetAttr("id"), resp.RequiresReplace, v.GetAttr("id"))
+		}
 	}
 }

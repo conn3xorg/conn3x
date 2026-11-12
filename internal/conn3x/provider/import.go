@@ -89,6 +89,10 @@ var importable = map[string]struct {
 	"conn3x_windows_user":           {nameID("windows_user", nil), notNull, "local user %s", hasWinUser},
 	"conn3x_windows_group":          {nameID("windows_group", nil), notNull, "local group %s", hasWinGroup},
 	"conn3x_windows_package":        {keysID("windows_package", "product_code"), notNull, "MSI package %s", hasWinPackage},
+	"conn3x_windows_firewall_rule":  {nameID("windows_firewall_rule", nil), notNull, "firewall rule %s", hasWinFirewallRule},
+	"conn3x_windows_scheduled_task": {keysID("windows_scheduled_task", "path", "name"), notNull, "scheduled task %s", hasWinTask},
+	"conn3x_windows_iis_app_pool":   {nameID("windows_iis_app_pool", nil), notNull, "IIS application pool %s", hasWinAppPool},
+	"conn3x_windows_iis_site":       {nameID("windows_iis_site", nil), notNull, "IIS site %s", hasWinSite},
 
 	// A host always has a hostname, time zone and locale, so there's
 	// nothing to find first: a different one imports and plans an update.
@@ -105,7 +109,8 @@ var importable = map[string]struct {
 
 // importDeletes are the types whose on_remove defaults to delete at plan
 // time (deleteByDefault), so an import must default it the same way.
-var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true, "conn3x_firewalld": true, "conn3x_ufw_rule": true}
+var importDeletes = map[string]bool{"conn3x_authorized_key": true, "conn3x_cron": true, "conn3x_timer": true, "conn3x_firewalld": true, "conn3x_ufw_rule": true,
+	"conn3x_windows_firewall_rule": true, "conn3x_windows_scheduled_task": true, "conn3x_windows_iis_app_pool": true, "conn3x_windows_iis_site": true}
 
 // ruleWhat says which rule a missing-object error is about, since no one
 // part of a rule's id names it.

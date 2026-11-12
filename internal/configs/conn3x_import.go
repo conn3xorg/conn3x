@@ -71,6 +71,10 @@ var importModules = map[string]string{
 	"conn3x_windows_user":           "windows_user",
 	"conn3x_windows_group":          "windows_group",
 	"conn3x_windows_package":        "windows_package",
+	"conn3x_windows_firewall_rule":  "windows_firewall_rule",
+	"conn3x_windows_scheduled_task": "windows_scheduled_task",
+	"conn3x_windows_iis_app_pool":   "windows_iis_app_pool",
+	"conn3x_windows_iis_site":       "windows_iis_site",
 }
 
 // ImportableType is the resource type a module's step lowers to, when the
@@ -84,7 +88,7 @@ func ImportableType(module string) (string, bool) {
 	return "", false
 }
 
-func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.Attributes, ssh *hclsyntax.Block) (*Import, hcl.Diagnostics) {
+func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.Attributes, moduleBlocks hclsyntax.Blocks, ssh *hclsyntax.Block) (*Import, hcl.Diagnostics) {
 	rng := attr.SrcRange
 	if _, ok := importModules[r.Type]; !ok {
 		var names []string
@@ -146,6 +150,27 @@ func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.At
 		if !importid.LeftOut(name) {
 			args[name] = a.Expr
 		}
+	}
+	// A module's blocks, such as a task's triggers or a site's bindings, go
+	// in as a list of objects, so the first plan compares the host with them.
+	// shortcut: dynamic blocks and blocks inside blocks are left out, and
+	// the first plan after the import updates what they set.
+	lists := map[string]*hclsyntax.TupleConsExpr{}
+	for _, b := range moduleBlocks {
+		if b.Type == "dynamic" || len(b.Labels) > 0 || len(b.Body.Blocks) > 0 {
+			continue
+		}
+		battrs := map[string]hclsyntax.Expression{}
+		for name, a := range b.Body.Attributes {
+			battrs[name] = a.Expr
+		}
+		if lists[b.Type] == nil {
+			lists[b.Type] = &hclsyntax.TupleConsExpr{SrcRange: rng, OpenRange: rng}
+		}
+		lists[b.Type].Exprs = append(lists[b.Type].Exprs, withoutNulls(object(battrs)))
+	}
+	for name, list := range lists {
+		args[name] = list
 	}
 	id := map[string]hclsyntax.Expression{
 		"v":    lit(cty.NumberIntVal(importid.Version)),
