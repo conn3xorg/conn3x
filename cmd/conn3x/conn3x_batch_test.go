@@ -72,6 +72,13 @@ func TestBatchArgs(t *testing.T) {
 	if got := strings.Join(r.applyArgs("p"), " "); got != "-chdir=x apply -parallelism=5 -no-color p" {
 		t.Errorf("applyArgs = %s", got)
 	}
+	r.args = append(r.args, "-limit", "web*")
+	if got := strings.Join(r.planArgs(nil, "p"), " "); !strings.HasSuffix(got, "-limit web*") {
+		t.Errorf("the approved plan should keep -limit: %s", got)
+	}
+	if got := strings.Join(r.planArgs([]string{"web1"}, "p"), " "); strings.Contains(got, "web*") || !strings.Contains(got, "-limit=web1") {
+		t.Errorf("a batch's plan should limit to the batch alone: %s", got)
+	}
 	if !r.approved() {
 		t.Error("-auto-approve didn't approve")
 	}
