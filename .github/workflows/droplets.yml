@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   droplets:
+    # A fork has none of the credentials this needs.
+    if: github.repository == 'conn3xorg/conn3x'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -41,7 +43,7 @@ jobs:
   # scripts/agent-bench-results.sh reads the artifacts.
   agent-bench:
     needs: droplets
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.repository == 'conn3xorg/conn3x' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
