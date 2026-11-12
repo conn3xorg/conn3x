@@ -100,6 +100,12 @@ func realMain() int {
 		}
 		defer pprof.StopCPUProfile()
 	}
+	stopTrace, err := startTrace() // CONN3X: CONN3X_TRACE
+	if err != nil {
+		rv.Error(err.Error())
+		return 1
+	}
+	defer stopTrace()
 
 	ctx, err := tracing.OpenTelemetryInit(context.Background())
 	if err != nil {
