@@ -73,6 +73,15 @@ func (f *rescueFilter) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) 
 }
 
 func (f *rescueFilter) Variables() []hcl.Traversal { return f.instances.Variables() }
+
+// Functions passes on the functions the instances call, so OpenTofu finds
+// the providers they need.
+func (f *rescueFilter) Functions() []hcl.Traversal {
+	if e, ok := f.instances.(hcl.ExpressionWithFunctions); ok {
+		return e.Functions()
+	}
+	return nil
+}
 func (f *rescueFilter) Range() hcl.Range           { return f.instances.Range() }
 func (f *rescueFilter) StartRange() hcl.Range      { return f.instances.StartRange() }
 
