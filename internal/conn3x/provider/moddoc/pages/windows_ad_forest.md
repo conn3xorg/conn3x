@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_ad_forest` to make a new Active Directory forest, with this host as its first domain controller and DNS server. It never reboots the host. Promotion always needs a reboot, so follow it with a [`windows_reboot`](windows_reboot.md) step, then wait for AD to answer before anything uses it.
 
 ## Example usage
