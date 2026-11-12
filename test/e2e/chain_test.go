@@ -6,6 +6,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -189,9 +190,22 @@ func TestBatchApply(t *testing.T) {
 		t.Errorf("a batch started before the one before it finished")
 	}
 
-	out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=2", "-var=fail_on=web2")
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=2", "-var=fail_on=web2", "-report=run.json")
 	if code == 0 || !strings.Contains(out, "1 host failed, more than max_failures = 0") || !strings.Contains(out, "Failed: web2") || !strings.Contains(out, "Not reached: web10") {
 		t.Errorf("a failure should stop the rollout (exit %d):\n%s", code, out)
+	}
+	var rep struct {
+		Success bool
+		Hosts   map[string]struct{ Steps []struct{ Status string } }
+		Errors  []string
+	}
+	raw, err := os.ReadFile(filepath.Join(w.dir, "run.json"))
+	if err != nil || json.Unmarshal(raw, &rep) != nil {
+		t.Fatalf("report: %v\n%s", err, raw)
+	}
+	_, reached := rep.Hosts["web10"]
+	if rep.Success || reached || len(rep.Hosts["web1"].Steps) != 2 || rep.Hosts["web2"].Steps[0].Status != "failed" || !strings.Contains(strings.Join(rep.Errors, "\n"), "Not reached: web10") {
+		t.Errorf("the rollout's report should have web1 done, web2 failed and web10 not reached:\n%s", raw)
 	}
 	if out := w.mustConn3x("plan", "-no-color", "-var=run=2"); !strings.Contains(out, `web__start["web10"] must be replaced`) || strings.Contains(out, `["web1"] must`) || strings.Contains(out, `["web1"] will`) {
 		t.Errorf("web1 should be done and web10 untouched:\n%s", out)

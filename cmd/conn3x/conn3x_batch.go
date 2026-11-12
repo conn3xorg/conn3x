@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/afero"
 	cli "github.com/urfave/cli/v3"
@@ -23,6 +24,7 @@ import (
 	"github.com/opentofu/opentofu/internal/command"
 	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/configs"
+	runreport "github.com/opentofu/opentofu/internal/conn3x/report"
 	"github.com/opentofu/opentofu/internal/plans"
 )
 
@@ -88,7 +90,16 @@ func withBatch(cmd *command.Command) {
 		}
 		defer os.RemoveAll(tmp)
 		r := &batchRun{self: self, dir: m.WorkingDir.OriginalWorkingDir(), tmp: tmp, args: args, out: stdout, errOut: stderr, in: os.Stdin, hosts: moduleStepHosts(".")}
-		return r.apply(b)
+		r.reportPath, _ = flagValue(r.applyFlags(), "report")
+		started := time.Now()
+		code := r.apply(b)
+		if r.reportPath != "" {
+			if err := r.writeReport(started, code == 0); err != nil {
+				fmt.Fprintf(stderr, "Error: writing the report: %s\n", err)
+				return 1
+			}
+		}
+		return code
 	}
 }
 
@@ -126,7 +137,7 @@ func batchRefuses(args []string, planPath *string, op *arguments.Operation, view
 	case view != nil && view.ViewType == arguments.ViewJSON:
 		return fmt.Errorf("a batched apply has no -json output yet")
 	}
-	for _, name := range []string{"report", "json-into"} {
+	for _, name := range []string{"json-into"} {
 		if _, ok := flagValue(args, name); ok {
 			return fmt.Errorf("a batched apply can't take -%s yet", name)
 		}
@@ -155,6 +166,14 @@ type batchRun struct {
 	in             io.Reader
 	hosts          stepHosts
 	runs           int
+	reportPath     string        // -report, or ""
+	streams        []batchStream // each batch apply's -json-into, for the report
+	errors         []string      // what the rollout said went wrong, for the report
+}
+
+type batchStream struct {
+	path string
+	ok   bool
 }
 
 // apply plans everything, asks, and rolls b out.
@@ -165,10 +184,10 @@ func (r *batchRun) apply(b configs.Conn3xBatch) int {
 	}
 	hosts, others := whole.circuitHosts(b.Circuit, r.hosts)
 	if len(hosts) == 0 {
-		return r.run(r.applyArgs(whole.path), r.out) // only outputs change
+		return r.applyPlan(whole.path) // only outputs change
 	}
 	if len(others) > 0 {
-		fmt.Fprintf(r.errOut, "\nError: a batched apply changes only circuit %q, and this plan also changes:\n  %s\nApply those first, with -target or without batch_size.\n", b.Circuit, strings.Join(others, "\n  "))
+		r.errorf("a batched apply changes only circuit %q, and this plan also changes:\n  %s\nApply those first, with -target or without batch_size.", b.Circuit, strings.Join(others, "\n  "))
 		return 1
 	}
 	size := b.Of(len(hosts))
@@ -197,16 +216,16 @@ func (r *batchRun) apply(b configs.Conn3xBatch) int {
 			return 1
 		}
 		if extra := plan.notIn(whole); len(extra) > 0 {
-			fmt.Fprintf(r.errOut, "\nError: batch %d's plan has changes the approved plan didn't:\n  %s\nSomething changed since the plan; run the apply again to see it.\n", i+1, strings.Join(extra, "\n  "))
+			r.errorf("batch %d's plan has changes the approved plan didn't:\n  %s\nSomething changed since the plan; run the apply again to see it.", i+1, strings.Join(extra, "\n  "))
 			return 1
 		}
-		if r.run(r.applyArgs(plan.path), r.out) == 0 {
+		if r.applyPlan(plan.path) == 0 {
 			continue
 		}
 		// What's still to change on the batch's hosts is what failed there.
 		left, code := r.plan(batch, io.Discard)
 		if code == 1 {
-			fmt.Fprintln(r.errOut, "\nError: batch failed, and the plan to see which hosts failed did too. No more batches start.")
+			r.errorf("batch failed, and the plan to see which hosts failed did too. No more batches start.")
 			return 1
 		}
 		if left != nil { // nil when nothing is left: what failed wasn't a step
@@ -218,19 +237,62 @@ func (r *batchRun) apply(b configs.Conn3xBatch) int {
 			for _, rest := range batches[i+1:] {
 				notReached = append(notReached, rest...)
 			}
-			fmt.Fprintf(r.errOut, "\nError: %d %s failed, more than max_failures = %d, so no more batches start.\n  Failed: %s\n", len(failed), plural(len(failed), "host", "hosts"), b.MaxFailures, strings.Join(failed, ", "))
+			msg := fmt.Sprintf("%d %s failed, more than max_failures = %d, so no more batches start.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), b.MaxFailures, strings.Join(failed, ", "))
 			if len(notReached) > 0 {
-				fmt.Fprintf(r.errOut, "  Not reached: %s\n", strings.Join(notReached, ", "))
+				msg += "\n  Not reached: " + strings.Join(notReached, ", ")
 			}
+			r.errorf("%s", msg)
 			return 1
 		}
 	}
 	if len(failed) > 0 {
-		fmt.Fprintf(r.errOut, "\nError: every batch ran, and %d %s failed, within max_failures = %d.\n  Failed: %s\n", len(failed), plural(len(failed), "host", "hosts"), b.MaxFailures, strings.Join(failed, ", "))
+		r.errorf("every batch ran, and %d %s failed, within max_failures = %d.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), b.MaxFailures, strings.Join(failed, ", "))
 		return 1
 	}
 	fmt.Fprintf(r.out, "\nAll %d %s applied.\n", len(batches), plural(len(batches), "batch", "batches"))
 	return 0
+}
+
+// errorf says what went wrong with the rollout, and keeps it for the report.
+func (r *batchRun) errorf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(r.errOut, "\nError: %s\n", msg)
+	r.errors = append(r.errors, "Error: "+msg)
+}
+
+// applyPlan applies a saved plan, keeping its JSON stream when there's a
+// report to write.
+func (r *batchRun) applyPlan(plan string) int {
+	args := r.applyArgs(plan)
+	if r.reportPath != "" {
+		stream := filepath.Join(r.tmp, fmt.Sprintf("apply-%d.jsonl", len(r.streams)+1))
+		args = append(args[:len(args)-1], "-json-into="+stream, plan)
+		code := r.run(args, r.out)
+		r.streams = append(r.streams, batchStream{path: stream, ok: code == 0})
+		return code
+	}
+	return r.run(args, r.out)
+}
+
+// writeReport writes one report for the whole rollout, from every batch's
+// apply: a host from a batch that never started isn't in it, and the
+// rollout's own errors say which those were.
+func (r *batchRun) writeReport(started time.Time, success bool) error {
+	rep := runreport.New("apply", started)
+	for _, s := range r.streams {
+		in, err := os.Open(s.path)
+		if err != nil {
+			return err
+		}
+		err = rep.FromApply(in, s.ok)
+		_ = in.Close()
+		if _, long := err.(runreport.LongLines); err != nil && !long {
+			return err
+		}
+	}
+	rep.Success = success
+	rep.Errors = append(rep.Errors, r.errors...)
+	return writeReport(r.reportPath, rep)
 }
 
 // approved asks before the first batch, unless -auto-approve says yes.
@@ -274,7 +336,7 @@ func (r *batchRun) applyFlags() []string {
 func (r *batchRun) planArgs(hosts []string, out string) []string {
 	global, _ := r.split()
 	args := append(slices.Clone(global), "plan", "-detailed-exitcode", "-out="+out)
-	flags := r.applyFlags()
+	flags := withoutFlag(r.applyFlags(), "report") // the rollout writes one
 	if hosts != nil {
 		// A batch's hosts are already inside any -limit the apply was given.
 		// shortcut: host names go in as patterns, so one holding * ? [ or
@@ -371,8 +433,8 @@ type batchPlan struct {
 
 type batchChange struct {
 	addr, module, typ, name string
-	key                any
-	actions            string
+	key                     any
+	actions                 string
 }
 
 func readBatchPlan(js []byte) (*batchPlan, error) {
