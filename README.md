@@ -46,7 +46,7 @@ To take a release only once it has been out for a week, use `conn3xorg/tap/conn3
 Or download a release:
 
 ```sh
-VERSION=0.14.0 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.15.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
@@ -56,7 +56,7 @@ Since v0.14.0 each release also has a `.deb` and an `.rpm` for Linux on amd64 an
 On Windows, the zip holds `conn3x.exe`. Put it somewhere on your `PATH`:
 
 ```powershell
-$v = "0.14.0"
+$v = "0.15.0"
 Invoke-WebRequest "https://github.com/conn3xorg/conn3x/releases/download/v$v/conn3x_${v}_windows_amd64.zip" -OutFile conn3x.zip
 Expand-Archive conn3x.zip -DestinationPath conn3x
 ```
@@ -148,7 +148,9 @@ container, in about five.
 - **Doesn't wait on the slowest host.** Set `strategy = "per_host"` on a circuit and
   each host runs its own steps in order, so one slow server doesn't hold up the rest.
   The default stays lockstep. A step with `when` runs only on the hosts where it's true,
-  and `run_once` runs it on just one.
+  `run_once` runs it on just one, and `on` runs it on another host, as `delegate_to`
+  does. `-limit` applies to some hosts only, and `batch_size` rolls a circuit out a few
+  hosts at a time, stopping once too many fail.
 - **Checks a file before it lands.** Give `file` a `validate` command, such as
   `visudo -cf %s`, and a broken `sudoers` or `sshd_config` never replaces the one that
   works. `conn3x convert ansible` carries it over from `copy` tasks. Add
@@ -201,8 +203,9 @@ It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu 
 and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian 13.
 Windows Server 2022 and 2025 are in preview, with tested Azure examples for one server,
 a small domain, a whole Active Directory lab, and a domain controller with up to five
-IIS servers. Nine Windows modules, the file, service, feature and package kind, are
-out of experimental; the Active Directory ones aren't yet. Arista EOS switches are
+IIS servers. Fifteen of the 25 Windows modules, from files and services to firewall
+rules, scheduled tasks and IIS, are out of experimental; the Active Directory ones,
+local users and groups, and `windows_update` aren't yet. Arista EOS switches are
 experimental. Windows at scale is the work now, then more network devices.
 See the [roadmap](ROADMAP.md).
 
