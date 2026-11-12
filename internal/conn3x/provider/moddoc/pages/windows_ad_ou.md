@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_ad_ou` to keep an organizational unit in Active Directory. Run it on a domain controller: that's where your SSH login is a domain account.
 
 ## Example usage

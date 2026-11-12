@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_group` to keep a local group on a Windows host and make sure the right accounts are in it. Members are compared by SID, so `LAB\alice` and `lab\Alice` are the same account.
 
 ## Example usage

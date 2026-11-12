@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_ad_user` to keep a user in Active Directory. Run it on a domain controller. Groups aren't set here: list the user in a [`windows_ad_group`](windows_ad_group.md) step's `members`.
 
 ## Example usage

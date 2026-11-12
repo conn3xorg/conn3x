@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_user` to keep a local account on a Windows host: its name, full name, description, whether it's enabled, and its password. The password never reaches the plan or state.
 
 ## Example usage
