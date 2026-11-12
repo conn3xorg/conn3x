@@ -1164,9 +1164,8 @@ func (n *NodeAbstractResourceInstance) plan(
 	}
 
 	// Evaluate the configuration
-	forEach, _ := evaluateForEachExpression(ctx, n.Config.ForEach, evalCtx, n.Addr)
-
-	keyData = EvalDataForInstanceKey(n.ResourceInstanceAddr().Resource.Key, forEach)
+	// CONN3X: each.key/each.value from the expansion, not a fresh for_each evaluation per instance.
+	keyData = conn3xRepetitionData(ctx, evalCtx, n.Config.ForEach, n.ResourceInstanceAddr())
 
 	checkDiags := evalCheckRules(
 		ctx,
@@ -2193,8 +2192,7 @@ func (n *NodeAbstractResourceInstance) planDataSource(ctx context.Context, evalC
 	objTy := schema.Block.ImpliedType()
 	priorVal := cty.NullVal(objTy)
 
-	forEach, _ := evaluateForEachExpression(ctx, config.ForEach, evalCtx, n.Addr)
-	keyData = EvalDataForInstanceKey(n.ResourceInstanceAddr().Resource.Key, forEach)
+	keyData = conn3xRepetitionData(ctx, evalCtx, config.ForEach, n.ResourceInstanceAddr()) // CONN3X
 
 	checkDiags := evalCheckRules(
 		ctx,
@@ -2487,8 +2485,7 @@ func (n *NodeAbstractResourceInstance) applyDataSource(ctx context.Context, eval
 		return nil, keyData, diags
 	}
 
-	forEach, _ := evaluateForEachExpression(ctx, config.ForEach, evalCtx, n.Addr)
-	keyData = EvalDataForInstanceKey(n.Addr.Resource.Key, forEach)
+	keyData = conn3xRepetitionData(ctx, evalCtx, config.ForEach, n.Addr) // CONN3X
 
 	checkDiags := evalCheckRules(
 		ctx,
@@ -3361,8 +3358,7 @@ func (n *NodeAbstractResourceInstance) planEphemeralResource(ctx context.Context
 	objTy := schema.Block.ImpliedType()
 	priorVal := cty.NullVal(objTy)
 
-	forEach, _ := evaluateForEachExpression(ctx, config.ForEach, evalCtx, n.Addr)
-	keyData = EvalDataForInstanceKey(n.ResourceInstanceAddr().Resource.Key, forEach)
+	keyData = conn3xRepetitionData(ctx, evalCtx, config.ForEach, n.ResourceInstanceAddr()) // CONN3X
 
 	checkDiags := evalCheckRules(
 		ctx,
