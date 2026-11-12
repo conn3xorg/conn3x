@@ -1,0 +1,48 @@
+variable "run" {
+  type = string
+}
+
+# Declared first, but its steps depend on db's, so db rolls out first.
+circuit "web" {
+  hosts = {
+    web1 = { address = "127.0.0.1", port = {{.PortA}} }
+    web2 = { address = "127.0.0.1", port = {{.PortB}} }
+  }
+  strategy   = "per_host"
+  batch_size = 1
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "start" {
+    depends_on = [conn3x_command.db__start]
+
+    command {
+      command = "date +%s.%N > /tmp/web # ${var.run}"
+    }
+  }
+}
+
+# Shares web1, so each batch must plan only its own circuit's steps.
+circuit "db" {
+  hosts = {
+    web1 = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+  strategy   = "per_host"
+  batch_size = 1
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "start" {
+    command {
+      command = "date +%s.%N > /tmp/db # ${var.run}"
+    }
+  }
+}

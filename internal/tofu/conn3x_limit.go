@@ -31,6 +31,11 @@ import (
 // command sets it (see cmd/conn3x/conn3x_limit.go); PlanOpts.Limit wins.
 var Conn3xCLILimit *hostpattern.Pattern
 
+// Conn3xCLILimitCircuit, when set, narrows Conn3xCLILimit to one root
+// module circuit's steps, so a batched apply rolls out one circuit at a
+// time on hosts that other circuits share.
+var Conn3xCLILimitCircuit string
+
 // conn3xHostTarget targets the instances of a circuit resource on the hosts
 // a -limit matches. It embeds the resource's address, which makes it
 // Targetable and gives it the address's String, so a saved plan records
@@ -114,8 +119,11 @@ func conn3xLimitTargets(config *configs.Config, state *states.State, opts *PlanO
 		for _, r := range c.Module.ManagedResources {
 			if configs.Conn3xCircuitResource(r) {
 				addr := r.Addr().InModule(c.Path)
-				targets = append(targets, conn3xHostTarget{ConfigResource: addr, config: r, limit: opts.Limit, hosts: hosts})
 				inConfig[addr.String()] = true
+				if Conn3xCLILimitCircuit != "" && (!c.Path.IsRoot() || !strings.HasPrefix(r.Name, Conn3xCLILimitCircuit+"__")) {
+					continue
+				}
+				targets = append(targets, conn3xHostTarget{ConfigResource: addr, config: r, limit: opts.Limit, hosts: hosts})
 			}
 		}
 	})

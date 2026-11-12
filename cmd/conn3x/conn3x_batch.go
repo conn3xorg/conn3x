@@ -31,6 +31,10 @@ import (
 const (
 	batchSizeHelp   = `Roll the batched circuit out this many hosts at a time, or this percentage of the hosts that change, such as "20%". Overrides the circuit's batch_size for this run.`
 	maxFailuresHelp = `How many hosts may fail before no more batches start. Overrides the circuit's max_failures for this run.`
+
+	// batchCircuitEnv narrows a batch's -limit to the circuit rolling out
+	// (see tofu.Conn3xCLILimitCircuit).
+	batchCircuitEnv = "CONN3X_BATCH_CIRCUIT"
 )
 
 // withBatch makes apply roll a circuit with batch_size out batch by batch,
@@ -66,7 +70,7 @@ func withBatch(cmd *command.Command) {
 			}
 			return run(m)
 		}
-		b, err := batchFor(batches, size, maxFailures)
+		bs, err := batchesFor(batches, size, maxFailures)
 		args := os.Args[1:]
 		if err == nil {
 			err = batchRefuses(args, planPath, op, view)
@@ -92,7 +96,7 @@ func withBatch(cmd *command.Command) {
 		r := &batchRun{self: self, dir: m.WorkingDir.OriginalWorkingDir(), tmp: tmp, args: args, out: stdout, errOut: stderr, in: os.Stdin, hosts: moduleStepHosts(".")}
 		r.reportPath, _ = flagValue(r.applyFlags(), "report")
 		started := time.Now()
-		code := r.apply(b)
+		code := r.apply(bs)
 		if r.reportPath != "" {
 			if err := r.writeReport(started, code == 0); err != nil {
 				fmt.Fprintf(stderr, "Error: writing the report: %s\n", err)
@@ -103,26 +107,21 @@ func withBatch(cmd *command.Command) {
 	}
 }
 
-// batchFor picks the batched circuit and applies the flags to it.
-func batchFor(batches []configs.Conn3xBatch, size string, maxFailures int) (configs.Conn3xBatch, error) {
-	if len(batches) > 1 {
-		names := make([]string, len(batches))
-		for i, b := range batches {
-			names[i] = b.Circuit
+// batchesFor applies the flags to every batched circuit.
+func batchesFor(batches []configs.Conn3xBatch, size string, maxFailures int) ([]configs.Conn3xBatch, error) {
+	out := slices.Clone(batches)
+	for i := range out {
+		if size != "" {
+			var err error
+			if out[i].Size, out[i].Percent, err = configs.ParseConn3xBatchSize(size); err != nil {
+				return nil, fmt.Errorf("-batch-size: %s", err)
+			}
 		}
-		return configs.Conn3xBatch{}, fmt.Errorf("circuits %s all have batch_size; one apply rolls out one batched circuit. Apply them one at a time with -target, or take batch_size off all but one", strings.Join(names, ", "))
-	}
-	b := batches[0]
-	if size != "" {
-		var err error
-		if b.Size, b.Percent, err = configs.ParseConn3xBatchSize(size); err != nil {
-			return b, fmt.Errorf("-batch-size: %s", err)
+		if maxFailures >= 0 {
+			out[i].MaxFailures = maxFailures
 		}
 	}
-	if maxFailures >= 0 {
-		b.MaxFailures = maxFailures
-	}
-	return b, nil
+	return out, nil
 }
 
 // batchRefuses refuses what a batched apply can't honour.
@@ -176,81 +175,149 @@ type batchStream struct {
 	ok   bool
 }
 
-// apply plans everything, asks, and rolls b out.
-func (r *batchRun) apply(b configs.Conn3xBatch) int {
-	whole, code := r.plan(nil, r.out)
+// rollout is one batched circuit's hosts, cut into batches.
+type rollout struct {
+	configs.Conn3xBatch
+	size    int
+	batches [][]string
+}
+
+// apply plans everything, asks, and rolls each batched circuit out in
+// turn, in the order their dependencies give.
+func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
+	whole, code := r.plan(nil, "", r.out)
 	if code != 2 {
 		return code // failed, or nothing to change
 	}
-	hosts, others := whole.circuitHosts(b.Circuit, r.hosts)
-	if len(hosts) == 0 {
-		return r.applyPlan(whole.path) // only outputs change
-	}
-	if len(others) > 0 {
-		r.errorf("a batched apply changes only circuit %q, and this plan also changes:\n  %s\nApply those first, with -target or without batch_size.", b.Circuit, strings.Join(others, "\n  "))
+	bs, err := whole.ordered(bs)
+	if err != nil {
+		r.errorf("%s", err)
 		return 1
 	}
-	size := b.Of(len(hosts))
-	var batches [][]string
-	for chunk := range slices.Chunk(hosts, size) {
-		batches = append(batches, chunk)
+	var rollouts []rollout
+	total := 0
+	for _, b := range bs {
+		hosts, _ := whole.circuitHosts(b.Circuit, r.hosts)
+		if len(hosts) == 0 {
+			continue
+		}
+		ro := rollout{Conn3xBatch: b, size: b.Of(len(hosts))}
+		for chunk := range slices.Chunk(hosts, ro.size) {
+			ro.batches = append(ro.batches, chunk)
+		}
+		rollouts = append(rollouts, ro)
+		total += len(ro.batches)
 	}
-	fmt.Fprintf(r.out, "\nCircuit %q changes %d %s, which roll out in %d %s of up to %d. No more batches start once more than %d %s failed.\n",
-		b.Circuit, len(hosts), plural(len(hosts), "host", "hosts"), len(batches), plural(len(batches), "batch", "batches"), size, b.MaxFailures, plural(b.MaxFailures, "host has", "hosts have"))
+	if len(rollouts) == 0 {
+		return r.applyPlan(whole.path) // only outputs change
+	}
+	if others := whole.outside(bs); len(others) > 0 {
+		names := make([]string, len(bs))
+		for i, b := range bs {
+			names[i] = fmt.Sprintf("%q", b.Circuit)
+		}
+		r.errorf("a batched apply changes only %s %s, and this plan also changes:\n  %s\nApply those first, with -target or without batch_size.", plural(len(bs), "circuit", "circuits"), strings.Join(names, ", "), strings.Join(others, "\n  "))
+		return 1
+	}
+	for _, ro := range rollouts {
+		hosts := 0
+		for _, batch := range ro.batches {
+			hosts += len(batch)
+		}
+		fmt.Fprintf(r.out, "\nCircuit %q changes %d %s, which roll out in %d %s of up to %d. No more batches start once more than %d %s failed.\n",
+			ro.Circuit, hosts, plural(hosts, "host", "hosts"), len(ro.batches), plural(len(ro.batches), "batch", "batches"), ro.size, ro.MaxFailures, plural(ro.MaxFailures, "host has", "hosts have"))
+	}
+	if len(rollouts) > 1 {
+		fmt.Fprintln(r.out, "\nEach circuit rolls out after the one before it, in this order.")
+	}
 	if !r.approved() {
 		fmt.Fprintln(r.errOut, "\nApply cancelled.")
 		return 1
 	}
 
+	for i, ro := range rollouts {
+		var later []string
+		for _, rest := range rollouts[i+1:] {
+			later = append(later, fmt.Sprintf("%q", rest.Circuit))
+		}
+		failed, ok := r.rollOut(whole, ro, len(rollouts) > 1, later)
+		if !ok {
+			return 1
+		}
+		if len(failed) > 0 {
+			msg := fmt.Sprintf("every batch ran, and %d %s failed, within max_failures = %d.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), ro.MaxFailures, strings.Join(failed, ", "))
+			if len(later) > 0 {
+				msg = fmt.Sprintf("every batch of circuit %q ran, and %d %s failed, within max_failures = %d.\n  Failed: %s\n  Not started, since they may depend on the failed hosts: %s %s", ro.Circuit, len(failed), plural(len(failed), "host", "hosts"), ro.MaxFailures, strings.Join(failed, ", "), plural(len(later), "circuit", "circuits"), strings.Join(later, ", "))
+			}
+			r.errorf("%s", msg)
+			return 1
+		}
+	}
+	fmt.Fprintf(r.out, "\nAll %d %s applied.\n", total, plural(total, "batch", "batches"))
+	return 0
+}
+
+// rollOut applies ro batch by batch. It returns the hosts that failed
+// within max_failures, and false once the rollout must stop, having said
+// why.
+func (r *batchRun) rollOut(whole *batchPlan, ro rollout, named bool, later []string) ([]string, bool) {
 	var failed []string
-	for i, batch := range batches {
-		fmt.Fprintf(r.out, "\nBatch %d of %d: %s\n", i+1, len(batches), strings.Join(batch, ", "))
+	for i, batch := range ro.batches {
+		if named {
+			fmt.Fprintf(r.out, "\nCircuit %q, batch %d of %d: %s\n", ro.Circuit, i+1, len(ro.batches), strings.Join(batch, ", "))
+		} else {
+			fmt.Fprintf(r.out, "\nBatch %d of %d: %s\n", i+1, len(ro.batches), strings.Join(batch, ", "))
+		}
 		var planOut bytes.Buffer
-		plan, code := r.plan(batch, &planOut)
+		plan, code := r.plan(batch, ro.Circuit, &planOut)
 		if code == 0 {
 			fmt.Fprintln(r.out, "Nothing left to change on these hosts.")
 			continue
 		}
 		if code == 1 {
 			_, _ = io.Copy(r.errOut, &planOut)
-			return 1
+			return nil, false
 		}
 		if extra := plan.notIn(whole); len(extra) > 0 {
 			r.errorf("batch %d's plan has changes the approved plan didn't:\n  %s\nSomething changed since the plan; run the apply again to see it.", i+1, strings.Join(extra, "\n  "))
-			return 1
+			return nil, false
+		}
+		// A step that depends on another batched circuit's would bring its
+		// changes along; ordered puts that circuit first, so this is a check.
+		if others := plan.outside([]configs.Conn3xBatch{ro.Conn3xBatch}); len(others) > 0 {
+			r.errorf("batch %d's plan changes more than circuit %q:\n  %s\nApply those first, with -target or without batch_size.", i+1, ro.Circuit, strings.Join(others, "\n  "))
+			return nil, false
 		}
 		if r.applyPlan(plan.path) == 0 {
 			continue
 		}
 		// What's still to change on the batch's hosts is what failed there.
-		left, code := r.plan(batch, io.Discard)
+		left, code := r.plan(batch, ro.Circuit, io.Discard)
 		if code == 1 {
 			r.errorf("batch failed, and the plan to see which hosts failed did too. No more batches start.")
-			return 1
+			return nil, false
 		}
 		if left != nil { // nil when nothing is left: what failed wasn't a step
-			batchFailed, _ := left.circuitHosts(b.Circuit, r.hosts)
+			batchFailed, _ := left.circuitHosts(ro.Circuit, r.hosts)
 			failed = append(failed, batchFailed...)
 		}
-		if len(failed) > b.MaxFailures {
+		if len(failed) > ro.MaxFailures {
 			var notReached []string
-			for _, rest := range batches[i+1:] {
+			for _, rest := range ro.batches[i+1:] {
 				notReached = append(notReached, rest...)
 			}
-			msg := fmt.Sprintf("%d %s failed, more than max_failures = %d, so no more batches start.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), b.MaxFailures, strings.Join(failed, ", "))
+			msg := fmt.Sprintf("%d %s failed, more than max_failures = %d, so no more batches start.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), ro.MaxFailures, strings.Join(failed, ", "))
 			if len(notReached) > 0 {
 				msg += "\n  Not reached: " + strings.Join(notReached, ", ")
 			}
+			if len(later) > 0 {
+				msg += fmt.Sprintf("\n  Not started: %s %s", plural(len(later), "circuit", "circuits"), strings.Join(later, ", "))
+			}
 			r.errorf("%s", msg)
-			return 1
+			return nil, false
 		}
 	}
-	if len(failed) > 0 {
-		r.errorf("every batch ran, and %d %s failed, within max_failures = %d.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), b.MaxFailures, strings.Join(failed, ", "))
-		return 1
-	}
-	fmt.Fprintf(r.out, "\nAll %d %s applied.\n", len(batches), plural(len(batches), "batch", "batches"))
-	return 0
+	return failed, true
 }
 
 // errorf says what went wrong with the rollout, and keeps it for the report.
@@ -380,12 +447,13 @@ func (r *batchRun) applyArgs(plan string) []string {
 	return append(args, plan)
 }
 
-// plan runs a plan, shows it on out, and reads it back. Its code is plan
-// -detailed-exitcode's: 0 for no changes, 2 for changes, 1 for errors.
-func (r *batchRun) plan(hosts []string, out io.Writer) (*batchPlan, int) {
+// plan runs a plan, limited to circuit's steps on hosts if any, shows it on
+// out, and reads it back. Its code is plan -detailed-exitcode's: 0 for no
+// changes, 2 for changes, 1 for errors.
+func (r *batchRun) plan(hosts []string, circuit string, out io.Writer) (*batchPlan, int) {
 	r.runs++
 	path := filepath.Join(r.tmp, fmt.Sprintf("plan-%d.tfplan", r.runs))
-	code := r.run(r.planArgs(hosts, path), out)
+	code := r.run(r.planArgs(hosts, path), out, batchCircuitEnv+"="+circuit)
 	if code != 2 {
 		return nil, code
 	}
@@ -406,15 +474,16 @@ func (r *batchRun) plan(hosts []string, out io.Writer) (*batchPlan, int) {
 	return p, 2
 }
 
-// run runs conn3x with args and returns its exit code.
-func (r *batchRun) run(args []string, out io.Writer) int {
+// run runs conn3x with args, and env added to its environment, and returns
+// its exit code.
+func (r *batchRun) run(args []string, out io.Writer, env ...string) int {
 	c := exec.Command(r.self, args...)
 	c.Dir, c.Stdout, c.Stderr, c.Stdin = r.dir, out, r.errOut, r.in
 	if out != r.out {
 		c.Stderr = out // a batch's plan shows its errors only if it fails
 	}
 	// No "run conn3x apply" hints between batches.
-	c.Env = append(os.Environ(), "TF_IN_AUTOMATION=1")
+	c.Env = append(append(os.Environ(), "TF_IN_AUTOMATION=1"), env...)
 	if err := c.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode()
@@ -429,6 +498,7 @@ func (r *batchRun) run(args []string, out io.Writer) int {
 type batchPlan struct {
 	path    string
 	changes []batchChange
+	deps    map[string][]string // each root module resource's references and depends_on
 }
 
 type batchChange struct {
@@ -450,11 +520,23 @@ func readBatchPlan(js []byte) (*batchPlan, error) {
 				Actions []string `json:"actions"`
 			} `json:"change"`
 		} `json:"resource_changes"`
+		Configuration struct {
+			RootModule struct {
+				Resources []struct {
+					Address     string   `json:"address"`
+					DependsOn   []string `json:"depends_on"`
+					Expressions any      `json:"expressions"`
+				} `json:"resources"`
+			} `json:"root_module"`
+		} `json:"configuration"`
 	}
 	if err := json.Unmarshal(js, &raw); err != nil {
 		return nil, err
 	}
-	p := &batchPlan{}
+	p := &batchPlan{deps: map[string][]string{}}
+	for _, r := range raw.Configuration.RootModule.Resources {
+		p.deps[r.Address] = append(slices.Clone(r.DependsOn), references(r.Expressions)...)
+	}
 	for _, c := range raw.ResourceChanges {
 		if c.Mode != "managed" {
 			continue
@@ -462,6 +544,121 @@ func readBatchPlan(js []byte) (*batchPlan, error) {
 		p.changes = append(p.changes, batchChange{addr: c.Address, module: c.ModuleAddress, typ: c.Type, name: c.Name, key: c.Index, actions: strings.Join(c.Change.Actions, ",")})
 	}
 	return p, nil
+}
+
+// references lists the resource addresses in a plan's JSON expressions,
+// without instance keys or attributes.
+func references(v any) []string {
+	var out []string
+	switch v := v.(type) {
+	case map[string]any:
+		for k, e := range v {
+			refs, ok := e.([]any)
+			if k != "references" || !ok {
+				out = append(out, references(e)...)
+				continue
+			}
+			for _, ref := range refs {
+				s, _ := ref.(string)
+				parts := strings.Split(s, ".")
+				n := 2
+				if parts[0] == "data" {
+					n = 3
+				}
+				if len(parts) >= n {
+					parts[n-1], _, _ = strings.Cut(parts[n-1], "[")
+					out = append(out, strings.Join(parts[:n], "."))
+				}
+			}
+		}
+	case []any:
+		for _, e := range v {
+			out = append(out, references(e)...)
+		}
+	}
+	return out
+}
+
+// ordered puts bs in the order their dependencies give: a circuit whose
+// steps depend on another's, directly or through other resources, comes
+// after it. Circuits that don't depend on each other keep bs's order.
+// shortcut: a dependency through a local value or a module isn't seen;
+// the batch plans' outside check catches it.
+func (p *batchPlan) ordered(bs []configs.Conn3xBatch) ([]configs.Conn3xBatch, error) {
+	circuitOf := func(addr string) string {
+		typ, name, _ := strings.Cut(addr, ".")
+		for _, b := range bs {
+			if strings.HasPrefix(typ, "conn3x_") && strings.HasPrefix(name, b.Circuit+"__") {
+				return b.Circuit
+			}
+		}
+		return ""
+	}
+	after := map[string]map[string]bool{} // circuit to the circuits it depends on
+	for addr := range p.deps {
+		c := circuitOf(addr)
+		if c == "" {
+			continue
+		}
+		seen := map[string]bool{addr: true}
+		stack := slices.Clone(p.deps[addr])
+		for len(stack) > 0 {
+			d := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if seen[d] {
+				continue
+			}
+			seen[d] = true
+			if dc := circuitOf(d); dc != "" && dc != c {
+				if after[c] == nil {
+					after[c] = map[string]bool{}
+				}
+				after[c][dc] = true
+			}
+			stack = append(stack, p.deps[d]...)
+		}
+	}
+	var out []configs.Conn3xBatch
+	done := map[string]bool{}
+	for len(out) < len(bs) {
+		next := slices.IndexFunc(bs, func(b configs.Conn3xBatch) bool {
+			if done[b.Circuit] {
+				return false
+			}
+			for dep := range after[b.Circuit] {
+				if !done[dep] {
+					return false
+				}
+			}
+			return true
+		})
+		if next < 0 {
+			var left []string
+			for _, b := range bs {
+				if !done[b.Circuit] {
+					left = append(left, fmt.Sprintf("%q", b.Circuit))
+				}
+			}
+			return nil, fmt.Errorf("circuits %s depend on each other, so none of them can roll out first. Apply them one at a time with -target, or take batch_size off all but one", strings.Join(left, ", "))
+		}
+		done[bs[next].Circuit] = true
+		out = append(out, bs[next])
+	}
+	return out, nil
+}
+
+// outside lists p's changes to anything but bs's circuits' steps.
+func (p *batchPlan) outside(bs []configs.Conn3xBatch) []string {
+	var out []string
+	for _, c := range p.changes {
+		if !c.changes() {
+			continue
+		}
+		if _, ok := c.key.(string); !ok || c.module != "" || !slices.ContainsFunc(bs, func(b configs.Conn3xBatch) bool { return strings.HasPrefix(c.name, b.Circuit+"__") }) {
+			out = append(out, c.addr)
+		}
+	}
+	return out
 }
 
 func (c batchChange) changes() bool { return c.actions != "no-op" && c.actions != "read" }

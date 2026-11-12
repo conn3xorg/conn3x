@@ -72,6 +72,18 @@ func TestConn3xLimit(t *testing.T) {
 	}
 }
 
+func TestConn3xLimitCircuit(t *testing.T) {
+	t.Cleanup(func() { Conn3xCLILimitCircuit = "" })
+	Conn3xCLILimitCircuit = "web"
+	if plan, _ := limitPlan(t, "a", plans.NormalMode); plan == nil || len(plannedAddrs(plan)) != 5 {
+		t.Errorf("narrowed to its own circuit, the limit should plan as before")
+	}
+	Conn3xCLILimitCircuit = "db"
+	if _, msgs := limitPlan(t, "a", plans.NormalMode); !slices.Contains(msgs, "-limit needs a circuit") {
+		t.Errorf("narrowed to another circuit, the limit should target nothing: %v", msgs)
+	}
+}
+
 func TestConn3xLimitNoMatch(t *testing.T) {
 	plan, msgs := limitPlan(t, "web*", plans.NormalMode)
 	if got := plannedAddrs(plan); len(got) != 0 {

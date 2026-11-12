@@ -221,3 +221,20 @@ func TestBatchApply(t *testing.T) {
 		t.Errorf("-limit should batch only the hosts it matches:\n%s", out)
 	}
 }
+
+func TestBatchTwoCircuits(t *testing.T) {
+	web1, web2 := startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web1, web2)
+	w := newWorkdir(t, "batch_circuits")
+	w.writeAs("main.circuit.hcl", chainVars{PortA: web1.port, PortB: web2.port, Key: web1.keyFile, KnownHosts: knownFile})
+	w.mustConn3x("init", "-no-color")
+
+	out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=1")
+	db, web := strings.Index(out, `Circuit "db", batch 1 of 1: web1`), strings.Index(out, `Circuit "web", batch 1 of 2: web1`)
+	if db < 0 || web < db || !strings.Contains(out, `Circuit "web", batch 2 of 2: web2`) || !strings.Contains(out, "All 3 batches applied") {
+		t.Errorf("db should roll out, then web, one batch at a time:\n%s", out)
+	}
+	if out := w.mustConn3x("plan", "-no-color", "-var=run=1"); !strings.Contains(out, "No changes") {
+		t.Errorf("every circuit should be applied:\n%s", out)
+	}
+}

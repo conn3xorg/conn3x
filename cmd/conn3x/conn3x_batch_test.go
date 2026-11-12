@@ -84,17 +84,50 @@ func TestBatchArgs(t *testing.T) {
 	}
 }
 
-func TestBatchFor(t *testing.T) {
-	one := []configs.Conn3xBatch{{Circuit: "web", Size: 5, MaxFailures: 1}}
-	b, err := batchFor(one, "25%", 0)
-	if err != nil || b != (configs.Conn3xBatch{Circuit: "web", Percent: 25}) {
-		t.Errorf("got %+v, %v", b, err)
+func TestBatchesFor(t *testing.T) {
+	two := []configs.Conn3xBatch{{Circuit: "web", Size: 5, MaxFailures: 1}, {Circuit: "db", Size: 1}}
+	bs, err := batchesFor(two, "25%", 0)
+	if err != nil || bs[0] != (configs.Conn3xBatch{Circuit: "web", Percent: 25}) || bs[1] != (configs.Conn3xBatch{Circuit: "db", Percent: 25}) {
+		t.Errorf("got %+v, %v", bs, err)
 	}
-	if b, _ := batchFor(one, "", -1); b != one[0] {
-		t.Errorf("no flags changed it: %+v", b)
+	if bs, _ := batchesFor(two, "", -1); !slices.Equal(bs, two) {
+		t.Errorf("no flags changed them: %+v", bs)
 	}
-	if _, err := batchFor(append(one, configs.Conn3xBatch{Circuit: "db", Size: 1}), "", -1); err == nil || !strings.Contains(err.Error(), "web, db") {
-		t.Errorf("two batched circuits: %v", err)
+	if _, err := batchesFor(two, "0", -1); err == nil {
+		t.Error("-batch-size=0 should be refused")
+	}
+}
+
+func TestBatchOrder(t *testing.T) {
+	// web's steps depend on db's through a cloud resource; cache depends on
+	// nothing, and app on web.
+	p, err := readBatchPlan([]byte(`{"configuration": {"root_module": {"resources": [
+		{"address": "conn3x_command.app__a", "depends_on": ["conn3x_command.web__b"]},
+		{"address": "conn3x_command.web__a", "expressions": {"command": {"references": ["aws_lb.x.dns_name", "aws_lb.x"]}}},
+		{"address": "conn3x_command.web__b", "depends_on": ["conn3x_command.web__a"]},
+		{"address": "aws_lb.x", "expressions": {"tags": {"references": ["conn3x_command.db__a[\"db1\"].id"]}}},
+		{"address": "conn3x_command.db__a"},
+		{"address": "conn3x_command.cache__a"}
+	]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bs []configs.Conn3xBatch
+	for _, c := range []string{"app", "web", "cache", "db"} {
+		bs = append(bs, configs.Conn3xBatch{Circuit: c})
+	}
+	got, err := p.ordered(bs)
+	var names []string
+	for _, b := range got {
+		names = append(names, b.Circuit)
+	}
+	if err != nil || strings.Join(names, ",") != "cache,db,web,app" {
+		t.Errorf("ordered = %v, %v", names, err)
+	}
+
+	p.deps["conn3x_command.db__a"] = []string{"conn3x_command.app__a"}
+	if _, err := p.ordered(bs); err == nil || !strings.Contains(err.Error(), `"app", "web", "db" depend on each other`) {
+		t.Errorf("a cycle: %v", err)
 	}
 }
 
