@@ -19,15 +19,15 @@ A module drops the experimental label when all of these hold:
 | Module | Ready | Runner | Azure | Import | What's missing |
 | --- | --- | --- | --- | --- | --- |
 | `windows_acl` | yes | yes | yes | yes | |
-| `windows_ad_domain` | no | no | yes, through `azure-ad-child-domain` | no | A tree domain, a new tree in the forest, isn't offered |
-| `windows_ad_domain_controller` | no | no | yes, through `azure-ad-lab`, and from a workgroup server (#395) | no | `import`; a runner test |
-| `windows_ad_forest` | no | yes | yes | no | `import` |
+| `windows_ad_domain` | no | no | yes, through `azure-ad-child-domain` | yes | A tree domain, a new tree in the forest, isn't offered; `import` on a real domain controller: it's unit-tested only |
+| `windows_ad_domain_controller` | no | no | yes, through `azure-ad-lab`, and from a workgroup server (#395) | yes | A runner test; `import` on a real domain controller: it's unit-tested only |
+| `windows_ad_forest` | no | yes | yes | yes | `import` on a real domain controller: it's unit-tested only |
 | `windows_ad_group` | no | module-level | yes, including scope and category changes (#408) and 5,000 members (#407) | yes | Members from a trust to another forest are untested |
 | `windows_ad_ou` | yes | module-level | yes, and `import` on `azure-ad-lab`'s domain controller | yes | |
 | `windows_ad_user` | yes | module-level | yes, and `import` on `azure-ad-lab`'s domain controller | yes | |
 | `windows_directory` | yes | yes | yes | yes | |
 | `windows_dns_client` | yes | yes | yes | yes | |
-| `windows_domain_membership` | no | no | yes, including `ou` (#396) and a 2022 host (#394) | no | `import`; a runner test |
+| `windows_domain_membership` | no | no | yes, including `ou` (#396) and a 2022 host (#394) | yes | A runner test; `import` on a real member server: it's unit-tested only |
 | `windows_feature` | yes | yes | yes | yes | |
 | `windows_file` | yes | yes | yes | yes | |
 | `windows_firewall_rule` | yes | yes | yes, through `azure-windows-fleet` | yes | |

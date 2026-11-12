@@ -224,6 +224,22 @@ func TestStepImportSyncedModules(t *testing.T) {
         port = 8080
       }
     }`,
+		"conn3x_windows_ad_forest": `windows_ad_forest {
+      domain_name           = "lab.example.com"
+      safe_mode_password_wo = "s3cret"
+    }`,
+		"conn3x_windows_ad_domain": `windows_ad_domain {
+      domain_name = "emea.lab.example.com"
+      username    = "admin@lab.example.com"
+    }`,
+		"conn3x_windows_ad_domain_controller": `windows_ad_domain_controller {
+      domain_name = "lab.example.com"
+      username    = "LAB\\admin"
+    }`,
+		"conn3x_windows_domain_membership": `windows_domain_membership {
+      domain   = "lab.example.com"
+      username = "LAB\\joiner"
+    }`,
 	} {
 		mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit("step \"s\" {\n    import = true\n    " + step + "\n  }")})
 		if diags.HasErrors() {
