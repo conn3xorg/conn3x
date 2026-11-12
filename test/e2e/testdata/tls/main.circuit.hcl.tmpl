@@ -32,4 +32,12 @@ circuit "tls" {
       renew_before_days = 10
     }
   }
+  step "csr" {
+    tls_csr {
+      path        = "/etc/conn3x-tls/web.csr"
+      key_path    = "/etc/conn3x-tls/web.key"
+      common_name = "web1.test"
+      dns_names   = ["web1.test"]
+    }
+  }
 }

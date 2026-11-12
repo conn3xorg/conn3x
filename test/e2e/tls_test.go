@@ -41,6 +41,9 @@ func TestTLSKeyAndCert(t *testing.T) {
 			if out := h.exec("", "sh", "-c", "openssl x509 -in /etc/conn3x-tls/web.crt -noout -text"); !strings.Contains(out, "DNS:web1.test, DNS:web.test, IP Address:10.0.0.5") || !strings.Contains(out, "CA:FALSE") {
 				t.Fatalf("certificate:\n%s", out)
 			}
+			if out := h.exec("", "sh", "-c", "openssl req -in /etc/conn3x-tls/web.csr -noout -verify -text 2>&1"); !strings.Contains(out, "verify OK") || !strings.Contains(out, "DNS:web1.test") {
+				t.Fatalf("request:\n%s", out)
+			}
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 				t.Fatalf("plan after apply:\n%s", out)
 			}

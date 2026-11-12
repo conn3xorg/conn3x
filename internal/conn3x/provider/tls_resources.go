@@ -186,3 +186,65 @@ func withAttr(v cty.Value, name, s string) cty.Value {
 	}
 	return cty.ObjectVal(vals)
 }
+
+func tlsCSRSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "A certificate signing request for a key already on the host, such as one from tls_private_key, for your own CA to sign. Made with the host's openssl.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":           {Type: cty.String, Computed: true},
+			"revision":     revisionAttr(),
+			"path":         {Type: cty.String, Required: true, Description: "Absolute path of the request file."},
+			"key_path":     {Type: cty.String, Required: true, Description: "Absolute path of the private key it's for."},
+			"common_name":  {Type: cty.String, Required: true, Description: "Subject common name, such as the host's name."},
+			"dns_names":    {Type: cty.List(cty.String), Optional: true, Description: "Host names to ask for as subject alternative names."},
+			"ip_addresses": {Type: cty.List(cty.String), Optional: true, Description: "IP addresses to ask for as subject alternative names."},
+			"mode":         {Type: cty.String, Optional: true, Description: "Octal permissions. Defaults to \"0644\"."},
+			"owner":        {Type: cty.String, Optional: true, Description: "Owner. Unset keeps the file's."},
+			"group":        {Type: cty.String, Optional: true, Description: "Group. Unset keeps the file's."},
+			"on_remove":    {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the file, \"delete\" removes it."},
+			"csr_pem":      {Type: cty.String, Computed: true, Description: "The request, PEM-encoded, for your CA."},
+			"in_sync":      {Type: cty.Bool, Computed: true, Description: "Whether the file holds a request for the key with these names."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func tlsCSRFrom(v cty.Value) tls.CSR {
+	return tls.CSR{Path: stringOr(v.GetAttr("path"), ""), KeyPath: stringOr(v.GetAttr("key_path"), ""), CommonName: stringOr(v.GetAttr("common_name"), ""),
+		DNSNames: stringList(v.GetAttr("dns_names")), IPs: stringList(v.GetAttr("ip_addresses")),
+		Mode: stringOr(v.GetAttr("mode"), ""), Owner: stringOr(v.GetAttr("owner"), ""), Group: stringOr(v.GetAttr("group"), "")}
+}
+
+func planTLSCSR(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return unknownWhenStale(planSynced(req, "tls_csr", []string{"path"},
+		[]string{"key_path", "common_name", "dns_names", "ip_addresses", "mode", "owner", "group"}), "csr_pem")
+}
+
+func readTLSCSR(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		c := tlsCSRFrom(prior)
+		s, err := tls.ReadCSR(ctx, h, c)
+		if err != nil {
+			return cty.NilVal, err
+		}
+		return withSync(withAttr(prior, "csr_pem", s.PEM), c.Matches(s)), nil
+	})
+}
+
+func applyTLSCSR(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			c := tlsCSRFrom(planned)
+			if err := tls.ApplyCSR(ctx, h, c); err != nil {
+				return cty.NilVal, fmt.Errorf("tls_csr %s: %w", c.Path, err)
+			}
+			s, err := tls.ReadCSR(ctx, h, c)
+			if err != nil {
+				return cty.NilVal, err
+			}
+			return withSync(withAttr(planned, "csr_pem", s.PEM), true), nil
+		},
+		func(ctx context.Context, h *hostConn, prior cty.Value) error {
+			return tls.DeleteCert(ctx, h, tlsCSRFrom(prior).Path)
+		})
+}
