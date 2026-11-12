@@ -167,7 +167,7 @@ func TestBatchApply(t *testing.T) {
 	if code == 0 || !strings.Contains(out, "1 host failed, more than max_failures = 0") || !strings.Contains(out, "Failed: web2") || !strings.Contains(out, "Not reached: web10") {
 		t.Errorf("a failure should stop the rollout (exit %d):\n%s", code, out)
 	}
-	if out := w.mustConn3x("plan", "-no-color", "-var=run=2"); !strings.Contains(out, `["web10"]`) || strings.Contains(out, `["web1"]`) {
+	if out := w.mustConn3x("plan", "-no-color", "-var=run=2"); !strings.Contains(out, `web__start["web10"] must be replaced`) || strings.Contains(out, `["web1"] must`) || strings.Contains(out, `["web1"] will`) {
 		t.Errorf("web1 should be done and web10 untouched:\n%s", out)
 	}
 
