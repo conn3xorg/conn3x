@@ -86,15 +86,18 @@ func TestBatchArgs(t *testing.T) {
 
 func TestBatchesFor(t *testing.T) {
 	two := []configs.Conn3xBatch{{Circuit: "web", Size: 5, MaxFailures: 1}, {Circuit: "db", Size: 1}}
-	bs, err := batchesFor(two, "25%", 0)
-	if err != nil || bs[0] != (configs.Conn3xBatch{Circuit: "web", Percent: 25}) || bs[1] != (configs.Conn3xBatch{Circuit: "db", Percent: 25}) {
+	bs, err := batchesFor(two, "25%", "10%")
+	if err != nil || bs[0] != (configs.Conn3xBatch{Circuit: "web", Percent: 25, FailedPercent: 10}) || bs[1] != (configs.Conn3xBatch{Circuit: "db", Percent: 25, FailedPercent: 10}) {
 		t.Errorf("got %+v, %v", bs, err)
 	}
-	if bs, _ := batchesFor(two, "", -1); !slices.Equal(bs, two) {
+	if bs, _ := batchesFor(two, "", ""); !slices.Equal(bs, two) {
 		t.Errorf("no flags changed them: %+v", bs)
 	}
-	if _, err := batchesFor(two, "0", -1); err == nil {
+	if _, err := batchesFor(two, "0", ""); err == nil {
 		t.Error("-batch-size=0 should be refused")
+	}
+	if _, err := batchesFor(two, "", "-1"); err == nil {
+		t.Error("-max-failures=-1 should be refused")
 	}
 }
 

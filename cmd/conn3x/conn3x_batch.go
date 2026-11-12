@@ -30,7 +30,7 @@ import (
 
 const (
 	batchSizeHelp   = `Roll the batched circuit out this many hosts at a time, or this percentage of the hosts that change, such as "20%". Overrides the circuit's batch_size for this run.`
-	maxFailuresHelp = `How many hosts may fail before no more batches start. Overrides the circuit's max_failures for this run.`
+	maxFailuresHelp = `How many hosts may fail before no more batches start, or what percentage of the hosts that change, such as "20%". Overrides the circuit's max_failures for this run.`
 
 	// batchCircuitEnv narrows a batch's -limit to the circuit rolling out
 	// (see tofu.Conn3xCLILimitCircuit).
@@ -44,9 +44,9 @@ const (
 // again for each plan and apply, as drift does.
 func withBatch(cmd *command.Command) {
 	var size string
-	maxFailures := -1
+	var maxFailures string
 	cmd.CommandLine.StringVar(&size, "batch-size", "", batchSizeHelp).SetDisplay("=n")
-	cmd.CommandLine.IntVar(&maxFailures, "max-failures", -1, maxFailuresHelp).SetDisplay("=n")
+	cmd.CommandLine.StringVar(&maxFailures, "max-failures", "", maxFailuresHelp).SetDisplay("=n")
 	var planPath *string
 	for _, a := range cmd.CommandLine.Args {
 		if s, ok := a.Cli.(*cli.StringArg); ok && a.Name == "PLAN" {
@@ -57,14 +57,14 @@ func withBatch(cmd *command.Command) {
 	run := cmd.Run
 	cmd.Run = func(m command.Meta) int {
 		batches, diags := configs.Conn3xBatches(".")
-		if planPath != nil && *planPath != "" && size == "" && maxFailures < 0 {
+		if planPath != nil && *planPath != "" && size == "" && maxFailures == "" {
 			return run(m) // a saved plan was planned whole, and applies whole
 		}
 		if diags.HasErrors() {
 			return run(m) // the configuration's own load reports it
 		}
 		if len(batches) == 0 {
-			if size != "" || maxFailures >= 0 {
+			if size != "" || maxFailures != "" {
 				fmt.Fprintln(stderr, "Error: -batch-size and -max-failures need a circuit with batch_size")
 				return 1
 			}
@@ -108,7 +108,7 @@ func withBatch(cmd *command.Command) {
 }
 
 // batchesFor applies the flags to every batched circuit.
-func batchesFor(batches []configs.Conn3xBatch, size string, maxFailures int) ([]configs.Conn3xBatch, error) {
+func batchesFor(batches []configs.Conn3xBatch, size, maxFailures string) ([]configs.Conn3xBatch, error) {
 	out := slices.Clone(batches)
 	for i := range out {
 		if size != "" {
@@ -117,8 +117,11 @@ func batchesFor(batches []configs.Conn3xBatch, size string, maxFailures int) ([]
 				return nil, fmt.Errorf("-batch-size: %s", err)
 			}
 		}
-		if maxFailures >= 0 {
-			out[i].MaxFailures = maxFailures
+		if maxFailures != "" {
+			var err error
+			if out[i].MaxFailures, out[i].FailedPercent, err = configs.ParseConn3xMaxFailures(maxFailures); err != nil {
+				return nil, fmt.Errorf("-max-failures: %s", err)
+			}
 		}
 	}
 	return out, nil
@@ -178,8 +181,10 @@ type batchStream struct {
 // rollout is one batched circuit's hosts, cut into batches.
 type rollout struct {
 	configs.Conn3xBatch
-	size    int
-	batches [][]string
+	size     int
+	batches  [][]string
+	failures int    // how many hosts may fail
+	limit    string // max_failures as written, for messages
 }
 
 // apply plans everything, asks, and rolls each batched circuit out in
@@ -201,7 +206,10 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 		if len(hosts) == 0 {
 			continue
 		}
-		ro := rollout{Conn3xBatch: b, size: b.Of(len(hosts))}
+		ro := rollout{Conn3xBatch: b, size: b.Of(len(hosts)), failures: b.FailuresOf(len(hosts)), limit: strconv.Itoa(b.MaxFailures)}
+		if b.FailedPercent > 0 {
+			ro.limit = fmt.Sprintf("%d%% (%d of %d %s)", b.FailedPercent, ro.failures, len(hosts), plural(len(hosts), "host", "hosts"))
+		}
 		for chunk := range slices.Chunk(hosts, ro.size) {
 			ro.batches = append(ro.batches, chunk)
 		}
@@ -228,7 +236,7 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 			hosts += len(batch)
 		}
 		fmt.Fprintf(r.out, "\nCircuit %q changes %d %s, which roll out in %d %s of up to %d. No more batches start once more than %d %s failed.\n",
-			ro.Circuit, hosts, plural(hosts, "host", "hosts"), len(ro.batches), plural(len(ro.batches), "batch", "batches"), ro.size, ro.MaxFailures, plural(ro.MaxFailures, "host has", "hosts have"))
+			ro.Circuit, hosts, plural(hosts, "host", "hosts"), len(ro.batches), plural(len(ro.batches), "batch", "batches"), ro.size, ro.failures, plural(ro.failures, "host has", "hosts have"))
 	}
 	if len(rollouts) > 1 {
 		fmt.Fprintln(r.out, "\nEach circuit rolls out after the one before it, in this order.")
@@ -255,9 +263,9 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 			return 1
 		}
 		if len(failed) > 0 {
-			msg := fmt.Sprintf("every batch ran, and %d %s failed, within max_failures = %d.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), ro.MaxFailures, strings.Join(failed, ", "))
+			msg := fmt.Sprintf("every batch ran, and %d %s failed, within max_failures = %s.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), ro.limit, strings.Join(failed, ", "))
 			if len(later) > 0 {
-				msg = fmt.Sprintf("every batch of circuit %q ran, and %d %s failed, within max_failures = %d.\n  Failed: %s\n  Not started, since they may depend on the failed hosts: %s %s", ro.Circuit, len(failed), plural(len(failed), "host", "hosts"), ro.MaxFailures, strings.Join(failed, ", "), plural(len(later), "circuit", "circuits"), strings.Join(later, ", "))
+				msg = fmt.Sprintf("every batch of circuit %q ran, and %d %s failed, within max_failures = %s.\n  Failed: %s\n  Not started, since they may depend on the failed hosts: %s %s", ro.Circuit, len(failed), plural(len(failed), "host", "hosts"), ro.limit, strings.Join(failed, ", "), plural(len(later), "circuit", "circuits"), strings.Join(later, ", "))
 			}
 			r.errorf("%s", msg)
 			return 1
@@ -347,12 +355,12 @@ func (r *batchRun) rollOut(whole *batchPlan, ro rollout, named bool, later []str
 			batchFailed, _ := left.circuitHosts(ro.Circuit, r.hosts)
 			failed = append(failed, batchFailed...)
 		}
-		if len(failed) > ro.MaxFailures {
+		if len(failed) > ro.failures {
 			var notReached []string
 			for _, rest := range ro.batches[i+1:] {
 				notReached = append(notReached, rest...)
 			}
-			msg := fmt.Sprintf("%d %s failed, more than max_failures = %d, so no more batches start.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), ro.MaxFailures, strings.Join(failed, ", "))
+			msg := fmt.Sprintf("%d %s failed, more than max_failures = %s, so no more batches start.\n  Failed: %s", len(failed), plural(len(failed), "host", "hosts"), ro.limit, strings.Join(failed, ", "))
 			if len(notReached) > 0 {
 				msg += "\n  Not reached: " + strings.Join(notReached, ", ")
 			}

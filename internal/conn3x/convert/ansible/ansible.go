@@ -429,8 +429,14 @@ func (c *converter) serial(cb *hclwrite.Body, name string, p map[string]*yaml.No
 	} else {
 		cb.SetAttributeValue("batch_size", cty.StringVal(v))
 	}
-	if p["max_fail_percentage"] != nil {
-		c.playIssue(cb, name, node, "sets max_fail_percentage, and Conn3x counts failed hosts instead: set max_failures to how many hosts may fail, or leave it at 0 to stop at the first")
+	if m := p["max_fail_percentage"]; m != nil {
+		pct := strings.TrimSuffix(scalar(m), "%")
+		if _, _, err := configs.ParseConn3xMaxFailures(pct + "%"); m.Kind != yaml.ScalarNode || err != nil {
+			c.playIssue(cb, name, node, "sets max_fail_percentage to something other than one percentage from 0 to 100; set max_failures on the circuit yourself")
+			return
+		}
+		comment(cb, "Ansible counts max_fail_percentage in each batch; Conn3x counts it over every host that changes.")
+		cb.SetAttributeValue("max_failures", cty.StringVal(pct+"%"))
 	}
 }
 
