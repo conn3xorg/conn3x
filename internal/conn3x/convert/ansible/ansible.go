@@ -715,9 +715,17 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			fams, familyCond = allowed, true
 		}
 	}
-	module := ""
+	module, delegate := "", ""
 	for _, k := range sortedKeys(t) {
 		if k == "loop" && items != nil {
+			continue
+		}
+		if k == "delegate_to" {
+			var why string
+			if delegate, why = delegateHost(t[k]); why != "" {
+				c.issue(body, name, node, why)
+				return
+			}
 			continue
 		}
 		if k == "when" && familyCond {
@@ -921,7 +929,13 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				c.res.Notes = append(c.res.Notes, Issue{Task: firstNonEmpty(name, mod), File: c.file, Line: node.Line, Reason: r})
 			}
 		}
+		if delegate != "" {
+			comment(body, fmt.Sprintf("Runs on %s, as delegate_to had it: %s must be a key of the circuit's hosts.", delegate, delegate))
+		}
 		sb := body.AppendNewBlock("step", []string{stepName}).Body()
+		if delegate != "" {
+			sb.SetAttributeValue("on", cty.StringVal(delegate))
+		}
 		if items != nil {
 			vals := make([]cty.Value, len(items))
 			for i, it := range items {
@@ -955,6 +969,21 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 }
 
 var digits = regexp.MustCompile(`^[0-9]+$`)
+
+// delegateHost reads a task's delegate_to: a host name, which becomes the
+// step's on. The controller and templated names don't convert yet.
+func delegateHost(n *yaml.Node) (string, string) {
+	h := scalar(n)
+	switch {
+	case h == "" || n.Kind != yaml.ScalarNode:
+		return "", "uses a delegate_to that isn't a host name"
+	case strings.Contains(h, "{{"):
+		return "", "uses a delegate_to the converter can't read, " + h + "; set on to the host it means"
+	case h == "localhost" || h == "127.0.0.1" || h == "::1":
+		return "", "delegates to the controller, which Conn3x can't run steps on yet"
+	}
+	return h, ""
+}
 
 // playIssue records something about a whole play for review, as a comment
 // at the top of its circuit.
