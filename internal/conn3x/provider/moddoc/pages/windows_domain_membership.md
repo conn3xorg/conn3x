@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_domain_membership` to join a Windows server to an Active Directory domain. It never reboots the host. A join only takes effect after a reboot, so follow it with a [`windows_reboot`](windows_reboot.md) step.
 
 ## Example usage
