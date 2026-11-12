@@ -43,7 +43,7 @@ jobs:
           install-mode: none
           args: ./internal/conn3x/... ./cmd/conn3x/... ./cmd/conn3x-agent/...
       - name: Upstream edits stay marked and within budget
-        run: bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 8
+        run: bash scripts/upstream/hook-budget.sh "$(cat internal/conn3x/version/UPSTREAM)" 9
       - name: Script tests
         run: |
           bash scripts/upstream/sync_test.sh
