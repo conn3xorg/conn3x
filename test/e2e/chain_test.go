@@ -175,4 +175,9 @@ func TestBatchApply(t *testing.T) {
 	if code == 0 || !strings.Contains(out, "every batch ran, and 1 host failed, within max_failures = 1") || !strings.Contains(out, "Batch 2 of 2: web10") {
 		t.Errorf("-max-failures=1 should let the rollout finish and still fail (exit %d):\n%s", code, out)
 	}
+
+	out = w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=4", "-limit=web1,web10")
+	if !strings.Contains(out, "changes 2 hosts, which roll out in 2 batches") || !strings.Contains(out, "Batch 2 of 2: web10") {
+		t.Errorf("-limit should batch only the hosts it matches:\n%s", out)
+	}
 }

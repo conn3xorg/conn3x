@@ -126,7 +126,7 @@ func batchRefuses(args []string, planPath *string, op *arguments.Operation, view
 	case view != nil && view.ViewType == arguments.ViewJSON:
 		return fmt.Errorf("a batched apply has no -json output yet")
 	}
-	for _, name := range []string{"limit", "report", "json-into"} {
+	for _, name := range []string{"report", "json-into"} {
 		if _, ok := flagValue(args, name); ok {
 			return fmt.Errorf("a batched apply can't take -%s yet", name)
 		}
@@ -274,15 +274,34 @@ func (r *batchRun) applyFlags() []string {
 func (r *batchRun) planArgs(hosts []string, out string) []string {
 	global, _ := r.split()
 	args := append(slices.Clone(global), "plan", "-detailed-exitcode", "-out="+out)
+	flags := r.applyFlags()
 	if hosts != nil {
+		// A batch's hosts are already inside any -limit the apply was given.
 		// shortcut: host names go in as patterns, so one holding * ? [ or
 		// a separator would match more or fewer; quote them if that comes up.
 		args = append(args, "-limit="+strings.Join(hosts, ","))
+		flags = withoutFlag(flags, "limit")
 	}
-	return append(args, slices.DeleteFunc(r.applyFlags(), func(a string) bool {
+	return append(args, slices.DeleteFunc(flags, func(a string) bool {
 		_, auto := flagValue([]string{a}, "auto-approve")
 		return auto
 	})...)
+}
+
+// withoutFlag drops -name and its value, in either form, from args.
+func withoutFlag(args []string, name string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := strings.TrimPrefix(strings.TrimPrefix(args[i], "-"), "-")
+		switch {
+		case a == name:
+			i++ // and its value
+		case strings.HasPrefix(a, name+"="):
+		default:
+			out = append(out, args[i])
+		}
+	}
+	return out
 }
 
 // applyArgs applies a saved plan, with the apply options a saved plan takes.
