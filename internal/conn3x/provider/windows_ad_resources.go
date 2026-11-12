@@ -338,7 +338,7 @@ const defaultJoinTimeout = 10 * time.Minute
 
 func winMembershipSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. This Windows host joined to an Active Directory domain as a member. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the host in the domain; nothing is unjoined.",
+		Description: "This Windows host joined to an Active Directory domain as a member. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the host in the domain; nothing is unjoined.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),
@@ -501,7 +501,7 @@ func applyWinMembership(ctx context.Context, req providers.ApplyResourceChangeRe
 
 func winDCSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. This Windows host as another domain controller, and DNS server, in an Active Directory domain that exists. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the domain controller; nothing is demoted.",
+		Description: "This Windows host as another domain controller, and DNS server, in an Active Directory domain that exists. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the domain controller; nothing is demoted.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":            {Type: cty.String, Computed: true},
 			"revision":      revisionAttr(),
