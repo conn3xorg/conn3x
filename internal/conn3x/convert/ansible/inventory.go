@@ -269,6 +269,30 @@ func (inv *Inventory) Group(name string) *Group {
 	return g
 }
 
+// Names lists the group's hosts, sorted.
+func (g *Group) Names() []string {
+	out := make([]string, 0, len(g.hosts))
+	for h := range g.hosts {
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Vars is a host's variables, resolved as Ansible would: groups from the
+// outermost in, then the host's own.
+func (g *Group) Vars(host string) map[string]string { return g.hosts[host] }
+
+// GroupNames lists the inventory's groups, sorted.
+func (inv *Inventory) GroupNames() []string {
+	out := make([]string, 0, len(inv.groups))
+	for n := range inv.groups {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Addresses maps each host's name to where to reach it.
 func (g *Group) Addresses() map[string]string {
 	out := map[string]string{}

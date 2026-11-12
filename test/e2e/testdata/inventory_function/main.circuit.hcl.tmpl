@@ -1,0 +1,16 @@
+circuit "web" {
+  hosts = provider::conn3x::inventory("${path.module}/inventory.ini", "web")
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "role" {
+    file {
+      path    = "/tmp/role"
+      content = "${each.value.vars.role}\n"
+    }
+  }
+}
