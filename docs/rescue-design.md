@@ -1,6 +1,14 @@
 # Design note: steps that run when an earlier step fails
 
-Status: proposal, for [#522](https://github.com/conn3xorg/conn3x/issues/522). Nothing here is built yet.
+Status: for [#522](https://github.com/conn3xorg/conn3x/issues/522). `rescue` is built; `always`, `prereq` and the converter aren't yet.
+
+## Where the build differs
+
+- A rescue can't `notify` a handler yet. Put the restart in the rescue.
+- Applying a saved plan warns that no rescue will run, rather than refusing, the way a saved plan already applies a batched circuit whole.
+- A rescued host still counts against `max_failures` (open question 2 below, answered "not yet").
+- Rescues run only in root module circuits, as batches do.
+- One rescue phase covers every circuit: each rescue gets its own hosts, through `CONN3X_RESCUE_HOSTS`, and the plan targets rescues only.
 
 ## What people want
 
@@ -129,7 +137,7 @@ A phase's steps go into state when they apply. On the next plan their `when` is 
 
 ### What it refuses
 
-The same things a batched apply refuses, for the same reasons: applying a saved plan, which can't be re-planned in phases, plus `-target`, `-exclude`, `-destroy`, and the remote and cloud backends.
+The same things a batched apply refuses, for the same reasons: `-target`, `-exclude`, `-json`, `-json-into`, and the remote and cloud backends. A destroy runs no rescues.
 
 ## What it costs
 
