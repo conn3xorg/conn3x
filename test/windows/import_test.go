@@ -45,7 +45,25 @@ func TestImportAdoptsWhatWasMade(t *testing.T) {
     }
   }`, imp, sfx, cmdExe)
 		if iis {
+			// The site's folder must be one only administrators can change.
 			s += fmt.Sprintf(`
+  step "site_folder" {
+    windows_directory {
+      path = "C:\\conn3x-import-site-%[2]s"
+      acl {
+        principal = "S-1-5-32-544"
+        rights    = ["FullControl"]
+      }
+      acl {
+        principal = "S-1-5-18"
+        rights    = ["FullControl"]
+      }
+      acl {
+        principal = "S-1-5-32-568"
+        rights    = ["ReadAndExecute"]
+      }
+    }
+  }
   step "pool" {
     import = %[1]t
     windows_iis_app_pool {
@@ -56,7 +74,7 @@ func TestImportAdoptsWhatWasMade(t *testing.T) {
     import = %[1]t
     windows_iis_site {
       name          = "conn3x-import-%[2]s"
-      physical_path = "C:\\inetpub\\wwwroot"
+      physical_path = "C:\\conn3x-import-site-%[2]s"
       app_pool      = "conn3x-import-%[2]s"
       binding {
         port        = 8097
