@@ -19,7 +19,7 @@ var iisStateAttr = &configschema.Attribute{Type: cty.String, Optional: true, Des
 
 func winAppPoolSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. An IIS application pool, found by its name.",
+		Description: "An IIS application pool, found by its name.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":                      {Type: cty.String, Computed: true},
 			"revision":                revisionAttr(),
@@ -142,7 +142,7 @@ func applyWinAppPool(ctx context.Context, req providers.ApplyResourceChangeReque
 
 func winSiteSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. An IIS site, found by its name.",
+		Description: "An IIS site, found by its name.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":            {Type: cty.String, Computed: true},
 			"revision":      revisionAttr(),

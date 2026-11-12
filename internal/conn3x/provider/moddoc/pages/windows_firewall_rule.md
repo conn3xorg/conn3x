@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_firewall_rule` to open, or close, a port in Windows Firewall. The rule is found by its name, so Conn3x changes the one rule it made and leaves the others alone.
 
 ## Example usage

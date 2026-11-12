@@ -19,7 +19,7 @@ import (
 
 func winDNSClientSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. The DNS servers one network interface on a Windows host asks, in order. Removing the step leaves them as they are.",
+		Description: "The DNS servers one network interface on a Windows host asks, in order. Removing the step leaves them as they are.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
 			"revision":  revisionAttr(),
