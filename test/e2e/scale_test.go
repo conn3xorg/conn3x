@@ -27,6 +27,9 @@ import (
 
 type scaleHost struct{ Name, Port string }
 
+// scalePortBase is the first port the hosts' sshd listen on.
+const scalePortBase = 22200
+
 type scaleVars struct {
 	Hosts           []scaleHost
 	Key, KnownHosts string
@@ -105,20 +108,18 @@ func startScaleHosts(t *testing.T, n int, pub string) []scaleHost {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out, err := exec.Command("podman", "run", "-d", "--rm", "-p", "127.0.0.1::22", "-e", "AUTHORIZED_KEY="+pub, "localhost/conn3x-scale").Output()
+			// The host's network, with a port each: a published port costs
+			// rootless Podman a forwarding process per container, and those
+			// run out long before 500.
+			port := strconv.Itoa(scalePortBase + i)
+			out, err := exec.Command("podman", "run", "-d", "--rm", "--network=host", "-e", "PORT="+port, "-e", "AUTHORIZED_KEY="+pub, "localhost/conn3x-scale").CombinedOutput()
 			if err != nil {
-				errs[i] = fmt.Errorf("podman run: %w", err)
+				errs[i] = fmt.Errorf("podman run: %w: %s", err, out)
 				return
 			}
 			id := strings.TrimSpace(string(out))
 			t.Cleanup(func() { _ = exec.Command("podman", "rm", "-f", id).Run() })
-			out, err = exec.Command("podman", "port", id, "22/tcp").Output()
-			if err != nil {
-				errs[i] = fmt.Errorf("podman port: %w", err)
-				return
-			}
-			m := strings.TrimSpace(string(out))
-			hosts[i] = scaleHost{Name: fmt.Sprintf("h%04d", i), Port: m[strings.LastIndex(m, ":")+1:]}
+			hosts[i] = scaleHost{Name: fmt.Sprintf("h%04d", i), Port: port}
 			for range 100 {
 				if c, err := net.DialTimeout("tcp", "127.0.0.1:"+hosts[i].Port, time.Second); err == nil {
 					buf := make([]byte, 4)
