@@ -38,3 +38,7 @@ Add a third disk later by adding it to `pvs`. Conn3x extends the group.
 ## Removal
 
 When you delete a `lvm_volume_group` step, the group stays on the host, with its volumes and their data. There's no `on_remove`.
+
+## From Ansible
+
+`conn3x convert ansible` turns `community.general.lvg` tasks with `state: present` into `lvm_volume_group` steps, with `vg` as `name`. Ansible's `lvg` also takes out of the group a physical volume that isn't in `pvs`; Conn3x leaves it in, and the step says so. A task that sets `pesize`, `pv_options` or `vg_options` stays a TODO.

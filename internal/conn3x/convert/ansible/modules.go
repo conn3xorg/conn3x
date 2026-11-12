@@ -24,6 +24,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/storage"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sudoers"
 )
 
@@ -386,6 +387,9 @@ var modules = map[string]func(*input) ([]step, string){
 	"mount":              mountModule,
 	"modprobe":           modprobeModule,
 	"sudoers":            sudoersModule,
+	"filesystem":         filesystemModule,
+	"lvg":                lvgModule,
+	"lvol":               lvolModule,
 	"command":            commandModule,
 	"shell":              commandModule,
 	"reboot":             rebootModule,
@@ -1190,6 +1194,72 @@ func sudoersModule(in *input) ([]step, string) {
 		attrs = append(attrs, attr{key: "nopassword", val: cty.True})
 	}
 	return one("sudoers", attrs)
+}
+
+func filesystemModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	fs := storage.Filesystem{Device: in.str("dev"), Type: in.str("fstype", "type"), Opts: strings.Fields(in.str("opts")), Resize: in.bool("resizefs", false), Force: in.bool("force", false)}
+	if err := fs.Validate(); err != nil {
+		return nil, err.Error()
+	}
+	attrs := []attr{s("device", fs.Device), s("type", fs.Type)}
+	if len(fs.Opts) > 0 {
+		vals := make([]cty.Value, len(fs.Opts))
+		for i, o := range fs.Opts {
+			vals[i] = cty.StringVal(o)
+		}
+		attrs = append(attrs, attr{key: "opts", val: cty.ListVal(vals)})
+	}
+	if fs.Resize {
+		attrs = append(attrs, attr{key: "resize", val: cty.True})
+	}
+	if fs.Force {
+		attrs = append(attrs, attr{key: "force", val: cty.True})
+		return one("filesystem", attrs, "TODO(convert): force = true lets this step make its file system over another one, erasing it, on every apply. Take it off once the hosts have the file system.")
+	}
+	return one("filesystem", attrs)
+}
+
+func lvgModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	// force only matters to Ansible when it removes a group.
+	in.ignore("force")
+	g := storage.VolumeGroup{Name: in.str("vg"), PVs: in.list("pvs")}
+	if err := g.Validate(); err != nil {
+		return nil, err.Error()
+	}
+	vals := make([]cty.Value, len(g.PVs))
+	for i, pv := range g.PVs {
+		vals[i] = cty.StringVal(pv)
+	}
+	return one("lvm_volume_group", []attr{s("name", g.Name), {key: "pvs", val: cty.ListVal(vals)}},
+		"Ansible's lvg also takes a physical volume that isn't in pvs out of the group; Conn3x leaves it in.")
+}
+
+func lvolModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	size := in.str("size")
+	if strings.HasPrefix(size, "+") || strings.HasPrefix(size, "-") {
+		return nil, "sets a size relative to the volume's current one, " + size + ", which would change it on every play; set the size it should be"
+	}
+	l := storage.LogicalVolume{VG: in.str("vg"), Name: in.str("lv"), Size: size, Force: in.bool("force", false)}
+	if err := l.Validate(); err != nil {
+		return nil, err.Error()
+	}
+	// shrink only matters with force, which Conn3x's force covers.
+	if in.has("shrink") && !in.bool("shrink", true) {
+		l.Force = false
+	}
+	attrs := []attr{s("vg", l.VG), s("name", l.Name), s("size", l.Size)}
+	var notes []string
+	if in.bool("resizefs", false) {
+		notes = append(notes, fmt.Sprintf("TODO(convert): resizefs grew the file system with the volume. Add a filesystem step for /dev/%s/%s after this one, with resize = true.", l.VG, l.Name))
+	}
+	if l.Force {
+		attrs = append(attrs, attr{key: "force", val: cty.True})
+		notes = append(notes, "TODO(convert): force = true lets this step shrink the volume, destroying what's past the new end, on every apply. Take it off once the hosts have their size.")
+	}
+	return one("lvm_logical_volume", attrs, notes...)
 }
 
 func commandModule(in *input) ([]step, string) {
