@@ -48,7 +48,14 @@ func runTask(t *testing.T, c *ssh.Client, tk windows.Task, file string) bool {
 	t.Helper()
 	res := run(t, c, `param($A)
 Start-ScheduledTask -TaskPath $A.path -TaskName $A.name
-for ($i = 0; $i -lt 60; $i++) { if ([IO.File]::Exists($A.file)) { return 'ran' }; Start-Sleep -Milliseconds 500 }
+# 30 seconds, or up to 3 minutes while it's still running: on Windows
+# Server 2025 a task's first run as a new user was still running at 30
+# seconds (0x41301), most likely making the user's profile.
+for ($i = 0; $i -lt 360; $i++) {
+  if ([IO.File]::Exists($A.file)) { return 'ran' }
+  if ($i -ge 60 -and (Get-ScheduledTask -TaskPath $A.path -TaskName $A.name).State -ne 'Running') { break }
+  Start-Sleep -Milliseconds 500
+}
 'not run: ' + (Get-ScheduledTaskInfo -TaskPath $A.path -TaskName $A.name).LastTaskResult`, map[string]any{"path": tk.Path, "name": tk.Name, "file": file})
 	got := strings.TrimSpace(res.Text)
 	if got != "ran" {
