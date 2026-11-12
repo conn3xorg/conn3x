@@ -33,7 +33,8 @@ jobs:
           CONN3X_SCALE: ${{ inputs.hosts }}
         run: |
           ulimit -n 65536 || true
-          export CONN3X_SCALE_OUT="$RUNNER_TEMP/scale.jsonl"
+          export CONN3X_SCALE_OUT="$RUNNER_TEMP/scale/scale.jsonl" CONN3X_SCALE_PROFILE="$RUNNER_TEMP/scale"
+          mkdir -p "$RUNNER_TEMP/scale"
           go test -tags e2e -count=1 -timeout 110m -v -run '^TestScalePlan$' ./test/e2e/...
           {
             echo '| hosts | steps | apply (s) | plan (s) | plan -parallelism=50 (s) | plan -refresh=false (s) |'
@@ -44,5 +45,5 @@ jobs:
         if: always()
         with:
           name: scale
-          path: ${{ runner.temp }}/scale.jsonl
+          path: ${{ runner.temp }}/scale/
           if-no-files-found: ignore
