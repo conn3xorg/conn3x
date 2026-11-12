@@ -172,6 +172,9 @@ func brandTree(cmd *command.Command) {
 	if cmd.Name == "test" && cmd.Run != nil {
 		withJUnit(cmd)
 	}
+	if (cmd.Name == "plan" || cmd.Name == "apply" || cmd.Name == "refresh") && cmd.Run != nil {
+		withLimit(cmd)
+	}
 	if cmd.Name == "init" && cmd.Run != nil {
 		cmd.Run = suggestEncryption(cmd.Run, cmd.CommandLine.View)
 	}
