@@ -43,7 +43,9 @@ func withLimit(cmd *command.Command) {
 			return 1
 		}
 		tofu.Conn3xCLILimit = limit
-		defer func() { tofu.Conn3xCLILimit = nil }()
+		// Set only by a batched apply, for its own plans.
+		tofu.Conn3xCLILimitCircuit = os.Getenv(batchCircuitEnv)
+		defer func() { tofu.Conn3xCLILimit, tofu.Conn3xCLILimitCircuit = nil, "" }()
 		return run(m)
 	}
 }
