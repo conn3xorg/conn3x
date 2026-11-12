@@ -35,4 +35,4 @@ When you delete a `tls_csr` step, `on_remove` decides what happens on the host. 
 
 ## From Ansible
 
-This is `community.crypto.openssl_csr`. `conn3x convert ansible` doesn't translate it yet.
+`conn3x convert ansible` turns `community.crypto.openssl_csr` tasks with a common name and `DNS:` or `IP:` alternative names into `tls_csr` steps. With no alternative names, the common name becomes the one DNS name, as Ansible's `use_common_name_for_san` does. Other subject fields, key usages, other extensions and a key passphrase stay a TODO.
