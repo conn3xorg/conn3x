@@ -178,6 +178,31 @@ func TestStepImportSyncedModules(t *testing.T) {
       source       = "C:/install/7z.msi"
       sha256       = "0000000000000000000000000000000000000000000000000000000000000000"
     }`,
+		"conn3x_windows_firewall_rule": `windows_firewall_rule {
+      name        = "web"
+      protocol    = "tcp"
+      local_ports = ["443"]
+    }`,
+		"conn3x_windows_scheduled_task": `windows_scheduled_task {
+      name    = "cleanup"
+      execute = "C:/tools/cleanup.exe"
+      user    = "SYSTEM"
+      trigger {
+        type = "daily"
+        at   = "2026-01-01T03:00:00"
+      }
+    }`,
+		"conn3x_windows_iis_app_pool": `windows_iis_app_pool {
+      name = "app"
+    }`,
+		"conn3x_windows_iis_site": `windows_iis_site {
+      name          = "app"
+      physical_path = "C:/sites/app"
+      app_pool      = "app"
+      binding {
+        port = 8080
+      }
+    }`,
 	} {
 		mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit("step \"s\" {\n    import = true\n    " + step + "\n  }")})
 		if diags.HasErrors() {
@@ -196,6 +221,24 @@ func TestStepImportSyncedModules(t *testing.T) {
   }`)})
 	got := importIDFor(t, mod.Import[0], "web1", cty.StringVal("203.0.113.10"))
 	if !strings.Contains(got, `"args":{"key":"ssh-ed25519 AAAA deploy","user":"deploy"}`) {
+		t.Fatalf("ID = %s", got)
+	}
+	// A module's blocks go in as a list of objects, without unset attributes.
+	mod, _ = loadCircuitModule(t, map[string]string{"main.circuit.hcl": importCircuit(`step "s" {
+    import = true
+    windows_iis_site {
+      name          = "app"
+      physical_path = "C:/sites/app"
+      binding {
+        port = 8080
+      }
+      binding {
+        port        = 80
+        host_header = "app.example.com"
+      }
+    }
+  }`)})
+	if got := importIDFor(t, mod.Import[0], "web1", cty.StringVal("203.0.113.10")); !strings.Contains(got, `"binding":[{"port":8080},{"host_header":"app.example.com","port":80}]`) {
 		t.Fatalf("ID = %s", got)
 	}
 	// A write-only password must not reach the ID, which plans print.

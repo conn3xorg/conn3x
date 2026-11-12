@@ -46,6 +46,27 @@ func hasWinPackage(ctx context.Context, h *hostConn, v cty.Value) (bool, error) 
 	return windows.PackageInstalled(ctx, h.client, v.GetAttr("product_code").AsString())
 }
 
+func hasWinFirewallRule(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadFirewallRule(ctx, h.client, v.GetAttr("name").AsString())
+	return a.Exists, err
+}
+
+func hasWinTask(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadTask(ctx, h.client, winTaskFrom(v))
+	return a.Exists, err
+}
+
+// hasWinAppPool and hasWinSite: a host without IIS has neither.
+func hasWinAppPool(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadAppPool(ctx, h.client, v.GetAttr("name").AsString())
+	return a.Installed && a.Exists, err
+}
+
+func hasWinSite(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := windows.ReadSite(ctx, h.client, v.GetAttr("name").AsString())
+	return a.Installed && a.Exists, err
+}
+
 func hasWinGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	a, err := windows.ReadGroup(ctx, h.client, winGroupFrom(v))
 	return a.Exists, err

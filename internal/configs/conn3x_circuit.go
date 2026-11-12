@@ -514,7 +514,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	var imp *Import
 	if attr, ok := body.Attributes["import"]; ok {
 		var importDiags hcl.Diagnostics
-		imp, importDiags = stepImport(r, attr, moduleAttrs, ssh)
+		imp, importDiags = stepImport(r, attr, moduleAttrs, module.Body.Blocks, ssh)
 		diags = append(diags, importDiags...)
 	}
 	return r, imp, diags
