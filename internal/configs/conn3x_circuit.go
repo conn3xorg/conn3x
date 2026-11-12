@@ -55,6 +55,7 @@ var circuitModules = map[string]string{
 	"download":             "conn3x_download",
 	"tls_private_key":      "conn3x_tls_private_key",
 	"tls_self_signed_cert": "conn3x_tls_self_signed_cert",
+	"tls_csr":              "conn3x_tls_csr",
 	"archive":              "conn3x_archive",
 	"git":                  "conn3x_git",
 	"mount":                "conn3x_mount",
