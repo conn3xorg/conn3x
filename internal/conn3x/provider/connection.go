@@ -45,6 +45,11 @@ func connectionBlock() *configschema.NestedBlock {
 			Description: "How to reach the host over SSH.",
 			Attributes: map[string]*configschema.Attribute{
 				"host": {Type: cty.String, Required: true, Description: "Hostname or IP address."},
+				"controller": {
+					Type:        cty.Bool,
+					Optional:    true,
+					Description: "Set by the circuit for a step with on = \"controller\": run on the machine Conn3x runs on, with /bin/sh, as whoever runs Conn3x, and no SSH.",
+				},
 				"port": {Type: cty.Number, Optional: true, Description: "SSH port. Defaults to 22."},
 				"user": {Type: cty.String, Optional: true, Description: "User to log in as. Required unless ssh_config_file sets one."},
 				"jump_hosts": {
@@ -306,6 +311,9 @@ func dial(ctx context.Context, conn cty.Value, upload bool) (*hostConn, error) {
 // A dial waits for the host as long as conn's timeout says, or maxWait
 // when that is shorter and not zero.
 func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostConn, error) {
+	if onController(conn) {
+		return controller(), nil
+	}
 	cfg, err := sshConfig(conn)
 	if err != nil {
 		return nil, err

@@ -1,0 +1,19 @@
+circuit "fleet" {
+  hosts = {
+    web1 = { address = "127.0.0.1", port = {{.PortA}} }
+    web2 = { address = "127.0.0.1", port = {{.PortB}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "announce" {
+    on = "controller"
+    command {
+      command = "echo ${each.key} >> announced.txt"
+    }
+  }
+}

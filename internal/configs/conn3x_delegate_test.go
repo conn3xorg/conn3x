@@ -73,3 +73,61 @@ func TestStepOnErrors(t *testing.T) {
 		}
 	}
 }
+
+// on = "controller" runs a command step on the machine Conn3x runs on, with
+// none of the circuit's ssh settings, become included.
+func TestStepOnController(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": `circuit "app" {
+  hosts = { web1 = "203.0.113.11" }
+  ssh {
+    user   = "root"
+    become = true
+  }
+  step "notify" {
+    on = "controller"
+    command {
+      command = "echo ${each.key} >> deployed.txt"
+    }
+  }
+}`})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	r := mod.ManagedResources["conn3x_command.app__notify"]
+	ssh, _, _ := r.Config.PartialContent(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "ssh"}}})
+	attrs, _ := ssh.Blocks[0].Body.JustAttributes()
+	if len(attrs) != 2 {
+		t.Errorf("ssh has %d attributes, want host and controller only", len(attrs))
+	}
+	if v, _ := attrs["controller"].Expr.Value(nil); !v.True() {
+		t.Errorf("controller = %#v", v)
+	}
+
+	_, diags = loadCircuitModule(t, map[string]string{"main.circuit.hcl": `circuit "app" {
+  hosts = { web1 = "203.0.113.11" }
+  ssh {
+    user = "root"
+  }
+  step "f" {
+    on = "controller"
+    file {
+      path    = "/tmp/x"
+      content = "x"
+    }
+  }
+}`})
+	if !strings.Contains(diags.Error(), "Only command steps run on the controller") {
+		t.Errorf("a file step on the controller: %v", diags)
+	}
+
+	_, diags = loadCircuitModule(t, map[string]string{"main.circuit.hcl": `circuit "app" {
+  hosts = { web1 = "203.0.113.11" }
+  ssh {
+    user       = "root"
+    controller = true
+  }
+}`})
+	if !strings.Contains(diags.Error(), "Unexpected controller in a circuit's ssh block") {
+		t.Errorf("controller in the circuit's ssh block: %v", diags)
+	}
+}
