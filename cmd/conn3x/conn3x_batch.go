@@ -209,7 +209,13 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 		total += len(ro.batches)
 	}
 	if len(rollouts) == 0 {
-		return r.applyPlan(whole.path) // only outputs change
+		// No batched circuit changes, so the rest applies in one go, once
+		// approved like any apply.
+		if !r.approved("") {
+			fmt.Fprintln(r.errOut, "\nApply cancelled.")
+			return 1
+		}
+		return r.applyPlan(whole.path)
 	}
 	// Everything else applies first, in one go, so long as none of it needs
 	// a batched circuit's steps.
@@ -233,7 +239,7 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 	if len(rollouts) > 1 {
 		fmt.Fprintln(r.out, "\nEach circuit rolls out after the one before it, in this order.")
 	}
-	if !r.approved() {
+	if !r.approved(" in batches") {
 		fmt.Fprintln(r.errOut, "\nApply cancelled.")
 		return 1
 	}
@@ -408,16 +414,17 @@ func (r *batchRun) writeReport(started time.Time, success bool) error {
 	return writeReport(r.reportPath, rep)
 }
 
-// approved asks before the first batch, unless -auto-approve says yes.
-func (r *batchRun) approved() bool {
+// approved asks before applying anything, unless -auto-approve says yes.
+// how is how the actions apply, such as " in batches".
+func (r *batchRun) approved(how string) bool {
 	if _, ok := flagValue(r.applyFlags(), "auto-approve"); ok {
 		return true
 	}
 	if v, ok := flagValue(r.applyFlags(), "input"); ok && v == "false" {
-		fmt.Fprintln(r.errOut, "\nError: -input=false needs -auto-approve to apply in batches.")
+		fmt.Fprintf(r.errOut, "\nError: -input=false needs -auto-approve to apply%s.\n", how)
 		return false
 	}
-	fmt.Fprint(r.out, "\nDo you want to perform these actions in batches?\n  Only 'yes' will be accepted to approve.\n\n  Enter a value: ")
+	fmt.Fprintf(r.out, "\nDo you want to perform these actions%s?\n  Only 'yes' will be accepted to approve.\n\n  Enter a value: ", how)
 	line, _ := bufio.NewReader(r.in).ReadString('\n')
 	return strings.TrimSpace(line) == "yes"
 }

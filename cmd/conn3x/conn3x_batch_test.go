@@ -79,8 +79,23 @@ func TestBatchArgs(t *testing.T) {
 	if got := strings.Join(r.planArgs([]string{"web1"}, "p"), " "); strings.Contains(got, "web*") || !strings.Contains(got, "-limit=web1") {
 		t.Errorf("a batch's plan should limit to the batch alone: %s", got)
 	}
-	if !r.approved() {
+	if !r.approved("") {
 		t.Error("-auto-approve didn't approve")
+	}
+}
+
+func TestBatchApproval(t *testing.T) {
+	for in, want := range map[string]bool{"yes\n": true, "no\n": false, "": false} {
+		var out strings.Builder
+		r := &batchRun{args: []string{"apply"}, in: strings.NewReader(in), out: &out, errOut: &out}
+		if got := r.approved(" in batches"); got != want || !strings.Contains(out.String(), "perform these actions in batches?") {
+			t.Errorf("%q: approved = %v, said %q", in, got, out.String())
+		}
+	}
+	var out strings.Builder
+	r := &batchRun{args: []string{"apply", "-input=false"}, out: &out, errOut: &out}
+	if r.approved("") || !strings.Contains(out.String(), "-input=false needs -auto-approve to apply.") {
+		t.Errorf("-input=false: %q", out.String())
 	}
 }
 
