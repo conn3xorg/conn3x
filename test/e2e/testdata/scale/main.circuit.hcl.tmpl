@@ -1,0 +1,43 @@
+circuit "fleet" {
+  hosts = {
+{{- range .Hosts }}
+    {{ .Name }} = { address = "127.0.0.1", port = {{ .Port }} }
+{{- end }}
+  }
+  strategy = "per_host"
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{ .Key }}"
+    known_hosts_file = "{{ .KnownHosts }}"
+  }
+
+  step "motd" {
+    file {
+      path    = "/etc/motd"
+      content = "managed by conn3x\n"
+    }
+  }
+  step "app_dir" {
+    directory {
+      path = "/srv/app"
+    }
+  }
+  step "env" {
+    line {
+      path = "/etc/environment"
+      line = "APP_ENV=bench"
+    }
+  }
+  step "sshd" {
+    package {
+      name = "openssh-server"
+    }
+  }
+  step "marker" {
+    command {
+      command = "touch /srv/app/.ready"
+      creates = "/srv/app/.ready"
+    }
+  }
+}
