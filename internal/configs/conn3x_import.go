@@ -75,6 +75,8 @@ var importModules = map[string]string{
 	"conn3x_windows_scheduled_task": "windows_scheduled_task",
 	"conn3x_windows_iis_app_pool":   "windows_iis_app_pool",
 	"conn3x_windows_iis_site":       "windows_iis_site",
+	"conn3x_windows_acl":            "windows_acl",
+	"conn3x_windows_dns_client":     "windows_dns_client",
 }
 
 // ImportableType is the resource type a module's step lowers to, when the

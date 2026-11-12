@@ -71,6 +71,8 @@ func TestImportPriorPerModule(t *testing.T) {
 		{"conn3x_windows_firewall_rule", `{"name":"web","protocol":"tcp","local_ports":["443"]}`, "203.0.113.10:2222:windows_firewall_rule:web", nil},
 		{"conn3x_windows_scheduled_task", `{"name":"cleanup","path":"\\Conn3x\\","execute":"C:/tools/cleanup.exe","user":"SYSTEM","trigger":[{"type":"daily","at":"2026-01-01T03:00:00"}]}`, "203.0.113.10:2222:windows_scheduled_task:\\Conn3x\\:cleanup", nil},
 		{"conn3x_windows_iis_app_pool", `{"name":"app"}`, "203.0.113.10:2222:windows_iis_app_pool:app", nil},
+		{"conn3x_windows_acl", `{"path":"C:/srv/app","entry":[{"principal":"S-1-5-32-544","rights":["FullControl"]}]}`, "203.0.113.10:2222:windows_acl:C:/srv/app", nil},
+		{"conn3x_windows_dns_client", `{"interface":"Ethernet","servers":["10.0.0.4"]}`, "203.0.113.10:2222:windows_dns_client:Ethernet", nil},
 		{"conn3x_windows_iis_site", `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`, "203.0.113.10:2222:windows_iis_site:app", nil},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
@@ -278,13 +280,15 @@ func TestImportUnsupportedType(t *testing.T) {
 	}
 }
 
-// An imported Windows rule, task, pool or site plans from the step without
+// An imported Windows step plans from the step without
 // a replace: its id is the one the plan writes.
 func TestImportedWindowsStepPlansWithoutReplace(t *testing.T) {
 	for typ, args := range map[string]string{
 		"conn3x_windows_firewall_rule":  `{"name":"web","protocol":"tcp","local_ports":["443"]}`,
 		"conn3x_windows_scheduled_task": `{"name":"cleanup","execute":"C:/tools/cleanup.exe","user":"SYSTEM","trigger":[{"type":"boot"}]}`,
 		"conn3x_windows_iis_app_pool":   `{"name":"app"}`,
+		"conn3x_windows_acl":            `{"path":"C:/srv/app","entry":[{"principal":"S-1-5-32-544","rights":["FullControl"]}]}`,
+		"conn3x_windows_dns_client":     `{"servers":["10.0.0.4"]}`,
 		"conn3x_windows_iis_site":       `{"name":"app","physical_path":"C:/sites/app","app_pool":"app","binding":[{"port":8080}]}`,
 	} {
 		_, v, err := importPrior(typ, `{"v":1,"key":"web1","ssh":`+testSSH+`,"args":`+args+`}`)

@@ -93,6 +93,8 @@ var importable = map[string]struct {
 	"conn3x_windows_scheduled_task": {keysID("windows_scheduled_task", "path", "name"), notNull, "scheduled task %s", hasWinTask},
 	"conn3x_windows_iis_app_pool":   {nameID("windows_iis_app_pool", nil), notNull, "IIS application pool %s", hasWinAppPool},
 	"conn3x_windows_iis_site":       {nameID("windows_iis_site", nil), notNull, "IIS site %s", hasWinSite},
+	"conn3x_windows_acl":            {pathID("windows_acl"), notNull, "file or folder %s", hasWinPath},
+	"conn3x_windows_dns_client":     {keysID("windows_dns_client", "interface"), notNull, "network interface %s", hasWinInterface},
 
 	// A host always has a hostname, time zone and locale, so there's
 	// nothing to find first: a different one imports and plans an update.

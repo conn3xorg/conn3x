@@ -11,10 +11,10 @@ import (
 	"testing"
 )
 
-// Conn3x makes a firewall rule, a scheduled task and, with IIS on the
-// runner, an app pool and a site; state forgets them; then the same steps
-// with import = true adopt them, and the plan has nothing to change. This
-// file sorts after iis_test.go, which installs IIS.
+// Conn3x makes a firewall rule, access rules on a folder, a scheduled task
+// and, with IIS on the runner, an app pool and a site; state forgets them;
+// then the same steps with import = true adopt them, and the plan has
+// nothing to change. This file sorts after iis_test.go, which installs IIS.
 func TestImportAdoptsWhatWasMade(t *testing.T) {
 	f := newFlow(t)
 	c := connect(t)
@@ -27,6 +27,21 @@ func TestImportAdoptsWhatWasMade(t *testing.T) {
       name        = "conn3x-import-%[2]s"
       protocol    = "tcp"
       local_ports = ["8097"]
+    }
+  }
+  step "dir" {
+    windows_directory {
+      path = "C:\\conn3x-import-%[2]s"
+    }
+  }
+  step "rules" {
+    import = %[1]t
+    windows_acl {
+      path = "C:\\conn3x-import-%[2]s"
+      entry {
+        principal = "S-1-5-32-545"
+        rights    = ["ReadAndExecute"]
+      }
     }
   }
   step "job" {
@@ -85,7 +100,7 @@ func TestImportAdoptsWhatWasMade(t *testing.T) {
 		}
 		return s
 	}
-	types := []string{"conn3x_windows_firewall_rule.win__rule", "conn3x_windows_scheduled_task.win__job"}
+	types := []string{"conn3x_windows_firewall_rule.win__rule", "conn3x_windows_acl.win__rules", "conn3x_windows_scheduled_task.win__job"}
 	if iis {
 		types = append(types, "conn3x_windows_iis_app_pool.win__pool", "conn3x_windows_iis_site.win__site")
 	} else {

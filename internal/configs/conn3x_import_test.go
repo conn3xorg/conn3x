@@ -195,6 +195,16 @@ func TestStepImportSyncedModules(t *testing.T) {
 		"conn3x_windows_iis_app_pool": `windows_iis_app_pool {
       name = "app"
     }`,
+		"conn3x_windows_acl": `windows_acl {
+      path = "C:/srv/app"
+      entry {
+        principal = "S-1-5-32-544"
+        rights    = ["FullControl"]
+      }
+    }`,
+		"conn3x_windows_dns_client": `windows_dns_client {
+      servers = ["10.0.0.4"]
+    }`,
 		"conn3x_windows_iis_site": `windows_iis_site {
       name          = "app"
       physical_path = "C:/sites/app"
