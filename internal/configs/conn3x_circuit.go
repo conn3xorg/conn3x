@@ -464,6 +464,16 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 	}
 
 	ssh := sshBlockFor(sshAttrs, sshRange, hostPath)
+	if a, ok := body.Attributes["on"]; ok && !once {
+		// Without run_once, on delegates: each host's step runs over the
+		// connection of the host on names, like Ansible's delegate_to.
+		block, onDiags := delegatedSSH(a, hosts, sshAttrs, sshRange)
+		diags = append(diags, onDiags...)
+		if onDiags.HasErrors() {
+			return nil, nil, diags
+		}
+		ssh = block
+	}
 	config := &hclsyntax.Body{
 		Attributes: moduleAttrs,
 		Blocks:     append(append(hclsyntax.Blocks{}, module.Body.Blocks...), ssh),
@@ -544,19 +554,47 @@ func sshBlockFor(sshAttrs hclsyntax.Attributes, sshRange hcl.Range, hostPath []s
 		}
 		ssh[k] = v
 	}
+	return sshBlockWith(ssh, sshRange, func(names ...string) hclsyntax.Expression {
+		return eachPath(sshRange, append(hostPath[:len(hostPath):len(hostPath)], names...)...)
+	})
+}
+
+// sshBlockOn is the ssh block of a step delegated with on: it reaches the
+// host hosts[on] rather than the one the instance is for.
+func sshBlockOn(sshAttrs hclsyntax.Attributes, sshRange hcl.Range, hosts, on hclsyntax.Expression) *hclsyntax.Block {
+	ssh := hclsyntax.Attributes{}
+	for k, v := range sshAttrs {
+		ssh[k] = v
+	}
+	return sshBlockWith(ssh, sshRange, func(names ...string) hclsyntax.Expression {
+		var e hclsyntax.Expression = &hclsyntax.IndexExpr{Collection: hosts, Key: on, SrcRange: sshRange, OpenRange: sshRange, BracketRange: sshRange}
+		if len(names) == 0 {
+			return e
+		}
+		var t hcl.Traversal
+		for _, n := range names {
+			t = append(t, hcl.TraverseAttr{Name: n, SrcRange: sshRange})
+		}
+		return &hclsyntax.RelativeTraversalExpr{Source: e, Traversal: t, SrcRange: sshRange}
+	})
+}
+
+// sshBlockWith fills in an ssh block's host and per-host overrides from
+// host, which gives the host's value, or with names one of its fields.
+func sshBlockWith(ssh hclsyntax.Attributes, sshRange hcl.Range, host func(names ...string) hclsyntax.Expression) *hclsyntax.Block {
 	attr := func(name string, expr hclsyntax.Expression) *hclsyntax.Attribute {
 		return &hclsyntax.Attribute{Name: name, Expr: expr, SrcRange: sshRange, NameRange: sshRange}
 	}
 	try := func(args ...hclsyntax.Expression) hclsyntax.Expression {
 		return &hclsyntax.FunctionCallExpr{Name: "try", Args: args, NameRange: sshRange, OpenParenRange: sshRange, CloseParenRange: sshRange}
 	}
-	ssh["host"] = attr("host", try(eachPath(sshRange, append(hostPath[:len(hostPath):len(hostPath)], "address")...), eachPath(sshRange, hostPath...)))
+	ssh["host"] = attr("host", try(host("address"), host()))
 	for _, name := range hostOverrides {
 		var fallback hclsyntax.Expression = &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.DynamicPseudoType), SrcRange: sshRange}
 		if a, ok := ssh[name]; ok {
 			fallback = a.Expr
 		}
-		ssh[name] = attr(name, try(eachPath(sshRange, append(hostPath[:len(hostPath):len(hostPath)], name)...), fallback))
+		ssh[name] = attr(name, try(host(name), fallback))
 	}
 	return &hclsyntax.Block{
 		Type:            "ssh",
@@ -1018,13 +1056,8 @@ func nativeSyntaxRequired(rng hcl.Range) *hcl.Diagnostic {
 // unclear which should pick first.
 func stepRunOnce(body *hclsyntax.Body) (bool, hcl.Diagnostics) {
 	a, ok := body.Attributes["run_once"]
-	on, hasOn := body.Attributes["on"]
 	if !ok {
-		if hasOn {
-			return false, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "on without run_once",
-				Detail: "on names the host a run_once step runs on; set run_once = true with it.", Subject: on.NameRange.Ptr()}}
-		}
-		return false, nil
+		return false, nil // on alone delegates, see delegatedSSH
 	}
 	v, diags := a.Expr.Value(nil)
 	if diags.HasErrors() || v.Type() != cty.Bool || v.IsNull() {
@@ -1032,10 +1065,6 @@ func stepRunOnce(body *hclsyntax.Body) (bool, hcl.Diagnostics) {
 			Detail: "run_once is written as true or false.", Subject: a.Expr.Range().Ptr()}}
 	}
 	if v.False() {
-		if hasOn {
-			return false, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "on without run_once",
-				Detail: "on names the host a run_once step runs on; it does nothing with run_once = false.", Subject: on.NameRange.Ptr()}}
-		}
 		return false, nil
 	}
 	if w, ok := body.Attributes["when"]; ok {
@@ -1043,6 +1072,33 @@ func stepRunOnce(body *hclsyntax.Body) (bool, hcl.Diagnostics) {
 			Detail: "A step takes run_once or when, not both, for now: it isn't settled whether when should pick the host or decide whether the one host runs it.", Subject: w.NameRange.Ptr()}}
 	}
 	return true, nil
+}
+
+// delegatedSSH is the ssh block for a step with on and no run_once. The
+// name "controller" is kept for running on the machine Conn3x runs on.
+func delegatedSSH(on *hclsyntax.Attribute, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range) (*hclsyntax.Block, hcl.Diagnostics) {
+	if v, diags := on.Expr.Value(nil); !diags.HasErrors() && v.Type() == cty.String && v.IsKnown() && !v.IsNull() && v.AsString() == "controller" {
+		return nil, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "Steps can't run on the controller yet",
+			Detail: `on = "controller" is kept for running a step on the machine Conn3x runs on, which isn't supported yet. on can name another host in hosts.`, Subject: on.Expr.Range().Ptr()}}
+	}
+	if c, ok := hosts.(*checkedHosts); ok {
+		hosts = c.Expression
+	}
+	h, ok := hosts.(hclsyntax.Expression)
+	if !ok {
+		return nil, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "Invalid on in step",
+			Detail: "on can delegate only when the circuit's hosts is written in native syntax.", Subject: on.NameRange.Ptr()}}
+	}
+	for _, a := range sshAttrs {
+		for _, t := range a.Expr.Variables() {
+			if t.RootName() == "each" {
+				rng := a.SrcRange
+				return nil, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "on with each in ssh",
+					Detail: fmt.Sprintf("The circuit's ssh %s uses each, which in a step with on would still mean this host, not the host on names. Set it in the host object instead.", a.Name), Subject: &rng}}
+			}
+		}
+	}
+	return sshBlockOn(sshAttrs, sshRange, h, on.Expr), nil
 }
 
 // CircuitStepType is the resource type a step's module block becomes, such

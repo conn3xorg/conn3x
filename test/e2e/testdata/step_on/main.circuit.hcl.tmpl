@@ -1,0 +1,20 @@
+circuit "fleet" {
+  hosts = {
+    web1 = { address = "127.0.0.1", port = {{.PortA}} }
+    lb   = { address = "127.0.0.1", port = {{.PortB}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "drain" {
+    on = "lb"
+    file {
+      path    = "/tmp/drained-${each.key}"
+      content = "${each.key}\n"
+    }
+  }
+}

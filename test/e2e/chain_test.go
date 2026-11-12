@@ -75,3 +75,27 @@ func stamp(t *testing.T, s string) float64 {
 	}
 	return v
 }
+
+// A step with on runs once per host, over the connection of the host on
+// names: lb ends up with a file for each host, and web1 with none.
+func TestStepOnAnotherHost(t *testing.T) {
+	web, lb := startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web, lb)
+	w := newWorkdir(t, "step_on")
+	w.writeAs("main.circuit.hcl", chainVars{PortA: web.port, PortB: lb.port, Key: web.keyFile, KnownHosts: knownFile})
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	files := func(h *host) string {
+		return strings.TrimSpace(h.exec("", "sh", "-c", "ls /tmp | grep '^drained-' | sort | tr '\\n' ' '"))
+	}
+	if got := files(lb); got != "drained-lb drained-web1" {
+		t.Errorf("lb has %q, want a file for each host", got)
+	}
+	if got := files(web); got != "" {
+		t.Errorf("web1 has %q, want none: its step ran on lb", got)
+	}
+	if out := w.mustConn3x("plan", "-no-color", "-detailed-exitcode"); !strings.Contains(out, "No changes") {
+		t.Errorf("a second plan should find both files on lb:\n%s", out)
+	}
+}
+
