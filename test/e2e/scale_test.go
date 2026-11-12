@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -71,16 +72,24 @@ func TestScalePlan(t *testing.T) {
 			w := newWorkdir(t, "scale")
 			w.writeAs("main.circuit.hcl", scaleVars{Hosts: hosts, Key: keyFile, KnownHosts: known})
 			w.mustConn3x("init", "-no-color")
-			timed := func(args ...string) time.Duration {
+			res := map[string]any{"hosts": n, "steps": 5 * n, "go": runtime.Version(), "cpus": runtime.NumCPU()}
+			// Each run records its wall time, the CPU conn3x itself used, and
+			// how busy the whole machine was: the hosts share its CPUs, so a
+			// busy machine means the rig, not conn3x, set the wall time.
+			timed := func(name string, args ...string) {
+				cpu, busy := childCPU(), machineBusy()
 				start := time.Now()
 				w.mustConn3x(args...)
-				return time.Since(start).Round(time.Millisecond)
+				res[name] = time.Since(start).Round(time.Millisecond).Seconds()
+				res[name+"_cpu"] = (childCPU() - cpu).Round(time.Millisecond).Seconds()
+				if b := busy(); b >= 0 {
+					res[name+"_machine_busy"] = b
+				}
 			}
-			res := map[string]any{"hosts": n, "steps": 5 * n, "go": runtime.Version(), "cpus": runtime.NumCPU()}
-			res["apply"] = timed("apply", "-auto-approve", "-no-color").Seconds()
-			res["plan"] = timed("plan", "-no-color").Seconds()
-			res["plan_parallelism_50"] = timed("plan", "-no-color", "-parallelism=50").Seconds()
-			res["plan_refresh_false"] = timed("plan", "-no-color", "-refresh=false").Seconds()
+			timed("apply", "apply", "-auto-approve", "-no-color")
+			timed("plan", "plan", "-no-color")
+			timed("plan_parallelism_50", "plan", "-no-color", "-parallelism=50")
+			timed("plan_refresh_false", "plan", "-no-color", "-refresh=false")
 			// One more plan with a CPU profile and an execution trace, for where
 			// the time goes and where it waits.
 			if dir := os.Getenv("CONN3X_SCALE_PROFILE"); dir != "" {
@@ -175,4 +184,43 @@ func scaleKnownHosts(t *testing.T, hosts []scaleHost) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// childCPU is the user and system CPU time of the test's finished child
+// processes. The hosts aren't among them: podman hands containers to conmon.
+func childCPU() time.Duration {
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_CHILDREN, &ru); err != nil {
+		return 0
+	}
+	return time.Duration(ru.Utime.Nano() + ru.Stime.Nano())
+}
+
+// machineBusy samples /proc/stat and returns what reports the fraction of
+// all CPUs busy since, or -1 off Linux.
+func machineBusy() func() float64 {
+	read := func() (idle, total uint64) {
+		raw, err := os.ReadFile("/proc/stat")
+		if err != nil {
+			return 0, 0
+		}
+		line, _, _ := strings.Cut(string(raw), "\n")
+		for i, f := range strings.Fields(line)[1:] {
+			v, _ := strconv.ParseUint(f, 10, 64)
+			total += v
+			if i == 3 || i == 4 { // idle, iowait
+				idle += v
+			}
+		}
+		return idle, total
+	}
+	idle0, total0 := read()
+	return func() float64 {
+		idle, total := read()
+		if total == total0 {
+			return -1
+		}
+		busy := 1 - float64(idle-idle0)/float64(total-total0)
+		return float64(int(busy*1000)) / 1000
+	}
 }
