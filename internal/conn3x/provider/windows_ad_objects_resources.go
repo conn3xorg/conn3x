@@ -108,7 +108,7 @@ func adWrite(ctx context.Context, c ps.Runner, write func() error) error {
 
 func winADOUSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. An organizational unit in Active Directory, run on a domain controller. Settings left unset are left as they are.",
+		Description: "An organizational unit in Active Directory, run on a domain controller. Settings left unset are left as they are.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":          {Type: cty.String, Computed: true},
 			"revision":    revisionAttr(),
@@ -314,7 +314,7 @@ func applyWinADGroup(ctx context.Context, req providers.ApplyResourceChangeReque
 
 func winADUserSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A user in Active Directory, run on a domain controller. Settings left unset are left as they are. Groups are set with windows_ad_group.",
+		Description: "A user in Active Directory, run on a domain controller. Settings left unset are left as they are. Groups are set with windows_ad_group.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":                     {Type: cty.String, Computed: true},
 			"revision":               revisionAttr(),

@@ -18,7 +18,7 @@ import (
 
 func winUserSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A local user on a Windows host. Settings left unset are left as they are.",
+		Description: "A local user on a Windows host. Settings left unset are left as they are.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":          {Type: cty.String, Computed: true},
 			"revision":    revisionAttr(),
@@ -300,7 +300,7 @@ func passwordAtApply(req providers.ApplyResourceChangeRequest, kind, name string
 
 func winGroupSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A local group on a Windows host, and who is in it. Settings left unset are left as they are.",
+		Description: "A local group on a Windows host, and who is in it. Settings left unset are left as they are.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":            {Type: cty.String, Computed: true},
 			"revision":      revisionAttr(),

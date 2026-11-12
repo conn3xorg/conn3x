@@ -1,6 +1,6 @@
 # Windows modules: what each needs before it leaves experimental
 
-Each `windows_*` module starts out experimental. That's honest, but it's also a reason teams won't try them, so this page says what "ready" means and where each module stands. Fifteen modules meet every point and have left experimental; the rest are marked in the table. Pick a gap, and the linked issue says how to close it.
+Each `windows_*` module starts out experimental. That's honest, but it's also a reason teams won't try them, so this page says what "ready" means and where each module stands. Nineteen modules meet every point and have left experimental; the rest are marked in the table. Pick a gap, and the linked issue says how to close it.
 
 ## What "ready" means
 
@@ -23,15 +23,15 @@ A module drops the experimental label when all of these hold:
 | `windows_ad_domain_controller` | no | no | yes, through `azure-ad-lab`, and from a workgroup server (#395) | no | `import`; a runner test |
 | `windows_ad_forest` | no | yes | yes | no | `import` |
 | `windows_ad_group` | no | module-level | yes, including scope and category changes (#408) and 5,000 members (#407) | yes | Members from a trust to another forest are untested |
-| `windows_ad_ou` | no | module-level | yes | yes | `import` on a real domain controller: it's unit-tested only |
-| `windows_ad_user` | no | module-level | yes | yes | `import` on a real domain controller: it's unit-tested only |
+| `windows_ad_ou` | yes | module-level | yes, and `import` on `azure-ad-lab`'s domain controller | yes | |
+| `windows_ad_user` | yes | module-level | yes, and `import` on `azure-ad-lab`'s domain controller | yes | |
 | `windows_directory` | yes | yes | yes | yes | |
 | `windows_dns_client` | yes | yes | yes | yes | |
 | `windows_domain_membership` | no | no | yes, including `ou` (#396) and a 2022 host (#394) | no | `import`; a runner test |
 | `windows_feature` | yes | yes | yes | yes | |
 | `windows_file` | yes | yes | yes | yes | |
 | `windows_firewall_rule` | yes | yes | yes, through `azure-windows-fleet` | yes | |
-| `windows_group` | no | yes | no | yes | An Azure run |
+| `windows_group` | yes | yes | yes, on an `azure-ad-lab` member server, with a domain user as a member | yes | |
 | `windows_iis_app_pool` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_iis_site` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_package` | yes | yes | yes, through `azure-windows-fleet` | yes | |
@@ -41,14 +41,14 @@ A module drops the experimental label when all of these hold:
 | `windows_scheduled_task` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_service` | yes | yes | yes | yes | |
 | `windows_update` | no | reads only | run by hand once | n/a | An install on the runner is slow and pointless; a large cumulative update on a real host |
-| `windows_user` | no | yes | no | yes | An Azure run |
+| `windows_user` | yes | yes | yes, on an `azure-ad-lab` member server | yes | |
 | `windows_wait_for` | yes | yes | yes | n/a | |
 
 "Module-level" means the runner test drives the module's Go API on a real domain controller, not a circuit step.
 
 ## What's left across the board
 
-- **`import` on the rest**: seventeen modules import now. The forest, domain, domain controller and membership modules are next, and the AD object ones want a run on a real domain controller.
+- **`import` on the rest**: seventeen modules import now. The forest, domain, domain controller and membership modules are next.
 
 Windows Server 2022 runs in CI since #568, on the first try for every runner test.
 
