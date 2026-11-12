@@ -1,0 +1,35 @@
+circuit "tls" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "openssl" {
+    package {
+      name = "openssl"
+    }
+  }
+  step "key" {
+    tls_private_key {
+      path  = "/etc/conn3x-tls/web.key"
+      type  = "{{.Type}}"
+      mode  = "0640"
+      group = "{{.Group}}"
+    }
+  }
+  step "cert" {
+    tls_self_signed_cert {
+      path              = "/etc/conn3x-tls/web.crt"
+      key_path          = "/etc/conn3x-tls/web.key"
+      common_name       = "web1.test"
+      dns_names         = ["web1.test", "web.test"]
+      ip_addresses      = ["10.0.0.5"]
+      days              = {{.Days}}
+      renew_before_days = 10
+    }
+  }
+}
