@@ -232,3 +232,22 @@ func (v VLAN) RemoveCommands(config string) []string {
 	}
 	return []string{"delete vlans " + v.Name}
 }
+
+// WithLines is config, as display set prints it, with cmds applied: what
+// the device will hold once they commit, for the next step of the same
+// commit to compare with. A delete takes the statements at and below it.
+//
+// shortcut: a set on a single-valued leaf, such as a new host-name, keeps
+// the old value's line beside the new one, which only a block step owning
+// that leaf would notice; model leaves if one ever does.
+func WithLines(config string, cmds []string) string {
+	lines := SetLines(config)
+	for _, c := range cmds {
+		if rest, ok := strings.CutPrefix(c, "delete "); ok {
+			lines = slices.DeleteFunc(lines, func(l string) bool { return under(l, rest) })
+		} else if !slices.Contains(lines, c) {
+			lines = append(lines, c)
+		}
+	}
+	return strings.Join(lines, "\n") + "\n"
+}

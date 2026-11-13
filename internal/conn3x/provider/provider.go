@@ -94,6 +94,8 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_junos_config":         junosConfigKind.entry(junosConfigSchema, validateJunosConfig),
 	"conn3x_junos_hostname":       junosHostnameKind.entry(junosHostnameSchema, validateJunosHostname),
 	"conn3x_junos_vlan":           junosVLANKind.entry(junosVLANSchema, validateJunosVLAN),
+	"conn3x_junos_commit":         junosCommitTypes["conn3x_junos_commit"],
+	"conn3x_junos_removals":       junosCommitTypes["conn3x_junos_removals"],
 	"conn3x_eos_removals":         {eosRemovalsSchema, func(cty.Value) tfdiags.Diagnostics { return nil }, planEOSRemovals, readEOSCommit, applyEOSRemovals, upgradeWith(eosRemovalsSchema)},
 	"conn3x_group":                {groupSchema, validateGroup, planGroup, readGroup, applyGroup, upgradeWith(groupSchema)},
 
@@ -228,6 +230,9 @@ func (p *Provider) ConfigureProvider(_ context.Context, req providers.ConfigureP
 func (p *Provider) Close(context.Context) error {
 	if p.stop != nil && !p.closed.Swap(true) && openProviders.Add(-1) == 0 {
 		abortStaged()
+		if err := finishJunos(); err != nil {
+			log.Printf("[WARN] conn3x: %v", err)
+		}
 	}
 	return nil
 }

@@ -210,6 +210,28 @@ func configHash(config string) [32]byte {
 
 func script(lines ...string) []byte { return []byte(strings.Join(lines, "\n") + "\n") }
 
+// Check is Apply's dry run on its own: cmds in configure private, then
+// commit check, then rollback and exit. It changes nothing, and fails with
+// a NotLiveError naming the device's refusal, or a PendingError while a
+// commit confirmed waits.
+func Check(ctx context.Context, d Device, cmds []string) error {
+	dry := append(append([]string{"configure private"}, cmds...), "commit check", "rollback 0", "exit")
+	out, err := run(ctx, d, "", script(dry...))
+	if err != nil {
+		return NotLiveError{err}
+	}
+	if errs := cliErrors(out); errs != nil {
+		return NotLiveError{fmt.Errorf("the device refused the change: %s", strings.Join(errs, "; "))}
+	}
+	if says := pendingConfirm.FindString(out); says != "" {
+		return PendingError{says}
+	}
+	if !strings.Contains(out, "configuration check succeeds") {
+		return NotLiveError{fmt.Errorf("commit check didn't say the configuration checks out: %s", Mask(lastLines(out, 5)))}
+	}
+	return nil
+}
+
 // Apply makes cmds live, all or nothing:
 //
 //  1. A dry run: cmds in configure private, then commit check, then rollback
@@ -228,19 +250,8 @@ func Apply(ctx context.Context, d Device, reconnect func(context.Context) (Devic
 		return "", nil
 	}
 	diff := Mask(strings.Join(cmds, "\n"))
-	dry := append(append([]string{"configure private"}, cmds...), "commit check", "rollback 0", "exit")
-	out, err := run(ctx, d, "", script(dry...))
-	if err != nil {
-		return diff, NotLiveError{err}
-	}
-	if errs := cliErrors(out); errs != nil {
-		return diff, NotLiveError{fmt.Errorf("the device refused the change: %s", strings.Join(errs, "; "))}
-	}
-	if says := pendingConfirm.FindString(out); says != "" {
-		return diff, PendingError{says}
-	}
-	if !strings.Contains(out, "configuration check succeeds") {
-		return diff, NotLiveError{fmt.Errorf("commit check didn't say the configuration checks out: %s", Mask(lastLines(out, 5)))}
+	if err := Check(ctx, d, cmds); err != nil {
+		return diff, err
 	}
 	now, err := RunningConfig(ctx, d)
 	if err != nil {
@@ -251,7 +262,7 @@ func Apply(ctx context.Context, d Device, reconnect func(context.Context) (Devic
 	}
 	minutes := int(RevertAfter / time.Minute)
 	live := append(append([]string{"configure exclusive"}, cmds...), fmt.Sprintf("commit confirmed %d and-quit", minutes))
-	out, err = run(ctx, d, "", script(live...))
+	out, err := run(ctx, d, "", script(live...))
 	committed := strings.Contains(out, "commit complete")
 	switch errs := cliErrors(out); {
 	case err != nil:

@@ -115,3 +115,19 @@ func TestHostname(t *testing.T) {
 		t.Error("ValidateHostname")
 	}
 }
+
+func TestWithLines(t *testing.T) {
+	got := SetLines(WithLines(running, []string{"delete vlans v10", "set vlans v20 vlan-id 20", "set system host-name sw-spike"}))
+	if slices.ContainsFunc(got, func(l string) bool { return strings.HasPrefix(l, "set vlans v10 ") }) {
+		t.Error("kept v10 after its delete")
+	}
+	if !slices.Contains(got, "set vlans v20 vlan-id 20") {
+		t.Error("lost the new VLAN")
+	}
+	if n := len(slices.DeleteFunc(slices.Clone(got), func(l string) bool { return l != "set system host-name sw-spike" })); n != 1 {
+		t.Errorf("host-name appears %d times", n)
+	}
+	if (VLAN{Name: "v20", ID: 20}).Commands(WithLines(running, []string{"set vlans v20 vlan-id 20"})) != nil {
+		t.Error("a staged VLAN isn't in sync for the next step")
+	}
+}
