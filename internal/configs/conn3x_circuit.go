@@ -318,15 +318,20 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 
 	diags = append(diags, warnOnConflictingEdits(content.Blocks.OfType("step"))...)
 
-	var eosSteps []*Resource
-	for _, r := range resources {
-		if strings.HasPrefix(r.Type, "conn3x_eos_") {
-			eosSteps = append(eosSteps, r)
+	// Network devices commit once per device per circuit: EOS through a
+	// config session, Junos through lines the provider holds until then.
+	for _, kind := range []string{"eos", "junos"} {
+		var deviceSteps []*Resource
+		for _, r := range resources {
+			if strings.HasPrefix(r.Type, "conn3x_"+kind+"_") {
+				deviceSteps = append(deviceSteps, r)
+			}
 		}
-	}
-	if len(eosSteps) > 0 {
-		removals := lowerEOSRemovals(name, block, hosts, sshAttrs, sshRange)
-		for _, r := range eosSteps {
+		if len(deviceSteps) == 0 {
+			continue
+		}
+		removals := lowerEOSRemovals(kind, name, block, hosts, sshAttrs, sshRange)
+		for _, r := range deviceSteps {
 			// A switch's config session holds one circuit's lines at a
 			// time: the steps and the commit say whose they are.
 			if body, ok := r.Config.(*hclsyntax.Body); ok {
@@ -341,7 +346,7 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 				hcl.TraverseAttr{Name: removals.Name, SrcRange: rng},
 			})
 		}
-		resources = append(resources, removals, lowerEOSCommit(name, block, hosts, sshAttrs, sshRange, eosSteps, chain, removals, perHost))
+		resources = append(resources, removals, lowerEOSCommit(kind, name, block, hosts, sshAttrs, sshRange, deviceSteps, chain, removals, perHost))
 	}
 
 	handlers := map[string]bool{}
@@ -802,14 +807,15 @@ func hostRevisions(steps []*Resource, rng hcl.Range) *hclsyntax.TupleConsExpr {
 	return &hclsyntax.TupleConsExpr{Exprs: revisions, SrcRange: rng, OpenRange: rng}
 }
 
-// lowerEOSCommit adds a circuit's conn3x_eos_commit: one per switch, after
+// lowerEOSCommit adds a circuit's conn3x_<kind>_commit, for kind eos or
+// junos; what follows says it for EOS. One per switch, after
 // every step on it, watching the eos steps' revisions. The eos steps only
 // stage their lines in a config session; this commits that session once,
 // so a switch waits confirm_after once per apply, not once per step.
 //
 // It also reads removals' id: a commit with one has a conn3x_eos_removals
 // after it on destroy, which commits what the steps' removals staged.
-func lowerEOSCommit(circuit string, block *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, eosSteps, chain []*Resource, removals *Resource, perHost bool) *Resource {
+func lowerEOSCommit(kind, circuit string, block *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range, eosSteps, chain []*Resource, removals *Resource, perHost bool) *Resource {
 	rng := chainRange(block, perHost)
 	removalsID := &hclsyntax.RelativeTraversalExpr{
 		Source: &hclsyntax.IndexExpr{
@@ -827,7 +833,7 @@ func lowerEOSCommit(circuit string, block *hcl.Block, hosts hcl.Expression, sshA
 	}
 	r := &Resource{
 		Mode: addrs.ManagedResourceMode,
-		Type: "conn3x_eos_commit",
+		Type: "conn3x_" + kind + "_commit",
 		Name: circuit + "__commit", // the type keeps it apart from a step named commit
 		Config: &hclsyntax.Body{
 			Attributes: hclsyntax.Attributes{
@@ -858,15 +864,15 @@ func eosCircuitAttr(circuit string, rng hcl.Range) *hclsyntax.Attribute {
 	return &hclsyntax.Attribute{Name: "circuit", Expr: &hclsyntax.LiteralValueExpr{Val: cty.StringVal(circuit), SrcRange: rng}, SrcRange: rng, NameRange: rng}
 }
 
-// lowerEOSRemovals adds a circuit's conn3x_eos_removals: one per switch,
+// lowerEOSRemovals adds a circuit's conn3x_<kind>_removals: one per switch,
 // before every eos step, so that destroying the circuit removes it last.
 // Destroy runs the commit first, and each step's removal after it, so the
 // removals stage into one session that this commits: a switch waits
 // confirm_after once, not once per removed step.
-func lowerEOSRemovals(circuit string, block *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *Resource {
+func lowerEOSRemovals(kind, circuit string, block *hcl.Block, hosts hcl.Expression, sshAttrs hclsyntax.Attributes, sshRange hcl.Range) *Resource {
 	return &Resource{
 		Mode: addrs.ManagedResourceMode,
-		Type: "conn3x_eos_removals",
+		Type: "conn3x_" + kind + "_removals",
 		Name: circuit + "__removals",
 		Config: &hclsyntax.Body{
 			Attributes: hclsyntax.Attributes{"circuit": eosCircuitAttr(circuit, block.TypeRange)},

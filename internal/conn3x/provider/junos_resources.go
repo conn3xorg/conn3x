@@ -149,34 +149,59 @@ func (k junosKind) apply(ctx context.Context, req providers.ApplyResourceChangeR
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	// One change at a time: configure exclusive refuses a second one anyway.
-	defer lockHost(h, "junos")()
-	// Checked before the lines: with nothing to send, Apply never looks.
-	if pending, err := junos.Pending(ctx, h.client); err != nil || pending != "" {
-		if err == nil {
-			err = junos.PendingError{Says: pending}
-		}
+	fail := func(err error) providers.ApplyResourceChangeResponse {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
 		return resp
 	}
-	base, err := junos.RunningConfig(ctx, h.client)
+	circuit := eosCircuit(target)
+	st := junosStagedOn(h)
+	// One change at a time: configure exclusive refuses a second one anyway.
+	unlock, err := st.turn(ctx, h, circuit, lockHost(h, "junos"))
+	defer func() { unlock() }()
 	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
-		return resp
+		return fail(err)
+	}
+	if err := st.failed[circuit]; err != nil {
+		return fail(fmt.Errorf("not applied: %w", err))
+	}
+	defer func() { st.touched = time.Now() }()
+	var view string // what the steps' lines compare with
+	if st.cmds != nil {
+		view = junos.WithLines(st.base, st.cmds)
+	} else {
+		// Checked before the lines: with nothing to send, Apply never looks.
+		if pending, err := junos.Pending(ctx, h.client); err != nil || pending != "" {
+			if err == nil {
+				err = junos.PendingError{Says: pending}
+			}
+			return fail(err)
+		}
+		if view, err = junos.RunningConfig(ctx, h.client); err != nil {
+			return fail(err)
+		}
 	}
 	var cmds []string
 	if removing {
-		cmds = k.remove(target, base)
+		cmds = k.remove(target, view)
 	} else {
-		cmds = k.config(target).Commands(base)
+		cmds = k.config(target).Commands(view)
 	}
-	diff, err := junos.Apply(ctx, h.client, junosReconnect(conn), base, cmds, junosConfirmAfter(conn))
-	if diff != "" {
-		log.Printf("[INFO] conn3x: junos_%s on %s: lines sent:\n%s", k.name, h.host, diff)
-	}
-	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
-		return resp
+	switch {
+	case len(cmds) == 0:
+	case circuit == "" || (removing && st.cmds == nil && !st.batch[circuit]):
+		// Outside a circuit there's no conn3x_junos_commit to wait for, and a
+		// step dropped from a circuit that stays has none coming.
+		diff, err := junos.Apply(ctx, h.client, junosReconnect(conn), view, cmds, junosConfirmAfter(conn))
+		if diff != "" {
+			log.Printf("[INFO] conn3x: junos_%s on %s: lines sent:\n%s", k.name, h.host, diff)
+		}
+		if err != nil {
+			return fail(err)
+		}
+	default:
+		if err := st.stage(ctx, h, circuit, view, cmds, removing, conn); err != nil {
+			return fail(err)
+		}
 	}
 	if !removing {
 		resp.NewState = withSync(req.PlannedState, true)
@@ -211,6 +236,7 @@ func junosConfigSchema() providers.Schema {
 			"match":     {Type: cty.String, Optional: true, Description: "\"lines\" (default): these statements must be there, and others are left alone. \"block\": the statements under prefix must be exactly these, so others under it are deleted. Needs prefix."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the device when this resource is removed: \"forget\" (default) leaves the statements, \"delete\" deletes them."},
 			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the device had these statements at the last refresh."},
+			"circuit":   eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -238,6 +264,7 @@ func junosHostnameSchema() providers.Schema {
 	s := singletonSchema(junosExperimental+"A Juniper Junos device's host name. Removing this step leaves the name as it is.",
 		"Host name, such as sw1. Junos takes letters, digits, hyphens and dots.")
 	s.Block.Attributes["in_sync"].Description = "Whether the device had this name at the last refresh."
+	s.Block.Attributes["circuit"] = eosCircuitAttr()
 	return s
 }
 
@@ -269,6 +296,7 @@ func junosVLANSchema() providers.Schema {
 			"vlan_id":   {Type: cty.Number, Required: true, Description: "VLAN ID, 1 to 4094."},
 			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the device when this resource is removed: \"delete\" (default) deletes the VLAN, everything under it included; \"forget\" leaves it."},
 			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the VLAN was there with this ID at the last refresh."},
+			"circuit":   eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}

@@ -426,11 +426,14 @@ var stagedLeft []error
 // FinishEOS ends a run for the EOS steps: it aborts what is still staged and
 // returns what that left on a switch, for the command to print. A failed
 // apply doesn't close its providers, so the command calls this as it exits.
+//
+// It finishes the Junos steps too, whose staged lines live here the same way.
 func FinishEOS() error {
 	abortStaged()
+	junosErr := finishJunos()
 	stagedSessions.Lock()
 	defer stagedSessions.Unlock()
-	err := errors.Join(stagedLeft...)
+	err := errors.Join(append(stagedLeft, junosErr)...)
 	stagedLeft = nil
 	return err
 }

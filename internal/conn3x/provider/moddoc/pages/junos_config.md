@@ -25,7 +25,20 @@ ssh {
 }
 ```
 
-It takes at least `"5s"` and anything under `"4m"`, so the confirm always lands before the five-minute rollback. For now each step commits on its own, so a device with three changed steps pays the wait three times.
+It takes at least `"5s"` and anything under `"4m"`, so the confirm always lands before the five-minute rollback.
+
+### One commit per device
+
+In a circuit, a device's steps share one commit per apply. Each step works out its lines against the configuration plus what the steps before it added, and Conn3x runs the dry run over everything so far, so a refused line still fails the step that brought it. Nothing reaches the device until the last step is in. Then one commit confirmed, one wait and one confirm make the lot live together. Ten changed steps cost one `confirm_after`, not ten.
+
+The plan shows two more lines per device, as with EOS. `conn3x_junos_commit.<circuit>__commit` changes only when one of the circuit's `junos_*` steps does. `conn3x_junos_removals.<circuit>__removals` does nothing until you destroy the circuit, and then it commits every removal in one go. A few things follow:
+
+- If any step fails, everything the circuit staged for that device is dropped, and nothing of it reaches the device.
+- A device holds one circuit's staged lines at a time. When two circuits have steps on the same device, the second one's steps wait until the first has committed, and give up after two minutes if the first goes quiet.
+- A lockout rolls back the whole commit: every step of that apply on the device.
+- `-target` on a single `junos_*` step leaves the commit out, and its lines are dropped when the run ends. Target `conn3x_junos_commit.<circuit>__commit` instead: it brings every step with it.
+- A step outside a circuit, or one you take out of a circuit that stays, commits on its own.
+- Conn3x forgets a removed step as soon as its removal is staged. So if the commit goes nowhere, Conn3x commits the removals on their own, and the error says so. Only if that fails too does the error list the lines for you to delete by hand.
 
 ## Example usage
 

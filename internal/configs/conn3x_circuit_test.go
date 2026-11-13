@@ -1167,6 +1167,66 @@ func TestEOSCircuitLowersOneCommit(t *testing.T) {
 	}
 }
 
+// Junos steps get their own commit and removals, as eos steps do, and a
+// circuit with both kinds gets one of each per kind.
+func TestJunosCircuitLowersOneCommit(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": `
+circuit "core" {
+  hosts = { sw1 = "10.0.0.1" }
+  ssh {
+    user = "ops"
+  }
+  step "name" {
+    junos_hostname {
+      name = each.key
+    }
+  }
+  step "vlan" {
+    junos_vlan {
+      name    = "users"
+      vlan_id = 10
+    }
+  }
+  step "leaf" {
+    eos_hostname {
+      name = "leaf1"
+    }
+  }
+}
+`})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	c, ok := mod.ManagedResources["conn3x_junos_commit.core__commit"]
+	if !ok {
+		t.Fatalf("no junos commit; have %v", keys(mod.ManagedResources))
+	}
+	attrs, _ := c.Config.JustAttributes()
+	var refs []string
+	for _, tr := range attrs["triggers"].Expr.Variables() {
+		refs = append(refs, traversalString(tr))
+	}
+	got := strings.Join(refs, ",")
+	if !strings.Contains(got, "conn3x_junos_hostname.core__name") || !strings.Contains(got, "conn3x_junos_vlan.core__vlan") || strings.Contains(got, "eos") {
+		t.Errorf("junos commit triggers = %q, want the junos steps only", got)
+	}
+	for _, addr := range []string{"conn3x_junos_removals.core__removals", "conn3x_eos_commit.core__commit", "conn3x_eos_removals.core__removals"} {
+		if _, ok := mod.ManagedResources[addr]; !ok {
+			t.Errorf("missing %s", addr)
+		}
+	}
+	for _, step := range []string{"conn3x_junos_hostname.core__name", "conn3x_junos_vlan.core__vlan"} {
+		r := mod.ManagedResources[step]
+		a, _ := r.Config.JustAttributes()
+		if v, _ := a["circuit"].Expr.Value(nil); !v.RawEquals(cty.StringVal("core")) {
+			t.Errorf("%s: circuit = %#v", step, v)
+		}
+		if !slices.ContainsFunc(r.DependsOn, func(tr hcl.Traversal) bool { return traversalString(tr) == "conn3x_junos_removals.core__removals" }) {
+			t.Errorf("%s doesn't wait for the junos removals, depends_on = %v", step, r.DependsOn)
+		}
+	}
+}
+
 // A windows_reboot step watches the revisions of every step before it in
 // its circuit, so it can check for a reboot one of them leaves pending. A
 // reboot that comes first has nothing to watch.
