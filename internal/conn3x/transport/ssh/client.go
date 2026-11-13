@@ -872,6 +872,17 @@ func (c *Client) Alive() bool {
 	return ok.(bool)
 }
 
+// DialRemote opens a TCP connection to addr from the host, over this SSH
+// connection (a direct-tcpip channel, as ssh -L uses), so the controller
+// reaches what only the host can, such as a database on its loopback.
+func (c *Client) DialRemote(ctx context.Context, addr string) (net.Conn, error) {
+	conn, err := c.conn.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("ssh %s: reaching %s from the host: %w", c.addr, addr, err)
+	}
+	return conn, nil
+}
+
 // Close ends the connection, and those to any jump hosts.
 func (c *Client) Close() error {
 	err := c.conn.Close()

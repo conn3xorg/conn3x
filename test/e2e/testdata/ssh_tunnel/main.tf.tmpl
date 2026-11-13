@@ -1,0 +1,19 @@
+ephemeral "conn3x_ssh_tunnel" "sshd" {
+  remote = "127.0.0.1:22"
+
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
+
+# The tunnel reaches the host's own sshd: its first bytes are its banner.
+resource "terraform_data" "banner" {
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    command     = "exec 3<>/dev/tcp/${ephemeral.conn3x_ssh_tunnel.sshd.local_host}/${ephemeral.conn3x_ssh_tunnel.sshd.local_port}; head -c 4 <&3 > banner.txt; echo ${ephemeral.conn3x_ssh_tunnel.sshd.local_port} > port.txt"
+  }
+}

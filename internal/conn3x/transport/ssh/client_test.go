@@ -755,3 +755,38 @@ func TestDialTriesKeys(t *testing.T) {
 		t.Fatalf("a bad key should say which: %v", err)
 	}
 }
+
+// DialRemote reaches a TCP service from the host's side of the connection.
+func TestDialRemote(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			c, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() { defer c.Close(); _, _ = io.Copy(c, c) }()
+		}
+	}()
+	srv := sshtest.New(t)
+	c := dial(t, testConfig(t, srv))
+	conn, err := c.DialRemote(context.Background(), echo.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != "ping" {
+		t.Fatalf("read %q, %v", buf, err)
+	}
+	if _, err := c.DialRemote(context.Background(), "127.0.0.1:1"); err == nil || !strings.Contains(err.Error(), "reaching 127.0.0.1:1") {
+		t.Errorf("a closed port: %v", err)
+	}
+}
