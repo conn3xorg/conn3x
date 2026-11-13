@@ -19,6 +19,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules/container"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/fsobj"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/kmod"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
@@ -390,6 +391,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"filesystem":         filesystemModule,
 	"lvg":                lvgModule,
 	"lvol":               lvolModule,
+	"docker_container":   containerModule("docker", "published_ports", "ports", "volumes"),
+	"podman_container":   containerModule("podman", "publish", "ports", "volume", "volumes"),
 	"command":            commandModule,
 	"shell":              commandModule,
 	"reboot":             rebootModule,
@@ -1260,6 +1263,73 @@ func lvolModule(in *input) ([]step, string) {
 		notes = append(notes, "TODO(convert): force = true lets this step shrink the volume, destroying what's past the new end, on every apply. Take it off once the hosts have their size.")
 	}
 	return one("lvm_logical_volume", attrs, notes...)
+}
+
+// containerModule translates docker_container and podman_container, whose
+// port and volume arguments go by different names.
+func containerModule(engine string, keys ...string) func(*input) ([]step, string) {
+	return func(in *input) ([]step, string) {
+		in.state("started", "started")
+		var ports, volumes []string
+		for _, k := range keys {
+			switch k {
+			case "published_ports", "publish", "ports":
+				ports = append(ports, in.list(k)...)
+			default:
+				volumes = append(volumes, in.list(k)...)
+			}
+		}
+		c := container.Container{Engine: engine, Name: in.str("name"), Image: in.str("image"), Ports: ports, Volumes: volumes, Restart: in.str("restart_policy")}
+		if n, ok := in.args["command"]; ok {
+			if n.Kind == yaml.ScalarNode && strings.ContainsAny(n.Value, "'\"\\$`") {
+				in.used["command"] = true
+				return nil, "sets command as one string with quotes or shell characters, which Ansible splits as a shell would; write it as a list"
+			}
+			if n.Kind == yaml.ScalarNode {
+				c.Command = strings.Fields(in.str("command"))
+			} else {
+				c.Command = in.list("command")
+			}
+		}
+		if n, ok := in.args["env"]; ok {
+			in.used["env"] = true
+			c.Env = map[string]string{}
+			for k, v := range mapping(n) {
+				if v.Kind != yaml.ScalarNode {
+					return nil, "sets env " + k + " to something other than one value"
+				}
+				c.Env[k] = in.render("env", v.Value)
+			}
+		}
+		if err := c.Validate(); err != nil {
+			return nil, err.Error()
+		}
+		attrs := []attr{s("name", c.Name), s("image", c.Image), s("engine", engine)}
+		strs := func(key string, vs []string) {
+			if len(vs) == 0 {
+				return
+			}
+			vals := make([]cty.Value, len(vs))
+			for i, v := range vs {
+				vals[i] = cty.StringVal(v)
+			}
+			attrs = append(attrs, attr{key: key, val: cty.ListVal(vals)})
+		}
+		strs("ports", c.Ports)
+		strs("volumes", c.Volumes)
+		strs("command", c.Command)
+		if len(c.Env) > 0 {
+			vals := map[string]cty.Value{}
+			for k, v := range c.Env {
+				vals[k] = cty.StringVal(v)
+			}
+			attrs = append(attrs, attr{key: "env", val: cty.MapVal(vals)})
+		}
+		if c.Restart != "" {
+			attrs = append(attrs, s("restart", c.Restart))
+		}
+		return one("container", attrs)
+	}
 }
 
 func commandModule(in *input) ([]step, string) {
