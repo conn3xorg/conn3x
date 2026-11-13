@@ -76,6 +76,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_archive":              {archiveSchema, validateWith("src", func(v cty.Value) error { return archiveFrom(v).Validate() }), planArchive, readArchive, applyArchive, upgradeWith(archiveSchema)},
 	"conn3x_git":                  {gitSchema, validateWith("repo", func(v cty.Value) error { return gitFrom(v).Validate() }), planGit, readGit, applyGit, upgradeWith(gitSchema)},
 	"conn3x_modprobe":             {modprobeSchema, validateModprobe, planModprobe, readModprobe, applyModprobe, upgradeWith(modprobeSchema)},
+	"conn3x_sudoers":              {sudoersSchema, validateWith("name", func(v cty.Value) error { return sudoersFrom(v).Validate() }), planSudoers, readSudoers, applySudoers, upgradeWith(sudoersSchema)},
 	"conn3x_mount":                {mountSchema, validateWith("path", func(v cty.Value) error { return mountFrom(v).Validate() }), planMount, readMount, applyMount, upgradeWith(mountSchema)},
 	"conn3x_filesystem":           storageTypes["conn3x_filesystem"],
 	"conn3x_lvm_volume_group":     storageTypes["conn3x_lvm_volume_group"],

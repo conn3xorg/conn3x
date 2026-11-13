@@ -24,6 +24,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/sudoers"
 )
 
 const (
@@ -384,6 +385,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"git":                gitModule,
 	"mount":              mountModule,
 	"modprobe":           modprobeModule,
+	"sudoers":            sudoersModule,
 	"command":            commandModule,
 	"shell":              commandModule,
 	"reboot":             rebootModule,
@@ -1152,6 +1154,42 @@ func modprobeModule(in *input) ([]step, string) {
 		attrs = append(attrs, attr{key: "persistent", val: cty.False})
 	}
 	return one("modprobe", attrs)
+}
+
+func sudoersModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	// validation: Conn3x always checks with visudo.
+	in.ignore("validation")
+	if p := in.str("sudoers_path"); p != "" && p != "/etc/sudoers.d" {
+		return nil, "writes to " + p + "; the sudoers step writes to /etc/sudoers.d"
+	}
+	for _, k := range []string{"setenv", "noexec"} {
+		if in.bool(k, false) {
+			return nil, "sets " + k + ", which the sudoers step doesn't have yet"
+		}
+	}
+	// Ansible's sudoers defaults nopassword to true; the step's default is false.
+	r := sudoers.Rule{Name: in.str("name"), User: in.str("user"), Group: in.str("group"), Commands: in.list("commands"), RunAs: in.str("runas"), Host: in.str("host"), NoPassword: in.bool("nopassword", true)}
+	if err := r.Validate(); err != nil {
+		return nil, err.Error()
+	}
+	vals := make([]cty.Value, len(r.Commands))
+	for i, c := range r.Commands {
+		vals[i] = cty.StringVal(c)
+	}
+	attrs := []attr{s("name", r.Name)}
+	if r.User != "" {
+		attrs = append(attrs, s("user", r.User))
+	} else {
+		attrs = append(attrs, s("group", r.Group))
+	}
+	attrs = append(attrs, attr{key: "commands", val: cty.ListVal(vals)})
+	attrs = in.optional(attrs, "runas", "runas")
+	attrs = in.optional(attrs, "host", "host")
+	if r.NoPassword {
+		attrs = append(attrs, attr{key: "nopassword", val: cty.True})
+	}
+	return one("sudoers", attrs)
 }
 
 func commandModule(in *input) ([]step, string) {
