@@ -430,7 +430,7 @@ var stagedLeft []error
 // It finishes the Junos steps too, whose staged lines live here the same way.
 func FinishEOS() error {
 	abortStaged()
-	junosErr := finishJunos()
+	junosErr := finishCLI()
 	stagedSessions.Lock()
 	defer stagedSessions.Unlock()
 	err := errors.Join(append(stagedLeft, junosErr)...)

@@ -123,16 +123,6 @@ func (i Interface) members() []string {
 
 func (i Interface) memberPath() string { return i.eswitch() + " vlan members" }
 
-// haveLeaf is the set line at path, or "".
-func haveLeaf(lines []string, path string) string {
-	for _, l := range lines {
-		if under(l, path) {
-			return l
-		}
-	}
-	return ""
-}
-
 func haveMembers(lines []string, path string) []string {
 	var m []string
 	for _, l := range lines {

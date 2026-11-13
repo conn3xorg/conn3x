@@ -8,14 +8,12 @@ import (
 	"crypto/hmac"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/junos"
-	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
@@ -63,175 +61,16 @@ func validateJunosSSH(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
-func junosConfirmAfter(conn cty.Value) time.Duration {
-	if d, err := time.ParseDuration(stringOr(optional(conn, "confirm_after"), "")); err == nil {
-		return d
-	}
-	return junos.DefaultConfirmAfter
-}
-
-// junosReconnect dials a new connection, outside the pool, for confirming a
-// commit: that the login still works is the point.
-func junosReconnect(conn cty.Value) func(context.Context) (junos.Device, error) {
-	return func(ctx context.Context) (junos.Device, error) {
-		cfg, err := sshConfig(conn)
-		if err != nil {
-			return nil, err
-		}
-		return ssh.Dial(ctx, cfg)
-	}
-}
-
-// junosKind is one Junos step module. Each step commits on its own, with
-// commit confirmed and a confirm over a new login.
-type junosKind struct {
-	name     string
-	keys     []string // changing one of these is a new resource
-	settings []string // changing one of these is an update
-	deletes  bool     // on_remove defaults to "delete"
-	config   func(cty.Value) junosWant
-	remove   func(cty.Value, string) []string // nil: removing only forgets
-	// guard, when set, refuses a change that would cut Conn3x off from the
-	// device at address, given the config it's computed from.
-	guard func(v cty.Value, config, address string) error
-}
-
-// junosWant is what a step wants of a device's configuration.
-type junosWant interface {
-	InSync(config string) bool
-	Commands(config string) []string
-}
-
-func (k junosKind) plan(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	if k.deletes {
-		req = deleteByDefault(req)
-	}
-	return planSynced(req, "junos_"+k.name, k.keys, k.settings)
-}
-
-func (k junosKind) read(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
-	resp := providers.ReadResourceResponse{NewState: req.PriorState}
-	if req.PriorState.IsNull() {
-		return resp
-	}
-	h, err := pooled(ctx, req.PriorState.GetAttr("ssh"), 0)
-	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
-		return resp
-	}
-	running, err := junos.RunningConfig(ctx, h.client)
-	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
-		return resp
-	}
-	pending, err := junos.Pending(ctx, h.client)
-	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
-		return resp
-	}
-	// Lines an unconfirmed commit added may yet roll back, so they don't count.
-	resp.NewState = withSync(req.PriorState, pending == "" && k.config(req.PriorState).InSync(running))
-	if pending != "" {
-		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(fmt.Sprintf("junos_%s on %s: a commit confirmed is waiting for its confirm (%s), so this step counts as out of sync until it rolls back", k.name, h.host, pending)))
-	}
-	return resp
-}
-
-func (k junosKind) apply(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
-	var resp providers.ApplyResourceChangeResponse
-	target := req.PlannedState
-	removing := target.IsNull()
-	if removing {
-		resp.NewState = target
-		if k.remove == nil || req.PriorState.IsNull() || req.PriorState.GetAttr("on_remove").AsString() != onRemoveDelete {
-			return resp
-		}
-		target = req.PriorState
-	}
-	conn := target.GetAttr("ssh")
-	h, err := pooled(ctx, conn, 0)
-	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
-		return resp
-	}
-	fail := func(err error) providers.ApplyResourceChangeResponse {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
-		return resp
-	}
-	circuit := eosCircuit(target)
-	st := junosStagedOn(h)
-	// One change at a time: configure exclusive refuses a second one anyway.
-	unlock, err := st.turn(ctx, h, circuit, lockHost(h, "junos"))
-	defer func() { unlock() }()
-	if err != nil {
-		return fail(err)
-	}
-	if err := st.failed[circuit]; err != nil {
-		return fail(fmt.Errorf("not applied: %w", err))
-	}
-	defer func() { st.touched = time.Now() }()
-	var view string // what the steps' lines compare with
-	if st.cmds != nil {
-		view = junos.WithLines(st.base, st.cmds)
-	} else {
-		// Checked before the lines: with nothing to send, Apply never looks.
-		if pending, err := junos.Pending(ctx, h.client); err != nil || pending != "" {
-			if err == nil {
-				err = junos.PendingError{Says: pending}
-			}
-			return fail(err)
-		}
-		if view, err = junos.RunningConfig(ctx, h.client); err != nil {
-			return fail(err)
-		}
-	}
-	var cmds []string
-	if removing {
-		cmds = k.remove(target, view)
-	} else {
-		if k.guard != nil {
-			if err := k.guard(target, view, h.host); err != nil {
-				return fail(st.drop(ctx, h, circuit, err))
-			}
-		}
-		cmds = k.config(target).Commands(view)
-	}
-	switch {
-	case len(cmds) == 0:
-	case circuit == "" || (removing && st.cmds == nil && !st.batch[circuit]):
-		// Outside a circuit there's no conn3x_junos_commit to wait for, and a
-		// step dropped from a circuit that stays has none coming.
-		diff, err := junos.Apply(ctx, h.client, junosReconnect(conn), view, cmds, junosConfirmAfter(conn))
-		if diff != "" {
-			log.Printf("[INFO] conn3x: junos_%s on %s: lines sent:\n%s", k.name, h.host, diff)
-		}
-		if err != nil {
-			return fail(err)
-		}
-	default:
-		if err := st.stage(ctx, h, circuit, view, cmds, removing, conn); err != nil {
-			return fail(err)
-		}
-	}
-	if !removing {
-		resp.NewState = withSync(req.PlannedState, true)
-	}
-	return resp
-}
-
-func (k junosKind) entry(schema func() providers.Schema, validate func(cty.Value) tfdiags.Diagnostics) resourceType {
-	return resourceType{schema, validate, k.plan, k.read, k.apply, upgradeWith(schema)}
-}
-
 func junosConfigFrom(v cty.Value) junos.Config {
 	return junos.Config{Prefix: stringOr(v.GetAttr("prefix"), ""), Lines: stringList(v.GetAttr("lines")), Match: stringOr(v.GetAttr("match"), junos.MatchLines)}
 }
 
-var junosConfigKind = junosKind{
+var junosConfigKind = cliKind{
+	p:        junosPlatform,
 	name:     "config",
 	keys:     []string{"prefix"},
 	settings: []string{"lines", "match"},
-	config:   func(v cty.Value) junosWant { return junosConfigFrom(v) },
+	config:   func(v cty.Value) cliWant { return junosConfigFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return junosConfigFrom(v).RemoveCommands(running) },
 }
 
@@ -264,10 +103,11 @@ func validateJunosConfig(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
-var junosHostnameKind = junosKind{
+var junosHostnameKind = cliKind{
+	p:        junosPlatform,
 	name:     "hostname",
 	settings: []string{"name"},
-	config:   func(v cty.Value) junosWant { return junos.Hostname(v.GetAttr("name").AsString()) },
+	config:   func(v cty.Value) cliWant { return junos.Hostname(v.GetAttr("name").AsString()) },
 }
 
 func junosHostnameSchema() providers.Schema {
@@ -287,12 +127,13 @@ func junosVLANFrom(v cty.Value) junos.VLAN {
 	return junos.VLAN{Name: stringOr(v.GetAttr("name"), ""), ID: int(id)}
 }
 
-var junosVLANKind = junosKind{
+var junosVLANKind = cliKind{
+	p:        junosPlatform,
 	name:     "vlan",
 	keys:     []string{"name"},
 	settings: []string{"vlan_id"},
 	deletes:  true,
-	config:   func(v cty.Value) junosWant { return junosVLANFrom(v) },
+	config:   func(v cty.Value) cliWant { return junosVLANFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return junosVLANFrom(v).RemoveCommands(running) },
 }
 
@@ -366,11 +207,12 @@ func junosInterfaceFrom(v cty.Value) junos.Interface {
 	return i
 }
 
-var junosInterfaceKind = junosKind{
+var junosInterfaceKind = cliKind{
+	p:        junosPlatform,
 	name:     "interface",
 	keys:     []string{"name"},
 	settings: []string{"description", "enabled", "mode", "access_vlan", "allowed_vlans", "mtu"},
-	config:   func(v cty.Value) junosWant { return junosInterfaceFrom(v) },
+	config:   func(v cty.Value) cliWant { return junosInterfaceFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return junosInterfaceFrom(v).RemoveCommands(running) },
 	guard:    func(v cty.Value, config, address string) error { return junosInterfaceFrom(v).Guard(config, address) },
 }
@@ -431,12 +273,13 @@ func junosUserID(v cty.Value) string {
 	return passwordID("junos_user", stringOr(v.GetAttr("ssh").GetAttr("host"), ""), stringOr(v.GetAttr("name"), ""))
 }
 
-var junosUserKind = junosKind{
+var junosUserKind = cliKind{
+	p:        junosPlatform,
 	name:     "user",
 	keys:     []string{"name"},
 	settings: []string{"class", "ssh_keys", "password_hmac"},
 	deletes:  true,
-	config:   func(v cty.Value) junosWant { return junosUserFrom(v) },
+	config:   func(v cty.Value) cliWant { return junosUserFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return junosUserFrom(v).RemoveCommands(running) },
 	guard: func(v cty.Value, _, _ string) error {
 		return junosUserFrom(v).Guard(stringOr(v.GetAttr("ssh").GetAttr("user"), ""))
@@ -509,7 +352,7 @@ func applyJunosUser(ctx context.Context, req providers.ApplyResourceChangeReques
 		id := junosUserID(req.PlannedState)
 		hash := eosSecret(key, id, password)
 		mac = eosSecretHMAC(key, id, hash)
-		k.config = func(v cty.Value) junosWant {
+		k.config = func(v cty.Value) cliWant {
 			u := junosUserFrom(v)
 			u.Secret, u.SecretIs = hash, func(h string) bool { return h == hash }
 			return u

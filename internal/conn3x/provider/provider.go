@@ -97,6 +97,11 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_junos_vlan":           junosVLANKind.entry(junosVLANSchema, validateJunosVLAN),
 	"conn3x_junos_interface":      junosInterfaceKind.entry(junosInterfaceSchema, validateJunosInterface),
 	"conn3x_junos_user":           {junosUserSchema, validateJunosUser, planJunosUser, junosUserKind.read, applyJunosUser, upgradeWith(junosUserSchema)},
+	"conn3x_vyos_config":          vyosConfigKind.entry(vyosConfigSchema, validateVyOSConfig),
+	"conn3x_vyos_hostname":        vyosHostnameKind.entry(vyosHostnameSchema, validateVyOSHostname),
+	"conn3x_vyos_interface":       vyosInterfaceKind.entry(vyosInterfaceSchema, validateVyOSInterface),
+	"conn3x_vyos_commit":          vyosCommitTypes["conn3x_vyos_commit"],
+	"conn3x_vyos_removals":        vyosCommitTypes["conn3x_vyos_removals"],
 	"conn3x_junos_commit":         junosCommitTypes["conn3x_junos_commit"],
 	"conn3x_junos_removals":       junosCommitTypes["conn3x_junos_removals"],
 	"conn3x_eos_removals":         {eosRemovalsSchema, func(cty.Value) tfdiags.Diagnostics { return nil }, planEOSRemovals, readEOSCommit, applyEOSRemovals, upgradeWith(eosRemovalsSchema)},
@@ -162,7 +167,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 		Provider:      providers.Schema{Block: providerConfigSchema()},
 		ResourceTypes: resourceSchemas(),
 		DataSources: map[string]providers.Schema{
-			"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema(), "conn3x_junos_device": junosDeviceSchema(),
+			"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema(), "conn3x_junos_device": junosDeviceSchema(), "conn3x_vyos_device": vyosDeviceSchema(),
 			"conn3x_packages": packagesDataSchema(), "conn3x_services": servicesDataSchema(),
 		},
 		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema()},
@@ -186,6 +191,8 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 			diags = diags.Append(validateEOSSSH(req.Config))
 		} else if strings.HasPrefix(req.TypeName, junosTypePrefix) {
 			diags = diags.Append(validateJunosSSH(req.Config))
+		} else if strings.HasPrefix(req.TypeName, vyosTypePrefix) {
+			diags = diags.Append(validateVyOSSSH(req.Config))
 		} else {
 			diags = diags.Append(validateNotEOS(req.Config))
 		}
@@ -195,6 +202,9 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 }
 
 func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
+	if req.TypeName == "conn3x_vyos_device" {
+		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateVyOSSSH(req.Config))}
+	}
 	if req.TypeName == "conn3x_junos_device" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateJunosSSH(req.Config))}
 	}
@@ -233,7 +243,7 @@ func (p *Provider) ConfigureProvider(_ context.Context, req providers.ConfigureP
 func (p *Provider) Close(context.Context) error {
 	if p.stop != nil && !p.closed.Swap(true) && openProviders.Add(-1) == 0 {
 		abortStaged()
-		if err := finishJunos(); err != nil {
+		if err := finishCLI(); err != nil {
 			log.Printf("[WARN] conn3x: %v", err)
 		}
 	}
@@ -381,7 +391,7 @@ func locateApplyErrors(block *configschema.Block, diags tfdiags.Diagnostics) tfd
 
 func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
 	read, ok := map[string]func(context.Context, providers.ReadDataSourceRequest) providers.ReadDataSourceResponse{
-		"conn3x_host": readHostData, "conn3x_eos_device": readEOSDevice, "conn3x_junos_device": readJunosDevice,
+		"conn3x_host": readHostData, "conn3x_eos_device": readEOSDevice, "conn3x_junos_device": readJunosDevice, "conn3x_vyos_device": readVyOSDevice,
 		"conn3x_packages": readPackagesData, "conn3x_services": readServicesData,
 	}[req.TypeName]
 	if !ok {
