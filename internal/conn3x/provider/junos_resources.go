@@ -119,7 +119,16 @@ func (k junosKind) read(ctx context.Context, req providers.ReadResourceRequest) 
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
 		return resp
 	}
-	resp.NewState = withSync(req.PriorState, k.config(req.PriorState).InSync(running))
+	pending, err := junos.Pending(ctx, h.client)
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
+		return resp
+	}
+	// Lines an unconfirmed commit added may yet roll back, so they don't count.
+	resp.NewState = withSync(req.PriorState, pending == "" && k.config(req.PriorState).InSync(running))
+	if pending != "" {
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(fmt.Sprintf("junos_%s on %s: a commit confirmed is waiting for its confirm (%s), so this step counts as out of sync until it rolls back", k.name, h.host, pending)))
+	}
 	return resp
 }
 
@@ -142,6 +151,14 @@ func (k junosKind) apply(ctx context.Context, req providers.ApplyResourceChangeR
 	}
 	// One change at a time: configure exclusive refuses a second one anyway.
 	defer lockHost(h, "junos")()
+	// Checked before the lines: with nothing to send, Apply never looks.
+	if pending, err := junos.Pending(ctx, h.client); err != nil || pending != "" {
+		if err == nil {
+			err = junos.PendingError{Says: pending}
+		}
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))
+		return resp
+	}
 	base, err := junos.RunningConfig(ctx, h.client)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_%s: %w", k.name, err))

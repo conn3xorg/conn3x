@@ -173,6 +173,30 @@ func ReadFacts(ctx context.Context, d Device) (Facts, error) {
 	return Facts{Hostname: first(i.Hostname), Model: first(i.Model), Version: first(i.Version)}, nil
 }
 
+// pendingConfirm matches what configuration mode prints on entry while a
+// commit confirmed waits for its confirm. show system commit can't tell:
+// its "rollback in" note stays on the entry once confirmed.
+var pendingConfirm = regexp.MustCompile(`commit confirmed will be rolled back in \d+ minutes?`)
+
+// Pending reports how the device says a commit confirmed is waiting for its
+// confirm, or "" when none is. While one waits, the configuration holds
+// lines that may yet roll back, so they can't count as in sync.
+func Pending(ctx context.Context, d Device) (string, error) {
+	out, err := run(ctx, d, "", script("configure private", "exit"))
+	if err != nil {
+		return "", err
+	}
+	return pendingConfirm.FindString(out), nil
+}
+
+// PendingError is an apply refused while a commit confirmed waits, most
+// likely an earlier apply's whose session ended before its confirm.
+type PendingError struct{ Says string }
+
+func (e PendingError) Error() string {
+	return fmt.Sprintf("a commit confirmed is waiting for its confirm (the device says %q), most likely an earlier apply's that lost its session, so its lines may yet roll back. Nothing was changed. Apply again once it has rolled back", e.Says)
+}
+
 // NotLiveError is a failure that left nothing live: the device's
 // configuration is as it was.
 type NotLiveError struct{ Err error }
@@ -212,6 +236,9 @@ func Apply(ctx context.Context, d Device, reconnect func(context.Context) (Devic
 	if errs := cliErrors(out); errs != nil {
 		return diff, NotLiveError{fmt.Errorf("the device refused the change: %s", strings.Join(errs, "; "))}
 	}
+	if says := pendingConfirm.FindString(out); says != "" {
+		return diff, PendingError{says}
+	}
 	if !strings.Contains(out, "configuration check succeeds") {
 		return diff, NotLiveError{fmt.Errorf("commit check didn't say the configuration checks out: %s", Mask(lastLines(out, 5)))}
 	}
@@ -227,10 +254,10 @@ func Apply(ctx context.Context, d Device, reconnect func(context.Context) (Devic
 	out, err = run(ctx, d, "", script(live...))
 	committed := strings.Contains(out, "commit complete")
 	switch errs := cliErrors(out); {
-	case err != nil && !committed:
-		return diff, NotLiveError{err}
 	case err != nil:
-		return diff, fmt.Errorf("committed with a %s rollback, but then: %w. Conn3x won't confirm it, so it rolls back on its own", RevertAfter, err)
+		// The commit itself may have cut the session, as a lockout does, so
+		// a lost session says nothing about whether it committed.
+		return diff, fmt.Errorf("the session ended before Junos said whether it committed (%w). If it did, Conn3x won't confirm it, so it rolls back on its own within %s", err, RevertAfter)
 	case !committed && errs != nil:
 		return diff, NotLiveError{fmt.Errorf("the device refused the change: %s", strings.Join(errs, "; "))}
 	case !committed:

@@ -24,6 +24,8 @@ type fakeDevice struct {
 	locked    bool    // someone else holds configure exclusive
 	shell     bool    // the login lands in csh, as root's does
 	down      bool    // every call fails, as on a connection that's gone
+	dropLive  bool    // the live script loses its session, as a lockout's commit does
+	pending   bool    // a commit confirmed waits for its confirm
 	onConfig  func()  // runs after each config read
 }
 
@@ -67,8 +69,14 @@ func (f fakeDevice) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.R
 		return ssh.Result{Stdout: []byte("error: syntax error, expecting <command>: " + cmd + "\n")}, nil
 	}
 	mode := strings.Fields(what)[1]
+	if mode == "exclusive" && f.dropLive && strings.Contains(what, "commit confirmed") {
+		return ssh.Result{}, errors.New("connection lost")
+	}
 	var b strings.Builder
 	b.WriteString("Entering configuration mode\n")
+	if f.pending {
+		b.WriteString("\n# commit confirmed will be rolled back in 4 minutes\n")
+	}
 	if mode == "exclusive" && f.locked {
 		return ssh.Result{Stdout: []byte("error: configuration database locked by:\n  ops terminal p0 (pid 4242) on since 2026-11-13 03:10:00 UTC\n      exclusive [edit]\n")}, nil
 	}
@@ -227,5 +235,39 @@ func TestCheckConfirmAfter(t *testing.T) {
 		if err := CheckConfirmAfter(d); (err == nil) != ok {
 			t.Errorf("CheckConfirmAfter(%s) = %v", d, err)
 		}
+	}
+}
+
+// A commit that cuts its own session may have committed, so the lost
+// session mustn't read as nothing changed.
+func TestApplyWhenTheLiveSessionDrops(t *testing.T) {
+	d, _ := newFake()
+	d.dropLive = true
+	_, err := Apply(context.Background(), d, reconnectTo(d), *d.config, []string{"set system host-name sw2"}, time.Millisecond)
+	if err == nil || errors.As(err, new(NotLiveError)) || !strings.Contains(err.Error(), "rolls back on its own") {
+		t.Fatalf("err = %v, want an error that isn't NotLiveError", err)
+	}
+}
+
+func TestApplyRefusesWhileACommitIsPending(t *testing.T) {
+	d, sent := newFake()
+	d.pending = true
+	_, err := Apply(context.Background(), d, reconnectTo(d), *d.config, []string{"set system host-name sw2"}, time.Millisecond)
+	if !errors.As(err, new(PendingError)) {
+		t.Fatalf("err = %v, want PendingError", err)
+	}
+	if len(*sent) != 1 {
+		t.Errorf("went on past the dry run: %q", *sent)
+	}
+}
+
+func TestPending(t *testing.T) {
+	d, _ := newFake()
+	if says, err := Pending(context.Background(), d); err != nil || says != "" {
+		t.Fatalf("nothing pending: %q, %v", says, err)
+	}
+	d.pending = true
+	if says, err := Pending(context.Background(), d); err != nil || says != "commit confirmed will be rolled back in 4 minutes" {
+		t.Fatalf("pending: %q, %v", says, err)
 	}
 }

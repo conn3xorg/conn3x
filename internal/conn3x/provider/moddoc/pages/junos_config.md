@@ -10,7 +10,9 @@ Junos answers every command with exit status 0, even one it refused, and a scrip
 2. **The commit.** If the configuration still matches what Conn3x read for the plan, the same lines go into `configure exclusive` with `commit confirmed 5`. If someone else holds the configuration lock, Conn3x stops, and nothing has changed.
 3. **The confirm.** Conn3x waits `confirm_after`, then logs in over a new SSH connection and runs `commit check`, which confirms. A change that locks Conn3x out never gets confirmed, so Junos rolls it back by itself within five minutes.
 
-Junos refuses `commit confirmed` in private mode, which is why the commit uses `configure exclusive`. If the device refuses part of the change on the second pass, even though the dry run passed, Conn3x doesn't confirm, and the change rolls back by itself. The error says so.
+Junos refuses `commit confirmed` in private mode, which is why the commit uses `configure exclusive`. If the device refuses part of the change on the second pass, even though the dry run passed, Conn3x doesn't confirm, and the change rolls back by itself. The error says so. The same goes for a session that ends mid-commit: the commit may be what cut it, so Conn3x never claims nothing changed.
+
+While a commit confirmed is waiting for its confirm, the lines it added may yet roll back. So a refresh counts the device's steps as out of sync, with a warning, and an apply stops before it sends anything. Apply again once the change has rolled back.
 
 ### The wait before the confirm
 
@@ -66,7 +68,7 @@ step "ntp" {
 
   `root` is refused, because its login starts in a shell. Junos has no sudo, so `become` and `agent` are refused in the circuit's `ssh` block too.
 - A line Junos prints differently, such as one without the quotes `display set` adds, never matches, and the step shows as changed on every plan. Copy lines from `show configuration | display set`.
-- Every line must be a `set` statement. Anything else could leave configuration mode, commit early or run another command. So `delete`, `exit`, `commit`, `run`, a `|` outside quotes, newlines and control characters are all refused.
+- Every line must be a `set` statement. Anything else could leave configuration mode, commit early or run another command. So `delete`, `exit`, `commit`, `run`, a `|` outside quotes, newlines and control characters are all refused. So is `plain-text-password`, which prompts for the password, and a script can't answer a prompt; set `encrypted-password` with a hash instead.
 - A deactivated statement doesn't count as there, so a step that owns one shows as changed until it's activated.
 - Don't put secrets in `lines`: they'd be stored in state. In logs and errors, Conn3x hides what follows `encrypted-password`, `authentication-key`, `secret`, `community`, `pre-shared-key` and `key`.
 - Commits on Junos persist, so there's no separate save step.

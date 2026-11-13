@@ -91,6 +91,9 @@ func CheckLine(l string) error {
 	if pipeOutsideQuotes(l) {
 		return fmt.Errorf("line %q has a | outside quotes, which the CLI would read as a pipe; quote the value", l)
 	}
+	if slices.Contains(strings.Fields(l), "plain-text-password") {
+		return fmt.Errorf("line %q would prompt for a password, which a script can't answer (Junos says \"error: Invalid password\"); set encrypted-password with a hash instead", l)
+	}
 	return nil
 }
 

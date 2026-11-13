@@ -70,6 +70,7 @@ func TestConfigValidate(t *testing.T) {
 		"outside prefix":   {Prefix: "interfaces ge-0/0/1", Lines: []string{"set interfaces ge-0/0/10 mtu 9000"}, Match: MatchBlock},
 		"empty":            {},
 		"bad match":        {Lines: []string{"set system host-name a"}, Match: "all"},
+		"password prompt":  {Lines: []string{"set system login user x authentication plain-text-password"}},
 	} {
 		if err := c.Validate(); err == nil {
 			t.Errorf("%s: Validate passed", name)
