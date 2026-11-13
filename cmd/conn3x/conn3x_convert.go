@@ -5,6 +5,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +31,7 @@ Write the result beside the playbook so the files it copies resolve. With -i, ho
 
 With -out, each role a play runs, from its roles list or an include_role or import_role in its task lists, is converted from roles/ beside the playbook into a circuit directory beside the output file, and called as a module in the order Ansible runs it. A directory that already has files is kept as it is, with a TODO(convert) line in the output file to say this run didn't write it.
 
-With -role, converts one role's directory instead, such as one ansible-galaxy installed, into a new circuit directory named by -out. Nothing is downloaded: install a role from Galaxy yourself, with ansible-galaxy, then point -role at it.
+With -role, converts one role's directory instead, such as one ansible-galaxy installed, into a new circuit directory named by -out. -role also takes a role on Galaxy, as namespace.name or namespace.name,version, such as geerlingguy.nginx,3.3.1: Conn3x downloads it from GitHub, as ansible-galaxy does, into a temporary directory, and the circuit's README says where it came from. A directory of that name on disk is used instead.
 
 Exits 0 when every task converted, 3 when some need review, and 1 on errors.`,
 	}
@@ -38,7 +40,7 @@ Exits 0 when every task converted, 3 when some need review, and 1 on errors.`,
 	ans.CommandLine.PositionalArg(&playbook, "PLAYBOOK", true)
 	ans.UsageOverride.Usage = "conn3x [global options] convert ansible [options] <PLAYBOOK>\n       conn3x [global options] convert ansible -role <ROLE> -out <DIR>"
 	ans.CommandLine.StringVar(&out, "out", "", "Write the circuits to this file instead of standard output, and the circuits of the roles the playbook runs beside it. With -role, the new directory to write the circuit to.")
-	ans.CommandLine.StringVar(&role, "role", "", "Convert the Ansible role in this directory into a circuit directory.")
+	ans.CommandLine.StringVar(&role, "role", "", "Convert the Ansible role in this directory, or this Galaxy role, such as geerlingguy.nginx or geerlingguy.nginx,3.3.1, into a circuit directory.")
 	ans.CommandLine.StringVar(&inventory, "i", "", "Inventory file (INI or YAML) to fill in each play's hosts and login from.")
 	ans.CommandLine.StringVar(&inventory, "inventory", "", "Same as -i.")
 	ans.Run = func(command.Meta) int {
@@ -177,10 +179,29 @@ func runConvertRole(role, out, playbook, inventory string, stderr io.Writer) int
 		fmt.Fprintf(stderr, "Error: %s already has files in it; choose a new directory, so nothing in it is replaced\n", out)
 		return 1
 	}
+	var galaxy *ansible.GalaxyRole
+	if _, err := os.Stat(role); errors.Is(err, os.ErrNotExist) && ansible.IsGalaxyRole(role) {
+		tmp, err := os.MkdirTemp("", "conn3x-galaxy-*")
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %s\n", err)
+			return 1
+		}
+		defer os.RemoveAll(tmp)
+		g, err := ansible.FetchGalaxyRole(context.Background(), role, tmp)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %s\n", err)
+			return 1
+		}
+		fmt.Fprintf(stderr, "Downloaded %s %s from %s.\n", g.Name, g.Version, g.Repo)
+		galaxy, role = &g, g.Dir
+	}
 	res, err := ansible.ConvertRole(role)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %s\n", err)
 		return 1
+	}
+	if galaxy != nil {
+		res.Files["README.md"] = append(res.Files["README.md"], fmt.Sprintf("\n## Source\n\nConverted from the Galaxy role [`%s`](https://galaxy.ansible.com/ui/standalone/roles/%s/), version `%s`, downloaded from %s.\n", galaxy.Name, strings.Replace(galaxy.Name, ".", "/", 1), galaxy.Version, galaxy.Repo)...)
 	}
 	for p, b := range res.Files {
 		path := filepath.Join(out, filepath.FromSlash(p))
