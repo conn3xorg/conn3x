@@ -565,6 +565,24 @@ func TestRunRawAddsNothingAroundTheCommand(t *testing.T) {
 	}
 }
 
+// RunShell starts the login shell, which reads its script from stdin.
+func TestRunShellFeedsTheLoginShell(t *testing.T) {
+	srv := sshtest.New(t)
+	c := dial(t, testConfig(t, srv))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := c.RunShell(ctx, []byte("echo one\necho two\nexit 3\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 3 || string(res.Stdout) != "one\ntwo\n" {
+		t.Fatalf("exit %d, stdout %q", res.ExitCode, res.Stdout)
+	}
+	if _, err := c.RunShell(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("without a deadline: %v", err)
+	}
+}
+
 func TestRunRawRefusesAContextWithoutADeadline(t *testing.T) {
 	srv := sshtest.New(t)
 	c := dial(t, testConfig(t, srv))

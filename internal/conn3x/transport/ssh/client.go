@@ -642,8 +642,27 @@ func (c *Client) RunRaw(ctx context.Context, cmd string, stdin []byte) (Result, 
 	return c.exec(ctx, cmd, stdin)
 }
 
+// RunShell is RunRaw with a shell request instead of a command: the login's
+// own shell reads stdin, as it does for ssh -T with no command. A Junos CLI
+// login needs it, since a command on an exec channel there runs alone and
+// stdin goes unread. Its deadline rules are RunRaw's.
+func (c *Client) RunShell(ctx context.Context, stdin []byte) (Result, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return Result{}, fmt.Errorf("ssh %s: RunShell needs a context with a deadline", c.addr)
+	}
+	stop := time.AfterFunc(time.Until(deadline)+rawGrace, func() { _ = c.Close() })
+	defer stop.Stop()
+	return c.start(ctx, stdin, "shell", func(s *gossh.Session) error { return s.Shell() })
+}
+
 // exec runs a command line as given in a new session, feeding it stdin.
 func (c *Client) exec(ctx context.Context, cmd string, stdin []byte) (Result, error) {
+	return c.start(ctx, stdin, "command", func(s *gossh.Session) error { return s.Start(cmd) })
+}
+
+// start runs a new session begun by begin, feeding it stdin.
+func (c *Client) start(ctx context.Context, stdin []byte, what string, begin func(*gossh.Session) error) (Result, error) {
 	session, err := c.session(ctx)
 	if err != nil {
 		return Result{}, err
@@ -663,8 +682,8 @@ func (c *Client) exec(ctx context.Context, cmd string, stdin []byte) (Result, er
 	session.Stderr = &stderr
 	session.Stdin = bytes.NewReader(stdin)
 
-	if err := session.Start(cmd); err != nil {
-		return Result{}, fmt.Errorf("ssh %s: starting command: %w", c.addr, err)
+	if err := begin(session); err != nil {
+		return Result{}, fmt.Errorf("ssh %s: starting %s: %w", c.addr, what, err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- session.Wait() }()
