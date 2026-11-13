@@ -78,6 +78,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_modprobe":             {modprobeSchema, validateModprobe, planModprobe, readModprobe, applyModprobe, upgradeWith(modprobeSchema)},
 	"conn3x_sudoers":              {sudoersSchema, validateWith("name", func(v cty.Value) error { return sudoersFrom(v).Validate() }), planSudoers, readSudoers, applySudoers, upgradeWith(sudoersSchema)},
 	"conn3x_container":            {containerSchema, validateWith("name", func(v cty.Value) error { return containerFrom(v).Validate() }), planContainer, readContainer, applyContainer, upgradeWith(containerSchema)},
+	"conn3x_nm_connection":        {nmConnectionSchema, validateNMConnection, planNMConnection, readNMConnection, applyNMConnection, upgradeWith(nmConnectionSchema)},
 	"conn3x_mount":                {mountSchema, validateWith("path", func(v cty.Value) error { return mountFrom(v).Validate() }), planMount, readMount, applyMount, upgradeWith(mountSchema)},
 	"conn3x_filesystem":           storageTypes["conn3x_filesystem"],
 	"conn3x_lvm_volume_group":     storageTypes["conn3x_lvm_volume_group"],
