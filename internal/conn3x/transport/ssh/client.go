@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,10 +34,13 @@ var ErrHostKey = errors.New("host key verification failed")
 
 // Config describes how to reach and authenticate to a host.
 type Config struct {
-	Host           string
-	Port           int // default 22
-	User           string
-	PrivateKey     []byte // PEM; empty means use the SSH agent (see dialAgent)
+	Host       string
+	Port       int // default 22
+	User       string
+	PrivateKey []byte // PEM; empty means use the SSH agent (see dialAgent)
+	// Keys are more PEM keys to try, after PrivateKey and before the
+	// agent: the provider's private_keys, which are never on disk.
+	Keys           [][]byte
 	HostKey        string // optional pinned key, in authorized_keys format
 	KnownHostsFile string // default ~/.ssh/known_hosts when HostKey is empty
 	Timeout        time.Duration
@@ -305,7 +309,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	// Each hop is reached through the one before it; the last is the target.
 	hops := make([]Config, 0, len(cfg.Jumps)+1)
 	for _, j := range cfg.Jumps {
-		hop := Config{Host: j.Host, Port: j.Port, User: j.User, PrivateKey: j.PrivateKey, KnownHostsFile: cfg.KnownHostsFile}
+		hop := Config{Host: j.Host, Port: j.Port, User: j.User, PrivateKey: j.PrivateKey, Keys: cfg.Keys, KnownHostsFile: cfg.KnownHostsFile}
 		if hop.Port == 0 {
 			hop.Port = 22
 		}
@@ -491,15 +495,26 @@ func (probeKey) Verify([]byte, *gossh.Signature) error { return errors.New("prob
 // authentication asks a key to sign only once the server has accepted it,
 // so the key that signed is the one the server let in.
 func authMethod(cfg Config, login *loginRecord) (gossh.AuthMethod, net.Conn, error) {
+	var extra []gossh.Signer
+	for _, k := range cfg.Keys {
+		signer, err := gossh.ParsePrivateKey(k)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parsing one of the provider's private_keys: %w", err)
+		}
+		extra = append(extra, login.wrap(signer))
+	}
 	if len(cfg.PrivateKey) > 0 {
 		signer, err := gossh.ParsePrivateKey(cfg.PrivateKey)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parsing private_key: %w", err)
 		}
-		return gossh.PublicKeys(login.wrap(signer)), nil, nil
+		return gossh.PublicKeys(append([]gossh.Signer{login.wrap(signer)}, extra...)...), nil, nil
 	}
 	conn, err := dialAgent(strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK")))
 	if err != nil {
+		if len(extra) > 0 {
+			return gossh.PublicKeys(extra...), nil, nil // no agent, but keys enough
+		}
 		return nil, nil, agentError{err}
 	}
 	agentSigners := agent.NewClient(conn).Signers
@@ -508,7 +523,7 @@ func authMethod(cfg Config, login *loginRecord) (gossh.AuthMethod, net.Conn, err
 		for i, s := range signers {
 			signers[i] = login.wrap(s)
 		}
-		return signers, err
+		return append(slices.Clone(extra), signers...), err
 	}), conn, nil
 }
 

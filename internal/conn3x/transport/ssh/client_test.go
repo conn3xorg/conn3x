@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net"
@@ -704,5 +705,35 @@ func TestLoginRecordKeepsAlgorithmSigners(t *testing.T) {
 	}
 	if rec.get() == nil {
 		t.Fatal("signing didn't record the key")
+	}
+}
+
+// Keys log in with no agent, and are tried after PrivateKey, so a wrong
+// private_key_file doesn't stop a key that works.
+func TestDialTriesKeys(t *testing.T) {
+	s := sshtest.New(t)
+	t.Setenv("SSH_AUTH_SOCK", "")
+	cfg := testConfig(t, s)
+	cfg.Keys, cfg.PrivateKey = [][]byte{cfg.PrivateKey}, nil
+	if _, err := dial(t, cfg).Run(context.Background(), "true", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	_, other, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := gossh.MarshalPrivateKey(other, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.PrivateKey = pem.EncodeToMemory(block)
+	if _, err := dial(t, cfg).Run(context.Background(), "true", nil); err != nil {
+		t.Fatalf("a wrong private key should fall through to Keys: %v", err)
+	}
+
+	cfg.Keys = [][]byte{[]byte("not a key")}
+	if _, err := Dial(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "provider's private_keys") {
+		t.Fatalf("a bad key should say which: %v", err)
 	}
 }

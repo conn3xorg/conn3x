@@ -527,6 +527,7 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 		}
 		cfg.PrivateKey = key
 	}
+	cfg.Keys = currentProviderKeys()
 	return cfg, nil
 }
 
