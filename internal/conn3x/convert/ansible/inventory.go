@@ -228,11 +228,8 @@ func expandRange(pattern string) ([]string, error) {
 		if len(lo) != 1 || len(hi) != 1 || lo > hi || !isLetter(lo[0]) || !isLetter(hi[0]) {
 			return nil, fmt.Errorf("[%s] isn't a range of numbers or of single letters", spec)
 		}
-		for c := lo[0]; c <= hi[0]; c += byte(step) {
-			items = append(items, string(c))
-			if int(c)+step > 'z' {
-				break
-			}
+		for c := int(lo[0]); c <= int(hi[0]); c += step {
+			items = append(items, string(rune(c)))
 		}
 	}
 	tails, err := expandRange(rest)

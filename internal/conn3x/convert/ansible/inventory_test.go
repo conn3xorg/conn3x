@@ -123,6 +123,8 @@ func TestInventoryHostRanges(t *testing.T) {
 		"web[8:10].example.com": "web8.example.com,web9.example.com,web10.example.com",
 		"db-[a:c]":              "db-a,db-b,db-c",
 		"n[1:9:4]":              "n1,n5,n9",
+		"x[a:z:300]":            "xa",
+		"x[y:z:2]":              "xy",
 		"r[1:2]-[a:b]":          "r1-a,r1-b,r2-a,r2-b",
 		"plain":                 "plain",
 	} {
