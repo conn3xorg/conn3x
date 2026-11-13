@@ -252,9 +252,10 @@ func TestBatchTwoCircuits(t *testing.T) {
 	}
 }
 
-// A rescue runs on the hosts where a step it watches failed, in a plan of
-// its own after the apply, and an always block on the hosts where one ran;
-// neither leaves anything in state behind it.
+// A prereq runs before the apply on the hosts where a step it's before
+// changes, a rescue after it on the hosts where a step it watches failed,
+// and an always block on the hosts where one ran, each in a plan of its
+// own; none leaves anything in state behind it.
 func TestRescue(t *testing.T) {
 	web1, web2 := startHost(t, "rocky10"), startHost(t, "rocky10")
 	knownFile := shareKey(t, web1, web2)
@@ -272,8 +273,11 @@ func TestRescue(t *testing.T) {
 	if file(web1, "always") != "always 1" || file(web2, "always") != "always 1" {
 		t.Errorf("the always block should run on both hosts: %q, %q", file(web1, "always"), file(web2, "always"))
 	}
-	if out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=1"); strings.Contains(out, "Running always") {
-		t.Errorf("with nothing to change, no always block should run:\n%s", out)
+	if !strings.Contains(out, "Running prereqs on web1, web2:") || file(web1, "seen") != "drained 1" || file(web2, "seen") != "drained 1" {
+		t.Errorf("the prereq should run before config on both hosts: saw %q, %q\n%s", file(web1, "seen"), file(web2, "seen"), out)
+	}
+	if out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=1"); strings.Contains(out, "Running always") || strings.Contains(out, "Running prereqs") {
+		t.Errorf("with nothing to change, no prereq or always block should run:\n%s", out)
 	}
 
 	out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=2", "-var=fail_on=web2", "-report=run.json")
@@ -304,8 +308,8 @@ func TestRescue(t *testing.T) {
 		t.Errorf("the report should mark web2 rescued and show the rescue:\n%s", raw)
 	}
 
-	if out := w.mustConn3x("state", "list"); strings.Contains(out, "restore") || strings.Contains(out, "after") {
-		t.Errorf("the rescue and always block should be dropped from state:\n%s", out)
+	if out := w.mustConn3x("state", "list"); strings.Contains(out, "restore") || strings.Contains(out, "after") || strings.Contains(out, "drain") {
+		t.Errorf("the prereq, rescue and always block should be dropped from state:\n%s", out)
 	}
 	if out, code := w.conn3x("plan", "-no-color", "-detailed-exitcode", "-var=run=2", "-var=fail_on=web2"); code != 2 || !strings.Contains(out, `app__config["web2"] will be created`) || strings.Contains(out, "restore") || strings.Contains(out, `["web1"] must`) {
 		t.Errorf("the next plan should catch web2 up and say nothing of the rescue (exit %d):\n%s", code, out)

@@ -35,6 +35,12 @@ const rescueSteps = `step "config" {
       command = "lb-enable"
     }
   }
+  prereq "drain" {
+    before = [step.config]
+    command {
+      command = "drain"
+    }
+  }
   rescue "page" {
     watches  = [step.config]
     for_each = ["a", "b"]
@@ -84,6 +90,7 @@ func TestRescueErrors(t *testing.T) {
 		"Duplicate rescue":                `rescue "config" {` + "\nwatches = [step.config]\n" + `command { command = "x" }` + "\n}",
 		"Duplicate always":                `always "page" {` + "\nwatches = [step.config]\n" + `command { command = "x" }` + "\n}\n" + `rescue "page" {` + "\nwatches = [step.config]\n" + `command { command = "x" }` + "\n}",
 		"Missing watches in always":       `always "r" {` + "\n" + `command { command = "x" }` + "\n}",
+		"Missing before in prereq":        `prereq "r" {` + "\nwatches = [step.config]\n" + `command { command = "x" }` + "\n}",
 		`Unsupported argument "notify"`:   `rescue "r" {` + "\nwatches = [step.config]\nnotify = [handler.restart]\n" + `command { command = "x" }` + "\n}",
 		`Unsupported argument "run_once"`: `rescue "r" {` + "\nwatches = [step.config]\nrun_once = true\n" + `command { command = "x" }` + "\n}",
 	} {
@@ -101,10 +108,10 @@ func TestConn3xRescues(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, diags := Conn3xRescues(dir)
-	if diags.HasErrors() || len(got) != 3 {
+	if diags.HasErrors() || len(got) != 4 || got[3].Kind != "prereq" || !slices.Equal(got[3].Watches, []string{"config"}) {
 		t.Fatalf("%v, %v", got, diags)
 	}
-	if got[0].Resource() != "app__restore" || !slices.Equal(got[0].Watches, []string{"config", "restart"}) || !slices.Equal(got[1].Watches, []string{"config"}) || got[1].Always || got[2].Name != "lb" || !got[2].Always {
+	if got[0].Resource() != "app__restore" || !slices.Equal(got[0].Watches, []string{"config", "restart"}) || !slices.Equal(got[1].Watches, []string{"config"}) || got[1].Kind != "rescue" || got[2].Name != "lb" || got[2].Kind != "always" {
 		t.Errorf("got %+v", got)
 	}
 }

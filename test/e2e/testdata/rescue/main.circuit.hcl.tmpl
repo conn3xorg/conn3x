@@ -26,7 +26,7 @@ circuit "app" {
 
   step "config" {
     command {
-      command = "[ ${each.key} != '${var.fail_on}' ] && echo ${var.run} > /tmp/config"
+      command = "cat /tmp/drain > /tmp/seen; [ ${each.key} != '${var.fail_on}' ] && echo ${var.run} > /tmp/config"
     }
   }
 
@@ -55,6 +55,13 @@ circuit "app" {
     watches = [step.config]
     command {
       command = "[ ${var.always_fails} = false ] && echo always ${var.run} > /tmp/always"
+    }
+  }
+
+  prereq "drain" {
+    before = [step.config]
+    command {
+      command = "echo drained ${var.run} > /tmp/drain"
     }
   }
 }

@@ -29,11 +29,20 @@ import (
 //	  command { command = "lb-enable ${each.key}" }
 //	}
 //
+// and a prereq runs on a host before a step it's before, only when that
+// step is about to change there, like Salt's prereq:
+//
+//	prereq "lb_disable" {
+//	  before = [step.config]
+//	  command { command = "lb-disable ${each.key}" }
+//	}
+//
 // Each lowers like a step, but has no instances in a plan: conn3x apply
-// runs the rescues in a plan of their own after an apply in which a watched
-// step failed, on the hosts where it failed, then the always blocks on the
-// hosts where a watched step ran, and drops them from state (see
-// cmd/conn3x/conn3x_rescue.go and docs/rescue-design.md).
+// runs the prereqs in a plan of their own before the apply, on the hosts
+// where a step they're before changes, then the rescues after an apply in
+// which a watched step failed, on the hosts where it failed, then the
+// always blocks on the hosts where a watched step ran, and drops them from
+// state (see cmd/conn3x/conn3x_rescue.go and docs/rescue-design.md).
 
 // Conn3xRescueHosts is set in the plan a rescue or always phase makes:
 // each rescue or always block's resource name to the hosts it runs on.
@@ -99,40 +108,56 @@ func Conn3xRescueResource(r *Resource) bool {
 	return ok
 }
 
-// Conn3xRescue is one rescue or always block, as conn3x apply needs it.
+// Conn3xRescue is one rescue, always or prereq block, as conn3x apply
+// needs it.
 type Conn3xRescue struct {
 	Circuit, Name string
-	Always        bool
-	// Watches are the step and handler names it watches, in the order
-	// written. A step and a handler can't share a name.
+	Kind          string // "rescue", "always" or "prereq"
+	// Watches are the step and handler names it watches, or for a prereq
+	// is before, in the order written. A step and a handler can't share a
+	// name.
 	Watches []string
 }
 
 // Resource is its resource name.
 func (r Conn3xRescue) Resource() string { return r.Circuit + "__" + r.Name }
 
-// rescueRefuses are the step arguments a rescue or always block doesn't
-// take, and why.
+// rescueRefuses are the step arguments a rescue, always or prereq block
+// doesn't take, and why.
 var rescueRefuses = map[string]string{
-	"depends_on": "It runs after the steps it watches, in a plan of its own, so it can't wait for anything else.",
-	"run_once":   "It runs on each host where a step it watches did.",
+	"depends_on": "It runs in a plan of its own, next to the steps it goes with, so it can't wait for anything else.",
+	"run_once":   "It runs on each host where a step it goes with does.",
 	"import":     "It's dropped from state once it has run, so there's nothing to import into.",
 	"notify":     "It can't notify a handler yet. Put the restart in the block itself.",
 }
 
-// rescueWatches reads a rescue or always block's watches =
-// [step.<name>, handler.<name>, ...].
+// watchesAttr is the argument naming what a rescue, always or prereq
+// block follows: a prereq's before, the others' watches.
+func watchesAttr(kind string) string {
+	if kind == "prereq" {
+		return "before"
+	}
+	return "watches"
+}
+
+// rescueWatches reads a rescue or always block's watches, or a prereq's
+// before: [step.<name>, handler.<name>, ...].
 func rescueWatches(rescue *hcl.Block) ([]string, hcl.Diagnostics) {
 	body, ok := rescue.Body.(*hclsyntax.Body)
 	if !ok {
 		return nil, hcl.Diagnostics{nativeSyntaxRequired(rescue.DefRange)}
 	}
-	attr, ok := body.Attributes["watches"]
+	name := watchesAttr(rescue.Type)
+	attr, ok := body.Attributes[name]
 	if !ok {
+		detail := "A " + rescue.Type + " block runs on a host after a step or handler it watches: watches = [step.config, handler.restart]."
+		if name == "before" {
+			detail = "A prereq runs on a host before a step it's before, when that step is about to change there: before = [step.config]."
+		}
 		return nil, hcl.Diagnostics{{
 			Severity: hcl.DiagError,
-			Summary:  "Missing watches in " + rescue.Type,
-			Detail:   "A " + rescue.Type + " block runs on a host after a step or handler it watches: watches = [step.config, handler.restart].",
+			Summary:  "Missing " + name + " in " + rescue.Type,
+			Detail:   detail,
 			Subject:  rescue.DefRange.Ptr(),
 		}}
 	}
@@ -143,8 +168,8 @@ func rescueWatches(rescue *hcl.Block) ([]string, hcl.Diagnostics) {
 		if tDiags.HasErrors() || len(t) != 2 || (t.RootName() != "step" && t.RootName() != "handler") {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  "Invalid watches in " + rescue.Type,
-				Detail:   "watches takes a list of step.<name> and handler.<name> references to steps and handlers in the same circuit.",
+				Summary:  "Invalid " + name + " in " + rescue.Type,
+				Detail:   name + " takes a list of step.<name> and handler.<name> references to steps and handlers in the same circuit.",
 				Subject:  e.Range().Ptr(),
 			})
 			continue
@@ -154,8 +179,8 @@ func rescueWatches(rescue *hcl.Block) ([]string, hcl.Diagnostics) {
 	if len(exprs) == 0 && !diags.HasErrors() {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  "Empty watches in " + rescue.Type,
-			Detail:   "A " + rescue.Type + " block that watches nothing never runs. Name the steps and handlers it follows.",
+			Summary:  "Empty " + name + " in " + rescue.Type,
+			Detail:   "A " + rescue.Type + " block with no steps in " + name + " never runs. Name the steps and handlers it goes with.",
 			Subject:  attr.SrcRange.Ptr(),
 		})
 	}
@@ -184,7 +209,7 @@ func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers, taken map
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Duplicate " + rescue.Type,
-				Detail:   fmt.Sprintf("Circuit %q already has a step, handler, rescue or always block named %q. They share names.", circuit, name),
+				Detail:   fmt.Sprintf("Circuit %q already has a step, handler, rescue, always or prereq block named %q. They share names.", circuit, name),
 				Subject:  &rescue.DefRange,
 			})
 			continue
@@ -199,11 +224,11 @@ func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers, taken map
 		diags = append(diags, wDiags...)
 		for i, w := range watches {
 			if !steps[w] && !handlers[w] {
-				e, _ := hcl.ExprList(body.Attributes["watches"].Expr)
+				e, _ := hcl.ExprList(body.Attributes[watchesAttr(rescue.Type)].Expr)
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  fmt.Sprintf("No step or handler %q", w),
-					Detail:   fmt.Sprintf("Circuit %q has no step or handler named %q for %s %q to watch.", circuit, w, rescue.Type, name),
+					Detail:   fmt.Sprintf("Circuit %q has no step or handler named %q for %s %q to go with.", circuit, w, rescue.Type, name),
 					Subject:  e[i].Range().Ptr(),
 				})
 			}
@@ -217,7 +242,7 @@ func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers, taken map
 					Detail:   why,
 					Subject:  a.SrcRange.Ptr(),
 				})
-			} else if k != "watches" {
+			} else if k != watchesAttr(rescue.Type) {
 				attrs[k] = a
 			}
 		}
@@ -240,8 +265,11 @@ func lowerRescues(circuit string, rescues hcl.Blocks, steps, handlers, taken map
 	return out, diags
 }
 
-// Conn3xRescues reads the rescue and always blocks of the circuits in the
-// root module in dir, rescues first. It reads only what conn3x apply needs; the full checks run when the
+// rescueKinds are the blocks that run in phases of their own.
+var rescueKinds = []string{"rescue", "always", "prereq"}
+
+// Conn3xRescues reads the rescue, always and prereq blocks of the circuits
+// in the root module in dir, by kind in rescueKinds' order. It reads only what conn3x apply needs; the full checks run when the
 // configuration loads.
 func Conn3xRescues(dir string) ([]Conn3xRescue, hcl.Diagnostics) {
 	entries, err := os.ReadDir(dir)
@@ -263,10 +291,12 @@ func Conn3xRescues(dir string) ([]Conn3xRescue, hcl.Diagnostics) {
 		top, _, _ := f.Body.PartialContent(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "circuit", LabelNames: []string{"name"}}}})
 		for _, block := range top.Blocks {
 			content, _, _ := block.Body.PartialContent(circuitSchema)
-			for _, rescue := range append(content.Blocks.OfType("rescue"), content.Blocks.OfType("always")...) {
-				watches, wDiags := rescueWatches(rescue)
-				diags = append(diags, wDiags...)
-				out = append(out, Conn3xRescue{Circuit: block.Labels[0], Name: rescue.Labels[0], Always: rescue.Type == "always", Watches: watches})
+			for _, kind := range rescueKinds {
+				for _, rescue := range content.Blocks.OfType(kind) {
+					watches, wDiags := rescueWatches(rescue)
+					diags = append(diags, wDiags...)
+					out = append(out, Conn3xRescue{Circuit: block.Labels[0], Name: rescue.Labels[0], Kind: kind, Watches: watches})
+				}
 			}
 		}
 	}
