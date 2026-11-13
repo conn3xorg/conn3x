@@ -65,6 +65,7 @@ var circuitModules = map[string]string{
 	"lvm_volume_group":     "conn3x_lvm_volume_group",
 	"lvm_logical_volume":   "conn3x_lvm_logical_volume",
 	"sudoers":              "conn3x_sudoers",
+	"nm_connection":        "conn3x_nm_connection",
 	"wait_for":             "conn3x_wait_for",
 	"reboot":               "conn3x_reboot",
 	"directory":            "conn3x_directory",
