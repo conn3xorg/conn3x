@@ -58,6 +58,7 @@ var circuitModules = map[string]string{
 	"tls_csr":              "conn3x_tls_csr",
 	"archive":              "conn3x_archive",
 	"git":                  "conn3x_git",
+	"modprobe":             "conn3x_modprobe",
 	"mount":                "conn3x_mount",
 	"wait_for":             "conn3x_wait_for",
 	"reboot":               "conn3x_reboot",

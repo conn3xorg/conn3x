@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/fsobj"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/kmod"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
@@ -382,6 +383,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"unarchive":          unarchiveModule,
 	"git":                gitModule,
 	"mount":              mountModule,
+	"modprobe":           modprobeModule,
 	"command":            commandModule,
 	"shell":              commandModule,
 	"reboot":             rebootModule,
@@ -1114,6 +1116,42 @@ func mountModule(in *input) ([]step, string) {
 	attrs = in.optional(attrs, "opts", "opts")
 	in.ignore("dump", "passno")
 	return one("mount", attrs)
+}
+
+func modprobeModule(in *input) ([]step, string) {
+	st := in.state("present", "present", "absent")
+	// Ansible's persistent defaults to disabled, which leaves the boot files
+	// alone; the step's default writes them.
+	persistent := "disabled"
+	if in.has("persistent") {
+		persistent = in.str("persistent")
+	}
+	m := kmod.Module{Name: in.str("name"), Params: strings.Fields(in.str("params")), Absent: st == "absent"}
+	switch {
+	case persistent == "disabled":
+	case persistent == "present" && !m.Absent, persistent == "absent" && m.Absent:
+		m.Persistent = true
+	default:
+		return nil, fmt.Sprintf("sets persistent: %s with state: %s, which the modprobe step can't do in one step", persistent, st)
+	}
+	if err := m.Validate(); err != nil {
+		return nil, err.Error()
+	}
+	attrs := []attr{s("name", m.Name)}
+	if len(m.Params) > 0 {
+		vals := make([]cty.Value, len(m.Params))
+		for i, p := range m.Params {
+			vals[i] = cty.StringVal(p)
+		}
+		attrs = append(attrs, attr{key: "params", val: cty.ListVal(vals)})
+	}
+	if m.Absent {
+		attrs = append(attrs, s("state", "absent"))
+	}
+	if !m.Persistent {
+		attrs = append(attrs, attr{key: "persistent", val: cty.False})
+	}
+	return one("modprobe", attrs)
 }
 
 func commandModule(in *input) ([]step, string) {

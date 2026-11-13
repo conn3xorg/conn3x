@@ -1,0 +1,34 @@
+variable "params" {
+  type = list(string)
+}
+
+variable "state" {
+  type    = string
+  default = "present"
+}
+
+circuit "kernel" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "kmod" {
+    package {
+      name = "kmod"
+    }
+  }
+
+  step "ifb" {
+    modprobe {
+      name   = "ifb"
+      params = var.params
+      state  = var.state
+    }
+  }
+}
