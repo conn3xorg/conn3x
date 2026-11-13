@@ -5,6 +5,7 @@ package hostpattern
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,32 @@ func TestParseErrors(t *testing.T) {
 	for _, pattern := range []string{"", ",", "web1,!", "web1,&", "~(", "web["} {
 		if _, err := Parse(pattern); err == nil {
 			t.Errorf("%q parsed, want an error", pattern)
+		}
+	}
+}
+
+func TestMatchInGroups(t *testing.T) {
+	groups := map[string][]string{"web1": {"webservers", "eu"}, "web2": {"webservers", "us"}, "db1": {"dbservers", "eu"}}
+	for raw, want := range map[string]string{
+		"webservers":      "web1,web2",
+		"webservers:&eu":  "web1",
+		"eu:!dbservers":   "web1",
+		"web*:dbservers":  "db1,web1,web2",
+		"~^db":            "db1",
+		"all:!webservers": "db1",
+	} {
+		p, err := Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, h := range []string{"db1", "web1", "web2"} {
+			if p.MatchIn(h, groups[h]) {
+				got = append(got, h)
+			}
+		}
+		if strings.Join(got, ",") != want {
+			t.Errorf("%s = %v, want %s", raw, got, want)
 		}
 	}
 }
