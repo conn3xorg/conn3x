@@ -53,3 +53,7 @@ step "worker" {
 ## Removal
 
 When you delete a `container` step, `on_remove` decides what happens on the host. The default, `"forget"`, leaves the container running. `"delete"` removes it with `rm -f`. Its volumes stay either way.
+
+## From Ansible
+
+`conn3x convert ansible` turns `community.docker.docker_container` and `containers.podman.podman_container` tasks with `state: started` into `container` steps, with `engine` set to match. `published_ports`, `publish` and `ports` become `ports`; `volumes` and `volume` become `volumes`; `restart_policy` becomes `restart`; `env` and `command` carry over. A `command` written as one string with quotes or shell characters, any other `state`, and arguments the step doesn't have, such as `networks` or `healthcheck`, stay a TODO.
