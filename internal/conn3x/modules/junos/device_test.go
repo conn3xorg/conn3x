@@ -271,3 +271,22 @@ func TestPending(t *testing.T) {
 		t.Fatalf("pending: %q, %v", says, err)
 	}
 }
+
+// Junos says some refusals in words no keyword list knows: the caret
+// under the refused word is what marks them.
+func TestCLIErrorsAfterACaret(t *testing.T) {
+	out := `ops# set interfaces ge-0/0/4 mtu 9216
+                                         ^
+Value 9216 is not within range (256..9192) at '9216'
+[edit]
+ops# commit check
+configuration check succeeds
+`
+	if errs := cliErrors(out); len(errs) != 1 || !strings.Contains(errs[0], "not within range") {
+		t.Fatalf("errs = %q", errs)
+	}
+	syntax := "ops# set x\n          ^\nsyntax error.\n"
+	if errs := cliErrors(syntax); len(errs) != 1 {
+		t.Errorf("a syntax error counted %d times: %q", len(errs), errs)
+	}
+}
