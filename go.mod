@@ -13,6 +13,7 @@ godebug (
 require (
 	cloud.google.com/go/kms v1.33.0
 	cloud.google.com/go/storage v1.65.0
+	filippo.io/age v1.2.1
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources v1.2.0

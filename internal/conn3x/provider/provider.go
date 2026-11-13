@@ -150,7 +150,8 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 			"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema(),
 			"conn3x_packages": packagesDataSchema(), "conn3x_services": servicesDataSchema(),
 		},
-		Functions: functions,
+		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema()},
+		Functions:          functions,
 	}
 }
 
@@ -192,8 +193,8 @@ func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.V
 	return providers.ValidateDataResourceConfigResponse{Diagnostics: diags}
 }
 
-func (p *Provider) ValidateEphemeralConfig(context.Context, providers.ValidateEphemeralConfigRequest) providers.ValidateEphemeralConfigResponse {
-	return providers.ValidateEphemeralConfigResponse{Diagnostics: unsupported("ephemeral resources")}
+func (p *Provider) ValidateEphemeralConfig(_ context.Context, req providers.ValidateEphemeralConfigRequest) providers.ValidateEphemeralConfigResponse {
+	return validateSecrets(req)
 }
 
 func (p *Provider) MoveResourceState(context.Context, providers.MoveResourceStateRequest) providers.MoveResourceStateResponse {
@@ -365,16 +366,18 @@ func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSou
 	return read(ctx, req)
 }
 
-func (p *Provider) OpenEphemeralResource(context.Context, providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
-	return providers.OpenEphemeralResourceResponse{Diagnostics: unsupported("ephemeral resources")}
+func (p *Provider) OpenEphemeralResource(_ context.Context, req providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
+	return openSecrets(req)
 }
 
+// RenewEphemeralResource and CloseEphemeralResource have nothing to do: a
+// secrets file is read once, and holds nothing open.
 func (p *Provider) RenewEphemeralResource(context.Context, providers.RenewEphemeralResourceRequest) providers.RenewEphemeralResourceResponse {
-	return providers.RenewEphemeralResourceResponse{Diagnostics: unsupported("ephemeral resources")}
+	return providers.RenewEphemeralResourceResponse{}
 }
 
 func (p *Provider) CloseEphemeralResource(context.Context, providers.CloseEphemeralResourceRequest) providers.CloseEphemeralResourceResponse {
-	return providers.CloseEphemeralResourceResponse{Diagnostics: unsupported("ephemeral resources")}
+	return providers.CloseEphemeralResourceResponse{}
 }
 
 func resourceSchemas() map[string]providers.Schema {

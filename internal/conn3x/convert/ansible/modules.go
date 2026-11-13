@@ -204,7 +204,7 @@ func (in *input) render(key, s string) string {
 		return m
 	})
 	if strings.Contains(out, vaultMark) {
-		in.fail(key + " is encrypted with Ansible Vault, which the converter can't read; set it by hand, from an ephemeral variable if it's a secret")
+		in.fail(key + " is encrypted with Ansible Vault, which the converter can't read. Move the secret to a SOPS file, such as with ansible-vault view <file> | sops -e --input-type yaml --output-type yaml --age <recipient> /dev/stdin > secrets.sops.yaml, and read it with ephemeral \"conn3x_secrets\" into a write-only argument")
 	}
 	if strings.Contains(out, "{{") || strings.Contains(out, "{%") {
 		in.fail(key + " uses a Jinja expression the converter can't translate")
