@@ -51,3 +51,7 @@ step "app_fs" {
 ## Removal
 
 When you delete a `filesystem` step, the device keeps its file system. There's no `on_remove`: erasing a file system is never something a removed step should do.
+
+## From Ansible
+
+`conn3x convert ansible` turns `community.general.filesystem` tasks with `state: present` into `filesystem` steps: `dev` becomes `device`, `fstype` becomes `type`, `resizefs` becomes `resize`, and `opts` is split into words. A task with `force: true` keeps it, with a TODO to take it off once the hosts have the file system.

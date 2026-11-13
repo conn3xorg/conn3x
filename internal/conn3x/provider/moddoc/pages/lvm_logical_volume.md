@@ -55,3 +55,7 @@ step "logs_lv" {
 ## Removal
 
 When you delete a `lvm_logical_volume` step, the volume stays on the host, with its data. There's no `on_remove`.
+
+## From Ansible
+
+`conn3x convert ansible` turns `community.general.lvol` tasks with `state: present` into `lvm_logical_volume` steps, with `lv` as `name`. `force` carries over, with a TODO to take it off. `resizefs` leaves a TODO to add a `filesystem` step with `resize = true`. A size relative to the current one, such as `+100%FREE`, or a share of `%PVS`, stays a TODO, as do snapshots and thin pools.
