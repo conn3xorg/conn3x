@@ -183,3 +183,55 @@ func TestStepWhenHandlerTrigger(t *testing.T) {
 		}
 	}
 }
+
+// A provider function in hosts, for_each or when must still be found by
+// OpenTofu, which reads the functions an expression calls to know which
+// providers it needs.
+func TestStepForEachPassesFunctionsOn(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": `circuit "app" {
+  hosts = provider::conn3x::inventory("inv.ini", "web")
+  ssh {
+    user = "root"
+  }
+  step "first" {
+    command {
+      command = "true"
+    }
+  }
+  step "s" {
+    for_each = provider::a::items()
+    when     = provider::b::ok(each.key)
+    command {
+      command = "true"
+    }
+  }
+}`})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	for addr, want := range map[string][]string{
+		"conn3x_command.app__first": {"provider::conn3x::inventory"},
+		"conn3x_command.app__s":     {"provider::conn3x::inventory", "provider::a::items", "provider::b::ok"},
+	} {
+		f, ok := mod.ManagedResources[addr].ForEach.(hcl.ExpressionWithFunctions)
+		if !ok {
+			t.Fatalf("%s: for_each doesn't list its functions", addr)
+		}
+		var got []string
+		for _, tr := range f.Functions() {
+			var parts []string
+			for _, step := range tr {
+				switch s := step.(type) {
+				case hcl.TraverseRoot:
+					parts = append(parts, s.Name)
+				case hcl.TraverseAttr:
+					parts = append(parts, s.Name)
+				}
+			}
+			got = append(got, strings.Join(parts, "::"))
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: functions = %v, want %v", addr, got, want)
+		}
+	}
+}

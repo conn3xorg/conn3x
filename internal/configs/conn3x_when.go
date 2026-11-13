@@ -98,6 +98,21 @@ func (w *whenFilter) Variables() []hcl.Traversal {
 	return out
 }
 
+func (w *whenFilter) Functions() []hcl.Traversal { return exprFunctions(w.instances, w.cond) }
+
+// exprFunctions lists the functions exprs call. OpenTofu reads them to find
+// which providers' functions an expression needs, so an expression that
+// wraps others must pass theirs on.
+func exprFunctions(exprs ...hcl.Expression) []hcl.Traversal {
+	var out []hcl.Traversal
+	for _, e := range exprs {
+		if f, ok := e.(hcl.ExpressionWithFunctions); ok {
+			out = append(out, f.Functions()...)
+		}
+	}
+	return out
+}
+
 func (w *whenFilter) Range() hcl.Range      { return w.cond.Range() }
 func (w *whenFilter) StartRange() hcl.Range { return w.cond.StartRange() }
 
