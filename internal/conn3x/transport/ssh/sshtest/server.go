@@ -380,12 +380,16 @@ func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request, exited, f
 		}
 	}()
 	for req := range reqs {
-		if req.Type != "exec" {
+		if req.Type != "exec" && req.Type != "shell" {
 			_ = req.Reply(false, nil)
 			continue
 		}
-		cmdLen := binary.BigEndian.Uint32(req.Payload[:4])
-		command := string(req.Payload[4 : 4+cmdLen])
+		// A shell request has no command: the login shell reads stdin.
+		command := ""
+		if req.Type == "exec" {
+			cmdLen := binary.BigEndian.Uint32(req.Payload[:4])
+			command = string(req.Payload[4 : 4+cmdLen])
+		}
 		_ = req.Reply(true, nil)
 		s.mu.Lock()
 		s.commands = append(s.commands, command)
@@ -403,6 +407,9 @@ func (s *Server) session(ch gossh.Channel, reqs <-chan *gossh.Request, exited, f
 		}
 
 		cmd := exec.Command("sh", "-c", command)
+		if req.Type == "shell" {
+			cmd = exec.Command("sh")
+		}
 		cmd.Dir = s.Dir
 		cmd.Env = append(os.Environ(), s.Env...)
 		// Stdin goes through an os.Pipe so that, as with sshd, the command
