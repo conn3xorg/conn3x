@@ -266,6 +266,15 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 		c.otherUser = c.filesChangeUser(p, become)
 	}
 	vars := map[string]string{}
+	// The inventory's variables, group_vars and host_vars included, come
+	// below the play's own, as in Ansible. Only one every host in the play
+	// shares can become a value in a step; one that differs by host stays
+	// for review.
+	if group != nil {
+		for k, v := range group.CommonVars() {
+			vars[k] = v
+		}
+	}
 	for k, v := range mapping(p["vars"]) {
 		if v.Kind == yaml.ScalarNode {
 			vars[k] = v.Value

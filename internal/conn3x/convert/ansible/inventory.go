@@ -449,6 +449,27 @@ func (inv *Inventory) Group(name string) *Group {
 // with Ansible Vault, which can't be read.
 func Encrypted(v string) bool { return v == vaultMark }
 
+// CommonVars are the variables every host in the group sets to the same
+// plain value, leaving out Ansible's own ansible_* settings.
+func (g *Group) CommonVars() map[string]string {
+	out := map[string]string{}
+	keys := map[string]bool{}
+	for _, vars := range g.hosts {
+		for k := range vars {
+			keys[k] = true
+		}
+	}
+	for k := range keys {
+		if strings.HasPrefix(k, "ansible_") {
+			continue
+		}
+		if v, ok := g.Common(k); ok && !Encrypted(v) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // Names lists the group's hosts, sorted.
 func (g *Group) Names() []string {
 	out := make([]string, 0, len(g.hosts))

@@ -146,3 +146,42 @@ func TestInventoryHostRanges(t *testing.T) {
 		t.Errorf("web = %v", got)
 	}
 }
+
+// A playbook converted with -i finds values the inventory and its
+// group_vars set for every host in the play; the play's own vars win.
+func TestConvertUsesInventoryVars(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "hosts.ini"), "[web]\nweb1\nweb2\n\n[web:vars]\nmotd=managed by conn3x\nport=8080\n")
+	if err := os.Mkdir(filepath.Join(dir, "group_vars"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "group_vars", "web.yml"), "site_root: /srv/site\n")
+	writeFile(t, filepath.Join(dir, "play.yml"), `- hosts: web
+  vars:
+    port: 9090
+  tasks:
+    - name: motd
+      copy: { dest: /etc/motd, content: "{{ motd }}\n" }
+    - name: root
+      file: { path: "{{ site_root }}", state: directory }
+    - name: port
+      copy: { dest: /etc/port, content: "{{ port }}\n" }
+`)
+	inv, err := ReadInventory(filepath.Join(dir, "hosts.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ConvertWith(filepath.Join(dir, "play.yml"), Options{Inventory: inv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := string(res.HCL)
+	for _, want := range []string{"managed by conn3x", `path = "/srv/site"`, "9090"} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %q:\n%s", want, hcl)
+		}
+	}
+	if res.Converted != 3 || len(res.Review) != 0 {
+		t.Errorf("converted %d, review %v", res.Converted, res.Review)
+	}
+}
