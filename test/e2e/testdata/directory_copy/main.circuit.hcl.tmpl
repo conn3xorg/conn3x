@@ -1,0 +1,21 @@
+circuit "site" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .Present}}
+  step "www" {
+    directory_copy {
+      source      = "${path.module}/site"
+      destination = "/srv/site"
+      owner       = "nobody"
+      delete      = true
+      on_remove   = "delete"
+    }
+  }
+{{- end}}
+}
