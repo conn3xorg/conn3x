@@ -189,9 +189,28 @@ func ValidateHostname(name string) error {
 	return nil
 }
 
-// Hostname is the device's name as one statement.
-func Hostname(name string) Config {
-	return Config{Lines: []string{"set system host-name " + name}, Match: MatchLines}
+// Hostname is the device's name, a single-valued statement.
+func Hostname(name string) Leaf { return Leaf{Path: "system host-name", Value: name} }
+
+// Leaf is one single-valued statement: the device holds one value at Path.
+type Leaf struct{ Path, Value string }
+
+func (l Leaf) want() string { return "set " + l.Path + " " + l.Value }
+
+// InSync reports whether config holds the leaf with this value.
+func (l Leaf) InSync(config string) bool { return l.Commands(config) == nil }
+
+// Commands set the leaf, deleting another value first so WithLines shows
+// the next step only this one. Nil when it already holds this value.
+func (l Leaf) Commands(config string) []string {
+	got := haveLeaf(SetLines(config), l.Path)
+	switch {
+	case got == l.want():
+		return nil
+	case got != "":
+		return []string{"delete " + l.Path, l.want()}
+	}
+	return []string{l.want()}
 }
 
 // VLAN is one VLAN on an ELS switch, keyed by name as Junos keys them.
@@ -237,9 +256,9 @@ func (v VLAN) RemoveCommands(config string) []string {
 // the device will hold once they commit, for the next step of the same
 // commit to compare with. A delete takes the statements at and below it.
 //
-// shortcut: a set on a single-valued leaf, such as a new host-name, keeps
-// the old value's line beside the new one, which only a block step owning
-// that leaf would notice; model leaves if one ever does.
+// It can't tell a leaf from a list, so a set on a leaf keeps the old
+// value's line beside the new one; steps that own a leaf delete it before
+// setting another value (see Leaf), which keeps the view exact.
 func WithLines(config string, cmds []string) string {
 	lines := SetLines(config)
 	for _, c := range cmds {

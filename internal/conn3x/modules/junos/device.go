@@ -74,12 +74,23 @@ func Mask(text string) string {
 // line, a syntax error, or the caret it prints under the word it stopped at.
 var refusal = regexp.MustCompile(`(?m)^\s*(error: .*|syntax error.*|unknown command.*|missing argument.*|invalid (?:value|ip address|prefix).*|.*is ambiguous.*)$`)
 
+// caret matches the line the CLI prints under the word it refused, and
+// the message on the line after it, whatever that says: "syntax error.",
+// or "Value 9216 is not within range (256..9192) at '9216'", which no
+// keyword list would catch.
+var caret = regexp.MustCompile(`(?m)^[ \t]*\^[ \t]*\n(.+)$`)
+
 // xnmError matches an error in | display xml output and its message.
 var xnmError = regexp.MustCompile(`(?s)<xnm:error[^>]*>.*?<message>\s*(.*?)\s*</message>.*?</xnm:error>`)
 
 // cliErrors are the CLI's refusals in out, masked, or nil.
 func cliErrors(out string) []string {
 	var errs []string
+	for _, m := range caret.FindAllStringSubmatch(out, -1) {
+		if msg := strings.TrimSpace(m[1]); !refusal.MatchString(msg) { // counted below
+			errs = append(errs, Mask(msg))
+		}
+	}
 	for _, m := range refusal.FindAllStringSubmatch(out, -1) {
 		errs = append(errs, Mask(strings.TrimSpace(m[1])))
 	}

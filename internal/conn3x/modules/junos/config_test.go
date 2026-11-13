@@ -111,6 +111,9 @@ func TestHostname(t *testing.T) {
 	if !Hostname("sw-spike").InSync(running) {
 		t.Error("out of sync")
 	}
+	if got := Hostname("sw2").Commands(running); !slices.Equal(got, []string{"delete system host-name", "set system host-name sw2"}) {
+		t.Errorf("rename: %q", got)
+	}
 	if ValidateHostname("-bad") == nil || ValidateHostname("sw1.lab") != nil {
 		t.Error("ValidateHostname")
 	}

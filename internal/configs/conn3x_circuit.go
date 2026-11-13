@@ -90,6 +90,8 @@ var circuitModules = map[string]string{
 	"junos_config":                 "conn3x_junos_config",
 	"junos_hostname":               "conn3x_junos_hostname",
 	"junos_vlan":                   "conn3x_junos_vlan",
+	"junos_interface":              "conn3x_junos_interface",
+	"junos_user":                   "conn3x_junos_user",
 	"windows_acl":                  "conn3x_windows_acl",
 	"windows_ad_domain":            "conn3x_windows_ad_domain",
 	"windows_ad_domain_controller": "conn3x_windows_ad_domain_controller",

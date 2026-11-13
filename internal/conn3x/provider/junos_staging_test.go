@@ -248,3 +248,76 @@ func TestJunosTurnGivesUpOnAnIdleCircuit(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Disabling the interface that holds the address Conn3x connects to fails
+// its step and drops what the circuit staged.
+func TestJunosInterfaceGuard(t *testing.T) {
+	f, ssh := newFakeJunos(t, "set interfaces ge-0/0/3 unit 0 family inet address "+ssh0(t)+"/24")
+	step := onSwitch(eosStep("conn3x_junos_interface", map[string]cty.Value{
+		"name": cty.StringVal("ge-0/0/3"), "enabled": cty.False, "circuit": cty.StringVal("lab"),
+	}, nil), ssh)
+	err := create(func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+		return junosInterfaceKind.apply(ctx, req)
+	}, step)
+	if err == nil || !strings.Contains(err.Error(), "would cut it off") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, commits, _ := f.state(); commits != 0 {
+		t.Errorf("%d commits", commits)
+	}
+}
+
+// ssh0 is the address sshtest servers listen on, the one Conn3x connects to.
+func ssh0(t *testing.T) string {
+	t.Helper()
+	return sshtest.New(t).Host
+}
+
+// A password goes to the device as a salted hash, the read finds it in
+// sync, and a hash changed by hand reads as out of sync.
+func TestJunosUserPassword(t *testing.T) {
+	t.Setenv(hmacKeyEnv, strings.Repeat("k", 32))
+	f, ssh := newFakeJunos(t, "set system login user ops class super-user")
+	attrs := map[string]cty.Value{"name": cty.StringVal("alice"), "class": cty.StringVal("operator"), "on_remove": cty.StringVal(onRemoveDelete), "circuit": cty.StringVal("lab")}
+	config := onSwitch(eosStep("conn3x_junos_user", map[string]cty.Value{"name": cty.StringVal("alice"), "class": cty.StringVal("operator"), "password_wo": cty.StringVal("S3cret!")}, nil), ssh)
+	key, _ := hmacKey(false)
+	attrs["password_hmac"] = cty.StringVal(eosPasswordHMAC(key, junosUserID(config), "S3cret!"))
+	planned := onSwitch(eosStep("conn3x_junos_user", attrs, nil), ssh)
+	resp := applyJunosUser(ctx, providers.ApplyResourceChangeRequest{PriorState: cty.NullVal(planned.Type()), PlannedState: planned, Config: config})
+	if err := resp.Diagnostics.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := create(junosCommitApply, junosCommitFor("lab", ssh)); err != nil {
+		t.Fatal(err)
+	}
+	hash := eosSecret(key, junosUserID(config), "S3cret!")
+	running, _, _ := f.state()
+	if !slices.Contains(running, `set system login user alice authentication encrypted-password "`+hash+`"`) {
+		t.Fatalf("no hash on the device: %q", running)
+	}
+	for _, l := range running {
+		if strings.Contains(l, "S3cret!") {
+			t.Fatalf("the password itself reached the device: %q", l)
+		}
+	}
+	inSync := func() bool {
+		r := junosUserKind.read(ctx, providers.ReadResourceRequest{PriorState: resp.NewState})
+		if err := r.Diagnostics.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return r.NewState.GetAttr("in_sync").True()
+	}
+	if !inSync() {
+		t.Error("not in sync after the password was set")
+	}
+	f.mu.Lock()
+	for n, l := range f.running {
+		if strings.Contains(l, "encrypted-password") {
+			f.running[n] = `set system login user alice authentication encrypted-password "$6$hand$Made"`
+		}
+	}
+	f.mu.Unlock()
+	if inSync() {
+		t.Error("a hash changed on the device still reads as in sync")
+	}
+}
