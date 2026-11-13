@@ -1,0 +1,26 @@
+terraform {
+  required_providers {
+    conn3x = { source = "terraform.io/builtin/conn3x" }
+  }
+}
+
+variable "deploy_key" {
+  type      = string
+  ephemeral = true
+  sensitive = true
+}
+
+provider "conn3x" {
+  private_keys = [var.deploy_key]
+}
+
+resource "conn3x_file" "motd" {
+  path    = "/etc/motd"
+  content = "keys from the provider block\n"
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.PortA}}
+    user             = "root"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}

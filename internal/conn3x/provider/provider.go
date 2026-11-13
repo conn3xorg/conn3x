@@ -144,7 +144,7 @@ func unsupported(what string) tfdiags.Diagnostics {
 
 func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchemaResponse {
 	return providers.GetProviderSchemaResponse{
-		Provider:      providers.Schema{Block: emptyBlock()},
+		Provider:      providers.Schema{Block: providerConfigSchema()},
 		ResourceTypes: resourceSchemas(),
 		DataSources: map[string]providers.Schema{
 			"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema(),
@@ -155,7 +155,8 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 }
 
 func (p *Provider) ValidateProviderConfig(_ context.Context, req providers.ValidateProviderConfigRequest) providers.ValidateProviderConfigResponse {
-	return providers.ValidateProviderConfigResponse{PreparedConfig: req.Config}
+	_, diags := parseProviderKeys(req.Config)
+	return providers.ValidateProviderConfigResponse{PreparedConfig: req.Config, Diagnostics: diags}
 }
 
 func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.ValidateResourceConfigRequest) providers.ValidateResourceConfigResponse {
@@ -200,8 +201,10 @@ func (p *Provider) MoveResourceState(context.Context, providers.MoveResourceStat
 	return providers.MoveResourceStateResponse{Diagnostics: unsupported("moving resource state")}
 }
 
-func (p *Provider) ConfigureProvider(context.Context, providers.ConfigureProviderRequest) providers.ConfigureProviderResponse {
-	return providers.ConfigureProviderResponse{}
+func (p *Provider) ConfigureProvider(_ context.Context, req providers.ConfigureProviderRequest) providers.ConfigureProviderResponse {
+	keys, diags := parseProviderKeys(req.Config)
+	addProviderKeys(keys)
+	return providers.ConfigureProviderResponse{Diagnostics: diags}
 }
 
 // Close aborts, with the last open instance, any config session still
