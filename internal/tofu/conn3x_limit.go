@@ -123,6 +123,10 @@ func conn3xLimitTargets(config *configs.Config, state *states.State, opts *PlanO
 				if Conn3xCLILimitCircuit != "" && (!c.Path.IsRoot() || !strings.HasPrefix(r.Name, Conn3xCLILimitCircuit+"__")) {
 					continue
 				}
+				// A rescue phase plans the rescues and nothing else.
+				if (configs.Conn3xRescueHosts != nil) != (c.Path.IsRoot() && configs.Conn3xRescueResource(r)) {
+					continue
+				}
 				targets = append(targets, conn3xHostTarget{ConfigResource: addr, config: r, limit: opts.Limit, hosts: hosts})
 			}
 		}

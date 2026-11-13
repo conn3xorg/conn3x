@@ -251,3 +251,52 @@ func TestBatchTwoCircuits(t *testing.T) {
 		t.Errorf("a change that needs batched steps should stop the apply before anything runs (exit %d):\n%s", code, out)
 	}
 }
+
+// A rescue runs on the hosts where a step it watches failed, in a plan of
+// its own after the apply, and leaves nothing in state behind it.
+func TestRescue(t *testing.T) {
+	web1, web2 := startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web1, web2)
+	w := newWorkdir(t, "rescue")
+	w.writeAs("main.circuit.hcl", chainVars{PortA: web1.port, PortB: web2.port, Key: web1.keyFile, KnownHosts: knownFile})
+	w.mustConn3x("init", "-no-color")
+	file := func(h *host, name string) string {
+		return strings.TrimSpace(h.exec("", "sh", "-c", "cat /tmp/"+name+" 2>/dev/null; true"))
+	}
+
+	out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=1")
+	if !strings.Contains(out, `If config fails on a host, rescue "restore" of circuit "app" runs there.`) || strings.Contains(out, "Rescuing") {
+		t.Errorf("the plan should say when the rescue runs, and nothing failed:\n%s", out)
+	}
+
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=2", "-var=fail_on=web2", "-report=run.json")
+	if code == 0 || !strings.Contains(out, "Rescuing web2:") || !strings.Contains(out, "Rescued web2. The apply still fails") {
+		t.Errorf("web2's failure should be rescued, and the apply still fail (exit %d):\n%s", code, out)
+	}
+	if file(web2, "rescued") != "rescued 2" || file(web1, "rescued") != "" || file(web1, "config") != "2" {
+		t.Errorf("only web2 should be rescued: web1 %q, web2 %q", file(web1, "rescued"), file(web2, "rescued"))
+	}
+	if file(web1, "never") != "" || file(web2, "never") != "" {
+		t.Error("a rescue whose watched step didn't fail ran")
+	}
+	var rep struct {
+		Hosts map[string]struct {
+			Rescued bool
+			Steps   []struct{ Step, Status string }
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(w.dir, "run.json"))
+	if err != nil || json.Unmarshal(raw, &rep) != nil {
+		t.Fatalf("report: %v\n%s", err, raw)
+	}
+	if !rep.Hosts["web2"].Rescued || rep.Hosts["web1"].Rescued || !strings.Contains(string(raw), `"step": "app.restore"`) {
+		t.Errorf("the report should mark web2 rescued and show the rescue:\n%s", raw)
+	}
+
+	if out := w.mustConn3x("state", "list"); strings.Contains(out, "restore") {
+		t.Errorf("the rescue should be dropped from state:\n%s", out)
+	}
+	if out, code := w.conn3x("plan", "-no-color", "-detailed-exitcode", "-var=run=2", "-var=fail_on=web2"); code != 2 || !strings.Contains(out, `app__config["web2"] will be created`) || strings.Contains(out, "restore") || strings.Contains(out, `["web1"] must`) {
+		t.Errorf("the next plan should catch web2 up and say nothing of the rescue (exit %d):\n%s", code, out)
+	}
+}

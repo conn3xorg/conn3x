@@ -35,13 +35,18 @@ const (
 	// batchCircuitEnv narrows a batch's -limit to the circuit rolling out
 	// (see tofu.Conn3xCLILimitCircuit).
 	batchCircuitEnv = "CONN3X_BATCH_CIRCUIT"
+
+	// childEnv marks the runs a batched apply makes of conn3x.
+	childEnv = "CONN3X_APPLY_CHILD"
 )
 
 // withBatch makes apply roll a circuit with batch_size out batch by batch,
 // as Ansible's serial does: it plans everything and asks once, then plans
 // and applies each batch of hosts with -limit, and stops starting batches
 // once more hosts have failed than max_failures allows. It runs conn3x
-// again for each plan and apply, as drift does.
+// again for each plan and apply, as drift does. A configuration with
+// rescues applies the same way, so the rescues can run after a failure
+// (see conn3x_rescue.go).
 func withBatch(cmd *command.Command) {
 	var size string
 	var maxFailures string
@@ -57,23 +62,32 @@ func withBatch(cmd *command.Command) {
 	run := cmd.Run
 	cmd.Run = func(m command.Meta) int {
 		batches, diags := configs.Conn3xBatches(".")
+		rescues, rescueDiags := configs.Conn3xRescues(".")
+		diags = append(diags, rescueDiags...)
 		if planPath != nil && *planPath != "" && size == "" && maxFailures == "" {
+			if len(rescues) > 0 && os.Getenv(rescueHostsEnv) == "" && os.Getenv(childEnv) == "" {
+				fmt.Fprintln(stderr, "Warning: a saved plan applies in one go, so no rescue runs if a step fails. Run conn3x apply without a plan file for that.")
+			}
 			return run(m) // a saved plan was planned whole, and applies whole
 		}
 		if diags.HasErrors() {
 			return run(m) // the configuration's own load reports it
 		}
+		what := "a batched apply"
 		if len(batches) == 0 {
 			if size != "" || maxFailures != "" {
 				fmt.Fprintln(stderr, "Error: -batch-size and -max-failures need a circuit with batch_size")
 				return 1
 			}
-			return run(m)
+			if len(rescues) == 0 || (op != nil && op.PlanMode == plans.DestroyMode) {
+				return run(m)
+			}
+			what = "an apply with rescues"
 		}
 		bs, err := batchesFor(batches, size, maxFailures)
 		args := os.Args[1:]
 		if err == nil {
-			err = batchRefuses(args, planPath, op, view)
+			err = batchRefuses(args, planPath, op, view, what)
 		}
 		if err == nil {
 			err = limitReachesPlan(m, nil)
@@ -93,7 +107,7 @@ func withBatch(cmd *command.Command) {
 			return 1
 		}
 		defer os.RemoveAll(tmp)
-		r := &batchRun{self: self, dir: m.WorkingDir.OriginalWorkingDir(), tmp: tmp, args: args, out: stdout, errOut: stderr, in: os.Stdin, hosts: moduleStepHosts(".")}
+		r := &batchRun{self: self, dir: m.WorkingDir.OriginalWorkingDir(), tmp: tmp, args: args, out: stdout, errOut: stderr, in: os.Stdin, hosts: moduleStepHosts("."), rescues: rescues, rescued: map[string]bool{}}
 		r.reportPath, _ = flagValue(r.applyFlags(), "report")
 		started := time.Now()
 		code := r.apply(bs)
@@ -127,21 +141,21 @@ func batchesFor(batches []configs.Conn3xBatch, size, maxFailures string) ([]conf
 	return out, nil
 }
 
-// batchRefuses refuses what a batched apply can't honour.
-func batchRefuses(args []string, planPath *string, op *arguments.Operation, view *arguments.View) error {
+// batchRefuses refuses what a batched apply, or what, can't honour.
+func batchRefuses(args []string, planPath *string, op *arguments.Operation, view *arguments.View, what string) error {
 	switch {
 	case planPath != nil && *planPath != "":
 		return fmt.Errorf("a saved plan applies whole; -batch-size and -max-failures can't split it")
 	case op != nil && op.PlanMode == plans.DestroyMode:
 		return fmt.Errorf("a destroy doesn't run in batches; take batch_size off the circuit, or remove hosts from its hosts and apply")
 	case op != nil && (len(op.Targets) > 0 || len(op.Excludes) > 0):
-		return fmt.Errorf("a batched apply picks its own hosts, so it can't take -target or -exclude")
+		return fmt.Errorf("%s picks its own hosts, so it can't take -target or -exclude", what)
 	case view != nil && view.ViewType == arguments.ViewJSON:
-		return fmt.Errorf("a batched apply has no -json output yet")
+		return fmt.Errorf("%s has no -json output yet", what)
 	}
 	for _, name := range []string{"json-into"} {
 		if _, ok := flagValue(args, name); ok {
-			return fmt.Errorf("a batched apply can't take -%s yet", name)
+			return fmt.Errorf("%s can't take -%s yet", what, name)
 		}
 	}
 	return nil
@@ -171,6 +185,8 @@ type batchRun struct {
 	reportPath     string        // -report, or ""
 	streams        []batchStream // each batch apply's -json-into, for the report
 	errors         []string      // what the rollout said went wrong, for the report
+	rescues        []configs.Conn3xRescue
+	rescued        map[string]bool // hosts every rescue ran on without failing
 }
 
 type batchStream struct {
@@ -194,6 +210,7 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 	if code != 2 {
 		return code // failed, or nothing to change
 	}
+	r.listRescues()
 	bs, err := whole.ordered(bs)
 	if err != nil {
 		r.errorf("%s", err)
@@ -329,7 +346,7 @@ func (r *batchRun) rollOut(whole *batchPlan, ro rollout, named bool, later []str
 			fmt.Fprintf(r.out, "\nBatch %d of %d: %s\n", i+1, len(ro.batches), strings.Join(batch, ", "))
 		}
 		var planOut bytes.Buffer
-		plan, code := r.plan(batch, ro.Circuit, &planOut)
+		plan, code := r.plan(batch, batchCircuitEnv+"="+ro.Circuit, &planOut)
 		if code == 0 {
 			fmt.Fprintln(r.out, "Nothing left to change on these hosts.")
 			continue
@@ -352,7 +369,7 @@ func (r *batchRun) rollOut(whole *batchPlan, ro rollout, named bool, later []str
 			continue
 		}
 		// What's still to change on the batch's hosts is what failed there.
-		left, code := r.plan(batch, ro.Circuit, io.Discard)
+		left, code := r.plan(batch, batchCircuitEnv+"="+ro.Circuit, io.Discard)
 		if code == 1 {
 			r.errorf("batch failed, and the plan to see which hosts failed did too. No more batches start.")
 			return nil, false
@@ -387,18 +404,28 @@ func (r *batchRun) errorf(format string, args ...any) {
 	r.errors = append(r.errors, "Error: "+msg)
 }
 
-// applyPlan applies a saved plan, keeping its JSON stream when there's a
-// report to write.
+// applyPlan applies a saved plan and, if it failed, runs the rescues.
 func (r *batchRun) applyPlan(plan string) int {
+	code, stream := r.applySaved(plan)
+	if code != 0 && stream != "" && len(r.rescues) > 0 {
+		r.rescue(stream)
+	}
+	return code
+}
+
+// applySaved applies a saved plan, with env added to the environment as
+// for the plan, keeping its JSON stream when there's a report to write or a
+// rescue to run, and returns the stream's path.
+func (r *batchRun) applySaved(plan string, env ...string) (int, string) {
 	args := r.applyArgs(plan)
-	if r.reportPath != "" {
+	if r.reportPath != "" || len(r.rescues) > 0 {
 		stream := filepath.Join(r.tmp, fmt.Sprintf("apply-%d.jsonl", len(r.streams)+1))
 		args = append(args[:len(args)-1], "-json-into="+stream, plan)
-		code := r.run(args, r.out)
+		code := r.run(args, r.out, env...)
 		r.streams = append(r.streams, batchStream{path: stream, ok: code == 0})
-		return code
+		return code, stream
 	}
-	return r.run(args, r.out)
+	return r.run(args, r.out, env...), ""
 }
 
 // writeReport writes one report for the whole rollout, from every batch's
@@ -419,6 +446,11 @@ func (r *batchRun) writeReport(started time.Time, success bool) error {
 	}
 	rep.Success = success
 	rep.Errors = append(rep.Errors, r.errors...)
+	for h := range r.rescued {
+		if rep.Hosts[h] != nil {
+			rep.Hosts[h].Rescued = true
+		}
+	}
 	return writeReport(r.reportPath, rep)
 }
 
@@ -508,17 +540,22 @@ func (r *batchRun) applyArgs(plan string) []string {
 	return append(args, plan)
 }
 
-// plan runs a plan, limited to circuit's steps on hosts if any, with extra
-// arguments, shows it on out, and reads it back. Its code is plan
-// -detailed-exitcode's: 0 for no changes, 2 for changes, 1 for errors.
-func (r *batchRun) plan(hosts []string, circuit string, out io.Writer, extra ...string) (*batchPlan, int) {
+// plan runs a plan, limited to hosts if any, with env (such as a batch's
+// circuit) added to its environment and extra arguments, shows it on out,
+// and reads it back. Its code is plan -detailed-exitcode's: 0 for no
+// changes, 2 for changes, 1 for errors.
+func (r *batchRun) plan(hosts []string, env string, out io.Writer, extra ...string) (*batchPlan, int) {
 	r.runs++
 	path := filepath.Join(r.tmp, fmt.Sprintf("plan-%d.tfplan", r.runs))
 	args := r.planArgs(hosts, path)
 	if len(extra) > 0 {
 		args = withoutFlag(args, "limit") // -target and -limit don't mix
 	}
-	code := r.run(append(args, extra...), out, batchCircuitEnv+"="+circuit)
+	var envs []string
+	if env != "" {
+		envs = append(envs, env)
+	}
+	code := r.run(append(args, extra...), out, envs...)
 	if code != 2 {
 		return nil, code
 	}
@@ -548,7 +585,7 @@ func (r *batchRun) run(args []string, out io.Writer, env ...string) int {
 		c.Stderr = out // a batch's plan shows its errors only if it fails
 	}
 	// No "run conn3x apply" hints between batches.
-	c.Env = append(append(os.Environ(), "TF_IN_AUTOMATION=1"), env...)
+	c.Env = append(append(os.Environ(), "TF_IN_AUTOMATION=1", childEnv+"=1"), env...)
 	if err := c.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode()

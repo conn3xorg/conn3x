@@ -40,7 +40,8 @@
                 "error": {"type": "string", "description": "The error as the terminal printed it."}
               }
             }
-          }
+          },
+          "rescued": {"type": "boolean", "description": "A step failed on this host and its rescues ran without failing. The run still failed."}
         }
       }
     },

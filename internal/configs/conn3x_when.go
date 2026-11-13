@@ -125,6 +125,8 @@ func stepLoops(forEach hcl.Expression) bool {
 		return stepLoops(e.instances)
 	case *onceFilter:
 		return stepLoops(e.instances)
+	case *rescueFilter:
+		return e.looping
 	}
 	return false
 }
@@ -132,7 +134,7 @@ func stepLoops(forEach hcl.Expression) bool {
 // stepFiltered reports whether a step may have no instance on some host.
 func stepFiltered(forEach hcl.Expression) bool {
 	switch forEach.(type) {
-	case *whenFilter, *onceFilter:
+	case *whenFilter, *onceFilter, *rescueFilter:
 		return true
 	}
 	return false

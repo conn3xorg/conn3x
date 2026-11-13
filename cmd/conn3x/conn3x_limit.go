@@ -12,6 +12,7 @@ import (
 	cli "github.com/urfave/cli/v3"
 
 	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/configs"
 	"github.com/opentofu/opentofu/internal/conn3x/hostpattern"
 	"github.com/opentofu/opentofu/internal/tofu"
 )
@@ -31,6 +32,14 @@ func withLimit(cmd *command.Command) {
 	}
 	run := cmd.Run
 	cmd.Run = func(m command.Meta) int {
+		// Set only by apply, for its own rescue plans and their applies.
+		if v := os.Getenv(rescueHostsEnv); v != "" {
+			if err := json.Unmarshal([]byte(v), &configs.Conn3xRescueHosts); err != nil {
+				fmt.Fprintf(stderr, "Error: %s: %s\n", rescueHostsEnv, err)
+				return 1
+			}
+			defer func() { configs.Conn3xRescueHosts = nil }()
+		}
 		if raw == "" {
 			return run(m)
 		}
