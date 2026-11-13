@@ -7,7 +7,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -18,6 +20,10 @@ import (
 type Inventory struct {
 	hostVars map[string]map[string]string
 	groups   map[string]*groupDef
+	// dirGroupVars and dirHostVars are what group_vars/ and host_vars/
+	// beside the inventory set, which outrank the inventory file's own.
+	dirGroupVars map[string]map[string]string
+	dirHostVars  map[string]map[string]string
 }
 
 type groupDef struct {
@@ -51,7 +57,83 @@ func ReadInventory(path string) (*Inventory, error) {
 			return nil, fmt.Errorf("%s: group %q is a child of itself", path, name)
 		}
 	}
+	dir := filepath.Dir(path)
+	if inv.dirGroupVars, err = readVarsDir(filepath.Join(dir, "group_vars")); err != nil {
+		return nil, err
+	}
+	if inv.dirHostVars, err = readVarsDir(filepath.Join(dir, "host_vars")); err != nil {
+		return nil, err
+	}
 	return inv, nil
+}
+
+// readVarsDir reads a group_vars or host_vars directory as Ansible does:
+// for each name, a file called name, name.yml, name.yaml or name.json, or
+// every such file under a directory called name, in lexical order, later
+// files winning. Only plain values are kept: a list or a map isn't, and
+// neither is a value encrypted with Ansible Vault, which a whole encrypted
+// file stops on.
+func readVarsDir(dir string) (map[string]map[string]string, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]map[string]string{}
+	add := func(name, path string) error {
+		ext := filepath.Ext(path)
+		if ext != "" && ext != ".yml" && ext != ".yaml" && ext != ".json" {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(string(src), "$ANSIBLE_VAULT") {
+			return fmt.Errorf("%s is encrypted with Ansible Vault, which Conn3x can't read", path)
+		}
+		var doc yaml.Node
+		if err := parse(src, &doc); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if out[name] == nil {
+			out[name] = map[string]string{}
+		}
+		if len(doc.Content) == 0 {
+			return nil
+		}
+		for k, v := range mapping(doc.Content[0]) {
+			if v.Kind == yaml.ScalarNode && v.Value != vaultMark {
+				out[name][k] = v.Value
+			}
+		}
+		return nil
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		if !e.IsDir() {
+			if err := add(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())), path); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		var files []string
+		_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				files = append(files, p)
+			}
+			return nil
+		})
+		sort.Strings(files)
+		for _, f := range files {
+			if err := add(e.Name(), f); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
 }
 
 // descends reports whether target is below name in the group tree.
@@ -77,22 +159,96 @@ func (inv *Inventory) group(name string) *groupDef {
 	return g
 }
 
-func (inv *Inventory) addHost(group, name string, vars map[string]string) error {
-	if strings.ContainsAny(name, "[]") {
-		return fmt.Errorf("host pattern %q: ranges aren't supported yet; list the hosts one by one", name)
+func (inv *Inventory) addHost(group, pattern string, vars map[string]string) error {
+	names, err := expandRange(pattern)
+	if err != nil {
+		return fmt.Errorf("host pattern %q: %w", pattern, err)
 	}
 	g := inv.group(group)
-	g.hosts = append(g.hosts, name)
-	hv, ok := inv.hostVars[name]
-	if !ok {
-		hv = map[string]string{}
-		inv.hostVars[name] = hv
-	}
-	for k, v := range vars {
-		hv[k] = v
+	for _, name := range names {
+		g.hosts = append(g.hosts, name)
+		hv, ok := inv.hostVars[name]
+		if !ok {
+			hv = map[string]string{}
+			inv.hostVars[name] = hv
+		}
+		for k, v := range vars {
+			hv[k] = v
+		}
 	}
 	return nil
 }
+
+// maxRange is how many hosts one pattern may expand to.
+const maxRange = 10000
+
+// expandRange expands a host pattern's ranges as Ansible does:
+// web[01:03] is web01, web02 and web03, keeping the leading zeros;
+// db-[a:c] is db-a, db-b and db-c; [1:9:2] counts in twos. A name can
+// hold several ranges.
+func expandRange(pattern string) ([]string, error) {
+	open := strings.Index(pattern, "[")
+	if open < 0 {
+		if strings.Contains(pattern, "]") {
+			return nil, fmt.Errorf("a ] without a [")
+		}
+		return []string{pattern}, nil
+	}
+	end := strings.Index(pattern[open:], "]")
+	if end < 0 {
+		return nil, fmt.Errorf("a [ without a ]")
+	}
+	prefix, spec, rest := pattern[:open], pattern[open+1:open+end], pattern[open+end+1:]
+	parts := strings.Split(spec, ":")
+	if len(parts) != 2 && len(parts) != 3 {
+		return nil, fmt.Errorf("a range is [start:end] or [start:end:step], not [%s]", spec)
+	}
+	step := 1
+	if len(parts) == 3 {
+		n, err := strconv.Atoi(parts[2])
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("the step in [%s] must be a whole number above 0", spec)
+		}
+		step = n
+	}
+	var items []string
+	lo, hi := parts[0], parts[1]
+	if a, errA := strconv.Atoi(lo); errA == nil {
+		b, errB := strconv.Atoi(hi)
+		if errB != nil || a > b {
+			return nil, fmt.Errorf("[%s] doesn't count up from one number to another", spec)
+		}
+		if (b-a)/step >= maxRange {
+			return nil, fmt.Errorf("[%s] makes more than %d hosts", spec, maxRange)
+		}
+		for i := a; i <= b; i += step {
+			items = append(items, fmt.Sprintf("%0*d", len(lo), i))
+		}
+	} else {
+		if len(lo) != 1 || len(hi) != 1 || lo > hi || !isLetter(lo[0]) || !isLetter(hi[0]) {
+			return nil, fmt.Errorf("[%s] isn't a range of numbers or of single letters", spec)
+		}
+		for c := int(lo[0]); c <= int(hi[0]); c += step {
+			items = append(items, string(rune(c)))
+		}
+	}
+	tails, err := expandRange(rest)
+	if err != nil {
+		return nil, err
+	}
+	if len(items)*len(tails) > maxRange {
+		return nil, fmt.Errorf("it makes more than %d hosts", maxRange)
+	}
+	var out []string
+	for _, it := range items {
+		for _, t := range tails {
+			out = append(out, prefix+it+t)
+		}
+	}
+	return out, nil
+}
+
+func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
 func (inv *Inventory) readINI(src string) error {
 	section, kind := "ungrouped", ""
@@ -206,8 +362,9 @@ func (inv *Inventory) depth(name string) int {
 	return best
 }
 
-// varsFor resolves a host's variables: groups from the outermost in, then
-// the host's own.
+// varsFor resolves a host's variables, in Ansible's order: the inventory
+// file's groups from the outermost in, then group_vars/ the same way, then
+// the host's own from the file, then host_vars/.
 func (inv *Inventory) varsFor(host string) map[string]string {
 	type held struct {
 		name  string
@@ -238,7 +395,23 @@ func (inv *Inventory) varsFor(host string) map[string]string {
 			out[k] = v
 		}
 	}
+	// group_vars/ outranks every group's vars in the inventory file, with
+	// all first and the deepest group last, as there.
+	for k, v := range inv.dirGroupVars["all"] {
+		out[k] = v
+	}
+	for _, g := range groups {
+		if g.name == "all" {
+			continue
+		}
+		for k, v := range inv.dirGroupVars[g.name] {
+			out[k] = v
+		}
+	}
 	for k, v := range inv.hostVars[host] {
+		out[k] = v
+	}
+	for k, v := range inv.dirHostVars[host] {
 		out[k] = v
 	}
 	return out
@@ -267,6 +440,31 @@ func (inv *Inventory) Group(name string) *Group {
 		g.hosts[h] = inv.varsFor(h)
 	}
 	return g
+}
+
+// Encrypted reports whether an inventory value stands for one encrypted
+// with Ansible Vault, which can't be read.
+func Encrypted(v string) bool { return v == vaultMark }
+
+// CommonVars are the variables every host in the group sets to the same
+// plain value, leaving out Ansible's own ansible_* settings.
+func (g *Group) CommonVars() map[string]string {
+	out := map[string]string{}
+	keys := map[string]bool{}
+	for _, vars := range g.hosts {
+		for k := range vars {
+			keys[k] = true
+		}
+	}
+	for k := range keys {
+		if strings.HasPrefix(k, "ansible_") {
+			continue
+		}
+		if v, ok := g.Common(k); ok && !Encrypted(v) {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // Names lists the group's hosts, sorted.
