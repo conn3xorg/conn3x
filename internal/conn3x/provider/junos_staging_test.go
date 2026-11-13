@@ -128,11 +128,11 @@ func junosVLANApply(req providers.ApplyResourceChangeRequest) providers.ApplyRes
 }
 
 func junosCommitApply(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
-	return applyJunosCommit(ctx, req)
+	return applyCLICommit(junosPlatform)(ctx, req)
 }
 
 func junosRemovalsApply(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
-	return applyJunosRemovals(ctx, req)
+	return applyCLIRemovals(junosPlatform)(ctx, req)
 }
 
 // Three steps in a circuit stage their lines, and its commit sends them in
