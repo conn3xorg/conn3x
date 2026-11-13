@@ -99,28 +99,46 @@ func split(raw string) []string {
 	return out
 }
 
-func (t term) match(host string) bool {
+func (t term) matchName(name string) bool {
 	if t.re != nil {
-		return t.re.MatchString(host)
+		return t.re.MatchString(name)
 	}
-	ok, _ := path.Match(t.glob, host)
+	ok, _ := path.Match(t.glob, name)
 	return ok
 }
 
+// match is whether the term names the host or one of its groups.
+func (t term) match(host string, groups []string) bool {
+	if t.matchName(host) {
+		return true
+	}
+	for _, g := range groups {
+		if t.matchName(g) {
+			return true
+		}
+	}
+	return false
+}
+
 // Match reports whether host matches the pattern.
-func (p *Pattern) Match(host string) bool {
+func (p *Pattern) Match(host string) bool { return p.MatchIn(host, nil) }
+
+// MatchIn reports whether host, in groups, matches the pattern: as in
+// Ansible, a term matches a host by its name or the name of a group it's
+// in, so "webservers:&eu" is the hosts in both groups.
+func (p *Pattern) MatchIn(host string, groups []string) bool {
 	ok := false
 	for _, t := range p.any {
-		if t.match(host) {
+		if t.match(host, groups) {
 			ok = true
 			break
 		}
 	}
 	for _, t := range p.every {
-		ok = ok && t.match(host)
+		ok = ok && t.match(host, groups)
 	}
 	for _, t := range p.none {
-		ok = ok && !t.match(host)
+		ok = ok && !t.match(host, groups)
 	}
 	if ok {
 		p.matched.Store(true)
