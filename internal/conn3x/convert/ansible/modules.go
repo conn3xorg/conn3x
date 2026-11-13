@@ -5,6 +5,7 @@ package ansible
 
 import (
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -343,6 +344,7 @@ func one(module string, attrs []attr, notes ...string) ([]step, string) {
 // modules maps Ansible module names to their translations.
 var modules = map[string]func(*input) ([]step, string){
 	"copy":               copyModule,
+	"synchronize":        synchronizeModule,
 	"file":               fileModule,
 	"lineinfile":         lineModule,
 	"blockinfile":        blockModule,
@@ -486,6 +488,62 @@ func copyModule(in *input) ([]step, string) {
 	}
 	in.ignore("backup")
 	return one("file", in.owners(attrs), in.modeNote()...)
+}
+
+// synchronizeModule turns ansible.posix.synchronize, pushing a directory
+// from the controller, into a directory_copy step. rsync copies "src/"'s
+// contents into dest, and "src" itself into dest/src; the destination says
+// which. What rsync does beyond copying files goes to review.
+func synchronizeModule(in *input) ([]step, string) {
+	src, dest := in.str("src"), in.str("dest")
+	switch {
+	case src == "" || dest == "":
+		return nil, "needs src and dest"
+	case in.str("mode") == "pull":
+		return nil, "pulls from the host (mode: pull), which directory_copy doesn't do"
+	case in.has("rsync_opts") || in.has("rsync_path") || in.has("set_remote_user") || in.has("private_key"):
+		return nil, "passes rsync options or its own connection settings, which the converter can't carry over"
+	case in.bool("dirs", false) || in.bool("copy_links", false):
+		return nil, "sets dirs or copy_links, which change what rsync copies"
+	case in.has("include") || in.has("exclude") || in.has("link_dest"):
+		return nil, "filters what it copies (include, exclude or link_dest), which directory_copy can't yet"
+	case !strings.HasPrefix(dest, "/"):
+		return nil, "has a relative dest, so where it lands depends on the remote user's home"
+	}
+	local := in.local("files", strings.TrimSuffix(src, "/"))
+	if local == "" {
+		return nil, "copies " + src + ", which isn't in the playbook's or role's directory"
+	}
+	if in.role != nil {
+		root := filepath.Join(in.dir, local)
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			if !d.Type().IsRegular() {
+				return fmt.Errorf("%s is a link or a special file", p)
+			}
+			rel, _ := filepath.Rel(in.dir, p)
+			in.copy(filepath.ToSlash(rel))
+			return nil
+		})
+		if err != nil {
+			return nil, "copies a directory with " + err.Error() + " in it; directory_copy copies regular files only"
+		}
+	}
+	if !strings.HasSuffix(src, "/") {
+		dest = strings.TrimSuffix(dest, "/") + "/" + filepath.Base(local)
+	}
+	attrs := []attr{{key: "source", raw: moduleFile(local)}, s("destination", strings.TrimSuffix(dest, "/"))}
+	if in.bool("delete", false) {
+		attrs = append(attrs, attr{key: "delete", val: cty.True})
+	}
+	var notes []string
+	if in.bool("archive", true) || in.has("perms") || in.has("owner") || in.has("group") {
+		notes = append(notes, "TODO(convert): rsync kept each file's own mode and owner from the controller; directory_copy gives every file one mode (0644 unless you set mode) and one owner. Set them if the files need others.")
+	}
+	in.ignore("archive", "compress", "recursive", "times", "perms", "owner", "group", "checksum", "verify_host", "use_ssh_args", "delay_updates", "partial", "mode")
+	return one("directory_copy", attrs, notes...)
 }
 
 // shellSyntax is what a shell reads differently from the plain argument
