@@ -175,6 +175,13 @@ func fetchTarball(ctx context.Context, client *http.Client, u, dest string) erro
 	if err != nil {
 		return err
 	}
+	// The root keeps every write inside dest, links included, whatever
+	// the names below turn out to hold.
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	tr := tar.NewReader(gz)
 	var written int64
 	for {
@@ -197,10 +204,10 @@ func fetchTarball(ctx context.Context, client *http.Client, u, dest string) erro
 		if !ok || rel == "" {
 			continue // the top directory itself
 		}
-		target := filepath.Join(dest, filepath.FromSlash(rel))
+		target := filepath.FromSlash(rel)
 		switch h.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := root.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
 		case tar.TypeReg:
@@ -208,10 +215,10 @@ func fetchTarball(ctx context.Context, client *http.Client, u, dest string) erro
 			if written > maxRoleFiles {
 				return errors.New("the archive unpacks to more than a role should be")
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
-			f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			f, err := root.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 			if err != nil {
 				return err
 			}
