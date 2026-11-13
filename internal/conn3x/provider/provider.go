@@ -169,6 +169,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 		DataSources: map[string]providers.Schema{
 			"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema(), "conn3x_junos_device": junosDeviceSchema(), "conn3x_vyos_device": vyosDeviceSchema(),
 			"conn3x_packages": packagesDataSchema(), "conn3x_services": servicesDataSchema(),
+			"conn3x_file": fileDataSchema(), "conn3x_command": commandDataSchema(),
 		},
 		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema()},
 		Functions:          functions,
@@ -210,6 +211,13 @@ func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.V
 	}
 	if req.TypeName == "conn3x_eos_device" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateEOSSSH(req.Config))}
+	}
+	if req.TypeName == "conn3x_file" || req.TypeName == "conn3x_command" {
+		check := validateFileData
+		if req.TypeName == "conn3x_command" {
+			check = validateCommandData
+		}
+		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateNotEOS(req.Config)).Append(check(req.Config))}
 	}
 	if req.TypeName == "conn3x_packages" || req.TypeName == "conn3x_services" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateNotEOS(req.Config))}
@@ -393,6 +401,7 @@ func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSou
 	read, ok := map[string]func(context.Context, providers.ReadDataSourceRequest) providers.ReadDataSourceResponse{
 		"conn3x_host": readHostData, "conn3x_eos_device": readEOSDevice, "conn3x_junos_device": readJunosDevice, "conn3x_vyos_device": readVyOSDevice,
 		"conn3x_packages": readPackagesData, "conn3x_services": readServicesData,
+		"conn3x_file": readFileData, "conn3x_command": readCommandData,
 	}[req.TypeName]
 	if !ok {
 		return providers.ReadDataSourceResponse{Diagnostics: unsupported("data source " + req.TypeName)}

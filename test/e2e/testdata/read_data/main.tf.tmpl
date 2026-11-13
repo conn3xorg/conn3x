@@ -1,0 +1,60 @@
+locals {
+  ssh = {
+    host             = "127.0.0.1"
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
+
+data "conn3x_file" "release" {
+  path = "/etc/os-release"
+{{- if .Small}}
+  max_size = 10
+{{- end}}
+  ssh {
+    host             = local.ssh.host
+    port             = local.ssh.port
+    user             = local.ssh.user
+    private_key_file = local.ssh.private_key_file
+    known_hosts_file = local.ssh.known_hosts_file
+  }
+}
+
+data "conn3x_file" "missing" {
+  path = "/etc/not-there-at-all"
+  ssh {
+    host             = local.ssh.host
+    port             = local.ssh.port
+    user             = local.ssh.user
+    private_key_file = local.ssh.private_key_file
+    known_hosts_file = local.ssh.known_hosts_file
+  }
+}
+
+data "conn3x_command" "probe" {
+  command = "cat /etc/hostname >/dev/null; echo ready; echo warn >&2; exit 3"
+  ssh {
+    host             = local.ssh.host
+    port             = local.ssh.port
+    user             = local.ssh.user
+    private_key_file = local.ssh.private_key_file
+    known_hosts_file = local.ssh.known_hosts_file
+  }
+}
+
+# A report-only check: it warns, and changes nothing.
+check "sshd_config_mode" {
+  assert {
+    condition     = data.conn3x_file.release.mode == "0644"
+    error_message = "os-release should be 0644"
+  }
+}
+
+output "release_has_id" { value = strcontains(nonsensitive(data.conn3x_file.release.content), "ID=") }
+output "release_sha"    { value = data.conn3x_file.release.sha256 }
+output "missing"        { value = data.conn3x_file.missing.exists }
+output "stdout"         { value = nonsensitive(data.conn3x_command.probe.stdout) }
+output "stderr"         { value = nonsensitive(data.conn3x_command.probe.stderr) }
+output "exit_code"      { value = data.conn3x_command.probe.exit_code }
