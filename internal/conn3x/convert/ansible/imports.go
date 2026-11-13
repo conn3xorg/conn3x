@@ -15,13 +15,27 @@ import (
 
 // taskAt is a task and the file it came from, relative to the converter's
 // dir. reason is set when it's an include the converter can't inline.
-// stack holds the files being imported to reach it, for flatten.
+// stack holds the files being imported to reach it, for flatten. A task
+// from a block with rescue or always has group, and kind says whether it's
+// in the block ("") or its "rescue" or "always".
 type taskAt struct {
 	node   *yaml.Node
 	file   string
 	reason string
 	stack  []string
+	kind   string
+	group  *blockGroup
 }
+
+// blockGroup collects the steps a block's tasks became, for its rescue and
+// always tasks to watch.
+type blockGroup struct {
+	steps []string
+}
+
+// blockKeys are what a block may set and still be flattened. Any other
+// keyword, such as when or become, would apply to every task inside it.
+var blockKeys = map[string]bool{"name": true, "tags": true, "block": true, "rescue": true, "always": true}
 
 // at gives each of nodes, written in file, as a task still to flatten.
 func at(nodes []*yaml.Node, file string) []taskAt {
@@ -43,21 +57,37 @@ var importKeys = map[string]bool{"name": true, "tags": true}
 // place, the way Ansible reads them before the play starts. stack holds the
 // files being read, to catch a file that imports itself.
 func (c *converter) flatten(nodes []*yaml.Node, file string, stack []string) []taskAt {
+	return c.flattenIn(nodes, file, stack, "", nil)
+}
+
+// flattenIn is flatten for tasks in a block's group, or its rescue or
+// always (kind). A block's own tasks join the list in its place, as do
+// those of a block inside it, and its rescue and always tasks follow them.
+func (c *converter) flattenIn(nodes []*yaml.Node, file string, stack []string, kind string, group *blockGroup) []taskAt {
 	var out []taskAt
 	for _, n := range nodes {
 		if why, ok := c.callWhy[n]; ok {
-			out = append(out, taskAt{node: n, file: file, reason: why})
+			out = append(out, taskAt{node: n, file: file, reason: why, kind: kind, group: group})
 			continue
 		}
-		mod, args := moduleOf(mapping(n))
+		t := mapping(n)
+		if _, ok := t["block"]; ok && !c.hidesValues(n) {
+			out = append(out, c.flattenBlock(n, file, stack, kind, group)...)
+			continue
+		}
+		if kind == "rescue" && (holds(n, "ansible_failed_task") || holds(n, "ansible_failed_result")) {
+			out = append(out, taskAt{node: n, file: file, reason: "reads ansible_failed_task or ansible_failed_result, which a Conn3x rescue has nothing like yet"})
+			continue
+		}
+		mod, args := moduleOf(t)
 		switch mod {
 		case "import_tasks":
 			sub, tasks, why := c.importFile(n, args, file, stack)
 			if why != "" {
-				out = append(out, taskAt{node: n, file: file, reason: why})
+				out = append(out, taskAt{node: n, file: file, reason: why, kind: kind, group: group})
 				continue
 			}
-			out = append(out, c.flatten(tasks, sub, append(stack, sub))...)
+			out = append(out, c.flattenIn(tasks, sub, append(stack, sub), kind, group)...)
 		case "include_tasks", "include":
 			if tasks, ok := c.familyInclude(n, args, file, stack); ok {
 				out = append(out, tasks...)
@@ -67,10 +97,55 @@ func (c *converter) flatten(nodes []*yaml.Node, file string, stack []string) []t
 		case "include_role", "import_role":
 			out = append(out, taskAt{node: n, file: file, reason: "uses " + mod + ", which runs another role here; the converter only calls roles run from a play's own task lists, with -out, so convert that role with -role and call its circuit as a module"})
 		default:
-			out = append(out, taskAt{node: n, file: file})
+			out = append(out, taskAt{node: n, file: file, kind: kind, group: group})
 		}
 	}
 	return out
+}
+
+// flattenBlock flattens a block: its tasks, then its rescue tasks, which become
+// rescue blocks watching the steps its tasks became, then its always tasks,
+// which become always blocks. kind and group are the block's own place, if
+// it's inside another.
+func (c *converter) flattenBlock(n *yaml.Node, file string, stack []string, kind string, group *blockGroup) []taskAt {
+	t := mapping(n)
+	for _, k := range sortedKeys(t) {
+		if !blockKeys[k] {
+			return []taskAt{{node: n, file: file, reason: "sets " + k + " on a block, which applies it to every task inside; the converter can't translate that yet"}}
+		}
+	}
+	if neverTagged(t["tags"]) {
+		return []taskAt{{node: n, file: file, reason: neverReason}}
+	}
+	_, rescue := t["rescue"]
+	_, always := t["always"]
+	if !rescue && !always {
+		return c.flattenIn(seq(t["block"]), file, stack, kind, group)
+	}
+	if group != nil {
+		return []taskAt{{node: n, file: file, reason: "has a block with rescue or always inside another block's, which the converter can't translate yet"}}
+	}
+	g := &blockGroup{}
+	out := c.flattenIn(seq(t["block"]), file, stack, "", g)
+	out = append(out, c.flattenIn(seq(t["rescue"]), file, stack, "rescue", g)...)
+	return append(out, c.flattenIn(seq(t["always"]), file, stack, "always", g)...)
+}
+
+// holds reports whether any scalar in n holds s, in Jinja or out of it, as
+// a bare when does.
+func holds(n *yaml.Node, s string) bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind == yaml.ScalarNode {
+		return strings.Contains(n.Value, s)
+	}
+	for _, c := range n.Content {
+		if holds(c, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // importFile finds and reads the file an import_tasks names. Ansible looks

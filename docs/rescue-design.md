@@ -1,6 +1,6 @@
 # Design note: steps that run when an earlier step fails
 
-Status: for [#522](https://github.com/conn3xorg/conn3x/issues/522). `rescue` and `always` are built; `prereq` and the converter aren't yet.
+Status: for [#522](https://github.com/conn3xorg/conn3x/issues/522). `rescue`, `always` and the converter are built; `prereq` isn't yet.
 
 ## Where the build differs
 
@@ -10,6 +10,7 @@ Status: for [#522](https://github.com/conn3xorg/conn3x/issues/522). `rescue` and
 - Rescues run only in root module circuits, as batches do.
 - An always block runs where a watched step or handler changed something or failed. A step with nothing to change isn't in the apply, so nothing runs after it.
 - An always block that fails fails the apply, even when every step succeeded.
+- The converter leaves a block that sets `when` or another keyword for review, and a block with rescue or always inside another's, rather than flattening those. A rescue task that notifies a handler goes to review too.
 - One rescue phase, and one always phase, covers every circuit: each rescue gets its own hosts, through `CONN3X_RESCUE_HOSTS`, and the plan targets rescues only.
 
 ## What people want
