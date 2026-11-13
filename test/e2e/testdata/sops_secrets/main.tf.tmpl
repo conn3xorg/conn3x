@@ -1,0 +1,22 @@
+terraform {
+  required_providers {
+    conn3x = { source = "terraform.io/builtin/conn3x" }
+  }
+}
+
+ephemeral "conn3x_secrets" "app" {
+  file = "${path.module}/secrets.sops.yaml"
+}
+
+resource "conn3x_file" "db_password" {
+  path       = "/etc/db_password"
+  content_wo = ephemeral.conn3x_secrets.app.values["db_password"]
+  mode       = "0600"
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.PortA}}
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
