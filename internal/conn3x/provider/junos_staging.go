@@ -99,6 +99,9 @@ func (st *junosStaged) drop(ctx context.Context, h *hostConn, circuit string, er
 		err, _ = st.salvage(ctx, h, st.removals, err)
 		st.cmds, st.removals = nil, nil
 	}
+	if circuit == "" {
+		return err // a step outside a circuit stages nothing for others to skip
+	}
 	if st.failed == nil {
 		st.failed = map[string]error{}
 	}

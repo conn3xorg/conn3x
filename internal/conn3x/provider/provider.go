@@ -95,6 +95,8 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_junos_config":         junosConfigKind.entry(junosConfigSchema, validateJunosConfig),
 	"conn3x_junos_hostname":       junosHostnameKind.entry(junosHostnameSchema, validateJunosHostname),
 	"conn3x_junos_vlan":           junosVLANKind.entry(junosVLANSchema, validateJunosVLAN),
+	"conn3x_junos_interface":      junosInterfaceKind.entry(junosInterfaceSchema, validateJunosInterface),
+	"conn3x_junos_user":           {junosUserSchema, validateJunosUser, planJunosUser, junosUserKind.read, applyJunosUser, upgradeWith(junosUserSchema)},
 	"conn3x_junos_commit":         junosCommitTypes["conn3x_junos_commit"],
 	"conn3x_junos_removals":       junosCommitTypes["conn3x_junos_removals"],
 	"conn3x_eos_removals":         {eosRemovalsSchema, func(cty.Value) tfdiags.Diagnostics { return nil }, planEOSRemovals, readEOSCommit, applyEOSRemovals, upgradeWith(eosRemovalsSchema)},

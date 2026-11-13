@@ -5,6 +5,8 @@ package provider
 
 import (
 	"context"
+	"crypto/hmac"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -89,6 +91,9 @@ type junosKind struct {
 	deletes  bool     // on_remove defaults to "delete"
 	config   func(cty.Value) junosWant
 	remove   func(cty.Value, string) []string // nil: removing only forgets
+	// guard, when set, refuses a change that would cut Conn3x off from the
+	// device at address, given the config it's computed from.
+	guard func(v cty.Value, config, address string) error
 }
 
 // junosWant is what a step wants of a device's configuration.
@@ -184,6 +189,11 @@ func (k junosKind) apply(ctx context.Context, req providers.ApplyResourceChangeR
 	if removing {
 		cmds = k.remove(target, view)
 	} else {
+		if k.guard != nil {
+			if err := k.guard(target, view, h.host); err != nil {
+				return fail(st.drop(ctx, h, circuit, err))
+			}
+		}
 		cmds = k.config(target).Commands(view)
 	}
 	switch {
@@ -337,5 +347,182 @@ func readJunosDevice(ctx context.Context, req providers.ReadDataSourceRequest) p
 	vals["model"] = cty.StringVal(f.Model)
 	vals["version"] = cty.StringVal(f.Version)
 	resp.State = cty.ObjectVal(vals)
+	return resp
+}
+
+func junosInterfaceFrom(v cty.Value) junos.Interface {
+	i := junos.Interface{Name: stringOr(v.GetAttr("name"), ""), Description: optString(v.GetAttr("description")), Mode: stringOr(v.GetAttr("mode"), ""), AccessVLAN: stringOr(v.GetAttr("access_vlan"), "")}
+	if e := v.GetAttr("enabled"); known(e) {
+		b := e.True()
+		i.Enabled = &b
+	}
+	if n := v.GetAttr("mtu"); known(n) {
+		x, _ := n.AsBigFloat().Int64()
+		i.MTU = int(x)
+	}
+	if l := v.GetAttr("allowed_vlans"); known(l) {
+		i.AllowedVLANs = append([]string{}, stringList(l)...)
+	}
+	return i
+}
+
+var junosInterfaceKind = junosKind{
+	name:     "interface",
+	keys:     []string{"name"},
+	settings: []string{"description", "enabled", "mode", "access_vlan", "allowed_vlans", "mtu"},
+	config:   func(v cty.Value) junosWant { return junosInterfaceFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return junosInterfaceFrom(v).RemoveCommands(running) },
+	guard:    func(v cty.Value, config, address string) error { return junosInterfaceFrom(v).Guard(config, address) },
+}
+
+func junosInterfaceSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: junosExperimental + "The settings Conn3x owns on one interface of a Juniper Junos device: description, enabled, MTU, and on an ELS switch port the interface-mode and VLAN members. Each one left unset is left alone, and so is every other statement under the interface.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"name":          {Type: cty.String, Required: true, Description: "The interface, such as ge-0/0/1, xe-0/0/48, ae0, irb or lo0."},
+			"description":   {Type: cty.String, Optional: true, Description: "Its description. No double quotes or backslashes."},
+			"enabled":       {Type: cty.Bool, Optional: true, Description: "false disables it, true deletes the disable. Disabling a management interface (fxp0, em0, me0, vme), or the one whose address Conn3x connects to, is refused."},
+			"mode":          {Type: cty.String, Optional: true, Description: "\"access\" or \"trunk\": unit 0 family ethernet-switching interface-mode. Switch ports and ae interfaces only."},
+			"access_vlan":   {Type: cty.String, Optional: true, Description: "The VLAN of an access port, by name or ID, as vlan members."},
+			"allowed_vlans": {Type: cty.List(cty.String), Optional: true, Description: "The VLANs a trunk carries, by name, ID or range such as 20-22. Members not listed are deleted."},
+			"mtu":           {Type: cty.Number, Optional: true, Description: "MTU, 256 to 9216."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens when this resource is removed: \"forget\" (default) leaves the interface as it is, \"delete\" deletes the statements it owns. The interface itself stays."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the interface had these settings at the last refresh."},
+			"circuit":       eosCircuitAttr(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateJunosInterface(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := junosInterfaceFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func junosUserFrom(v cty.Value) junos.User {
+	u := junos.User{Name: stringOr(v.GetAttr("name"), ""), Class: stringOr(v.GetAttr("class"), "")}
+	if l := v.GetAttr("ssh_keys"); known(l) {
+		u.SSHKeys = append([]string{}, stringList(l)...)
+	}
+	// password_hmac is unknown while a new password is planned.
+	stored := v.GetAttr("password_hmac")
+	u.WantSecret = !stored.IsNull()
+	// Without the key that made password_hmac, a read can't tell which
+	// password the device holds, only that it has one.
+	if key, err := hmacKey(false); err == nil && known(stored) && checkHMACKey(stored.AsString(), key) == nil {
+		id := junosUserID(v)
+		u.SecretIs = func(hash string) bool {
+			return hmac.Equal([]byte(eosSecretHMAC(key, id, hash)), []byte(stored.AsString()))
+		}
+	}
+	return u
+}
+
+func junosUserID(v cty.Value) string {
+	return passwordID("junos_user", stringOr(v.GetAttr("ssh").GetAttr("host"), ""), stringOr(v.GetAttr("name"), ""))
+}
+
+var junosUserKind = junosKind{
+	name:     "user",
+	keys:     []string{"name"},
+	settings: []string{"class", "ssh_keys", "password_hmac"},
+	deletes:  true,
+	config:   func(v cty.Value) junosWant { return junosUserFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return junosUserFrom(v).RemoveCommands(running) },
+	guard: func(v cty.Value, _, _ string) error {
+		return junosUserFrom(v).Guard(stringOr(v.GetAttr("ssh").GetAttr("user"), ""))
+	},
+}
+
+func junosUserSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: junosExperimental + "A local account on a Juniper Junos device: its login class, password and SSH keys. Conn3x won't demote or delete the account it logs in as.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"name":          {Type: cty.String, Required: true, Description: "The account name. Not root."},
+			"class":         {Type: cty.String, Required: true, Description: "Its login class, such as super-user, operator or read-only. Junos requires one."},
+			"password_wo":   {Type: cty.String, Optional: true, Sensitive: true, WriteOnly: true, Description: "Write-only: the password, never kept in state. Conn3x hashes it here and sends the device the salted SHA-512 hash, as encrypted-password, so the password itself never reaches the CLI; a new value plans a change through password_hmac. Unset leaves the account's password alone."},
+			"password_hmac": {Type: cty.String, Computed: true, Description: "An HMAC of the hash the device should hold for password_wo, keyed outside state. A new password plans a change, and a refresh finds an account with another one out of sync."},
+			"ssh_keys":      {Type: cty.List(cty.String), Optional: true, Description: "The account's public keys, one line each, such as \"ssh-ed25519 AAAA... alice@laptop\". Keys not listed are deleted; [] deletes them all, and unset leaves them alone."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) deletes the account when the step goes, as with every step that grants access; \"forget\" leaves it."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the account matched at the last refresh."},
+			"circuit":       eosCircuitAttr(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateJunosUser(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := junosUserFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func planJunosUser(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planPasswordAs(deleteByDefault(req), "junos_user", junosUserKind.settings, planSyncedFold, eosPasswordHMAC)
+}
+
+// applyJunosUser hashes the step's password, which only the config holds,
+// as applyEOSUser does: the same salted SHA-512 crypt, which Junos takes as
+// encrypted-password.
+func applyJunosUser(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	if req.PlannedState.IsNull() && !req.PriorState.IsNull() && req.PriorState.GetAttr("on_remove").AsString() == onRemoveDelete {
+		if name := req.PriorState.GetAttr("name").AsString(); name == stringOr(req.PriorState.GetAttr("ssh").GetAttr("user"), "") {
+			var resp providers.ApplyResourceChangeResponse
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("junos_user: Conn3x logs in as %s, so it won't delete that account; set on_remove = \"forget\" to drop the step", name))
+			return resp
+		}
+	}
+	k := junosUserKind
+	var mac string
+	if !req.PlannedState.IsNull() && junosUserFrom(req.PlannedState).WantSecret {
+		var resp providers.ApplyResourceChangeResponse
+		password := ""
+		if !req.Config.IsNull() {
+			password = stringOr(req.Config.GetAttr("password_wo"), "")
+		}
+		if password == "" {
+			resp.Diagnostics = resp.Diagnostics.Append(errors.New("junos_user: password_wo didn't reach the apply; it's write-only, so set it in the step's config"))
+			return resp
+		}
+		key, err := hmacKey(true)
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("password_wo", err.Error()))
+			return resp
+		}
+		id := junosUserID(req.PlannedState)
+		hash := eosSecret(key, id, password)
+		mac = eosSecretHMAC(key, id, hash)
+		k.config = func(v cty.Value) junosWant {
+			u := junosUserFrom(v)
+			u.Secret, u.SecretIs = hash, func(h string) bool { return h == hash }
+			return u
+		}
+	}
+	resp := k.apply(ctx, req)
+	if !resp.NewState.IsNull() {
+		vals := resp.NewState.AsValueMap()
+		vals["password_wo"] = cty.NullVal(cty.String)
+		if mac != "" {
+			vals["password_hmac"] = cty.StringVal(mac)
+		}
+		resp.NewState = cty.ObjectVal(vals)
+	}
 	return resp
 }
