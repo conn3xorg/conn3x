@@ -1,0 +1,31 @@
+variable "commands" {
+  type = list(string)
+}
+
+variable "present" {
+  type    = bool
+  default = true
+}
+
+circuit "ops" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "rule" {
+    when = var.present
+    sudoers {
+      name       = "conn3x-test"
+      user       = "nobody"
+      commands   = var.commands
+      nopassword = true
+      on_remove  = "delete"
+    }
+  }
+}
