@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/opentofu/opentofu/internal/conn3x/hostdata"
+
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/conn3x/convert/ansible"
@@ -42,6 +44,16 @@ var functions = map[string]providers.FunctionSpec{
 			"ansible_port, ansible_user and ansible_ssh_private_key_file become port, user and private_key_file, where they're set. " +
 			"vars holds every plain variable the host has, from the inventory file and the group_vars and host_vars directories beside it, resolved as Ansible resolves them.",
 	},
+	"hostdata": {
+		Parameters: []providers.FunctionParameterSpec{
+			{Name: "dir", Type: cty.String, Description: "The data directory, with hierarchy.yaml in it. Start it with path.module to make it relative to the configuration."},
+			{Name: "vars", Type: cty.DynamicPseudoType, Description: "What fills the hierarchy's {placeholders}: a map or object of strings, or lists of strings for a placeholder that names several layers, such as a host's groups."},
+		},
+		Return:  cty.DynamicPseudoType,
+		Summary: "Layered host data, as Hiera reads it: each key from the first layer that sets it.",
+		Description: "values holds every top-level key, each from the highest-priority layer that sets it, as YAML types. " +
+			"from maps each key to the file it came from, so a plan or an output can say why a host got a value.",
+	},
 	"import_id": {
 		Parameters: []providers.FunctionParameterSpec{
 			{Name: "key", Type: cty.String, Description: "The host's key in the circuit's hosts, such as web1."},
@@ -60,6 +72,9 @@ func (p *Provider) GetFunctions(context.Context) providers.GetFunctionsResponse 
 func (p *Provider) CallFunction(_ context.Context, req providers.CallFunctionRequest) providers.CallFunctionResponse {
 	if req.Name == "inventory" {
 		return inventory(req.Arguments)
+	}
+	if req.Name == "hostdata" {
+		return hostData(req.Arguments)
 	}
 	if req.Name != "import_id" {
 		return providers.CallFunctionResponse{Error: fmt.Errorf("the conn3x provider has no function %q", req.Name)}
@@ -140,4 +155,54 @@ func inventory(args []cty.Value) providers.CallFunctionResponse {
 		return providers.CallFunctionResponse{Result: cty.EmptyObjectVal}
 	}
 	return providers.CallFunctionResponse{Result: cty.ObjectVal(hosts)}
+}
+
+// hostData is provider::conn3x::hostdata.
+func hostData(args []cty.Value) providers.CallFunctionResponse {
+	if len(args) != 2 {
+		return providers.CallFunctionResponse{Error: fmt.Errorf("hostdata takes 2 arguments, dir and vars, not %d", len(args))}
+	}
+	if args[0].IsNull() {
+		return providers.CallFunctionResponse{Error: &providers.CallFunctionArgumentError{Text: "dir can't be null", FunctionArgument: 0}}
+	}
+	// At validate, each.key and friends aren't known yet.
+	if !args[0].IsKnown() || !args[1].IsWhollyKnown() {
+		return providers.CallFunctionResponse{Result: cty.DynamicVal}
+	}
+	vars := map[string][]string{}
+	if v := args[1]; !v.IsNull() {
+		if !v.Type().IsObjectType() && !v.Type().IsMapType() {
+			return providers.CallFunctionResponse{Error: &providers.CallFunctionArgumentError{Text: "vars must be a map or object, such as { host = each.key, group = [\"web\"] }", FunctionArgument: 1}}
+		}
+		for k, e := range v.AsValueMap() {
+			switch {
+			case e.IsNull():
+			case e.Type() == cty.String:
+				vars[k] = []string{e.AsString()}
+			case e.CanIterateElements():
+				for it := e.ElementIterator(); it.Next(); {
+					_, item := it.Element()
+					if item.Type() != cty.String || item.IsNull() {
+						return providers.CallFunctionResponse{Error: &providers.CallFunctionArgumentError{Text: fmt.Sprintf("vars.%s must be a string or a list of strings", k), FunctionArgument: 1}}
+					}
+					vars[k] = append(vars[k], item.AsString())
+				}
+			default:
+				return providers.CallFunctionResponse{Error: &providers.CallFunctionArgumentError{Text: fmt.Sprintf("vars.%s must be a string or a list of strings", k), FunctionArgument: 1}}
+			}
+		}
+	}
+	res, err := hostdata.Load(args[0].AsString(), vars)
+	if err != nil {
+		return providers.CallFunctionResponse{Error: fmt.Errorf("hostdata: %w", err)}
+	}
+	from := map[string]cty.Value{}
+	for k, f := range res.From {
+		from[k] = cty.StringVal(f)
+	}
+	values, fromVal := cty.EmptyObjectVal, cty.MapValEmpty(cty.String)
+	if len(res.Values) > 0 {
+		values, fromVal = cty.ObjectVal(res.Values), cty.MapVal(from)
+	}
+	return providers.CallFunctionResponse{Result: cty.ObjectVal(map[string]cty.Value{"values": values, "from": fromVal})}
 }
