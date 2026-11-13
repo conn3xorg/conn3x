@@ -78,3 +78,82 @@ func TestSSHTunnel(t *testing.T) {
 		t.Error("a remote without a port passed")
 	}
 }
+
+// A client that sends, shuts its write side, then reads still gets the
+// reply, as through ssh -L.
+func TestSSHTunnelHalfClose(t *testing.T) {
+	svc, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	go func() {
+		c, err := svc.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		got, _ := io.ReadAll(c) // to EOF, then answer
+		_, _ = c.Write(append([]byte("got "), got...))
+	}()
+	s := sshtest.New(t)
+	ssh := eosStep("conn3x_file", nil, map[string]cty.Value{
+		"host": cty.StringVal(s.Host), "port": cty.NumberIntVal(int64(s.Port)), "user": cty.StringVal("ops"),
+		"private_key_file": cty.StringVal(s.KeyFile(t)), "known_hosts_file": cty.StringVal(s.KnownHosts(t)),
+	}).GetAttr("ssh")
+	vals := map[string]cty.Value{}
+	for name, at := range tunnelSchema().Block.ImpliedType().AttributeTypes() {
+		vals[name] = cty.NullVal(at)
+	}
+	vals["remote"], vals["ssh"] = cty.StringVal(svc.Addr().String()), ssh
+	resp := openTunnel(ctx, providers.OpenEphemeralResourceRequest{TypeName: tunnelType, Config: cty.ObjectVal(vals)})
+	if err := resp.Diagnostics.Err(); err != nil {
+		t.Fatal(err)
+	}
+	defer closeTunnel(providers.CloseEphemeralResourceRequest{TypeName: tunnelType, Private: resp.Private})
+	port, _ := resp.Result.GetAttr("local_port").AsBigFloat().Int64()
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatInt(port, 10)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = conn.Write([]byte("ping"))
+	_ = conn.(*net.TCPConn).CloseWrite()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	reply, err := io.ReadAll(conn)
+	if string(reply) != "got ping" {
+		t.Fatalf("reply %q, %v", reply, err)
+	}
+}
+
+// Closing a tunnel doesn't wait for a forward still connecting to a remote
+// that drops packets.
+func TestSSHTunnelClosesWhileConnecting(t *testing.T) {
+	s := sshtest.New(t)
+	s.SetForwardDelay(30 * time.Second)
+	ssh := eosStep("conn3x_file", nil, map[string]cty.Value{
+		"host": cty.StringVal(s.Host), "port": cty.NumberIntVal(int64(s.Port)), "user": cty.StringVal("ops"),
+		"private_key_file": cty.StringVal(s.KeyFile(t)), "known_hosts_file": cty.StringVal(s.KnownHosts(t)),
+	}).GetAttr("ssh")
+	vals := map[string]cty.Value{}
+	for name, at := range tunnelSchema().Block.ImpliedType().AttributeTypes() {
+		vals[name] = cty.NullVal(at)
+	}
+	vals["remote"], vals["ssh"] = cty.StringVal("127.0.0.1:9"), ssh
+	resp := openTunnel(ctx, providers.OpenEphemeralResourceRequest{TypeName: tunnelType, Config: cty.ObjectVal(vals)})
+	if err := resp.Diagnostics.Err(); err != nil {
+		t.Fatal(err)
+	}
+	port, _ := resp.Result.GetAttr("local_port").AsBigFloat().Int64()
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatInt(port, 10)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	time.Sleep(300 * time.Millisecond) // the forward is now waiting on its connect
+	start := time.Now()
+	closeTunnel(providers.CloseEphemeralResourceRequest{TypeName: tunnelType, Private: resp.Private})
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("close took %s", took)
+	}
+}

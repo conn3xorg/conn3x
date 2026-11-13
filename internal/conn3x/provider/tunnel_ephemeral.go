@@ -27,7 +27,7 @@ const tunnelType = "conn3x_ssh_tunnel"
 
 func tunnelSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "A local port, open for the length of the run, that reaches remote from the host over Conn3x's SSH connection, jump hosts included, as ssh -L does. Give its local_host and local_port to another provider, such as one for the database the host runs. Nothing of it lands in state.",
+		Description: "A local port, open for the length of the run, that reaches remote from the host over Conn3x's SSH connection, jump hosts included, as ssh -L does. Give its local_host and local_port to another provider, such as one for the database the host runs. Nothing of it lands in state. As with ssh -L, any user on this machine can connect to the port while the run lasts, and reach remote as the SSH user: mind that on a shared CI runner.",
 		Attributes: map[string]*configschema.Attribute{
 			"remote":     {Type: cty.String, Required: true, Description: "What to reach, as the host sees it: host:port, such as 127.0.0.1:5432 for a database on the host's loopback, or 10.0.2.7:6379 for one beside it."},
 			"local_host": {Type: cty.String, Computed: true, Description: "Where the tunnel listens on this machine: 127.0.0.1."},
@@ -133,11 +133,21 @@ func (t *tunnel) serve() {
 			t.mu.Lock()
 			t.conns = append(t.conns, local, far)
 			t.mu.Unlock()
+			// Each side's EOF is passed on, as ssh -L does, so a client that
+			// sends, shuts its write side and then reads still gets its reply.
 			copied := make(chan struct{}, 2)
-			go func() { _, _ = io.Copy(far, local); copied <- struct{}{} }()
-			go func() { _, _ = io.Copy(local, far); copied <- struct{}{} }()
-			<-copied // one side ended: close both
+			go func() { _, _ = io.Copy(far, local); closeWrite(far); copied <- struct{}{} }()
+			go func() { _, _ = io.Copy(local, far); closeWrite(local); copied <- struct{}{} }()
+			<-copied
+			<-copied
 		}()
+	}
+}
+
+// closeWrite shuts a connection's write side, when it has one to shut.
+func closeWrite(c net.Conn) {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
 	}
 }
 
@@ -148,8 +158,12 @@ func (t *tunnel) close() error {
 		_ = c.Close()
 	}
 	t.mu.Unlock()
+	// Closing the client first ends any channel still opening, such as one
+	// to a remote that drops packets, and every open one; waiting first
+	// would hang until the host gave up on its connect.
+	err = errors.Join(err, t.client.Close())
 	t.done.Wait()
-	return errors.Join(err, t.client.Close())
+	return err
 }
 
 func closeTunnel(req providers.CloseEphemeralResourceRequest) providers.CloseEphemeralResourceResponse {
