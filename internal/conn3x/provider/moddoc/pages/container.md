@@ -24,7 +24,7 @@ step "worker" {
     name      = "worker"
     image     = "ghcr.io/example/worker:2.4.1"
     command   = ["worker", "--queue", "default"]
-    env       = { QUEUE_URL = var.queue_url, LOG_LEVEL = "info" }
+    env       = { QUEUE_URL = "amqp://queue.internal:5672", LOG_LEVEL = "info" }
     engine    = "podman"
     restart   = "always"
     on_remove = "delete"
