@@ -30,12 +30,16 @@ func TestRescueHosts(t *testing.T) {
 		{Circuit: "app", Name: "restore", Watches: []string{"config", "restart"}},
 		{Circuit: "app", Name: "page", Watches: []string{"restart"}},
 	}}
-	by, all, err := r.rescueHosts(stream)
+	by, all, err := r.rescueHosts(stream, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(all, []string{"web2", "web3", "web10"}) || !slices.Equal(by["app__restore"], all) || !slices.Equal(by["app__page"], []string{"web3"}) || len(by) != 2 {
 		t.Errorf("got %v, %v", by, all)
+	}
+	r.rescues = append(r.rescues, configs.Conn3xRescue{Circuit: "app", Name: "lb", Always: true, Watches: []string{"config"}})
+	if by, all, err := r.rescueHosts(stream, true); err != nil || !slices.Equal(all, []string{"web1", "web2", "web10"}) || len(by) != 1 {
+		t.Errorf("always: %v, %v, %v", by, all, err)
 	}
 	if got := orList([]string{"a", "b", "c"}); got != "a, b or c" {
 		t.Errorf("orList = %q", got)

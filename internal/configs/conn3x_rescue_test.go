@@ -29,6 +29,12 @@ const rescueSteps = `step "config" {
       command = "restore"
     }
   }
+  always "lb" {
+    watches = [step.config]
+    command {
+      command = "lb-enable"
+    }
+  }
   rescue "page" {
     watches  = [step.config]
     for_each = ["a", "b"]
@@ -48,8 +54,12 @@ func TestRescueInstances(t *testing.T) {
 		t.Fatal("Conn3xRescueResource is wrong")
 	}
 	// The second rescue runs after the first, and neither waits for a step.
-	if len(page.DependsOn) != 1 || page.DependsOn[0].RootName() != "conn3x_command" || len(restore.DependsOn) != 0 {
-		t.Fatalf("depends_on: restore %v, page %v", restore.DependsOn, page.DependsOn)
+	lb := mod.ManagedResources["conn3x_command.app__lb"]
+	if len(page.DependsOn) != 1 || page.DependsOn[0].RootName() != "conn3x_command" || len(restore.DependsOn) != 0 || len(lb.DependsOn) != 0 {
+		t.Fatalf("depends_on: restore %v, page %v, lb %v", restore.DependsOn, page.DependsOn, lb.DependsOn)
+	}
+	if !Conn3xRescueResource(lb) {
+		t.Fatal("an always block should count as a rescue resource")
 	}
 
 	if keys, d := instanceKeys(t, restore.ForEach, nil); d.HasErrors() || len(keys) != 0 {
@@ -72,6 +82,8 @@ func TestRescueErrors(t *testing.T) {
 		"Invalid watches in rescue":       `rescue "r" {` + "\nwatches = [var.x]\n" + `command { command = "x" }` + "\n}",
 		`No step or handler "nope"`:       `rescue "r" {` + "\nwatches = [step.nope]\n" + `command { command = "x" }` + "\n}",
 		"Duplicate rescue":                `rescue "config" {` + "\nwatches = [step.config]\n" + `command { command = "x" }` + "\n}",
+		"Duplicate always":                `always "page" {` + "\nwatches = [step.config]\n" + `command { command = "x" }` + "\n}\n" + `rescue "page" {` + "\nwatches = [step.config]\n" + `command { command = "x" }` + "\n}",
+		"Missing watches in always":       `always "r" {` + "\n" + `command { command = "x" }` + "\n}",
 		`Unsupported argument "notify"`:   `rescue "r" {` + "\nwatches = [step.config]\nnotify = [handler.restart]\n" + `command { command = "x" }` + "\n}",
 		`Unsupported argument "run_once"`: `rescue "r" {` + "\nwatches = [step.config]\nrun_once = true\n" + `command { command = "x" }` + "\n}",
 	} {
@@ -89,10 +101,10 @@ func TestConn3xRescues(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, diags := Conn3xRescues(dir)
-	if diags.HasErrors() || len(got) != 2 {
+	if diags.HasErrors() || len(got) != 3 {
 		t.Fatalf("%v, %v", got, diags)
 	}
-	if got[0].Resource() != "app__restore" || !slices.Equal(got[0].Watches, []string{"config", "restart"}) || !slices.Equal(got[1].Watches, []string{"config"}) {
+	if got[0].Resource() != "app__restore" || !slices.Equal(got[0].Watches, []string{"config", "restart"}) || !slices.Equal(got[1].Watches, []string{"config"}) || got[1].Always || got[2].Name != "lb" || !got[2].Always {
 		t.Errorf("got %+v", got)
 	}
 }

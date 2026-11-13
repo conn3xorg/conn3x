@@ -187,6 +187,7 @@ type batchRun struct {
 	errors         []string      // what the rollout said went wrong, for the report
 	rescues        []configs.Conn3xRescue
 	rescued        map[string]bool // hosts every rescue ran on without failing
+	blockFailed    bool            // a rescue or always block failed, or couldn't run
 }
 
 type batchStream struct {
@@ -295,6 +296,9 @@ func (r *batchRun) apply(bs []configs.Conn3xBatch) int {
 		}
 	}
 	fmt.Fprintf(r.out, "\nAll %d %s applied.\n", total, plural(total, "batch", "batches"))
+	if r.blockFailed {
+		return 1 // an always block failed, and said so
+	}
 	return 0
 }
 
@@ -404,11 +408,15 @@ func (r *batchRun) errorf(format string, args ...any) {
 	r.errors = append(r.errors, "Error: "+msg)
 }
 
-// applyPlan applies a saved plan and, if it failed, runs the rescues.
+// applyPlan applies a saved plan, then runs the rescues if it failed, and
+// the always blocks. An always block that fails fails the apply.
 func (r *batchRun) applyPlan(plan string) int {
 	code, stream := r.applySaved(plan)
-	if code != 0 && stream != "" && len(r.rescues) > 0 {
-		r.rescue(stream)
+	if stream != "" && len(r.rescues) > 0 && !r.afterApply(stream, code != 0) {
+		r.blockFailed = true
+		if code == 0 {
+			code = 1
+		}
 	}
 	return code
 }

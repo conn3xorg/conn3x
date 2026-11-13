@@ -253,7 +253,8 @@ func TestBatchTwoCircuits(t *testing.T) {
 }
 
 // A rescue runs on the hosts where a step it watches failed, in a plan of
-// its own after the apply, and leaves nothing in state behind it.
+// its own after the apply, and an always block on the hosts where one ran;
+// neither leaves anything in state behind it.
 func TestRescue(t *testing.T) {
 	web1, web2 := startHost(t, "rocky10"), startHost(t, "rocky10")
 	knownFile := shareKey(t, web1, web2)
@@ -265,13 +266,23 @@ func TestRescue(t *testing.T) {
 	}
 
 	out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=1")
-	if !strings.Contains(out, `If config fails on a host, rescue "restore" of circuit "app" runs there.`) || strings.Contains(out, "Rescuing") {
-		t.Errorf("the plan should say when the rescue runs, and nothing failed:\n%s", out)
+	if !strings.Contains(out, `If config fails on a host, rescue "restore" of circuit "app" runs there.`) || strings.Contains(out, "Rescuing") || !strings.Contains(out, "Running always blocks on web1, web2:") {
+		t.Errorf("the plan should say when the rescue runs, nothing failed, and the always block ran:\n%s", out)
+	}
+	if file(web1, "always") != "always 1" || file(web2, "always") != "always 1" {
+		t.Errorf("the always block should run on both hosts: %q, %q", file(web1, "always"), file(web2, "always"))
+	}
+	if out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=1"); strings.Contains(out, "Running always") {
+		t.Errorf("with nothing to change, no always block should run:\n%s", out)
 	}
 
 	out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=2", "-var=fail_on=web2", "-report=run.json")
-	if code == 0 || !strings.Contains(out, "Rescuing web2:") || !strings.Contains(out, "Rescued web2. The apply still fails") {
-		t.Errorf("web2's failure should be rescued, and the apply still fail (exit %d):\n%s", code, out)
+	rescuing, always := strings.Index(out, "Rescuing web2:"), strings.Index(out, "Running always blocks on web1, web2:")
+	if code == 0 || rescuing < 0 || always < rescuing || !strings.Contains(out, "Rescued web2. The apply still fails") {
+		t.Errorf("web2's failure should be rescued, the always block run after, and the apply still fail (exit %d):\n%s", code, out)
+	}
+	if file(web1, "always") != "always 2" || file(web2, "always") != "always 2" {
+		t.Errorf("the always block should run where config failed too: %q, %q", file(web1, "always"), file(web2, "always"))
 	}
 	if file(web2, "rescued") != "rescued 2" || file(web1, "rescued") != "" || file(web1, "config") != "2" {
 		t.Errorf("only web2 should be rescued: web1 %q, web2 %q", file(web1, "rescued"), file(web2, "rescued"))
@@ -293,10 +304,14 @@ func TestRescue(t *testing.T) {
 		t.Errorf("the report should mark web2 rescued and show the rescue:\n%s", raw)
 	}
 
-	if out := w.mustConn3x("state", "list"); strings.Contains(out, "restore") {
-		t.Errorf("the rescue should be dropped from state:\n%s", out)
+	if out := w.mustConn3x("state", "list"); strings.Contains(out, "restore") || strings.Contains(out, "after") {
+		t.Errorf("the rescue and always block should be dropped from state:\n%s", out)
 	}
 	if out, code := w.conn3x("plan", "-no-color", "-detailed-exitcode", "-var=run=2", "-var=fail_on=web2"); code != 2 || !strings.Contains(out, `app__config["web2"] will be created`) || strings.Contains(out, "restore") || strings.Contains(out, `["web1"] must`) {
 		t.Errorf("the next plan should catch web2 up and say nothing of the rescue (exit %d):\n%s", code, out)
+	}
+
+	if out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=3", "-var=always_fails=true"); code == 0 || !strings.Contains(out, "an always block failed") {
+		t.Errorf("a failed always block should fail the apply (exit %d):\n%s", code, out)
 	}
 }

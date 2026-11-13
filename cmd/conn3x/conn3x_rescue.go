@@ -16,20 +16,26 @@ import (
 	runreport "github.com/opentofu/opentofu/internal/conn3x/report"
 )
 
-// rescueHostsEnv gives a rescue phase's plan the hosts each rescue runs on
-// (see configs.Conn3xRescueHosts).
+// rescueHostsEnv gives a rescue or always phase's plan the hosts each block
+// runs on (see configs.Conn3xRescueHosts).
 const rescueHostsEnv = "CONN3X_RESCUE_HOSTS"
 
 // A circuit's rescues run after an apply in which a step or handler they
 // watch failed: apply reads which hosts it failed on from the apply's JSON
 // stream, plans the rescues alone on those hosts, applies them, and drops
-// them from state, so the next plan doesn't show them going. A rescued
-// failure is still a failure, and apply still exits 1.
+// them from state, so the next plan doesn't show them going. Then its
+// always blocks run the same way, on the hosts where a step or handler they
+// watch ran, failed or not. A rescued failure is still a failure, and apply
+// still exits 1.
 
-// listRescues says, under the plan, when each rescue runs.
+// listRescues says, under the plan, when each rescue and always block runs.
 func (r *batchRun) listRescues() {
 	for _, rs := range r.rescues {
-		fmt.Fprintf(r.out, "\nIf %s fails on a host, rescue %q of circuit %q runs there.", orList(rs.Watches), rs.Name, rs.Circuit)
+		if rs.Always {
+			fmt.Fprintf(r.out, "\nAfter %s runs on a host, always %q of circuit %q runs there.", orList(rs.Watches), rs.Name, rs.Circuit)
+		} else {
+			fmt.Fprintf(r.out, "\nIf %s fails on a host, rescue %q of circuit %q runs there.", orList(rs.Watches), rs.Name, rs.Circuit)
+		}
 	}
 	if len(r.rescues) > 0 {
 		fmt.Fprintln(r.out)
@@ -45,8 +51,9 @@ func orList(names []string) string {
 }
 
 // rescueHosts reads an apply's JSON stream for the hosts where a watched
-// step or handler failed, by rescue resource name, and every such host.
-func (r *batchRun) rescueHosts(stream string) (map[string][]string, []string, error) {
+// step or handler failed, or for always blocks where one ran, by resource
+// name, and every such host.
+func (r *batchRun) rescueHosts(stream string, always bool) (map[string][]string, []string, error) {
 	in, err := os.Open(stream)
 	if err != nil {
 		return nil, nil, err
@@ -58,85 +65,108 @@ func (r *batchRun) rescueHosts(stream string) (map[string][]string, []string, er
 			return nil, nil, err
 		}
 	}
-	byRescue := map[string][]string{}
+	byBlock := map[string][]string{}
 	var all []string
 	for host, h := range rep.Hosts {
 		for _, s := range h.Steps {
-			if s.Status != runreport.StatusFailed || strings.HasPrefix(s.Address, "module.") {
+			ran := s.Status == runreport.StatusFailed || (always && s.Status == runreport.StatusOK)
+			if !ran || strings.HasPrefix(s.Address, "module.") {
 				continue
 			}
 			circuit, step, _ := strings.Cut(s.Step, ".")
 			for _, rs := range r.rescues {
-				if rs.Circuit != circuit || !slices.Contains(rs.Watches, step) || slices.Contains(byRescue[rs.Resource()], host) {
+				if rs.Always != always || rs.Circuit != circuit || !slices.Contains(rs.Watches, step) || slices.Contains(byBlock[rs.Resource()], host) {
 					continue
 				}
-				byRescue[rs.Resource()] = append(byRescue[rs.Resource()], host)
+				byBlock[rs.Resource()] = append(byBlock[rs.Resource()], host)
 				if !slices.Contains(all, host) {
 					all = append(all, host)
 				}
 			}
 		}
 	}
-	for _, hs := range byRescue {
+	for _, hs := range byBlock {
 		slices.SortFunc(hs, naturalCompare)
 	}
 	slices.SortFunc(all, naturalCompare)
-	return byRescue, all, nil
+	return byBlock, all, nil
 }
 
-// rescue runs the rescues for the watched steps that failed in the apply
-// that wrote stream. It reports what went wrong itself; the apply has
-// failed either way.
-func (r *batchRun) rescue(stream string) {
-	byRescue, hosts, err := r.rescueHosts(stream)
+// afterApply runs the rescues, if the apply that wrote stream failed, and
+// then the always blocks. It reports what went wrong itself, and returns
+// false if an always block failed.
+func (r *batchRun) afterApply(stream string, failed bool) bool {
+	if failed {
+		r.phase(stream, false)
+	}
+	return r.phase(stream, true)
+}
+
+// phase runs the rescues, or the always blocks, for the watched steps in
+// the apply that wrote stream. It returns false if one of them failed, or
+// couldn't run.
+func (r *batchRun) phase(stream string, always bool) bool {
+	byBlock, hosts, err := r.rescueHosts(stream, always)
 	if err != nil {
-		r.errorf("reading which steps failed, for the rescues: %s", err)
-		return
+		r.errorf("reading which steps ran, for the rescue and always blocks: %s", err)
+		return false
 	}
 	if len(hosts) == 0 {
-		return
+		return true
 	}
-	fmt.Fprintf(r.out, "\nRescuing %s:\n", strings.Join(hosts, ", "))
-	js, _ := json.Marshal(byRescue)
+	what := "rescue"
+	if always {
+		what = "always block"
+		fmt.Fprintf(r.out, "\nRunning always blocks on %s:\n", strings.Join(hosts, ", "))
+	} else {
+		fmt.Fprintf(r.out, "\nRescuing %s:\n", strings.Join(hosts, ", "))
+	}
+	js, _ := json.Marshal(byBlock)
 	env := rescueHostsEnv + "=" + string(js)
 	var planOut bytes.Buffer
 	plan, code := r.plan(hosts, env, &planOut)
 	switch code {
 	case 0:
-		fmt.Fprintln(r.out, "No rescue has anything to run on these hosts.")
-		return
+		fmt.Fprintf(r.out, "No %s has anything to run on these hosts.\n", what)
+		return true
 	case 1:
 		_, _ = io.Copy(r.errOut, &planOut)
-		r.errorf("the rescue plan failed, so no rescue ran.")
-		return
+		r.errorf("the %s plan failed, so no %s ran.", what, what)
+		return false
 	}
 	var addrs, others []string
 	for _, c := range plan.changes {
-		_, isRescue := byRescue[c.name]
+		_, ours := byBlock[c.name]
 		switch {
 		case !c.changes():
-		case c.module != "" || !isRescue || c.actions != "create":
+		case c.module != "" || !ours || c.actions != "create":
 			others = append(others, c.addr)
 		case !slices.Contains(addrs, c.typ+"."+c.name):
 			addrs = append(addrs, c.typ+"."+c.name)
 		}
 	}
 	if len(others) > 0 {
-		r.errorf("the rescue plan changes more than the rescues:\n  %s\nSo no rescue ran.", strings.Join(others, "\n  "))
-		return
+		r.errorf("the %s plan changes more than the %ss:\n  %s\nSo no %s ran.", what, what, strings.Join(others, "\n  "), what)
+		return false
 	}
 	code, _ = r.applySaved(plan.path, env)
 	if err := r.forget(addrs); err != nil {
-		r.errorf("dropping the rescues from state: %s\nRun conn3x state rm %s, or the next plan shows them being removed.", err, strings.Join(addrs, " "))
+		r.errorf("dropping the %ss from state: %s\nRun conn3x state rm %s, or the next plan shows them being removed.", what, err, strings.Join(addrs, " "))
 	}
-	if code != 0 {
+	switch {
+	case code != 0 && always:
+		r.errorf("an always block failed.")
+		return false
+	case code != 0:
 		r.errorf("a rescue failed, so %s may still be as the failed step left %s.", strings.Join(hosts, ", "), plural(len(hosts), "it", "them"))
-		return
+		return false
+	case !always:
+		for _, h := range hosts {
+			r.rescued[h] = true
+		}
+		fmt.Fprintf(r.out, "\nRescued %s. The apply still fails, because a step failed.\n", strings.Join(hosts, ", "))
 	}
-	for _, h := range hosts {
-		r.rescued[h] = true
-	}
-	fmt.Fprintf(r.out, "\nRescued %s. The apply still fails, because a step failed.\n", strings.Join(hosts, ", "))
+	return true
 }
 
 // forget drops resources from state, as conn3x state rm does. Those that
