@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -25,11 +26,79 @@ type Pattern struct {
 type term struct {
 	glob string
 	re   *regexp.Regexp
+	// sub is a term such as webservers[0:2], which Resolve turns into
+	// picked when webservers is a group; until then it's a glob.
+	sub    *subscript
+	picked map[string]bool
+}
+
+// subscript is Ansible's group[n], group[from:to], group[from:] or
+// group[:to], counted from 0 with to excluded, and negative from the end.
+type subscript struct {
+	group                 string
+	from, to              int
+	hasFrom, hasTo, colon bool
+}
+
+var subscriptTerm = regexp.MustCompile(`^([^\[\]*?]+)\[(-?[0-9]+)?(:)?(-?[0-9]+)?\]$`)
+
+func parseSubscript(s string) *subscript {
+	m := subscriptTerm.FindStringSubmatch(s)
+	if m == nil || (m[2] == "" && m[3] == "") {
+		return nil
+	}
+	sub := &subscript{group: m[1], colon: m[3] != ""}
+	if m[2] != "" {
+		sub.from, sub.hasFrom = atoi(m[2]), true
+	}
+	if m[4] != "" {
+		sub.to, sub.hasTo = atoi(m[4]), true
+	}
+	if !sub.colon && m[4] != "" {
+		return nil
+	}
+	return sub
+}
+
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+// pick is the hosts the subscript names from a group's hosts, in order.
+func (s *subscript) pick(hosts []string) map[string]bool {
+	n := len(hosts)
+	at := func(i int) int {
+		if i < 0 {
+			i += n
+		}
+		return min(max(i, 0), n)
+	}
+	picked := map[string]bool{}
+	if !s.colon {
+		if i := s.from; (i >= 0 && i < n) || (i < 0 && -i <= n) {
+			picked[hosts[at(i)]] = true
+		}
+		return picked
+	}
+	from, to := 0, n
+	if s.hasFrom {
+		from = at(s.from)
+	}
+	if s.hasTo {
+		to = at(s.to)
+	}
+	for _, h := range hosts[from:max(from, to)] {
+		picked[h] = true
+	}
+	return picked
 }
 
 // Parse reads a pattern. Terms are separated by "," or ":". A term is a
 // host name, a glob with * ? and [ ], "all" for every host, or a regular
-// expression after "~".
+// expression after "~". A group with a subscript, such as webservers[0]
+// or webservers[1:3], picks hosts by position once Resolve knows the
+// group's order.
 // "&" in front of a term narrows to the hosts it matches too, and "!"
 // leaves out the hosts it matches.
 func Parse(raw string) (*Pattern, error) {
@@ -57,10 +126,11 @@ func Parse(raw string) (*Pattern, error) {
 			if s == "all" {
 				s = "*" // as in Ansible
 			}
-			if _, err := path.Match(s, ""); err != nil {
+			t.glob, t.sub = s, parseSubscript(s)
+			// A subscript such as [-1] needn't be a valid glob as well.
+			if _, err := path.Match(s, ""); err != nil && t.sub == nil {
 				return nil, fmt.Errorf("%q: %s isn't a valid glob", raw, s)
 			}
-			t.glob = s
 		}
 		*list = append(*list, t)
 	}
@@ -99,6 +169,23 @@ func split(raw string) []string {
 	return out
 }
 
+// Resolve turns each subscript term whose group order knows into the hosts
+// it picks: order gives a group's hosts in inventory order, or nil when
+// there's no such group, and then the term stays a glob, so web[0] still
+// matches a host named web0.
+func (p *Pattern) Resolve(order func(group string) []string) {
+	for _, list := range [][]term{p.any, p.every, p.none} {
+		for i, t := range list {
+			if t.sub == nil {
+				continue
+			}
+			if hosts := order(t.sub.group); hosts != nil {
+				list[i].picked = t.sub.pick(hosts)
+			}
+		}
+	}
+}
+
 func (t term) matchName(name string) bool {
 	if t.re != nil {
 		return t.re.MatchString(name)
@@ -109,6 +196,9 @@ func (t term) matchName(name string) bool {
 
 // match is whether the term names the host or one of its groups.
 func (t term) match(host string, groups []string) bool {
+	if t.picked != nil {
+		return t.picked[host]
+	}
 	if t.matchName(host) {
 		return true
 	}

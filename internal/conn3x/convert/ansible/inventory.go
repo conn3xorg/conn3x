@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ type Inventory struct {
 	// beside the inventory set, which outrank the inventory file's own.
 	dirGroupVars map[string]map[string]string
 	dirHostVars  map[string]map[string]string
+	order        []string // hosts in the order the file first names them
 }
 
 type groupDef struct {
@@ -171,6 +173,7 @@ func (inv *Inventory) addHost(group, pattern string, vars map[string]string) err
 		if !ok {
 			hv = map[string]string{}
 			inv.hostVars[name] = hv
+			inv.order = append(inv.order, name)
 		}
 		for k, v := range vars {
 			hv[k] = v
@@ -480,6 +483,36 @@ func (g *Group) Names() []string {
 // Vars is a host's variables, resolved as Ansible would: groups from the
 // outermost in, then the host's own.
 func (g *Group) Vars(host string) map[string]string { return g.hosts[host] }
+
+// Ordered is a group's hosts in inventory order, as Ansible counts them for
+// a subscript such as webservers[0]: its own hosts, then its children's,
+// each once. "all" is every host in the order the file first names it.
+func (inv *Inventory) Ordered(name string) []string {
+	if name == "all" {
+		return slices.Clone(inv.order)
+	}
+	var out []string
+	seen, visited := map[string]bool{}, map[string]bool{}
+	var walk func(string)
+	walk = func(n string) {
+		g, ok := inv.groups[n]
+		if !ok || visited[n] {
+			return
+		}
+		visited[n] = true
+		for _, h := range g.hosts {
+			if !seen[h] {
+				seen[h] = true
+				out = append(out, h)
+			}
+		}
+		for _, c := range g.children {
+			walk(c)
+		}
+	}
+	walk(name)
+	return out
+}
 
 // GroupNames lists the inventory's groups, sorted.
 func (inv *Inventory) GroupNames() []string {

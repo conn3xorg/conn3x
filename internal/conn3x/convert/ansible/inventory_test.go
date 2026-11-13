@@ -187,3 +187,39 @@ func TestConvertUsesInventoryVars(t *testing.T) {
 		t.Errorf("converted %d, review %v", res.Converted, res.Review)
 	}
 }
+
+// Ordered is the order Ansible counts a subscript in: the file's, a group's
+// own hosts before its children's, and each host once.
+func TestInventoryOrdered(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "hosts.ini")
+	if err := os.WriteFile(p, []byte(`[web]
+zeta
+alpha
+web[01:02]
+
+[db]
+mid
+
+[prod:children]
+db
+web
+
+[prod]
+alpha
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := ReadInventory(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for group, want := range map[string]string{
+		"web":  "zeta alpha web01 web02",
+		"prod": "alpha mid zeta web01 web02",
+		"all":  "zeta alpha web01 web02 mid",
+	} {
+		if got := strings.Join(inv.Ordered(group), " "); got != want {
+			t.Errorf("%s: %q, want %q", group, got, want)
+		}
+	}
+}
