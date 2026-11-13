@@ -83,3 +83,50 @@ func TestMatchInGroups(t *testing.T) {
 		}
 	}
 }
+
+// Ansible's own examples, with webservers = cobweb, webbing, weber in that
+// order: https://docs.ansible.com/ansible/latest/inventory_guide/intro_patterns.html
+func TestSubscripts(t *testing.T) {
+	order := func(g string) []string {
+		switch g {
+		case "webservers":
+			return []string{"cobweb", "webbing", "weber"}
+		case "all":
+			return []string{"cobweb", "webbing", "weber", "db1"}
+		}
+		return nil
+	}
+	all := []string{"cobweb", "webbing", "weber", "db1", "web0"}
+	for pattern, want := range map[string]string{
+		"webservers[0]":             "cobweb",
+		"webservers[-1]":            "weber",
+		"webservers[0:2]":           "cobweb webbing",
+		"webservers[1:]":            "webbing weber",
+		"webservers[:3]":            "cobweb webbing weber",
+		"webservers[9]":             "",
+		"all[-1]":                   "db1",
+		"webservers[0]:db1":         "cobweb db1",
+		"webservers:!webservers[0]": "webbing weber",
+		// Not a group, so still a glob: web[0] is web0.
+		"web[0]": "web0",
+	} {
+		p, err := Parse(pattern)
+		if err != nil {
+			t.Fatalf("%s: %v", pattern, err)
+		}
+		p.Resolve(order)
+		var got []string
+		for _, h := range all {
+			groups := []string{}
+			if h != "db1" && h != "web0" {
+				groups = append(groups, "webservers")
+			}
+			if p.MatchIn(h, groups) {
+				got = append(got, h)
+			}
+		}
+		if strings.Join(got, " ") != want {
+			t.Errorf("%s matched %q, want %q", pattern, strings.Join(got, " "), want)
+		}
+	}
+}

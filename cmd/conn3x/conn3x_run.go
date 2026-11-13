@@ -115,6 +115,12 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 			groups[h] = append(groups[h], g)
 		}
 	}
+	pattern.Resolve(func(g string) []string {
+		if inv.Group(g) == nil {
+			return nil
+		}
+		return inv.Ordered(g)
+	})
 	all := inv.Group("all")
 	var hosts []*runHost
 	for _, h := range all.Names() {
