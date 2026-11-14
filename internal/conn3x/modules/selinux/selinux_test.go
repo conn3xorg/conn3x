@@ -77,3 +77,36 @@ func TestReadBooleanValidatesItsName(t *testing.T) {
 		t.Fatal("read a boolean with an invalid name")
 	}
 }
+
+func TestWithMode(t *testing.T) {
+	for in, want := range map[string]string{
+		"# comment\nSELINUX=enforcing\nSELINUXTYPE=targeted\n": "# comment\nSELINUX=permissive\nSELINUXTYPE=targeted\n",
+		"SELINUX = disabled\nSELINUX=enforcing\n":              "SELINUX = disabled\nSELINUX=permissive\n",
+		"SELINUXTYPE=targeted":                                 "SELINUXTYPE=targeted\nSELINUX=permissive\n",
+		"# SELINUX=enforcing\n":                                "# SELINUX=enforcing\nSELINUX=permissive\n",
+	} {
+		if got := withMode(in, "permissive"); got != want {
+			t.Errorf("withMode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestModeState(t *testing.T) {
+	for _, c := range []struct {
+		s             ModeState
+		match, reboot bool
+	}{
+		{ModeState{"enforcing", "enforcing"}, true, false},
+		{ModeState{"enforcing", "permissive"}, false, false},
+		{ModeState{"permissive", "enforcing"}, false, false},
+		{ModeState{"enforcing", "disabled"}, true, true},
+		{ModeState{"disabled", "disabled"}, false, true},
+	} {
+		if c.s.Matches("enforcing") != c.match || c.s.RebootRequired("enforcing") != c.reboot {
+			t.Errorf("%+v: match %v, reboot %v", c.s, c.s.Matches("enforcing"), c.s.RebootRequired("enforcing"))
+		}
+	}
+	if ValidateMode("disabled") == nil || ValidateMode("Enforcing") == nil || ValidateMode("permissive") != nil {
+		t.Error("ValidateMode")
+	}
+}

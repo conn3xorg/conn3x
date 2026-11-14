@@ -117,3 +117,66 @@ func applySELinuxFcontext(ctx context.Context, req providers.ApplyResourceChange
 			return selinux.DeleteFcontext(ctx, h, fcontextFrom(prior))
 		})
 }
+
+func selinuxModeSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "The host's SELinux mode, enforcing or permissive, in " + selinux.ConfigFile + " and, while SELinux is on, now. Removing it leaves the mode as it is.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":              {Type: cty.String, Computed: true},
+			"revision":        revisionAttr(),
+			"mode":            {Type: cty.String, Required: true, Description: "\"enforcing\" or \"permissive\". Switching between them takes effect at once. Disabling SELinux isn't a mode here yet."},
+			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether the host needs a reboot to run in mode: true when SELinux is off now, since only a boot turns it on. Pair it with a reboot step."},
+			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether the config file has mode and, while SELinux is on, it's running in it."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateSELinuxMode(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.GetAttr("mode").IsKnown() {
+		return diags
+	}
+	if err := selinux.ValidateMode(cfg.GetAttr("mode").AsString()); err != nil {
+		diags = diags.Append(attrError("mode", err.Error()))
+	}
+	return diags
+}
+
+func planSELinuxMode(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	resp := planSynced(req, "selinux_mode", nil, []string{"mode"})
+	if p := resp.PlannedState; !p.IsNull() && !p.GetAttr("in_sync").IsKnown() {
+		vals := p.AsValueMap()
+		vals["reboot_required"] = cty.UnknownVal(cty.Bool)
+		resp.PlannedState = cty.ObjectVal(vals)
+	}
+	return resp
+}
+
+func withReboot(v cty.Value, reboot bool) cty.Value {
+	vals := v.AsValueMap()
+	vals["reboot_required"] = cty.BoolVal(reboot)
+	return cty.ObjectVal(vals)
+}
+
+func readSELinuxMode(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		s, err := selinux.ReadMode(ctx, h)
+		if err != nil {
+			return cty.NilVal, err
+		}
+		mode := prior.GetAttr("mode").AsString()
+		return withSync(withReboot(prior, s.RebootRequired(mode)), s.Matches(mode)), nil
+	})
+}
+
+func applySELinuxMode(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			reboot, err := selinux.ApplyMode(ctx, h, planned.GetAttr("mode").AsString())
+			if err != nil {
+				return cty.NilVal, fmt.Errorf("selinux_mode: %w", err)
+			}
+			return withSync(withReboot(planned, reboot), true), nil
+		}, nil)
+}
