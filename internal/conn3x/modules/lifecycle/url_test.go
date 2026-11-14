@@ -110,3 +110,23 @@ func TestDo(t *testing.T) {
 		t.Errorf("an unexpected status: %v", err)
 	}
 }
+
+// A Host header reaches the server as the request's host, as with curl -H
+// "Host: ...", so a name-based virtual host answers on the host's loopback.
+func TestDoSendsTheHostHeader(t *testing.T) {
+	var got atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.Store(r.Host)
+	}))
+	defer srv.Close()
+	_, err := Do(context.Background(), &dialer{}, Request{
+		URLCheck: URLCheck{URL: srv.URL + "/"},
+		Headers:  map[string]string{"Host": "app.example.com", "X-Other": "1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := got.Load().(string); h != "app.example.com" {
+		t.Fatalf("server saw Host %q, want app.example.com", h)
+	}
+}

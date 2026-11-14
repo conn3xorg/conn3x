@@ -120,6 +120,12 @@ func Do(ctx context.Context, r modules.Runner, req Request) (Response, error) {
 		return Response{}, err
 	}
 	for k, v := range req.Headers {
+		// net/http sends req.Host and ignores a Host header, so set it
+		// there, as curl -H "Host: ..." does for a name-based virtual host.
+		if strings.EqualFold(k, "Host") {
+			hr.Host = v
+			continue
+		}
 		hr.Header.Set(k, v)
 	}
 	resp, err := client(d, req.SkipTLSVerify).Do(hr)
