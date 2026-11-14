@@ -55,6 +55,20 @@ type cliDevice interface {
 	RunShell(ctx context.Context, stdin []byte) (ssh.Result, error)
 }
 
+// hostFor is the device's hostConn: the pooled connection, or, for a
+// perCommand platform, which logs in per command, only its name and lock
+// key, so no login sits idle on a vty line (#837).
+func (p *cliPlatform) hostFor(ctx context.Context, conn cty.Value) (*hostConn, error) {
+	if !p.perCommand {
+		return pooled(ctx, conn, 0)
+	}
+	cfg, err := sshConfig(conn)
+	if err != nil {
+		return nil, err
+	}
+	return &hostConn{host: cfg.Host, rootKey: rootKey(cfg)}, nil
+}
+
 func (p *cliPlatform) device(h *hostConn, conn cty.Value) cliDevice {
 	if p.perCommand {
 		dial := p.reconnect(conn)
@@ -202,7 +216,7 @@ func (k cliKind) read(ctx context.Context, req providers.ReadResourceRequest) pr
 	if req.PriorState.IsNull() {
 		return resp
 	}
-	h, err := pooled(ctx, req.PriorState.GetAttr("ssh"), 0)
+	h, err := k.p.hostFor(ctx, req.PriorState.GetAttr("ssh"))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
@@ -243,7 +257,7 @@ func (k cliKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 		target = req.PriorState
 	}
 	conn := target.GetAttr("ssh")
-	h, err := pooled(ctx, conn, 0)
+	h, err := k.p.hostFor(ctx, conn)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp

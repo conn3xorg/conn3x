@@ -239,7 +239,7 @@ func applyCLICommit(p *cliPlatform) func(context.Context, providers.ApplyResourc
 			obj = req.PriorState
 		}
 		conn := obj.GetAttr("ssh")
-		h, err := pooled(ctx, conn, 0)
+		h, err := p.hostFor(ctx, conn)
 		if err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 			return resp
@@ -273,7 +273,7 @@ func applyCLIRemovals(p *cliPlatform) func(context.Context, providers.ApplyResou
 			return resp
 		}
 		conn := req.PriorState.GetAttr("ssh")
-		h, err := pooled(ctx, conn, 0)
+		h, err := p.hostFor(ctx, conn)
 		if err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 			return resp

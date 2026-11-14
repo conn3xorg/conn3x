@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/opentofu/opentofu/internal/conn3x/modules/ios"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
@@ -25,8 +27,8 @@ func (c countedLogin) answer() (ssh.Result, error) {
 }
 
 func (c countedLogin) RunRaw(context.Context, string, []byte) (ssh.Result, error) { return c.answer() }
-func (c countedLogin) RunShell(context.Context, []byte) (ssh.Result, error)        { return c.answer() }
-func (c countedLogin) Close() error                                                { atomic.AddInt32(c.open, -1); return nil }
+func (c countedLogin) RunShell(context.Context, []byte) (ssh.Result, error)       { return c.answer() }
+func (c countedLogin) Close() error                                               { atomic.AddInt32(c.open, -1); return nil }
 
 // Eight steps refreshing at once on one IOS device open one login at a
 // time, not a login each (Foothills' review of #836).
@@ -69,4 +71,17 @@ func TestOneFreshLoginPerHost(t *testing.T) {
 		t.Error("a second login got in while the first was open")
 	}
 	_ = held.(interface{ Close() error }).Close()
+}
+
+// An IOS step's hostConn is its name and lock key, without a login: it
+// logs in per command, so a pooled one would only hold a vty line (#837).
+func TestIOSHostNeedsNoLogin(t *testing.T) {
+	conn := objFor(iosConfigSchema(), map[string]cty.Value{"lines": cty.ListVal([]cty.Value{cty.StringVal("hostname r1")})}).GetAttr("ssh")
+	h, err := iosPlatform.hostFor(context.Background(), conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.client != nil || h.host != "203.0.113.10" || h.rootKey == "" {
+		t.Errorf("hostConn %+v", h)
+	}
 }
