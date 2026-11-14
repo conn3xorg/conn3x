@@ -157,6 +157,48 @@ func validateJunosVLAN(cfg cty.Value) tfdiags.Diagnostics {
 	return validateWith("name", func(v cty.Value) error { return junosVLANFrom(v).Validate() })(cfg)
 }
 
+func junosStaticRouteFrom(v cty.Value) junos.StaticRoute {
+	r := junos.StaticRoute{Prefix: stringOr(v.GetAttr("prefix"), "")}
+	if l := v.GetAttr("next_hops"); known(l) {
+		r.NextHops = stringList(l)
+	}
+	if p := v.GetAttr("preference"); known(p) {
+		n, _ := p.AsBigFloat().Int64()
+		r.Preference = &n
+	}
+	return r
+}
+
+var junosStaticRouteKind = cliKind{
+	p:        junosPlatform,
+	name:     "static_route",
+	keys:     []string{"prefix"},
+	settings: []string{"next_hops", "preference"},
+	config:   func(v cty.Value) cliWant { return junosStaticRouteFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return junosStaticRouteFrom(v).RemoveCommands(running) },
+}
+
+func junosStaticRouteSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: junosExperimental + "One static route on a Juniper Junos device, owned whole: its next hops are exactly these, and anything else under the route, such as discard, is deleted.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":         {Type: cty.String, Computed: true},
+			"revision":   revisionAttr(),
+			"prefix":     {Type: cty.String, Required: true, Description: "The network, such as 10.20.0.0/16 or 2001:db8:20::/48. An IPv6 one goes in the inet6.0 table."},
+			"next_hops":  {Type: cty.List(cty.String), Required: true, Description: "The next hop addresses, of the prefix's family."},
+			"preference": {Type: cty.Number, Optional: true, Description: "The route's preference, 0 to 4294967295; lower wins. Unset is Junos's default for static routes."},
+			"on_remove":  {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the device when this resource is removed: \"forget\" (default) leaves the route, \"delete\" deletes it."},
+			"in_sync":    {Type: cty.Bool, Computed: true, Description: "Whether the device had this route, and nothing else under it, at the last refresh."},
+			"circuit":    eosCircuitAttr(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateJunosStaticRoute(cfg cty.Value) tfdiags.Diagnostics {
+	return validateWith("prefix", func(v cty.Value) error { return junosStaticRouteFrom(v).Validate() })(cfg)
+}
+
 // junosDeviceSchema is the conn3x_junos_device data source: what a circuit
 // checks before it changes a device.
 func junosDeviceSchema() providers.Schema {

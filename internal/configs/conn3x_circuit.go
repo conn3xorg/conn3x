@@ -99,6 +99,7 @@ var circuitModules = map[string]string{
 	"junos_hostname":               "conn3x_junos_hostname",
 	"junos_vlan":                   "conn3x_junos_vlan",
 	"junos_interface":              "conn3x_junos_interface",
+	"junos_static_route":           "conn3x_junos_static_route",
 	"junos_user":                   "conn3x_junos_user",
 	"vyos_config":                  "conn3x_vyos_config",
 	"vyos_hostname":                "conn3x_vyos_hostname",
