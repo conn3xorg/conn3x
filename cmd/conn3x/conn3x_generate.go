@@ -85,18 +85,18 @@ The host is checked against known_hosts (~/.ssh/known_hosts unless -known-hosts-
 	steps := command.Command{
 		Name:  "steps",
 		Short: "List what a host has, and print steps for what you pick",
-		Long: `Lists the packages, services, users or mounts a host has, and with -match prints a step with import = true for each one that matches, as generate step does for one. Adopting a long-lived server then takes one command per kind, not one per object.
+		Long: `Lists the packages, services, users, mounts or sysctl settings a host has, and with -match prints a step with import = true for each one that matches, as generate step does for one. Adopting a long-lived server then takes one command per kind, not one per object.
 
   conn3x generate steps -host 203.0.113.10 -user root packages
   conn3x generate steps -host 203.0.113.10 -user root -match 'nginx*,postgresql-16' packages >> adopt.circuit.hcl
   conn3x generate steps -host 203.0.113.10 -user root -match '*' mounts
 
-users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. -match takes globs, separated by commas.
+users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. sysctl lists the kernel parameters set in /etc/sysctl.conf and /etc/sysctl.d, with their values; a sysctl step keeps its setting in a file of its own, /etc/sysctl.d/90-conn3x-NAME.conf, so the first apply after adopting one writes that file. The file it came from stays, and since the kernel reads these files in name order, a later one's value wins at boot: take the setting out of it once the step is in. -match takes globs, separated by commas.
 
 Each step is read the way generate step reads one, so pasting the steps into a circuit and planning adopts them with nothing to change. An object that can't be read is reported on stderr and the rest still print. Exits 0 when everything matched printed, 1 when anything failed.`,
 	}
 	steps.CommandLine.PositionalArg(&kind, "KIND", true)
-	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|services|users|mounts"
+	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|services|users|mounts|sysctl"
 	steps.CommandLine.StringVar(&so.host, "host", "", "Host name or address to read from.")
 	steps.CommandLine.StringVar(&so.user, "user", "", "User to log in as.")
 	steps.CommandLine.IntVar(&so.port, "port", 0, "SSH port. Defaults to 22.")
@@ -129,14 +129,17 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 	}
 	k, ok := provider.ListKinds[kind]
 	if !ok {
-		return fail("%q isn't a kind generate steps lists: packages, services, users or mounts", kind)
+		return fail("%q isn't a kind generate steps lists: packages, services, users, mounts or sysctl", kind)
 	}
-	names, err := provider.ListHost(ctx, kind, o.sshValue())
+	names, values, err := provider.ListHost(ctx, kind, o.sshValue())
 	if err != nil {
 		return fail("listing %s on %s: %s", kind, o.host, err)
 	}
 	if match == "" {
 		for _, n := range names {
+			if k.Value != "" {
+				n += " = " + values[n]
+			}
 			fmt.Fprintln(stdout, termsafe.Escape(n))
 		}
 		return 0
@@ -157,6 +160,9 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 		}
 		one := o
 		one.module, one.args = k.Module, []string{k.Key + "=" + strconv.Quote(n)}
+		if k.Value != "" {
+			one.args = append(one.args, k.Value+"="+strconv.Quote(values[n]))
+		}
 		one.name = stepName(k.Module, map[string]cty.Value{k.Key: cty.StringVal(n)})
 		for i := 2; used[one.name]; i++ {
 			one.name = fmt.Sprintf("%s_%d", stepName(k.Module, map[string]cty.Value{k.Key: cty.StringVal(n)}), i)

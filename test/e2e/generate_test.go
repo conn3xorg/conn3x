@@ -67,8 +67,9 @@ func TestGenerateStep(t *testing.T) {
 	w.mustConn3x("init", "-no-color")
 	out = w.mustConn3x("plan", "-no-color")
 	t.Logf("first plan:\n%s", out)
-	if !strings.Contains(out, "Plan: 4 to import, 0 to add, 0 to change, 0 to destroy.") {
-		t.Fatalf("the generated steps should import with nothing to change:\n%s", out)
+	// sysctl keeps a setting in its own file, so adopting one writes it.
+	if !strings.Contains(out, "Plan: 4 to import, 0 to add, 1 to change, 0 to destroy.") || !strings.Contains(out, "conn3x_sysctl.box__net_ipv4_ip_forward[\"box\"] will be updated in-place") {
+		t.Fatalf("the generated steps should import, with only the sysctl file to write:\n%s", out)
 	}
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
@@ -129,6 +130,15 @@ func TestGenerateSteps(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("package step (exit %d):\n%s", code, pkg)
 	}
+	// A setting someone put in sysctl.d, at the value the kernel has.
+	h.exec("", "sh", "-c", "echo \"net.ipv4.ip_forward = $(cat /proc/sys/net/ipv4/ip_forward)\" > /etc/sysctl.d/90-local.conf && echo '# kernel.x = 1' >> /etc/sysctl.d/90-local.conf")
+	if list, code := gen("sysctl"); code != 0 || !strings.Contains(list, "net.ipv4.ip_forward = ") || strings.Contains(list, "kernel.x") {
+		t.Fatalf("sysctl list (exit %d):\n%s", code, list)
+	}
+	sysctl, code := gen("-match", "net.ipv4.ip_forward", "sysctl")
+	if code != 0 || !strings.Contains(sysctl, "sysctl {") || !strings.Contains(sysctl, `name  = "net.ipv4.ip_forward"`) {
+		t.Fatalf("sysctl step (exit %d):\n%s", code, sysctl)
+	}
 	if out, code := gen("-match", "nothing-like-this-*", "packages"); code != 1 || !strings.Contains(out, "matches none") {
 		t.Fatalf("a match for nothing (exit %d):\n%s", code, out)
 	}
@@ -139,12 +149,13 @@ func TestGenerateSteps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(strings.Replace(string(circuit), "# steps", steps+"\n"+pkg, 1)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Replace(string(circuit), "# steps", steps+"\n"+pkg+"\n"+sysctl, 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	w.mustConn3x("init", "-no-color")
 	out := w.mustConn3x("plan", "-no-color")
-	if !strings.Contains(out, "Plan: 3 to import, 0 to add, 0 to change, 0 to destroy.") {
-		t.Fatalf("the generated steps should import with nothing to change:\n%s", out)
+	// sysctl keeps a setting in its own file, so adopting one writes it.
+	if !strings.Contains(out, "Plan: 4 to import, 0 to add, 1 to change, 0 to destroy.") || !strings.Contains(out, "conn3x_sysctl.box__net_ipv4_ip_forward[\"box\"] will be updated in-place") {
+		t.Fatalf("the generated steps should import, with only the sysctl file to write:\n%s", out)
 	}
 }
