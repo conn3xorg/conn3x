@@ -38,6 +38,14 @@ func TestConn3xRun(t *testing.T) {
 	if got := web1.exec("", "cat", "/tmp/motd"); got != "hello there\n" {
 		t.Errorf("/tmp/motd = %q", got)
 	}
+	// src sends a file from here, as Ansible's copy does.
+	if err := os.WriteFile(filepath.Join(w.dir, "motd.src"), []byte("hello there\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := run("web", "-m", "file", "-a", "src=motd.src path=/tmp/motd"); !strings.Contains(out, "web1 | ok") {
+		t.Errorf("src with the same content should be ok:\n%s", out)
+	}
+	os.Remove(filepath.Join(w.dir, "motd.src"))
 	if out, _ := run("web", "-m", "file", "-a", "path=/tmp/motd content='hello there\n'"); !strings.Contains(out, "web1 | ok") {
 		t.Errorf("the same file again should be ok:\n%s", out)
 	}
