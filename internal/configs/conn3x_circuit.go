@@ -151,6 +151,7 @@ var circuitSchema = &hcl.BodySchema{
 		{Name: "strategy"},
 		{Name: "batch_size"},
 		{Name: "max_failures"},
+		{Name: "device_backup_dir"},
 	},
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "ssh"},
@@ -358,7 +359,13 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 				hcl.TraverseAttr{Name: removals.Name, SrcRange: rng},
 			})
 		}
-		resources = append(resources, removals, lowerEOSCommit(kind, name, block, hosts, sshAttrs, sshRange, deviceSteps, chain, removals, perHost))
+		commit := lowerEOSCommit(kind, name, block, hosts, sshAttrs, sshRange, deviceSteps, chain, removals, perHost)
+		if dir, ok := content.Attributes["device_backup_dir"]; ok {
+			if expr, ok := dir.Expr.(hclsyntax.Expression); ok {
+				commit.Config.(*hclsyntax.Body).Attributes["backup_dir"] = &hclsyntax.Attribute{Name: "backup_dir", Expr: expr, SrcRange: dir.Range, NameRange: dir.NameRange}
+			}
+		}
+		resources = append(resources, removals, commit)
 	}
 
 	handlers := map[string]bool{}
