@@ -42,7 +42,7 @@ step "postgres_held" {
 <!-- reference -->
 ## How it works
 
-**Holding.** On the Debian family, Conn3x runs `apt-mark hold`, and `apt-mark unhold` to release. On the Red Hat family it runs `dnf versionlock add`, which locks the version that's installed, or the newest available one if the package isn't installed, and `dnf versionlock delete` to release. Fedora's dnf 5 has `versionlock` built in. dnf 4, on Rocky Linux 10, AlmaLinux and RHEL, needs `python3-dnf-plugin-versionlock`, and without it the step fails and names that package.
+**Holding.** On the Debian family, Conn3x runs `apt-mark hold`, and `apt-mark unhold` to release. On the Red Hat family it runs `dnf versionlock add`, which locks the installed version, and `dnf versionlock delete` to release. A hold needs the package installed: holding one that isn't fails and says to install it first, since there's no version to hold, and releasing one that isn't is fine. After the command, Conn3x reads the list back, because `dnf versionlock` exits 0 even for a name it can't find, as with a typo. Fedora's dnf 5 has `versionlock` built in. dnf 4, on Rocky Linux 10, AlmaLinux and RHEL, needs `python3-dnf-plugin-versionlock`, and without it the step fails and names that package.
 
 **Reading.** Every plan reads `apt-mark showhold` or `dnf versionlock list`. A hold someone released by hand, or one someone added, shows the step out of sync, and the next apply puts it back the way the step says. Apply changes nothing when the host already matches.
 
