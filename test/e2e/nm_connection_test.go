@@ -48,6 +48,14 @@ systemctl start NetworkManager`)
 		t.Errorf("a second plan should be clean:\n%s", out)
 	}
 
+	// Another configuration adopts the connection with import.
+	adopt := newWorkdir(t, "nm_connection_import")
+	adopt.writeAs("main.circuit.hcl", chainVars{PortA: box.port, Key: box.keyFile, KnownHosts: knownFile})
+	adopt.mustConn3x("init", "-no-color")
+	if out := adopt.mustConn3x("plan", "-no-color", "-var=address=192.0.2.11/24"); !strings.Contains(out, "Plan: 1 to import, 0 to add, 0 to change, 0 to destroy.") {
+		t.Errorf("importing the connection:\n%s", out)
+	}
+
 	box.exec("", "nmcli", "connection", "modify", "lan", "ipv4.addresses", "192.0.2.99/24")
 	if out := w.mustConn3x("plan", "-no-color", "-var=address=192.0.2.11/24"); !strings.Contains(out, "1 to change") {
 		t.Errorf("an nmcli edit should show as a change:\n%s", out)

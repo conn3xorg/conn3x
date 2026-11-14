@@ -1,0 +1,35 @@
+variable "address" {
+  type = string
+}
+
+variable "present" {
+  type    = bool
+  default = true
+}
+
+circuit "net" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "lan" {
+    import = true
+    when = var.present
+    nm_connection {
+      name          = "lan"
+      type          = "ethernet"
+      ifname        = "c3a"
+      ip4           = [var.address]
+      dns4          = ["192.0.2.53"]
+      ip6           = ["disabled"]
+      confirm_after = "20s"
+      on_remove     = "delete"
+    }
+  }
+}

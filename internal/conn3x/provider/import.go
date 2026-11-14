@@ -14,15 +14,18 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"github.com/opentofu/opentofu/internal/conn3x/importid"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/container"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/firewall"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mount"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/nm"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/postgresql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/selinux"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/service"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/storage"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
@@ -72,6 +75,15 @@ var importable = map[string]struct {
 	"conn3x_sysctl":         {nameID("sysctl", nil), notNull, "kernel parameter %s", hasSysctl},
 	"conn3x_mount":          {pathID("mount"), notNull, "mount %s", hasMount},
 	"conn3x_repository":     {nameID("repository", nil), notNull, "repository %s", hasRepository},
+
+	// Storage and the rest: what's adopted is what's there, and a plan
+	// shows where it differs. A file system with another type, or a group
+	// missing a PV, plans the change, which force still guards.
+	"conn3x_filesystem":         {keysID("filesystem", "device"), notNull, "a file system on %s", hasFilesystem},
+	"conn3x_lvm_volume_group":   {nameID("lvm_volume_group", nil), notNull, "volume group %s", hasVolumeGroup},
+	"conn3x_lvm_logical_volume": {keysID("lvm_logical_volume", "vg", "name"), notNull, "logical volume %s", hasLogicalVolume},
+	"conn3x_container":          {nameID("container", nil), notNull, "container %s", hasContainer},
+	"conn3x_nm_connection":      {nameID("nm_connection", nil), notNull, "NetworkManager connection %s", hasNMConnection},
 
 	"conn3x_postgresql_database": {nameID("postgresql_database", nil), notNull, "PostgreSQL database %s", hasPgDatabase},
 	"conn3x_postgresql_role":     {nameID("postgresql_role", nil), notNull, "PostgreSQL role %s", hasPgRole},
@@ -260,6 +272,50 @@ func hasMount(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	return a.Entry != "" || a.Mounted, err
 }
 
+// allNull reports whether v is null, or a list or tuple of nothing but
+// nulls.
+func allNull(v cty.Value) bool {
+	if v.IsNull() {
+		return true
+	}
+	if !v.IsKnown() || !v.CanIterateElements() {
+		return false
+	}
+	for it := v.ElementIterator(); it.Next(); {
+		if _, e := it.Element(); !e.IsNull() {
+			return false
+		}
+	}
+	return true
+}
+
+// hasFilesystem: the device holds a file system, of any type.
+func hasFilesystem(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := storage.ReadFilesystem(ctx, h, filesystemFrom(v))
+	return a.Type != "", err
+}
+
+func hasVolumeGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := storage.ReadVolumeGroup(ctx, h, volumeGroupFrom(v))
+	return a.Exists, err
+}
+
+func hasLogicalVolume(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := storage.ReadLogicalVolume(ctx, h, logicalVolumeFrom(v))
+	return a.Exists, err
+}
+
+func hasContainer(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := container.Read(ctx, h, containerFrom(v))
+	return a.Exists, err
+}
+
+// hasNMConnection: its keyfile is there, whoever wrote it.
+func hasNMConnection(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
+	a, err := nm.Read(ctx, h, nmConnectionFrom(v))
+	return a.Content != "", err
+}
+
 // hasRepository: any of the repository's files is there.
 func hasRepository(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 	family, err := pkg.DetectFamily(ctx, h)
@@ -409,6 +465,23 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 		}
 		attrs[k] = v
 	}
+	// A dynamic argument, such as the earlier_revisions a circuit sets,
+	// comes as plain JSON; cty's decoder wants its type alongside.
+	for name, a := range resourceTypes[typeName].schema().Block.Attributes {
+		raw, ok := attrs[name]
+		if !ok || !a.Type.Equals(cty.DynamicPseudoType) {
+			continue
+		}
+		t, err := ctyjson.ImpliedType(raw)
+		if err != nil {
+			return id, cty.NilVal, fmt.Errorf("import ID for %s: %s: %w", typeName, name, err)
+		}
+		tj, err := ctyjson.MarshalType(t)
+		if err != nil {
+			return id, cty.NilVal, err
+		}
+		attrs[name], _ = json.Marshal(map[string]json.RawMessage{"value": raw, "type": tj})
+	}
 	b, err := json.Marshal(attrs)
 	if err != nil {
 		return id, cty.NilVal, err
@@ -434,6 +507,16 @@ func importPrior(typeName, raw string) (importID, cty.Value, error) {
 		return id, cty.NilVal, fmt.Errorf("import ID has no ssh host")
 	}
 	vals := v.AsValueMap()
+	// Revisions the circuit hands a step are strings, null until those
+	// steps are in state; JSON's nulls carry no type, so give them that one,
+	// or the plan after the import would see a change of type.
+	if r, ok := vals["earlier_revisions"]; ok && !r.IsNull() && allNull(r) && r.Type().IsTupleType() {
+		nulls := make([]cty.Value, r.LengthInt())
+		for i := range nulls {
+			nulls[i] = cty.NullVal(cty.String)
+		}
+		vals["earlier_revisions"] = cty.TupleVal(nulls)
+	}
 	if ty.HasAttribute("on_remove") && vals["on_remove"].IsNull() {
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 		if importDeletes[typeName] {

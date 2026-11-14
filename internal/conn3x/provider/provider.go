@@ -52,6 +52,8 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_line":                 {lineKind.schema, lineKind.validate, lineKind.plan, lineKind.read, lineKind.apply, upgradeWith(lineKind.schema)},
 	"conn3x_block":                {blockKind.schema, blockKind.validate, blockKind.plan, blockKind.read, blockKind.apply, upgradeWith(blockKind.schema)},
 	"conn3x_ini":                  {iniKind.schema, iniKind.validate, iniKind.plan, iniKind.read, iniKind.apply, upgradeWith(iniKind.schema)},
+	"conn3x_xml_value":            {xmlValueKind.schema, xmlValueKind.validate, xmlValueKind.plan, xmlValueKind.read, xmlValueKind.apply, upgradeWith(xmlValueKind.schema)},
+	"conn3x_json_value":           {jsonValueKind.schema, jsonValueKind.validate, jsonValueKind.plan, jsonValueKind.read, jsonValueKind.apply, upgradeWith(jsonValueKind.schema)},
 	"conn3x_replace":              {replaceKind.schema, replaceKind.validate, replaceKind.plan, replaceKind.read, replaceKind.apply, upgradeWith(replaceKind.schema)},
 	"conn3x_limit":                {limitKind.schema, limitKind.validate, limitKind.plan, limitKind.read, limitKind.apply, upgradeWith(limitKind.schema)},
 	"conn3x_known_hosts":          {knownHostsSchema, validateKnownHosts, planKnownHosts, readKnownHosts, applyKnownHosts, upgradeWith(knownHostsSchema)},
@@ -61,6 +63,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_package_sources":      {packageSourcesSchema, validatePackageSources, planPackageSources, readPackageSources, applyPackageSources, upgradeWith(packageSourcesSchema)},
 	"conn3x_timer":                {timerSchema, validateTimer, planTimer, readTimer, applyTimer, upgradeWith(timerSchema)},
 	"conn3x_acl":                  {aclSchema, validateACL, planACL, readACL, applyACL, upgradeWith(aclSchema)},
+	"conn3x_uri":                  {uriSchema, validateURI, planURI, readURI, applyURI, upgradeWith(uriSchema)},
 	"conn3x_sysctl":               {sysctlSchema, validateSysctl, planSysctl, readSysctl, applySysctl, upgradeWith(sysctlSchema)},
 	"conn3x_package_hold":         {packageHoldSchema, validatePackageHold, planPackageHold, readPackageHold, applyPackageHold, upgradeWith(packageHoldSchema)},
 	"conn3x_hostname":             {hostnameSchema, validateHostname, planHostname, readHostname, applyHostname, upgradeWith(hostnameSchema)},
@@ -173,7 +176,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 			"conn3x_packages": packagesDataSchema(), "conn3x_services": servicesDataSchema(),
 			"conn3x_file": fileDataSchema(), "conn3x_command": commandDataSchema(),
 		},
-		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema(), tunnelType: tunnelSchema()},
+		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema(), tunnelType: tunnelSchema(), hostdataType: hostdataSchema()},
 		Functions:          functions,
 	}
 }
@@ -235,8 +238,11 @@ func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.V
 }
 
 func (p *Provider) ValidateEphemeralConfig(_ context.Context, req providers.ValidateEphemeralConfigRequest) providers.ValidateEphemeralConfigResponse {
-	if req.TypeName == tunnelType {
+	switch req.TypeName {
+	case tunnelType:
 		return providers.ValidateEphemeralConfigResponse{Diagnostics: validateTunnel(req.Config)}
+	case hostdataType:
+		return providers.ValidateEphemeralConfigResponse{Diagnostics: validateHostdataEphemeral(req.Config)}
 	}
 	return validateSecrets(req)
 }
@@ -418,14 +424,17 @@ func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSou
 }
 
 func (p *Provider) OpenEphemeralResource(ctx context.Context, req providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
-	if req.TypeName == tunnelType {
+	switch req.TypeName {
+	case tunnelType:
 		return openTunnel(ctx, req)
+	case hostdataType:
+		return openHostdata(req)
 	}
 	return openSecrets(req)
 }
 
-// RenewEphemeralResource has nothing to do: a secrets file is read once,
-// and a tunnel stays open until it's closed.
+// RenewEphemeralResource has nothing to do: a secrets file and host data
+// are read once, and a tunnel stays open until it's closed.
 func (p *Provider) RenewEphemeralResource(context.Context, providers.RenewEphemeralResourceRequest) providers.RenewEphemeralResourceResponse {
 	return providers.RenewEphemeralResourceResponse{}
 }
