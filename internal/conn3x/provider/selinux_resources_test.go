@@ -48,3 +48,23 @@ func TestSELinuxValidate(t *testing.T) {
 		}
 	}
 }
+
+// One mode per host, so the id is the host's, and a change of mode is an
+// update that doesn't know yet whether it takes a reboot.
+func TestSELinuxModePlan(t *testing.T) {
+	r := resourceTypes["conn3x_selinux_mode"]
+	cfg := objFor(r.schema(), map[string]cty.Value{"mode": cty.StringVal("enforcing")})
+	created := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(cfg.Type()), ProposedNewState: cfg, Config: cfg}).PlannedState
+	if got := created.GetAttr("id"); !got.RawEquals(cty.StringVal("203.0.113.10:selinux_mode")) {
+		t.Errorf("id = %#v", got)
+	}
+	prior := withSync(withReboot(created, false), true)
+	next := objFor(r.schema(), map[string]cty.Value{"mode": cty.StringVal("permissive")})
+	resp := r.plan(providers.PlanResourceChangeRequest{PriorState: prior, ProposedNewState: next, Config: next})
+	if len(resp.RequiresReplace) != 0 || resp.PlannedState.GetAttr("reboot_required").IsKnown() {
+		t.Errorf("replace %v, planned %#v", resp.RequiresReplace, resp.PlannedState)
+	}
+	if diags := r.validate(objFor(r.schema(), map[string]cty.Value{"mode": cty.StringVal("disabled")})); !diags.HasErrors() {
+		t.Error("accepted disabled")
+	}
+}

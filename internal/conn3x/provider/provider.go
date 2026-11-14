@@ -73,6 +73,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_ufw_rule":             {ufwRuleSchema, validateUFWRule, planRule("ufw", []string{"action", "port", "from"}), readUFWRule, applyUFWRule, upgradeWith(ufwRuleSchema)},
 	"conn3x_selinux_boolean":      {selinuxBooleanSchema, validateSELinuxBoolean, planSELinuxBoolean, readSELinuxBoolean, applySELinuxBoolean, upgradeWith(selinuxBooleanSchema)},
 	"conn3x_selinux_fcontext":     {selinuxFcontextSchema, validateSELinuxFcontext, planSELinuxFcontext, readSELinuxFcontext, applySELinuxFcontext, upgradeWith(selinuxFcontextSchema)},
+	"conn3x_selinux_mode":         {selinuxModeSchema, validateSELinuxMode, planSELinuxMode, readSELinuxMode, applySELinuxMode, upgradeWith(selinuxModeSchema)},
 	"conn3x_repository":           {repositorySchema, validateRepository, planRepository, readRepository, applyRepository, upgradeWith(repositorySchema)},
 	"conn3x_tls_private_key":      {tlsKeySchema, validateWith("path", func(v cty.Value) error { return tlsKeyFrom(v).Validate() }), planTLSKey, readTLSKey, applyTLSKey, upgradeWith(tlsKeySchema)},
 	"conn3x_tls_csr":              {tlsCSRSchema, validateWith("common_name", func(v cty.Value) error { return tlsCSRFrom(v).Validate() }), planTLSCSR, readTLSCSR, applyTLSCSR, upgradeWith(tlsCSRSchema)},
