@@ -120,7 +120,7 @@ func stepImport(r *Resource, attr *hclsyntax.Attribute, moduleAttrs hclsyntax.At
 		}}
 	}
 
-	forEach := r.ForEach
+	forEach := lenientWhen(r.ForEach)
 	if v, diags := attr.Expr.Value(nil); !diags.HasErrors() && v.Type() == cty.Bool {
 		if v.IsNull() || v.False() {
 			return nil, nil
