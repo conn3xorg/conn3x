@@ -1,0 +1,27 @@
+circuit "pins" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .Plugin}}
+  step "versionlock" {
+    package {
+      name = "python3-dnf-plugin-versionlock"
+    }
+  }
+{{end}}
+  step "bash" {
+{{- if .Plugin}}
+    depends_on = [conn3x_package.pins__versionlock]
+{{- end}}
+    package_hold {
+      name      = "bash"
+      state     = "{{.State}}"
+      on_remove = "delete"
+    }
+  }
+}
