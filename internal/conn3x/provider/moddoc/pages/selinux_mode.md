@@ -37,3 +37,7 @@ step "selinux" {
 ## Removal
 
 A `selinux_mode` step has no `on_remove`. When you delete it, Conn3x stops managing the mode and leaves it as it is.
+
+## From Ansible
+
+`conn3x convert ansible` turns `ansible.posix.selinux` tasks with `state: enforcing` or `permissive` into `selinux_mode` steps. `policy` is dropped with a note, since the step leaves `SELINUXTYPE` as it is. `state: disabled`, `update_kernel_param` and a `configfile` other than `/etc/selinux/config` stay TODOs.
