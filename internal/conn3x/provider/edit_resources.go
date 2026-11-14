@@ -134,6 +134,37 @@ func iniFrom(v cty.Value) edit.INI {
 	}
 }
 
+var xmlValueKind = editKind{
+	name: "xml_value",
+	desc: "One element's text or one attribute in an XML file, which should or should not be there. The rest of the file stays as it was, byte for byte.",
+	attrs: map[string]*configschema.Attribute{
+		"xpath": {Type: cty.String, Required: true, Description: "Which element or attribute, from the root: element names with [@attr='value'] or [n] to pick one, ending in /@name for an attribute, such as /Server/Service/Connector[@port='8080']/@protocol. A missing last element is added."},
+		"value": {Type: cty.String, Optional: true, Description: "The element's text or the attribute's value, unescaped. Required unless state is \"absent\"."},
+		"state": {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which takes the attribute or the element out."},
+	},
+	edit: func(v cty.Value) func(string) (string, error) {
+		c := xmlValueFrom(v)
+		return func(s string) (string, error) { return edit.ApplyXMLValue(s, c) }
+	},
+	remove: func(v cty.Value) func(string) (string, error) {
+		c := xmlValueFrom(v)
+		c.State = edit.Absent
+		return func(s string) (string, error) { return edit.ApplyXMLValue(s, c) }
+	},
+	check: func(v cty.Value) error {
+		c := xmlValueFrom(v)
+		if c.State != edit.Absent && v.GetAttr("value").IsNull() {
+			return errors.New("value is required unless state is \"absent\"")
+		}
+		return c.Validate()
+	},
+	missingOK: func(v cty.Value) bool { return xmlValueFrom(v).State == edit.Absent },
+}
+
+func xmlValueFrom(v cty.Value) edit.XMLValue {
+	return edit.XMLValue{XPath: stringOr(v.GetAttr("xpath"), ""), Value: stringOr(v.GetAttr("value"), ""), State: edit.State(stringOr(v.GetAttr("state"), ""))}
+}
+
 var limitKind = editKind{
 	name: "limit",
 	desc: "One PAM limit in a limits.conf file, which should or should not be there. The rest of the file stays as it is.",
