@@ -2,6 +2,11 @@ variable "address" {
   type = string
 }
 
+variable "present" {
+  type    = bool
+  default = true
+}
+
 circuit "net" {
   hosts = {
     box = { address = "127.0.0.1", port = {{.PortA}} }
@@ -15,6 +20,7 @@ circuit "net" {
 
   step "lan" {
     import = true
+    when = var.present
     nm_connection {
       name          = "lan"
       type          = "ethernet"
