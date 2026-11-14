@@ -1586,7 +1586,8 @@ func TestShare(t *testing.T) {
 	}
 	a, err := windows.ReadShare(ctx, c, s)
 	if ok, merr := s.Matches(a); err != nil || !ok || merr != nil {
-		t.Fatalf("after create: %+v, %v, %v", a, err, merr)
+		shares := run(t, c, `Get-SmbShare | Select-Object Name, Path, ScopeName | ConvertTo-Json -Compress`, nil).Text
+		t.Fatalf("after create: %+v, %v, %v\nshares on the host: %s", a, err, merr, shares)
 	}
 	for _, e := range a.Access {
 		if e.SID == "S-1-1-0" {
