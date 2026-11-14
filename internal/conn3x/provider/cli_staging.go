@@ -78,7 +78,7 @@ func (st *cliStaged) turn(ctx context.Context, h *hostConn, circuit string, unlo
 // everything staged for the circuit: nothing of it reaches the device.
 func (st *cliStaged) stage(ctx context.Context, h *hostConn, circuit, view string, cmds []string, removal bool, conn cty.Value) error {
 	all := append(append([]string{}, st.cmds...), cmds...)
-	if err := st.p.check(ctx, h.client, all); err != nil {
+	if err := st.p.check(ctx, st.p.device(h, conn), all); err != nil {
 		return st.drop(ctx, h, circuit, err)
 	}
 	if st.cmds == nil {
@@ -123,11 +123,12 @@ func (st *cliStaged) salvage(ctx context.Context, h *hostConn, removed [][]strin
 		lines = append(lines, strings.Join(r, "; "))
 	}
 	again := func() error {
-		running, err := st.p.running(ctx, h.client)
+		d := st.p.device(h, st.conn)
+		running, err := st.p.running(ctx, d)
 		if err != nil {
 			return err
 		}
-		_, err = st.p.apply(ctx, h.client, st.p.reconnect(st.conn), running, cmds, st.p.confirmAfter(st.conn))
+		_, err = st.p.apply(ctx, d, st.p.reconnect(st.conn), running, cmds, st.p.confirmAfter(st.conn))
 		return err
 	}
 	if againErr := again(); againErr != nil {
@@ -157,7 +158,7 @@ func (st *cliStaged) commit(ctx context.Context, h *hostConn, circuit string, co
 	}
 	base, cmds, removed := st.base, st.cmds, st.removals
 	st.cmds, st.removals = nil, nil // committed or rolling back: either way, gone
-	diff, err := st.p.apply(ctx, h.client, st.p.reconnect(conn), base, cmds, st.p.confirmAfter(conn))
+	diff, err := st.p.apply(ctx, st.p.device(h, conn), st.p.reconnect(conn), base, cmds, st.p.confirmAfter(conn))
 	if diff != "" {
 		log.Printf("[INFO] conn3x: %s on %s: lines sent:\n%s", what, h.host, diff)
 	}

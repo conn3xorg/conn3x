@@ -112,6 +112,9 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_vyos_static_route":    vyosStaticRouteKind.entry(vyosStaticRouteSchema, validateVyOSStaticRoute),
 	"conn3x_vyos_commit":          vyosCommitTypes["conn3x_vyos_commit"],
 	"conn3x_vyos_removals":        vyosCommitTypes["conn3x_vyos_removals"],
+	"conn3x_ios_config":           iosConfigKind.entry(iosConfigSchema, validateIOSConfig),
+	"conn3x_ios_commit":           iosCommitTypes["conn3x_ios_commit"],
+	"conn3x_ios_removals":         iosCommitTypes["conn3x_ios_removals"],
 	"conn3x_junos_commit":         junosCommitTypes["conn3x_junos_commit"],
 	"conn3x_junos_removals":       junosCommitTypes["conn3x_junos_removals"],
 	"conn3x_eos_removals":         {eosRemovalsSchema, func(cty.Value) tfdiags.Diagnostics { return nil }, planEOSRemovals, readEOSCommit, applyEOSRemovals, upgradeWith(eosRemovalsSchema)},
@@ -204,6 +207,8 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 			diags = diags.Append(validateJunosSSH(req.Config))
 		} else if strings.HasPrefix(req.TypeName, vyosTypePrefix) {
 			diags = diags.Append(validateVyOSSSH(req.Config))
+		} else if strings.HasPrefix(req.TypeName, iosTypePrefix) {
+			diags = diags.Append(validateIOSSSH(req.Config))
 		} else {
 			diags = diags.Append(validateNotEOS(req.Config))
 		}
