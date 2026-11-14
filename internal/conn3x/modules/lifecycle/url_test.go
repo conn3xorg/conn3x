@@ -5,6 +5,7 @@ package lifecycle
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -85,3 +86,27 @@ func TestURLCheck(t *testing.T) {
 type noDial struct{}
 
 func (noDial) Run(context.Context, string, []byte) (ssh.Result, error) { return ssh.Result{}, nil }
+
+func TestDo(t *testing.T) {
+	var got struct{ method, auth, body string }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got.method, got.auth, got.body = r.Method, r.Header.Get("Authorization"), string(b)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":7}`))
+	}))
+	defer srv.Close()
+	d := &dialer{}
+	req := Request{URLCheck: URLCheck{URL: srv.URL + "/hosts", StatusCodes: []int{201}}, Method: "POST", Headers: map[string]string{"Authorization": "Bearer t"}, Body: `{"host":"web1"}`}
+	res, err := Do(context.Background(), d, req)
+	if err != nil || res.Status != 201 || res.Body != `{"id":7}` {
+		t.Fatalf("res = %+v, %v", res, err)
+	}
+	if got.method != "POST" || got.auth != "Bearer t" || got.body != `{"host":"web1"}` || d.dials.Load() != 1 {
+		t.Errorf("server saw %+v, %d dials", got, d.dials.Load())
+	}
+	req.StatusCodes = nil
+	if _, err := Do(context.Background(), d, req); err == nil || !strings.Contains(err.Error(), "answered 201 Created, not 200") {
+		t.Errorf("an unexpected status: %v", err)
+	}
+}

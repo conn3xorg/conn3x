@@ -66,6 +66,75 @@ func (u URLCheck) codes() []int {
 	return u.StatusCodes
 }
 
+// client is an HTTP client whose connections leave from the host.
+func client(d RemoteDialer, skipTLSVerify bool) *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			// Never a proxy from this machine's environment: the request is
+			// the host's.
+			Proxy:               nil,
+			DialContext:         func(ctx context.Context, _, addr string) (net.Conn, error) { return d.DialRemote(ctx, addr) },
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: skipTLSVerify}, //nolint:gosec // only when skip_tls_verify asks
+			DisableKeepAlives:   true,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
+}
+
+// Request is one HTTP call made from the host, as the uri step makes it.
+type Request struct {
+	URLCheck
+	Method  string
+	Headers map[string]string
+	Body    string
+}
+
+// Response is what a Request got: its status, and the first bodyLimit
+// bytes of its body.
+type Response struct {
+	Status int
+	Body   string
+}
+
+// Do makes the request once, and fails when the status isn't one of
+// StatusCodes.
+func Do(ctx context.Context, r modules.Runner, req Request) (Response, error) {
+	if err := req.Validate(); err != nil {
+		return Response{}, err
+	}
+	d, ok := r.(RemoteDialer)
+	if !ok {
+		return Response{}, errors.New("uri needs the SSH connection to make the request from the host")
+	}
+	method := req.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	var body io.Reader
+	if req.Body != "" {
+		body = strings.NewReader(req.Body)
+	}
+	hr, err := http.NewRequestWithContext(ctx, method, req.URL, body)
+	if err != nil {
+		return Response{}, err
+	}
+	for k, v := range req.Headers {
+		hr.Header.Set(k, v)
+	}
+	resp, err := client(d, req.SkipTLSVerify).Do(hr)
+	if err != nil {
+		return Response{}, err
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
+	out := Response{Status: resp.StatusCode, Body: string(got)}
+	if !slices.Contains(req.codes(), resp.StatusCode) {
+		return out, fmt.Errorf("%s %s answered %s, not %s", method, req.URL, resp.Status, joinCodes(req.codes()))
+	}
+	return out, nil
+}
+
 // check makes the request once. why says what isn't right yet, "" when the
 // answer is the one wanted; err is for a runner that can't reach the host's
 // network at all.
@@ -74,23 +143,13 @@ func (u URLCheck) check(ctx context.Context, r modules.Runner) (why string, err 
 	if !ok {
 		return "", errors.New("url needs the SSH connection to make the request from the host")
 	}
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			// Never a proxy from this machine's environment: the request is
-			// the host's.
-			Proxy:               nil,
-			DialContext:         func(ctx context.Context, _, addr string) (net.Conn, error) { return d.DialRemote(ctx, addr) },
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: u.SkipTLSVerify}, //nolint:gosec // only when skip_tls_verify asks
-			DisableKeepAlives:   true,
-			TLSHandshakeTimeout: 10 * time.Second,
-		},
-	}
+	c := client(d, u.SkipTLSVerify)
+	c.Timeout = 10 * time.Second
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.URL, nil)
 	if err != nil {
 		return "", err
 	}
-	resp, err := client.Do(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		// sshd with AllowTcpForwarding no will never let the request out.
 		if strings.Contains(err.Error(), "administratively prohibited") {

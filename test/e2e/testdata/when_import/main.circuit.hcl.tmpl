@@ -1,0 +1,25 @@
+variable "present" {
+  type    = bool
+  default = true
+}
+
+circuit "app" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "motd" {
+    import = true
+    when   = var.present
+    file {
+      path    = "/etc/motd.c3"
+      content = "hello\n"
+    }
+  }
+}

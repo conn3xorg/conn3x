@@ -30,6 +30,10 @@ import (
 type whenFilter struct {
 	instances hcl.Expression
 	cond      hcl.Expression
+	// lenient leaves a when that isn't known yet unknown, rather than an
+	// error, for an import block: OpenTofu evaluates its for_each before
+	// variables are known, as well as at plan.
+	lenient bool
 }
 
 var _ hcl.Expression = (*whenFilter)(nil)
@@ -60,6 +64,9 @@ func (w *whenFilter) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 		}
 		got, condMarks := got.Unmark()
 		marks = append(marks, condMarks)
+		if !got.IsKnown() && w.lenient {
+			return cty.DynamicVal.WithMarks(marks...), diags
+		}
 		if !got.IsKnown() {
 			return bad("when isn't known yet",
 				fmt.Sprintf("when decides whether the step runs on %s, so it has to be known when planning, but on %s it depends on something only the apply will know. "+
@@ -141,6 +148,21 @@ func stepFiltered(forEach hcl.Expression) bool {
 }
 
 // unfiltered is a step's instances before its when.
+// lenientWhen is forEach with its when, if it has one, lenient.
+func lenientWhen(forEach hcl.Expression) hcl.Expression {
+	switch e := forEach.(type) {
+	case *whenFilter:
+		c := *e
+		c.lenient = true
+		return &c
+	case *onceFilter:
+		c := *e
+		c.instances = lenientWhen(e.instances)
+		return &c
+	}
+	return forEach
+}
+
 func unfiltered(forEach hcl.Expression) hcl.Expression {
 	switch e := forEach.(type) {
 	case *whenFilter:

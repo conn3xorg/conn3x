@@ -63,6 +63,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_package_sources":      {packageSourcesSchema, validatePackageSources, planPackageSources, readPackageSources, applyPackageSources, upgradeWith(packageSourcesSchema)},
 	"conn3x_timer":                {timerSchema, validateTimer, planTimer, readTimer, applyTimer, upgradeWith(timerSchema)},
 	"conn3x_acl":                  {aclSchema, validateACL, planACL, readACL, applyACL, upgradeWith(aclSchema)},
+	"conn3x_uri":                  {uriSchema, validateURI, planURI, readURI, applyURI, upgradeWith(uriSchema)},
 	"conn3x_sysctl":               {sysctlSchema, validateSysctl, planSysctl, readSysctl, applySysctl, upgradeWith(sysctlSchema)},
 	"conn3x_package_hold":         {packageHoldSchema, validatePackageHold, planPackageHold, readPackageHold, applyPackageHold, upgradeWith(packageHoldSchema)},
 	"conn3x_hostname":             {hostnameSchema, validateHostname, planHostname, readHostname, applyHostname, upgradeWith(hostnameSchema)},

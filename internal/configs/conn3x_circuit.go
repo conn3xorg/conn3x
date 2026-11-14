@@ -68,6 +68,7 @@ var circuitModules = map[string]string{
 	"sudoers":              "conn3x_sudoers",
 	"nm_connection":        "conn3x_nm_connection",
 	"wait_for":             "conn3x_wait_for",
+	"uri":                  "conn3x_uri",
 	"reboot":               "conn3x_reboot",
 	"directory":            "conn3x_directory",
 	"link":                 "conn3x_link",
