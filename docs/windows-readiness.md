@@ -40,6 +40,7 @@ A module drops the experimental label when all of these hold:
 | `windows_registry_value` | yes | yes | yes | yes | |
 | `windows_environment` | no | yes | no | no | an Azure run; `import` (#417) |
 | `windows_path` | no | yes | no | no | an Azure run; `import` (#417) |
+| `windows_share` | no | yes | no | no | an Azure run; `import` (#417) |
 | `windows_scheduled_task` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_service` | yes | yes | yes | yes | |
 | `windows_update` | yes | reads only: an install on the runner is slow and pointless | yes, and an 8-month-behind Windows Server 2022 brought current with its cumulative and .NET updates (#583) | n/a | |

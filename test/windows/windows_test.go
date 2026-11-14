@@ -1564,3 +1564,58 @@ func TestEnvironmentAndPath(t *testing.T) {
 		t.Errorf("after removing: %+v, want %q", after, before.Value)
 	}
 }
+
+// windows_share makes a share, then changes its Allow entries in place:
+// grants, a revoke of New-SmbShare's own Everyone, and a Deny left alone.
+func TestShare(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	dir := `C:\Conn3xShare` + suffix
+	name := "Conn3xTest" + suffix
+	run(t, c, `param($A) $null = New-Item -ItemType Directory -Force -LiteralPath $A.d`, map[string]any{"d": dir})
+	t.Cleanup(func() {
+		_ = windows.ApplyShareRemove(context.Background(), c, name)
+		_, _ = ps.User(context.Background(), c, `param($A) Remove-Item -LiteralPath $A.d -Recurse -Force`, map[string]any{"d": dir}, time.Minute)
+	})
+	desc := `Conn3x test 'share' with "quotes" and $env:WINDIR`
+	s := windows.Share{Name: name, Path: dir, Description: &desc, Full: []string{"Administrators"}, Read: []string{"Users"}}
+	if err := windows.ApplyShare(ctx, c, s); err != nil {
+		t.Fatal(err)
+	}
+	a, err := windows.ReadShare(ctx, c, s)
+	if ok, merr := s.Matches(a); err != nil || !ok || merr != nil {
+		t.Fatalf("after create: %+v, %v, %v", a, err, merr)
+	}
+	for _, e := range a.Access {
+		if e.SID == "S-1-1-0" {
+			t.Errorf("New-SmbShare's Everyone stayed: %+v", a.Access)
+		}
+	}
+	// A Deny entry someone added stays; Users goes up to Change in place.
+	run(t, c, `param($A) $null = Block-SmbShareAccess -Name $A.n -AccountName 'Guests' -Force`, map[string]any{"n": name})
+	s.Read, s.Change = nil, []string{"Users"}
+	if err := windows.ApplyShare(ctx, c, s); err != nil {
+		t.Fatal(err)
+	}
+	a, _ = windows.ReadShare(ctx, c, s)
+	if ok, _ := s.Matches(a); !ok {
+		t.Errorf("after change: %+v", a.Access)
+	}
+	deny := false
+	for _, e := range a.Access {
+		deny = deny || e.Type == "Deny"
+	}
+	if !deny {
+		t.Errorf("the Deny entry went: %+v", a.Access)
+	}
+	if err := windows.ApplyShareRemove(ctx, c, name); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := windows.ReadShare(ctx, c, s); a.Exists {
+		t.Error("remove left the share")
+	}
+	if got := strings.TrimSpace(run(t, c, `param($A) Test-Path -LiteralPath $A.d`, map[string]any{"d": dir}).Text); got != "True" {
+		t.Error("remove took the folder")
+	}
+}
