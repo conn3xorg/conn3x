@@ -6,11 +6,13 @@
 package schedule
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/account"
 )
 
@@ -211,4 +213,26 @@ func ParseTimer(name, service, timer string) (Timer, string) {
 		return Timer{}, err.Error()
 	}
 	return t, ""
+}
+
+// DropIns are the drop-in directories, holding a .conf, for the timer and
+// its service. systemd applies them over the units, so with any there the
+// units aren't what runs (#850).
+func (t Timer) DropIns(ctx context.Context, r modules.Runner) ([]string, error) {
+	res, err := r.Run(ctx, fmt.Sprintf(`for d in /etc/systemd/system /run/systemd/system; do
+  for u in %s.timer %s.service; do
+    ls "$d/$u.d/"*.conf >/dev/null 2>&1 && echo "$d/$u.d"
+  done
+done; true`, t.Name, t.Name), nil)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(string(res.Stdout)), nil
+}
+
+// DropInError is a timer step refusing a timer whose drop-ins change it.
+type DropInError struct{ Dirs []string }
+
+func (e DropInError) Error() string {
+	return "drop-ins in " + strings.Join(e.Dirs, " and ") + " change what this timer's units say, so the step can't make it run as written. Fold them into the step's arguments and remove them, then apply again"
 }

@@ -43,6 +43,17 @@ func TestCronAndTimer(t *testing.T) {
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, `conn3x_timer.jobs__report["box"] will be updated in-place`) {
 				t.Fatalf("stopped timer not planned:\n%s", out)
 			}
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+
+			// A drop-in from systemctl edit retimes the job behind the step:
+			// that's drift, and apply refuses rather than pretend (#850).
+			h.exec("", "sh", "-c", "mkdir -p /etc/systemd/system/conn3x-report.timer.d && printf '[Timer]\\nOnCalendar=\\nOnCalendar=hourly\\n' > /etc/systemd/system/conn3x-report.timer.d/override.conf")
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, `conn3x_timer.jobs__report["box"] will be updated in-place`) {
+				t.Fatalf("a drop-in should be drift:\n%s", out)
+			}
+			if out, code := w.conn3x("apply", "-auto-approve", "-no-color"); code == 0 || !strings.Contains(out, "conn3x-report.timer.d") {
+				t.Fatalf("apply with a drop-in (exit %d):\n%s", code, out)
+			}
 		})
 	}
 }

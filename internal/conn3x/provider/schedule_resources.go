@@ -248,7 +248,12 @@ func readTimer(ctx context.Context, req providers.ReadResourceRequest) providers
 		if err != nil {
 			return cty.NilVal, err
 		}
-		ok := a.Content == svc && b.Content == tmr && unit.Exists && unit.Running && unit.Enabled && !unit.NeedsReload
+		// A drop-in changes what runs, so the units alone can't be in sync.
+		dropIns, err := t.DropIns(ctx, h)
+		if err != nil {
+			return cty.NilVal, err
+		}
+		ok := a.Content == svc && b.Content == tmr && unit.Exists && unit.Running && unit.Enabled && !unit.NeedsReload && len(dropIns) == 0
 		return withSync(prior, ok), nil
 	})
 }
@@ -260,6 +265,12 @@ func applyTimer(ctx context.Context, req providers.ApplyResourceChangeRequest) p
 			svc, tmr, err := t.Units()
 			if err != nil {
 				return cty.NilVal, err
+			}
+			if dirs, err := t.DropIns(ctx, h); err != nil || len(dirs) > 0 {
+				if err == nil {
+					err = schedule.DropInError{Dirs: dirs}
+				}
+				return cty.NilVal, fmt.Errorf("timer %s: %w", t.Name, err)
 			}
 			svcPath, tmrPath := t.Paths()
 			for path, content := range map[string]string{svcPath: svc, tmrPath: tmr} {
