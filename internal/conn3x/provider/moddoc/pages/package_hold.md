@@ -2,7 +2,7 @@ Use `package_hold` to keep a package at the version it has while the rest of the
 
 ## Example usage
 
-Hold PostgreSQL where it is:
+Hold PostgreSQL where it is. Steps run in the order written, so the hold comes after the install:
 
 ```hcl
 step "postgres" {
@@ -12,7 +12,6 @@ step "postgres" {
 }
 
 step "postgres_held" {
-  depends_on = [conn3x_package.db__postgres]
 
   package_hold {
     name = "postgresql16-server"
