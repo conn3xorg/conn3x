@@ -550,17 +550,24 @@ func validateEOSVLAN(cfg cty.Value) tfdiags.Diagnostics {
 	return validateWith("vlan_id", func(v cty.Value) error { return eosVLANFrom(v).Validate() })(cfg)
 }
 
+var (
+	eosInterfaceType    = cty.Object(map[string]cty.Type{"name": cty.String, "status": cty.String, "description": cty.String})
+	eosLLDPNeighborType = cty.Object(map[string]cty.Type{"local_port": cty.String, "neighbor_name": cty.String, "neighbor_port": cty.String})
+)
+
 // eosDeviceSchema is the conn3x_eos_device data source: what a circuit
 // checks before it changes a switch.
 func eosDeviceSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: eosExperimental + "Facts about an Arista EOS switch, from show version and show hostname.",
+		Description: eosExperimental + "Facts about an Arista EOS switch, from show version, show hostname, show interfaces status and show lldp neighbors. The last two may be empty if the switch refuses them.",
 		Attributes: map[string]*configschema.Attribute{
-			"hostname":   {Type: cty.String, Computed: true, Description: "The switch's hostname."},
-			"model":      {Type: cty.String, Computed: true, Description: "Model, such as DCS-7050SX3-48YC8, or cEOSLab."},
-			"version":    {Type: cty.String, Computed: true, Description: "EOS version as show version prints it, such as 4.37.0F or 4.37.0F-51574443.4370F.1 (engineering build)."},
-			"serial":     {Type: cty.String, Computed: true, Description: "Serial number. cEOS-lab reports a made-up one."},
-			"system_mac": {Type: cty.String, Computed: true, Description: "System MAC address."},
+			"hostname":       {Type: cty.String, Computed: true, Description: "The switch's hostname."},
+			"model":          {Type: cty.String, Computed: true, Description: "Model, such as DCS-7050SX3-48YC8, or cEOSLab."},
+			"version":        {Type: cty.String, Computed: true, Description: "EOS version as show version prints it, such as 4.37.0F or 4.37.0F-51574443.4370F.1 (engineering build)."},
+			"serial":         {Type: cty.String, Computed: true, Description: "Serial number. cEOS-lab reports a made-up one."},
+			"system_mac":     {Type: cty.String, Computed: true, Description: "System MAC address."},
+			"interfaces":     {Type: cty.List(eosInterfaceType), Computed: true, Description: "Each port from show interfaces status, sorted by name: name, status (linkStatus, such as connected) and description."},
+			"lldp_neighbors": {Type: cty.List(eosLLDPNeighborType), Computed: true, Description: "Each LLDP neighbour from show lldp neighbors, sorted by local port: local_port, neighbor_name and neighbor_port."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -584,8 +591,26 @@ func readEOSDevice(ctx context.Context, req providers.ReadDataSourceRequest) pro
 	vals["version"] = cty.StringVal(f.Version)
 	vals["serial"] = cty.StringVal(f.Serial)
 	vals["system_mac"] = cty.StringVal(f.SystemMAC)
+	ifs := []cty.Value{}
+	for _, i := range f.Interfaces {
+		ifs = append(ifs, cty.ObjectVal(map[string]cty.Value{"name": cty.StringVal(i.Name), "status": cty.StringVal(i.Status), "description": cty.StringVal(i.Description)}))
+	}
+	vals["interfaces"] = listOrEmpty(ifs, eosInterfaceType)
+	nbs := []cty.Value{}
+	for _, n := range f.LLDPNeighbors {
+		nbs = append(nbs, cty.ObjectVal(map[string]cty.Value{"local_port": cty.StringVal(n.LocalPort), "neighbor_name": cty.StringVal(n.NeighborName), "neighbor_port": cty.StringVal(n.NeighborPort)}))
+	}
+	vals["lldp_neighbors"] = listOrEmpty(nbs, eosLLDPNeighborType)
 	resp.State = cty.ObjectVal(vals)
 	return resp
+}
+
+// listOrEmpty is vals as a list of t; a list of none is typed, not null.
+func listOrEmpty(vals []cty.Value, t cty.Type) cty.Value {
+	if len(vals) == 0 {
+		return cty.ListValEmpty(t)
+	}
+	return cty.ListVal(vals)
 }
 
 // conn3x_eos_commit makes live what a circuit's eos_* steps staged on one
