@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_ad_group` to keep a group in Active Directory, and to make sure the right accounts are in it. Run it on a domain controller.
 
 ## Example usage
