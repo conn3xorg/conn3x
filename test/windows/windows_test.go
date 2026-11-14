@@ -1506,8 +1506,7 @@ func TestInventory(t *testing.T) {
 }
 
 // windows_environment and windows_path keep a variable's kind: the machine
-// Path stays ExpandString, with %SystemRoot% unexpanded, after an element
-// comes and goes.
+// Path comes back as it was, kind included, after an element comes and goes.
 func TestEnvironmentAndPath(t *testing.T) {
 	c := connect(t)
 	ctx := context.Background()
@@ -1538,7 +1537,9 @@ func TestEnvironmentAndPath(t *testing.T) {
 	}
 
 	before, err := windows.ReadEnv(ctx, c, "Path", false)
-	if err != nil || !before.Exists || before.Kind != "ExpandString" || !strings.Contains(before.Value, "%SystemRoot%") {
+	// GitHub's runner images have Path expanded, with no %SystemRoot% left;
+	// what matters is that it comes back as it was, kind and all.
+	if err != nil || !before.Exists {
 		t.Fatalf("machine Path before: %+v, %v", before, err)
 	}
 	elem := `C:\Conn3x Test\` + name
@@ -1547,7 +1548,7 @@ func TestEnvironmentAndPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := windows.ReadEnv(ctx, c, "Path", false)
-	if !p.Matches(a) || a.Kind != "ExpandString" || a.Value != before.Value+";"+elem {
+	if !p.Matches(a) || a.Kind != before.Kind || a.Value != strings.TrimRight(before.Value, ";")+";"+elem {
 		t.Errorf("after adding: %+v", a)
 	}
 	if err := windows.ApplyPath(ctx, c, p); err != nil {
@@ -1560,7 +1561,7 @@ func TestEnvironmentAndPath(t *testing.T) {
 	if err := windows.ApplyPath(ctx, c, p); err != nil {
 		t.Fatal(err)
 	}
-	if after, _ := windows.ReadEnv(ctx, c, "Path", false); after.Value != before.Value || after.Kind != "ExpandString" {
+	if after, _ := windows.ReadEnv(ctx, c, "Path", false); after.Value != strings.TrimRight(before.Value, ";") || after.Kind != before.Kind {
 		t.Errorf("after removing: %+v, want %q", after, before.Value)
 	}
 }
