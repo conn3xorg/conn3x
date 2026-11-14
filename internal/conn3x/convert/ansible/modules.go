@@ -77,6 +77,8 @@ type input struct {
 	// out holds files a role's task adds to the circuit, kept only if the
 	// task converts.
 	out map[string][]byte
+	// wait is set for a uri task that retries until a status answers.
+	wait *uriWait
 }
 
 // verbatim lists, by module, the arguments Conn3x uses exactly as Ansible
@@ -399,9 +401,13 @@ var modules = map[string]func(*input) ([]step, string){
 	"shell":              commandModule,
 	"reboot":             rebootModule,
 	"wait_for":           waitForModule,
+	"uri":                uriModule,
+	"acl":                aclModule,
 	"apt_repository":     aptRepositoryModule,
 	"yum_repository":     yumRepositoryModule,
 	"locale_gen":         localeGenModule,
+	"dpkg_selections":    dpkgSelectionsModule,
+	"yum_versionlock":    versionlockModule,
 
 	"win_acl":               winACLModule,
 	"win_acl_inheritance":   winACLInheritanceModule,
@@ -1221,6 +1227,80 @@ func modprobeModule(in *input) ([]step, string) {
 	return one("modprobe", attrs)
 }
 
+// dpkgSelectionsModule turns hold and install into a package_hold step.
+// deinstall and purge mark a package for removal, which a hold doesn't.
+func dpkgSelectionsModule(in *input) ([]step, string) {
+	h := pkg.Hold{Name: in.str("name")}
+	switch sel := in.str("selection"); sel {
+	case "hold":
+		h.Held = true
+	case "install":
+	default:
+		return nil, fmt.Sprintf("selection %q marks the package for removal; use a package step with state = \"absent\"", sel)
+	}
+	return holdSteps(in, []string{h.Name}, h.Held)
+}
+
+// versionlockModule turns each locked name into a package_hold step.
+func versionlockModule(in *input) ([]step, string) {
+	return holdSteps(in, in.list("name"), in.state("present", "present", "absent") == "present")
+}
+
+func holdSteps(in *input, names []string, held bool) ([]step, string) {
+	var steps []step
+	for _, n := range names {
+		// yum_versionlock takes versions and wildcards, as in
+		// httpd-0:2.4.57-2.el9; package_hold holds the installed version.
+		if strings.ContainsAny(n, ":*?[") {
+			return nil, fmt.Sprintf("%s has a version or wildcard: package_hold takes a name only and holds the installed version", n)
+		}
+		if !strings.Contains(n, "${") {
+			if err := (pkg.Hold{Name: n}).Validate(); err != nil {
+				return nil, err.Error()
+			}
+		}
+		attrs := []attr{s("name", n)}
+		if !held {
+			attrs = append(attrs, s("state", "released"))
+		}
+		steps = append(steps, step{module: "package_hold", attrs: attrs, suffix: n})
+	}
+	if len(steps) == 0 {
+		return nil, "names no package"
+	}
+	return steps, ""
+}
+
+// aclModule converts one ACL entry. Ansible's state defaults to query,
+// which reads and changes nothing.
+func aclModule(in *input) ([]step, string) {
+	if in.has("entry") {
+		return nil, "sets entry, the old one-string form; give it etype, entity and permissions instead"
+	}
+	st := in.state("query", "present", "absent")
+	for key, keep := range map[string]string{"recursive": "false", "recurse": "false", "follow": "true", "use_nfsv4_acls": "false", "recalculate_mask": "default"} {
+		if in.has(key) && in.str(key) != keep && truthy(in.str(key)) != truthy(keep) {
+			return nil, "sets " + key + ", and the acl step owns one entry on one path, as POSIX ACLs"
+		}
+	}
+	attrs := []attr{s("path", in.str("path")), s("etype", in.str("etype"))}
+	attrs = in.optional(attrs, "entity", "entity")
+	if in.has("permissions") {
+		p := strings.ReplaceAll(in.str("permissions"), "-", "")
+		if strings.Trim(p, "rwx") != "" {
+			return nil, "sets permissions " + in.str("permissions") + "; the acl step takes r, w and x"
+		}
+		attrs = append(attrs, s("permissions", p))
+	}
+	if in.has("default") && truthy(in.str("default")) {
+		attrs = append(attrs, attr{key: "default", val: cty.True})
+	}
+	if st == "absent" {
+		attrs = append(attrs, s("state", "absent"))
+	}
+	return one("acl", attrs)
+}
+
 func sudoersModule(in *input) ([]step, string) {
 	in.state("present", "present")
 	// validation: Conn3x always checks with visudo.
@@ -1448,6 +1528,76 @@ func waitForModule(in *input) ([]step, string) {
 	}
 	in.ignore("delay")
 	return one("wait_for", attrs)
+}
+
+// uriWait is a uri task's until, retries and delay: the codes it waits for,
+// nil when it waits for the task to succeed, and how long in all.
+type uriWait struct {
+	codes   []string
+	seconds int
+}
+
+var (
+	untilStatus = regexp.MustCompile(`^(\w+)\.status\s*(?:==\s*(\d{3})|in\s*\[\s*(\d{3}(?:\s*,\s*\d{3})*)\s*\])$`)
+	untilOK     = regexp.MustCompile(`^(\w+)\s+is\s+(?:succeeded|success|successful|not\s+failed)$`)
+)
+
+// uriRetry reads a uri task that polls a URL: until on the registered
+// result's status, with retries and delay given as numbers.
+func uriRetry(t map[string]*yaml.Node) *uriWait {
+	if mod, _ := moduleOf(t); mod != "uri" || t["until"] == nil || t["until"].Kind != yaml.ScalarNode {
+		return nil
+	}
+	reg, until := scalar(t["register"]), strings.TrimSpace(scalar(t["until"]))
+	retries, err1 := strconv.Atoi(scalar(t["retries"]))
+	delay, err2 := strconv.Atoi(scalar(t["delay"]))
+	if reg == "" || err1 != nil || err2 != nil || retries < 1 || delay < 0 {
+		return nil
+	}
+	w := &uriWait{seconds: retries * delay}
+	if m := untilStatus.FindStringSubmatch(until); m != nil && m[1] == reg {
+		for _, c := range strings.Split(m[2]+m[3], ",") {
+			w.codes = append(w.codes, strings.TrimSpace(c))
+		}
+		return w
+	}
+	if m := untilOK.FindStringSubmatch(until); m != nil && m[1] == reg {
+		return w
+	}
+	return nil
+}
+
+// uriModule converts a uri task that waits for a URL into wait_for.
+func uriModule(in *input) ([]step, string) {
+	if in.wait == nil {
+		return nil, "makes a request; only a uri task that retries until a status answers converts yet, to wait_for"
+	}
+	if m := in.str("method"); m != "" && !strings.EqualFold(m, "GET") {
+		return nil, "waits with a " + m + " request, and wait_for sends GET"
+	}
+	attrs := []attr{s("url", in.str("url"))}
+	codes := in.wait.codes
+	if c := in.list("status_code"); codes == nil {
+		codes = c
+	}
+	if len(codes) > 0 && !slices.Equal(codes, []string{"200"}) {
+		vals := make([]cty.Value, len(codes))
+		for i, c := range codes {
+			n, err := strconv.Atoi(c)
+			if err != nil {
+				return nil, "has a status_code that isn't a number"
+			}
+			vals[i] = cty.NumberIntVal(int64(n))
+		}
+		attrs = append(attrs, attr{key: "status_codes", val: cty.ListVal(vals)})
+	}
+	if in.has("validate_certs") && !truthy(in.str("validate_certs")) {
+		attrs = append(attrs, attr{key: "skip_tls_verify", val: cty.True})
+	}
+	// timeout is per request; wait_for's covers the whole wait.
+	in.ignore("timeout", "return_content")
+	attrs = append(attrs, s("timeout", fmt.Sprintf("%ds", in.wait.seconds)))
+	return one("wait_for", attrs, "Was a uri task retried until it answered; the registered result isn't kept.")
 }
 
 // aptLine is a one-line apt source: deb, optional [options], URL, suite and

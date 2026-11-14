@@ -767,9 +767,13 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			fams, familyCond = allowed, true
 		}
 	}
+	wait := uriRetry(t)
 	module, delegate := "", ""
 	for _, k := range sortedKeys(t) {
 		if k == "loop" && items != nil {
+			continue
+		}
+		if wait != nil && (k == "until" || k == "retries" || k == "delay" || k == "register") {
 			continue
 		}
 		if k == "delegate_to" {
@@ -822,6 +826,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	run := func(vars map[string]string) (*input, []step, string) {
 		in := c.input(mod, args, vars, items)
 		in.factsLater = c.factsAfter[node]
+		in.wait = wait
 		steps, reason := m(in)
 		if reason == "" && items != nil {
 			reason = loopSteps(in.itemUsed)
