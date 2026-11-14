@@ -57,6 +57,9 @@ type Server struct {
 	commands []string
 	delay    time.Duration
 	exec     func(command string, stdin []byte) (stdout string, code int)
+	// forwardDelay holds each forward this long before it connects, as a
+	// remote that drops packets does.
+	forwardDelay time.Duration
 
 	accepts    atomic.Int64
 	forwards   atomic.Int64
@@ -81,6 +84,13 @@ func (s *Server) SetExec(f func(command string, stdin []byte) (stdout string, co
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.exec = f
+}
+
+// SetForwardDelay holds each forward d before it connects to its target.
+func (s *Server) SetForwardDelay(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forwardDelay = d
 }
 
 // Rejections is how many sessions the server has refused.
@@ -343,6 +353,10 @@ func (s *Server) forward(nc gossh.NewChannel) {
 		_ = nc.Reject(gossh.ConnectionFailed, "bad forward request")
 		return
 	}
+	s.mu.Lock()
+	delay := s.forwardDelay
+	s.mu.Unlock()
+	time.Sleep(delay)
 	conn, err := net.Dial("tcp", net.JoinHostPort(target.Host, strconv.Itoa(int(target.Port))))
 	if err != nil {
 		_ = nc.Reject(gossh.ConnectionFailed, err.Error())
@@ -355,8 +369,15 @@ func (s *Server) forward(nc gossh.NewChannel) {
 	}
 	s.forwards.Add(1)
 	go gossh.DiscardRequests(reqs)
-	go func() { _, _ = io.Copy(ch, conn); _ = ch.CloseWrite() }()
+	// As sshd does: the channel's EOF shuts only the write side towards the
+	// target, so a client that half-closes still gets its reply.
+	replied := make(chan struct{})
+	go func() { _, _ = io.Copy(ch, conn); _ = ch.CloseWrite(); close(replied) }()
 	_, _ = io.Copy(conn, ch)
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.CloseWrite()
+	}
+	<-replied
 	conn.Close()
 	ch.Close()
 }

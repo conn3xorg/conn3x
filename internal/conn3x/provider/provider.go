@@ -171,7 +171,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 			"conn3x_packages": packagesDataSchema(), "conn3x_services": servicesDataSchema(),
 			"conn3x_file": fileDataSchema(), "conn3x_command": commandDataSchema(),
 		},
-		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema()},
+		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema(), tunnelType: tunnelSchema()},
 		Functions:          functions,
 	}
 }
@@ -233,6 +233,9 @@ func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.V
 }
 
 func (p *Provider) ValidateEphemeralConfig(_ context.Context, req providers.ValidateEphemeralConfigRequest) providers.ValidateEphemeralConfigResponse {
+	if req.TypeName == tunnelType {
+		return providers.ValidateEphemeralConfigResponse{Diagnostics: validateTunnel(req.Config)}
+	}
 	return validateSecrets(req)
 }
 
@@ -251,6 +254,7 @@ func (p *Provider) ConfigureProvider(_ context.Context, req providers.ConfigureP
 func (p *Provider) Close(context.Context) error {
 	if p.stop != nil && !p.closed.Swap(true) && openProviders.Add(-1) == 0 {
 		abortStaged()
+		closeTunnels()
 		if err := finishCLI(); err != nil {
 			log.Printf("[WARN] conn3x: %v", err)
 		}
@@ -411,17 +415,24 @@ func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSou
 	return read(ctx, req)
 }
 
-func (p *Provider) OpenEphemeralResource(_ context.Context, req providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
+func (p *Provider) OpenEphemeralResource(ctx context.Context, req providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
+	if req.TypeName == tunnelType {
+		return openTunnel(ctx, req)
+	}
 	return openSecrets(req)
 }
 
-// RenewEphemeralResource and CloseEphemeralResource have nothing to do: a
-// secrets file is read once, and holds nothing open.
+// RenewEphemeralResource has nothing to do: a secrets file is read once,
+// and a tunnel stays open until it's closed.
 func (p *Provider) RenewEphemeralResource(context.Context, providers.RenewEphemeralResourceRequest) providers.RenewEphemeralResourceResponse {
 	return providers.RenewEphemeralResourceResponse{}
 }
 
-func (p *Provider) CloseEphemeralResource(context.Context, providers.CloseEphemeralResourceRequest) providers.CloseEphemeralResourceResponse {
+// CloseEphemeralResource closes a tunnel; a secrets file holds nothing open.
+func (p *Provider) CloseEphemeralResource(_ context.Context, req providers.CloseEphemeralResourceRequest) providers.CloseEphemeralResourceResponse {
+	if req.TypeName == tunnelType {
+		return closeTunnel(req)
+	}
 	return providers.CloseEphemeralResourceResponse{}
 }
 
