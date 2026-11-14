@@ -4,6 +4,8 @@
 package provider
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -93,7 +95,9 @@ func TestVyOSStepsShareOneCommit(t *testing.T) {
 		t.Helper()
 		attrs["circuit"] = cty.StringVal("edge")
 		v := onSwitch(eosStep(typ, attrs, nil), ssh)
-		if err := create(func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse { return kind.apply(ctx, req) }, v); err != nil {
+		if err := create(func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+			return kind.apply(ctx, req)
+		}, v); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -103,11 +107,28 @@ func TestVyOSStepsShareOneCommit(t *testing.T) {
 	if f.commits != 0 {
 		t.Fatalf("%d commits before the circuit's commit", f.commits)
 	}
-	commit := onSwitch(eosStep("conn3x_vyos_commit", map[string]cty.Value{"id": cty.StringVal("c"), "circuit": cty.StringVal("edge"), "removals": cty.StringVal("r")}, nil), ssh)
-	if err := create(func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	backups := t.TempDir()
+	commit := onSwitch(eosStep("conn3x_vyos_commit", map[string]cty.Value{"id": cty.StringVal("c"), "circuit": cty.StringVal("edge"), "removals": cty.StringVal("r"), "backup_dir": cty.StringVal(backups)}, nil), ssh)
+	applyCommit := func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 		return applyCLICommit(vyosPlatform)(ctx, req)
-	}, commit); err != nil {
+	}
+	if err := create(applyCommit, commit); err != nil {
 		t.Fatal(err)
+	}
+	// device_backup_dir: the configuration from before the change, once.
+	files, _ := os.ReadDir(backups)
+	if len(files) != 1 {
+		t.Fatalf("%d backups, want 1", len(files))
+	}
+	if b, _ := os.ReadFile(filepath.Join(backups, files[0].Name())); !strings.Contains(string(b), "host-name r1") || strings.Contains(string(b), "host-name r2") {
+		t.Errorf("the backup isn't the configuration from before the change:\n%s", b)
+	}
+	// A commit with nothing staged changes nothing, and backs nothing up.
+	if err := create(applyCommit, commit); err != nil {
+		t.Fatal(err)
+	}
+	if files, _ := os.ReadDir(backups); len(files) != 1 {
+		t.Errorf("%d backups after a commit with nothing to do, want 1", len(files))
 	}
 	if f.commits != 1 || f.confirms != 1 || f.saves != 1 {
 		t.Errorf("%d commits, %d confirms, %d saves; want 1 each", f.commits, f.confirms, f.saves)

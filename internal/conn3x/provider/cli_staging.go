@@ -138,6 +138,16 @@ func (st *cliStaged) salvage(ctx context.Context, h *hostConn, removed [][]strin
 
 // commit sends what circuit staged in one commit confirmed. Nothing staged,
 // or another circuit's lines, is nothing to do.
+// backup writes the configuration the circuit's first staged step read,
+// which is the device's as it was before this change, to dir, when there's
+// a change to commit.
+func (st *cliStaged) backup(dir string, h *hostConn, circuit string) error {
+	if dir == "" || st.cmds == nil || st.owner != circuit || st.failed[circuit] != nil {
+		return nil
+	}
+	return writeDeviceBackup(dir, h.host, st.base)
+}
+
 func (st *cliStaged) commit(ctx context.Context, h *hostConn, circuit string, conn cty.Value, what string) error {
 	if err := st.failed[circuit]; err != nil {
 		return fmt.Errorf("%s: nothing was committed: %w", what, err)
@@ -242,6 +252,10 @@ func applyCLICommit(p *cliPlatform) func(context.Context, providers.ApplyResourc
 				st.batch = map[string]bool{}
 			}
 			st.batch[circuit] = true
+			return resp
+		}
+		if err := st.backup(stringOr(obj.GetAttr("backup_dir"), ""), h, circuit); err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("%s commit: nothing was committed, since the backup failed: %w", p.name, err))
 			return resp
 		}
 		if err := st.commit(ctx, h, circuit, conn, p.name+" commit"); err != nil {

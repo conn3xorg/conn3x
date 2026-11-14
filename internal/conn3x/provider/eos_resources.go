@@ -596,10 +596,11 @@ func eosCommitSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: eosExperimental + "Commits the config session a circuit's eos_* steps added their lines to, with a revert timer, waits confirm_after, confirms over a new login and saves. Circuits add it; it isn't a step.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":       {Type: cty.String, Computed: true},
-			"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "The revisions of the circuit's eos steps on this switch; the commit runs when they change."},
-			"removals": {Type: cty.String, Optional: true, Description: "The id of the circuit's conn3x_eos_removals on this switch. With one, destroying the circuit stages the steps' removals for it to commit once."},
-			"circuit":  eosCircuitAttr(),
+			"id":         {Type: cty.String, Computed: true},
+			"triggers":   {Type: cty.DynamicPseudoType, Optional: true, Description: "The revisions of the circuit's eos steps on this switch; the commit runs when they change."},
+			"removals":   {Type: cty.String, Optional: true, Description: "The id of the circuit's conn3x_eos_removals on this switch. With one, destroying the circuit stages the steps' removals for it to commit once."},
+			"circuit":    eosCircuitAttr(),
+			"backup_dir": {Type: cty.String, Optional: true, Description: "Set from the circuit's device_backup_dir: a directory on the machine running Conn3x where the device's configuration, as it was before the change, is written before each commit that changes it."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -655,6 +656,16 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 	}
 	if st.session == nil || st.owner != circuit {
 		return resp // no step of this circuit changed anything on this switch
+	}
+	if dir := stringOr(obj.GetAttr("backup_dir"), ""); dir != "" {
+		before, err := eos.RunningConfig(ctx, h.client)
+		if err == nil {
+			err = writeDeviceBackup(dir, h.host, before)
+		}
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos commit: nothing was committed, since the backup failed: %w", err))
+			return resp
+		}
 	}
 	s, removed := st.session, st.removals
 	st.session, st.removals = nil, nil // committed or rolling back: either way, gone

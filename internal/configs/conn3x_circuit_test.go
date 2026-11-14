@@ -1334,3 +1334,39 @@ func TestCrontabClash(t *testing.T) {
 		}
 	}
 }
+
+// device_backup_dir reaches each device kind's commit, and only those.
+func TestCircuitDeviceBackupDir(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": `
+circuit "core" {
+  hosts             = { sw1 = "10.0.0.1" }
+  device_backup_dir = "${path.module}/backups"
+  ssh {
+    user = "ops"
+  }
+  step "name" {
+    junos_hostname {
+      name = each.key
+    }
+  }
+  step "leaf" {
+    eos_hostname {
+      name = "leaf1"
+    }
+  }
+}
+`})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	for _, addr := range []string{"conn3x_junos_commit.core__commit", "conn3x_eos_commit.core__commit"} {
+		attrs, _ := mod.ManagedResources[addr].Config.JustAttributes()
+		if _, ok := attrs["backup_dir"]; !ok {
+			t.Errorf("%s has no backup_dir", addr)
+		}
+	}
+	attrs, _ := mod.ManagedResources["conn3x_junos_hostname.core__name"].Config.JustAttributes()
+	if _, ok := attrs["backup_dir"]; ok {
+		t.Error("a step got backup_dir")
+	}
+}
