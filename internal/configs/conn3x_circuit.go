@@ -43,6 +43,7 @@ var circuitModules = map[string]string{
 	"crontab":              "conn3x_crontab",
 	"timer":                "conn3x_timer",
 	"sysctl":               "conn3x_sysctl",
+	"acl":                  "conn3x_acl",
 	"hostname":             "conn3x_hostname",
 	"timezone":             "conn3x_timezone",
 	"locale":               "conn3x_locale",
