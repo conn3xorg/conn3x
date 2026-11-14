@@ -302,9 +302,11 @@ func ApplyDomainController(ctx context.Context, r ps.Runner, d DomainController,
 }
 
 // ChildDomain is a new domain in a forest that exists, with this host as its
-// first domain controller.
+// first domain controller: a child under a domain, or a new tree.
 type ChildDomain struct {
 	DomainName   string // DNS name of the new domain, such as emea.lab.example.com
+	Tree         bool   // a new tree in the forest, such as apac.example.net, rather than a child
+	ParentName   string // for a tree: a domain in the forest, such as lab.example.com
 	NetBIOSName  string // empty lets Windows derive it from the first label
 	Username     string // account in the forest that may add a domain, by DNS name, such as admin@lab.example.com
 	DatabasePath string
@@ -312,8 +314,12 @@ type ChildDomain struct {
 	SysvolPath   string
 }
 
-// Parent is the domain the new one goes under: its name without the first label.
+// Parent is the domain the new one goes under: for a child, its name without
+// the first label; for a tree, the domain in the forest it's given.
 func (c ChildDomain) Parent() string {
+	if c.Tree {
+		return c.ParentName
+	}
 	_, parent, _ := strings.Cut(c.DomainName, ".")
 	return parent
 }
@@ -323,7 +329,20 @@ func (c ChildDomain) Check() (attr string, err error) {
 	if attr, err := (Forest{DomainName: c.DomainName, NetBIOSName: c.NetBIOSName, DatabasePath: c.DatabasePath, LogPath: c.LogPath, SysvolPath: c.SysvolPath}).Check(); err != nil {
 		return attr, err
 	}
-	if strings.Count(c.DomainName, ".") < 2 {
+	if c.Tree {
+		if c.ParentName == "" {
+			return "parent_domain_name", errors.New(`a tree needs parent_domain_name: a domain in the forest it joins, such as lab.example.com`)
+		}
+		if _, err := (Forest{DomainName: c.ParentName}).Check(); err != nil {
+			return "parent_domain_name", fmt.Errorf("parent_domain_name: %w", err)
+		}
+		p, d := strings.ToLower(c.ParentName), strings.ToLower(c.DomainName)
+		if d == p || strings.HasSuffix(d, "."+p) || strings.HasSuffix(p, "."+d) {
+			return "domain_name", fmt.Errorf("domain_name %q is in %s's namespace, so it's a child, not a new tree: leave domain_type unset", c.DomainName, c.ParentName)
+		}
+	} else if c.ParentName != "" {
+		return "parent_domain_name", errors.New(`parent_domain_name is for domain_type = "tree"; a child's parent is its name without the first label`)
+	} else if strings.Count(c.DomainName, ".") < 2 {
 		return "domain_name", fmt.Errorf("domain_name %q must be the new domain's full name, its own label in front of its parent's, such as emea.%s", c.DomainName, c.DomainName)
 	}
 	if err := checkUsername("username", c.Username); err != nil {
@@ -337,7 +356,12 @@ func (c ChildDomain) Check() (attr string, err error) {
 	if !qualified {
 		_, domain, qualified = strings.Cut(c.Username, "@")
 	}
-	if !qualified || strings.Count(c.Username, "@") > 1 || !strings.HasSuffix(strings.ToLower(c.DomainName), "."+strings.ToLower(domain)) {
+	under := c.DomainName
+	if c.Tree {
+		// A tree's account comes from the domain it's given, or one above it.
+		under = "x." + c.ParentName
+	}
+	if !qualified || strings.Count(c.Username, "@") > 1 || !strings.HasSuffix(strings.ToLower(under), "."+strings.ToLower(domain)) {
 		return "username", fmt.Errorf(`username %q must be an account in %s or a domain above it, named by the domain's DNS name, such as admin@%s or %s\admin: the new domain controller finds the forest through DNS`, c.Username, c.Parent(), c.Parent(), c.Parent())
 	}
 	return "", nil
@@ -368,8 +392,12 @@ func ApplyChildDomain(ctx context.Context, r ps.Runner, c ChildDomain, password,
 		return c
 	}
 	label, parent, _ := strings.Cut(c.DomainName, ".")
+	if c.Tree {
+		// A tree is named in full, and goes in beside the forest's domains.
+		label, parent = c.DomainName, c.ParentName
+	}
 	res, err := ps.Apply(ctx, r, script("apply_ad_domain.ps1"), map[string]any{
-		"domain_name": c.DomainName, "label": label, "parent": parent, "netbios_name": c.NetBIOSName,
+		"domain_name": c.DomainName, "label": label, "parent": parent, "tree": c.Tree, "netbios_name": c.NetBIOSName,
 		"username": c.Username, "password": password, "safe_mode_password": safeModePassword,
 		"database_path": clean(c.DatabasePath), "log_path": clean(c.LogPath), "sysvol_path": clean(c.SysvolPath),
 	}, timeout)

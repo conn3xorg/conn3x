@@ -900,13 +900,21 @@ func winDCModule(in *input) ([]step, string) {
 // winChildDomainModule converts microsoft.ad.domain_child, which makes a
 // child domain under one in the forest, or a new tree in it.
 func winChildDomainModule(in *input) ([]step, string) {
-	if t := in.str("domain_type"); t != "" && t != "child" {
-		return nil, fmt.Sprintf("has domain_type %q; windows_ad_domain only makes a child of an existing domain, not a new tree", t)
+	tree := in.str("domain_type") == "tree"
+	if t := in.str("domain_type"); t != "" && t != "child" && t != "tree" {
+		return nil, fmt.Sprintf("has domain_type %q; windows_ad_domain makes a child or a tree", t)
+	}
+	parent := in.str("parent_domain_name")
+	if tree && parent == "" {
+		return nil, "makes a tree without parent_domain_name; windows_ad_domain needs the forest domain the tree joins"
+	}
+	if _, derived, _ := strings.Cut(in.str("dns_domain_name"), "."); !tree && parent != "" && !strings.EqualFold(parent, derived) {
+		return nil, fmt.Sprintf("puts the child under %s, not under the domain its name says; windows_ad_domain takes a child's parent from its name", parent)
 	}
 	if in.has("install_dns") && !in.bool("install_dns", true) {
 		return nil, "makes the domain without DNS; windows_ad_domain always installs it"
 	}
-	for _, k := range []string{"domain_mode", "create_dns_delegation", "site_name", "replication_source_dc", "parent_domain_name"} {
+	for _, k := range []string{"domain_mode", "create_dns_delegation", "site_name", "replication_source_dc"} {
 		if in.has(k) {
 			return nil, "sets " + k + ", which windows_ad_domain doesn't offer yet; make the domain with Windows' defaults or by hand"
 		}
@@ -918,12 +926,16 @@ func winChildDomainModule(in *input) ([]step, string) {
 	if !dnsQualified(user) {
 		return nil, fmt.Sprintf("names the account as %q; windows_ad_domain needs it with its domain's DNS name, such as admin@lab.example.com or lab.example.com\\admin", user)
 	}
-	attrs := []attr{s("domain_name", in.str("dns_domain_name")), s("username", user)}
+	attrs := []attr{s("domain_name", in.str("dns_domain_name"))}
+	if tree {
+		attrs = append(attrs, s("domain_type", "tree"), s("parent_domain_name", parent))
+	}
+	attrs = append(attrs, s("username", user))
 	attrs = in.optional(attrs, "database_path", "database_path")
 	attrs = in.optional(attrs, "log_path", "log_path")
 	attrs = in.optional(attrs, "sysvol_path", "sysvol_path")
 	// Never read, so a password can't end up in the output.
-	in.ignore("domain_admin_password", "safe_mode_password", "install_dns", "domain_type")
+	in.ignore("domain_admin_password", "safe_mode_password", "install_dns", "domain_type", "parent_domain_name")
 	child := step{module: "windows_ad_domain", attrs: attrs, suffix: "domain",
 		notes: []string{"TODO(convert): Set password_wo and safe_mode_password_wo from ephemeral variables. The task's passwords aren't copied here."}}
 	return in.thenReboot(child, true)

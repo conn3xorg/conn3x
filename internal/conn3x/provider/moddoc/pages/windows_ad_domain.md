@@ -1,6 +1,6 @@
 **Experimental.** Windows support is new, and this module may change between releases.
 
-Use `windows_ad_domain` to add a child domain to a forest that exists, with this host as the new domain's first domain controller and DNS server. Shops that split by region or business unit do this: `emea.lab.example.com` under `lab.example.com`. It never reboots the host. Promotion always needs a reboot, so follow it with a [`windows_reboot`](windows_reboot.md) step, then wait for AD to answer.
+Use `windows_ad_domain` to add a domain to a forest that exists, with this host as the new domain's first domain controller and DNS server. Shops that split by region or business unit add a child, such as `emea.lab.example.com` under `lab.example.com`. After a merger, a company with its own name often gets a new tree instead, such as `apac.example.net` beside `lab.example.com`, in the same forest. It never reboots the host. Promotion always needs a reboot, so follow it with a [`windows_reboot`](windows_reboot.md) step, then wait for AD to answer.
 
 ## Example usage
 
@@ -52,12 +52,29 @@ step "adws" {
   }
 }
 ```
+A new tree names the forest domain it joins:
+
+```hcl
+step "domain" {
+  windows_ad_domain {
+    domain_name           = "apac.example.net"
+    domain_type           = "tree"
+    parent_domain_name    = "lab.example.com"
+    netbios_name          = "APAC"
+    username              = "azadmin@lab.example.com"
+    password_wo           = "use an ephemeral variable here"
+    safe_mode_password_wo = "use an ephemeral variable here"
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
-**Promotion.** Conn3x runs `Install-ADDSDomain` with `-DomainType ChildDomain`, `-InstallDns`, `-CreateDnsDelegation` and `-NoRebootOnCompletion`. `domain_name` is the new domain's full name, and everything after its first label is the parent, so `emea.lab.example.com` goes under `lab.example.com`. The parent's DNS gets a delegation to this server, so names in the new domain resolve from the rest of the forest. The new domain controller is a global catalog, as Windows makes one by default, and the new domain trusts its parent both ways, as every child domain does. On Azure, with two 2-vCPU Windows Server 2025 VMs, promotion took under 3 minutes, the reboot after it about 6, and the second plan made no change to either domain.
+**Promotion.** Conn3x runs `Install-ADDSDomain` with `-DomainType ChildDomain`, `-InstallDns`, `-CreateDnsDelegation` and `-NoRebootOnCompletion`. `domain_name` is the new domain's full name, and everything after its first label is the parent, so `emea.lab.example.com` goes under `lab.example.com`. The parent's DNS gets a delegation to this server, so names in the new domain resolve from the rest of the forest. The new domain controller is a global catalog, as Windows makes one by default, and the new domain trusts its parent both ways, as every child domain does.
 
-**Why it needs a password.** A key login has no password to show the forest, so promotion uses the account in `username` and `password_wo`. Adding a domain to a forest takes a member of Enterprise Admins, such as the forest root's first administrator. It belongs to the parent domain or one above it. Name it by that domain's DNS name, as `azadmin@lab.example.com` or `lab.example.com\azadmin`: the host isn't in the forest yet, so it finds the domain through DNS, and `Install-ADDSDomain` refuses `LAB\azadmin`. Conn3x checks this before anything reaches the host.
+**A new tree.** With `domain_type = "tree"`, Conn3x runs `Install-ADDSDomain` with `-DomainType TreeDomain`, the full `domain_name`, and `parent_domain_name` as the domain it joins. A tree has no parent zone, so there's no delegation: the rest of the forest finds the new domain's names once you give their DNS servers a forwarder or a stub zone for it. The new tree and the forest root trust each other both ways. Its name has to be outside the namespace of `parent_domain_name`, or it's a child, and Conn3x says so before anything reaches the host. On Azure, with two 2-vCPU Windows Server 2025 VMs, promotion took under 3 minutes, the reboot after it about 6, and the second plan made no change to either domain.
+
+**Why it needs a password.** A key login has no password to show the forest, so promotion uses the account in `username` and `password_wo`. Adding a domain to a forest takes a member of Enterprise Admins, such as the forest root's first administrator. It belongs to the parent domain or one above it. For a tree, that's `parent_domain_name` or a domain above it. Name it by that domain's DNS name, as `azadmin@lab.example.com` or `lab.example.com\azadmin`: the host isn't in the forest yet, so it finds the domain through DNS, and `Install-ADDSDomain` refuses `LAB\azadmin`. Conn3x checks this before anything reaches the host.
 
 **The passwords.** `password_wo` and `safe_mode_password_wo` go to the host on stdin and become `SecureString` values through .NET before the cmdlet sees them, so a logging policy that records cmdlet parameters records only the type name. They're never in plan or state, and they're blanked from errors. Both are used once, at promotion. To change the Directory Services Restore Mode password later, use `ntdsutil` on the host.
 
@@ -71,7 +88,7 @@ step "adws" {
 
 **Logging in afterwards.** A domain controller has no local accounts. Seen on Azure, the bare name, such as `azadmin`, logs in as the new domain's account of that name after promotion, `EMEA\azadmin`, with the same key. A local login, such as `dc2\azadmin` or `.\azadmin`, stops working, so Conn3x refuses to promote with one. To use the domain form, set `netbios_name` so Conn3x can check it's the new domain's.
 
-**What it refuses.** A host that's a domain controller already, and a host that's a member of a domain: promoting it would take it out, and Conn3x never does that. A `domain_name` with fewer than three labels, since a child needs a parent with two.
+**What it refuses.** A host that's a domain controller already, and a host that's a member of a domain: promoting it would take it out, and Conn3x never does that. A child's `domain_name` with fewer than three labels, since a child needs a parent with two. A tree without `parent_domain_name`, a child with one, and a tree named inside its parent's namespace.
 
 ## Removal
 

@@ -656,14 +656,16 @@ func winChildDomainSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "Experimental. A new child domain in an Active Directory forest that exists, with this Windows host as its first domain controller and DNS server. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the domain; nothing is demoted.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":            {Type: cty.String, Computed: true},
-			"revision":      revisionAttr(),
-			"domain_name":   {Type: cty.String, Required: true, Description: "Full DNS name of the new domain, such as emea.lab.example.com. Everything after the first label is the parent domain, which must exist."},
-			"netbios_name":  {Type: cty.String, Optional: true, Description: "NetBIOS name of the new domain, up to 15 characters, such as EMEA. Unset lets Windows take it from the first label. Used only when the domain is made."},
-			"username":      {Type: cty.String, Required: true, Description: "Account in the forest that may add a domain, a member of Enterprise Admins, named by its domain's DNS name: admin@lab.example.com or lab.example.com\\admin, not LAB\\admin. Its domain is the new domain's parent or another domain above it. Used only when the domain is made."},
-			"database_path": {Type: cty.String, Optional: true, Description: "Folder for the AD database. Windows' default is C:\\Windows\\NTDS. Used only when the domain is made."},
-			"log_path":      {Type: cty.String, Optional: true, Description: "Folder for the AD logs. Used only when the domain is made."},
-			"sysvol_path":   {Type: cty.String, Optional: true, Description: "Folder for SYSVOL. Used only when the domain is made."},
+			"id":                 {Type: cty.String, Computed: true},
+			"revision":           revisionAttr(),
+			"domain_name":        {Type: cty.String, Required: true, Description: "Full DNS name of the new domain, such as emea.lab.example.com. For a child, everything after the first label is the parent domain, which must exist. For a tree, a name outside the forest's other domains, such as apac.example.net."},
+			"domain_type":        {Type: cty.String, Optional: true, Description: "\"child\" (default), a domain under the one its name says, or \"tree\", a new tree in the forest beside its other domains. Used only when the domain is made."},
+			"parent_domain_name": {Type: cty.String, Optional: true, Description: "For a tree: a domain in the forest it joins, usually the forest root, such as lab.example.com. Not set for a child. Used only when the domain is made."},
+			"netbios_name":       {Type: cty.String, Optional: true, Description: "NetBIOS name of the new domain, up to 15 characters, such as EMEA. Unset lets Windows take it from the first label. Used only when the domain is made."},
+			"username":           {Type: cty.String, Required: true, Description: "Account in the forest that may add a domain, a member of Enterprise Admins, named by its domain's DNS name: admin@lab.example.com or lab.example.com\\admin, not LAB\\admin. Its domain is the new domain's parent or another domain above it. Used only when the domain is made."},
+			"database_path":      {Type: cty.String, Optional: true, Description: "Folder for the AD database. Windows' default is C:\\Windows\\NTDS. Used only when the domain is made."},
+			"log_path":           {Type: cty.String, Optional: true, Description: "Folder for the AD logs. Used only when the domain is made."},
+			"sysvol_path":        {Type: cty.String, Optional: true, Description: "Folder for SYSVOL. Used only when the domain is made."},
 			"password_wo": {
 				Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
 				Description: "Password for username, kept out of plan and state. Needed to make the domain, and used only then.",
@@ -683,6 +685,7 @@ func winChildDomainSchema() providers.Schema {
 func winChildDomainFrom(v cty.Value) windows.ChildDomain {
 	return windows.ChildDomain{
 		DomainName: stringOr(v.GetAttr("domain_name"), ""), NetBIOSName: stringOr(v.GetAttr("netbios_name"), ""), Username: stringOr(v.GetAttr("username"), ""),
+		Tree: stringOr(v.GetAttr("domain_type"), "") == "tree", ParentName: stringOr(v.GetAttr("parent_domain_name"), ""),
 		DatabasePath: stringOr(v.GetAttr("database_path"), ""), LogPath: stringOr(v.GetAttr("log_path"), ""), SysvolPath: stringOr(v.GetAttr("sysvol_path"), ""),
 	}
 }
@@ -694,7 +697,10 @@ func childLockout(v cty.Value, c windows.ChildDomain, host string) string {
 }
 
 func validateWinChildDomain(cfg cty.Value) tfdiags.Diagnostics {
-	diags := validatePromotion(cfg, []string{"password_wo", "safe_mode_password_wo"}, []string{"domain_name", "netbios_name", "username", "database_path", "log_path", "sysvol_path"}, func() (string, error) {
+	if t := cfg.GetAttr("domain_type"); known(t) && t.AsString() != "child" && t.AsString() != "tree" {
+		return tfdiags.Diagnostics{}.Append(attrError("domain_type", fmt.Sprintf(`domain_type %q must be "child" or "tree"`, t.AsString())))
+	}
+	diags := validatePromotion(cfg, []string{"password_wo", "safe_mode_password_wo"}, []string{"domain_name", "domain_type", "parent_domain_name", "netbios_name", "username", "database_path", "log_path", "sysvol_path"}, func() (string, error) {
 		return winChildDomainFrom(cfg).Check()
 	})
 	if !cfg.IsNull() && !diags.HasErrors() {

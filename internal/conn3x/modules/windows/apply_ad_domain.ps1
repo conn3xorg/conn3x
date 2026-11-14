@@ -13,7 +13,7 @@ New-ADFolders $missing
 $set = @{
   NewDomainName                 = [string]$A.label
   ParentDomainName              = [string]$A.parent
-  DomainType                    = 'ChildDomain'
+  DomainType                    = $(if ($A.tree) { 'TreeDomain' } else { 'ChildDomain' })
   Credential                    = [Management.Automation.PSCredential]::new([string]$A.username, [Net.NetworkCredential]::new('', [string]$A.password).SecurePassword)
   SafeModeAdministratorPassword = [Net.NetworkCredential]::new('', [string]$A.safe_mode_password).SecurePassword
 }
@@ -21,10 +21,10 @@ if ($A.netbios_name) { $set.NewDomainNetbiosName = [string]$A.netbios_name }
 if ($A.database_path) { $set.DatabasePath = [string]$A.database_path }
 if ($A.log_path) { $set.LogPath = [string]$A.log_path }
 if ($A.sysvol_path) { $set.SysvolPath = [string]$A.sysvol_path }
-# The parent's DNS gets a delegation to this server, so names in the new
-# domain resolve from the rest of the forest. Never a reboot: that's its own
-# step, so it shows in the plan.
-$r = Install-ADDSDomain @set -InstallDns -CreateDnsDelegation -NoRebootOnCompletion -Force -Confirm:$false -WarningAction SilentlyContinue
+# A child's parent DNS gets a delegation to this server, so names in the new
+# domain resolve from the rest of the forest. A tree has no parent zone to
+# delegate from. Never a reboot: that's its own step, so it shows in the plan.
+$r = Install-ADDSDomain @set -InstallDns -CreateDnsDelegation:(-not $A.tree) -NoRebootOnCompletion -Force -Confirm:$false -WarningAction SilentlyContinue
 if ([string]$r.Status -ne 'Success') { throw "Install-ADDSDomain: $($r.Status): $($r.Message)" }
 Set-RebootMarker ([string]$A.domain_name)
 @{ restart = $true }

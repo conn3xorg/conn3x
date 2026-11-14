@@ -46,13 +46,13 @@ circuit "emea_child_domain" {
     }
   }
 
-  # TODO(convert): Task "Same, as a new tree" (site.yml line 16) has domain_type "tree"; windows_ad_domain only makes a child of an existing domain, not a new tree.
-  #   - name: Same, as a new tree
-  #     microsoft.ad.domain_child:
-  #       dns_domain_name: corp.example.net
-  #       domain_type: tree
-  #       parent_domain_name: '{{ parent }}'
-  #       domain_admin_user: 'admin@{{ parent }}'
-  #       domain_admin_password: (secret left out; see the playbook)
-  #       safe_mode_password: (secret left out; see the playbook)
+  # TODO(convert): Set password_wo and safe_mode_password_wo from ephemeral variables. The task's passwords aren't copied here.
+  step "same_as_a_new_tree" {
+    windows_ad_domain {
+      domain_name        = "corp.example.net"
+      domain_type        = "tree"
+      parent_domain_name = "lab.example.com"
+      username           = "admin@lab.example.com"
+    }
+  }
 }
