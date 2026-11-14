@@ -1,0 +1,27 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "port" {
+    json_value {
+      path  = "/etc/app.json"
+      key   = "server.port"
+      value = jsonencode({{.Port2}})
+    }
+  }
+
+  step "log_level" {
+    json_value {
+      path      = "/etc/app.json"
+      key       = "log.level"
+      value     = jsonencode("info")
+      on_remove = "delete"
+    }
+  }
+}
