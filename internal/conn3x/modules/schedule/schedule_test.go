@@ -83,3 +83,35 @@ func TestPercentIsEscaped(t *testing.T) {
 		t.Fatalf("service = %q, %v", svc, err)
 	}
 }
+
+func TestParseTimerRoundTrips(t *testing.T) {
+	for _, want := range []Timer{
+		{Name: "backup", OnCalendar: "*-*-* 02:30:00", Command: "/usr/local/bin/backup --to s3://b/%Y", Persistent: true},
+		{Name: "report", OnCalendar: "weekly", Command: "/opt/report", User: "app", Description: "Weekly report"},
+	} {
+		svc, tmr, err := want.Units()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, why := ParseTimer(want.Name, svc, tmr)
+		if why != "" || got != want {
+			t.Errorf("%s: got %+v (%s), want %+v", want.Name, got, why, want)
+		}
+	}
+	// Written by hand: comments, spacing and a Unit= line it can't own.
+	svc := "[Unit]\nDescription=Clean tmp\n\n[Service]\n# nightly\nExecStart = /usr/bin/find /tmp -mtime +7 -delete\n"
+	if got, why := ParseTimer("clean", svc, "[Timer]\nOnCalendar = daily\n[Install]\nWantedBy=timers.target\n"); why != "" || got.OnCalendar != "daily" || got.Command != "/usr/bin/find /tmp -mtime +7 -delete" || got.Description != "Clean tmp" {
+		t.Errorf("by hand: %+v, %s", got, why)
+	}
+	for name, units := range map[string][2]string{
+		"two calendars": {svc, "[Timer]\nOnCalendar=daily\nOnCalendar=weekly\n"},
+		"boot":          {svc, "[Timer]\nOnBootSec=5min\n"},
+		"delay":         {svc, "[Timer]\nOnCalendar=daily\nRandomizedDelaySec=1h\n"},
+		"two commands":  {"[Service]\nExecStart=/a\nExecStart=/b\n", "[Timer]\nOnCalendar=daily\n"},
+		"simple":        {"[Service]\nType=simple\nExecStart=/a\n", "[Timer]\nOnCalendar=daily\n"},
+	} {
+		if _, why := ParseTimer("x", units[0], units[1]); why == "" {
+			t.Errorf("%s: adopted", name)
+		}
+	}
+}

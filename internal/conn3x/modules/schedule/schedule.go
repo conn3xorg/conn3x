@@ -140,3 +140,75 @@ func singleLine(label, v string) error {
 	}
 	return nil
 }
+
+// ParseTimer reads a timer's units, as a host has them, back into the
+// Timer a timer step would write them as. It returns why not when the
+// units hold something the step can't say, such as a second OnCalendar
+// or an OnBootSec, so generate leaves that timer out rather than adopt
+// it as something else.
+func ParseTimer(name, service, timer string) (Timer, string) {
+	t := Timer{Name: name}
+	unesc := func(s string) string { return strings.ReplaceAll(s, "%%", "%") }
+	seen := map[string]int{}
+	read := func(text string, keep map[string]*string) string {
+		section := ""
+		for _, raw := range strings.Split(text, "\n") {
+			line := strings.TrimSpace(raw)
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+				continue
+			}
+			if strings.HasPrefix(line, "[") {
+				section = line
+				continue
+			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+			key := section + k
+			seen[key]++
+			if dst, ok := keep[key]; ok {
+				*dst = v
+				continue
+			}
+			switch key {
+			case "[Unit]Description", "[Install]WantedBy", "[Service]Type":
+			default:
+				return section + " " + k + " is something a timer step doesn't set"
+			}
+		}
+		return ""
+	}
+	var persistent, typ string
+	if why := read(timer, map[string]*string{"[Timer]OnCalendar": &t.OnCalendar, "[Timer]Persistent": &persistent}); why != "" {
+		return Timer{}, why
+	}
+	var desc string
+	if why := read(service, map[string]*string{"[Service]ExecStart": &t.Command, "[Service]User": &t.User, "[Unit]Description": &desc, "[Service]Type": &typ}); why != "" {
+		return Timer{}, why
+	}
+	switch {
+	case t.OnCalendar == "":
+		return Timer{}, "it has no OnCalendar"
+	case seen["[Timer]OnCalendar"] > 1:
+		return Timer{}, "it has more than one OnCalendar"
+	case t.Command == "":
+		return Timer{}, "its service has no ExecStart"
+	case seen["[Service]ExecStart"] > 1:
+		return Timer{}, "its service has more than one ExecStart"
+	case typ != "" && typ != "oneshot":
+		return Timer{}, "its service is Type=" + typ + ", and a timer step's is oneshot"
+	}
+	t.Command, t.Persistent = unesc(t.Command), persistent == "true" || persistent == "yes"
+	if d := unesc(desc); d != name+" (managed by Conn3x)" {
+		t.Description = d
+	}
+	if t.User == "root" {
+		t.User = ""
+	}
+	if err := t.Validate(); err != nil {
+		return Timer{}, err.Error()
+	}
+	return t, ""
+}

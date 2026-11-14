@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"github.com/zclconf/go-cty/cty/convert"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/schedule"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/service"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/windows"
 )
@@ -23,20 +25,25 @@ import (
 // module whose step needs it, the argument its value goes in.
 type ListKind struct {
 	Module, Key, Value string
+	// Full is for a kind whose step takes several arguments from the host:
+	// each value is then JSON, {"attrs": {...}} with the step's arguments,
+	// or {"skip": "why"} for one the step can't adopt as it is.
+	Full bool
 }
 
 // ListKinds are the kinds a host can be listed for.
 var ListKinds = map[string]ListKind{
-	"packages": {"package", "name", ""},
-	"services": {"service", "name", ""},
-	"users":    {"user", "name", ""},
-	"mounts":   {"mount", "path", ""},
-	"sysctl":   {"sysctl", "name", "value"},
+	"packages": {"package", "name", "", false},
+	"services": {"service", "name", "", false},
+	"users":    {"user", "name", "", false},
+	"mounts":   {"mount", "path", "", false},
+	"sysctl":   {"sysctl", "name", "value", false},
+	"timers":   {"timer", "name", "", true},
 
-	"windows_features": {"windows_feature", "name", ""},
-	"windows_services": {"windows_service", "name", ""},
-	"windows_users":    {"windows_user", "name", ""},
-	"windows_groups":   {"windows_group", "name", ""},
+	"windows_features": {"windows_feature", "name", "", false},
+	"windows_services": {"windows_service", "name", "", false},
+	"windows_users":    {"windows_user", "name", "", false},
+	"windows_groups":   {"windows_group", "name", "", false},
 }
 
 // ListHost lists the objects of kind a host has, by the value of the
@@ -97,6 +104,26 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 			}
 			values[key] = strings.Join(strings.Fields(value), " ")
 		}
+	case "timers":
+		// Only timers someone wrote into /etc/systemd/system, not links to
+		// a package's own under /usr/lib.
+		res, err := h.Run(ctx, `for t in /etc/systemd/system/*.timer; do
+  [ -f "$t" ] && [ ! -L "$t" ] || continue
+  n=$(basename "$t" .timer)
+  printf '\036%s\037' "$n"; cat "$t"; printf '\037'; cat "/etc/systemd/system/$n.service" 2>/dev/null
+done; true`, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		values = map[string]string{}
+		for _, rec := range strings.Split(string(res.Stdout), "\x1e")[1:] {
+			parts := strings.SplitN(rec, "\x1f", 3)
+			if len(parts) != 3 {
+				continue
+			}
+			names = append(names, parts[0])
+			values[parts[0]] = timerJSON(parts[0], parts[2], parts[1])
+		}
 	case "users", "mounts":
 		cmd := "getent passwd"
 		if kind == "mounts" {
@@ -126,7 +153,7 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 			}
 		}
 	default:
-		return nil, nil, fmt.Errorf("can't list %q; conn3x generate steps lists packages, services, users, mounts and sysctl, and on Windows windows_features, windows_services, windows_users and windows_groups", kind)
+		return nil, nil, fmt.Errorf("can't list %q; conn3x generate steps lists packages, services, users, mounts, sysctl and timers, and on Windows windows_features, windows_services, windows_users and windows_groups", kind)
 	}
 	sort.Strings(names)
 	return names, values, nil
@@ -145,4 +172,26 @@ func fullSSH(conn cty.Value) cty.Value {
 		}
 	}
 	return cty.ObjectVal(vals)
+}
+
+// timerJSON is a timer's step arguments, or why it can't be adopted, as
+// ListKind.Full describes.
+func timerJSON(name, service, timer string) string {
+	t, why := schedule.ParseTimer(name, service, timer)
+	if why != "" {
+		b, _ := json.Marshal(map[string]string{"skip": why})
+		return string(b)
+	}
+	attrs := map[string]any{"name": t.Name, "on_calendar": t.OnCalendar, "command": t.Command}
+	if t.User != "" {
+		attrs["user"] = t.User
+	}
+	if t.Description != "" {
+		attrs["description"] = t.Description
+	}
+	if t.Persistent {
+		attrs["persistent"] = true
+	}
+	b, _ := json.Marshal(map[string]any{"attrs": attrs})
+	return string(b)
 }

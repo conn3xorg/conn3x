@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -85,18 +86,18 @@ The host is checked against known_hosts (~/.ssh/known_hosts unless -known-hosts-
 	steps := command.Command{
 		Name:  "steps",
 		Short: "List what a host has, and print steps for what you pick",
-		Long: `Lists the packages, services, users, mounts or sysctl settings a host has, and with -match prints a step with import = true for each one that matches, as generate step does for one. Adopting a long-lived server then takes one command per kind, not one per object.
+		Long: `Lists the packages, services, users, mounts, sysctl settings or timers a host has, and with -match prints a step with import = true for each one that matches, as generate step does for one. Adopting a long-lived server then takes one command per kind, not one per object.
 
   conn3x generate steps -host 203.0.113.10 -user root packages
   conn3x generate steps -host 203.0.113.10 -user root -match 'nginx*,postgresql-16' packages >> adopt.circuit.hcl
   conn3x generate steps -host 203.0.113.10 -user root -match '*' mounts
 
-users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. sysctl lists the kernel parameters set in /etc/sysctl.conf and /etc/sysctl.d, with their values; a sysctl step keeps its setting in a file of its own, /etc/sysctl.d/90-conn3x-NAME.conf, so the first apply after adopting one writes that file. The file it came from stays, and since the kernel reads these files in name order, a later one's value wins at boot: take the setting out of it once the step is in. On a Windows host, windows_features lists the installed features, windows_services the services, and windows_users and windows_groups the local accounts; their steps hold the name alone, since a Windows module leaves the rest as it is until you set it. -match takes globs, separated by commas.
+users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. sysctl lists the kernel parameters set in /etc/sysctl.conf and /etc/sysctl.d, with their values; a sysctl step keeps its setting in a file of its own, /etc/sysctl.d/90-conn3x-NAME.conf, so the first apply after adopting one writes that file. The file it came from stays, and since the kernel reads these files in name order, a later one's value wins at boot: take the setting out of it once the step is in. timers lists the systemd timers written into /etc/systemd/system, not a package's own, with their schedule and command; a timer step holds what it reads from both units, and since the step writes its units its own way, the first apply rewrites them. A timer with something a timer step doesn't set, such as RandomizedDelaySec or a second OnCalendar, is listed with the reason and not adopted. On a Windows host, windows_features lists the installed features, windows_services the services, and windows_users and windows_groups the local accounts; their steps hold the name alone, since a Windows module leaves the rest as it is until you set it. -match takes globs, separated by commas.
 
 Each step is read the way generate step reads one, so pasting the steps into a circuit and planning adopts them with nothing to change. An object that can't be read is reported on stderr and the rest still print. Exits 0 when everything matched printed, 1 when anything failed.`,
 	}
 	steps.CommandLine.PositionalArg(&kind, "KIND", true)
-	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|services|users|mounts|sysctl|windows_features|windows_services|windows_users|windows_groups"
+	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|services|users|mounts|sysctl|timers|windows_features|windows_services|windows_users|windows_groups"
 	steps.CommandLine.StringVar(&so.host, "host", "", "Host name or address to read from.")
 	steps.CommandLine.StringVar(&so.user, "user", "", "User to log in as.")
 	steps.CommandLine.IntVar(&so.port, "port", 0, "SSH port. Defaults to 22.")
@@ -129,7 +130,7 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 	}
 	k, ok := provider.ListKinds[kind]
 	if !ok {
-		return fail("%q isn't a kind generate steps lists: packages, services, users, mounts, sysctl, windows_features, windows_services, windows_users or windows_groups", kind)
+		return fail("%q isn't a kind generate steps lists: packages, services, users, mounts, sysctl, timers, windows_features, windows_services, windows_users or windows_groups", kind)
 	}
 	names, values, err := provider.ListHost(ctx, kind, o.sshValue())
 	if err != nil {
@@ -137,7 +138,15 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 	}
 	if match == "" {
 		for _, n := range names {
-			if k.Value != "" {
+			switch {
+			case k.Full:
+				attrs, why := fullValue(values[n])
+				if why != "" {
+					n += "  (can't adopt: " + why + ")"
+				} else {
+					n += " = " + fmt.Sprint(attrs["on_calendar"]) + ": " + fmt.Sprint(attrs["command"])
+				}
+			case k.Value != "":
 				n += " = " + values[n]
 			}
 			fmt.Fprintln(stdout, termsafe.Escape(n))
@@ -169,7 +178,29 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 		}
 		used[one.name] = true
 		var out bytes.Buffer
-		if strings.HasPrefix(kind, "windows_") {
+		if k.Full {
+			attrs, why := fullValue(values[n])
+			if why != "" {
+				fmt.Fprintln(stderr, termsafe.Escape(fmt.Sprintf("%s %s isn't adopted: %s", k.Module, n, why)))
+				failed++
+				continue
+			}
+			// The host's own values: a step written this way adopts the
+			// object with nothing to change but the layout of its files.
+			f := hclwrite.NewEmptyFile()
+			step := f.Body().AppendNewBlock("step", []string{one.name}).Body()
+			step.SetAttributeValue("import", cty.True)
+			mod := step.AppendNewBlock(k.Module, nil).Body()
+			for _, key := range sortedAttrKeys(attrs) {
+				switch v := attrs[key].(type) {
+				case bool:
+					mod.SetAttributeValue(key, cty.BoolVal(v))
+				default:
+					mod.SetAttributeValue(key, cty.StringVal(fmt.Sprint(v)))
+				}
+			}
+			out.Write(f.Bytes())
+		} else if strings.HasPrefix(kind, "windows_") {
 			// A Windows read only says whether the host matches, so a step
 			// holds the name alone; its other arguments are left as they are
 			// until set, so it adopts what's there with nothing to change.
@@ -196,6 +227,37 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 		return 1
 	}
 	return 0
+}
+
+// fullValue reads a ListKind.Full value: the step's arguments, or why it
+// can't adopt the object.
+func fullValue(v string) (map[string]any, string) {
+	var r struct {
+		Attrs map[string]any `json:"attrs"`
+		Skip  string         `json:"skip"`
+	}
+	if err := json.Unmarshal([]byte(v), &r); err != nil {
+		return nil, "the host's answer wasn't valid"
+	}
+	if r.Skip != "" {
+		return nil, r.Skip
+	}
+	return r.Attrs, ""
+}
+
+func sortedAttrKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	// name first, as a step reads.
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i] == "name" || keys[j] == "name" {
+			return keys[i] == "name"
+		}
+		return keys[i] < keys[j]
+	})
+	return keys
 }
 
 // generateSeeds are arguments a module's read fills in only when they're

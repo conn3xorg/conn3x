@@ -138,6 +138,22 @@ func TestGenerateSteps(t *testing.T) {
 	if code != 0 || !strings.Contains(sysctl, "sysctl {") || !strings.Contains(sysctl, `name  = "net.ipv4.ip_forward"`) {
 		t.Fatalf("sysctl step (exit %d):\n%s", code, sysctl)
 	}
+	// A timer someone wrote by hand, and one with a setting a timer step
+	// doesn't have, which generate lists but won't adopt.
+	h.exec("", "sh", "-c", `printf '[Unit]\nDescription=Clean tmp\n\n[Service]\nExecStart=/usr/bin/find /tmp -mtime +7 -delete\n' > /etc/systemd/system/cleanup.service
+printf '[Timer]\nOnCalendar=daily\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' > /etc/systemd/system/cleanup.timer
+printf '[Service]\nExecStart=/bin/true\n' > /etc/systemd/system/jitter.service
+printf '[Timer]\nOnCalendar=hourly\nRandomizedDelaySec=5m\n' > /etc/systemd/system/jitter.timer`)
+	if list, code := gen("timers"); code != 0 || !strings.Contains(list, "cleanup = daily: /usr/bin/find /tmp -mtime +7 -delete") || !strings.Contains(list, "jitter  (can't adopt: [Timer] RandomizedDelaySec") {
+		t.Fatalf("timers list (exit %d):\n%s", code, list)
+	}
+	timer, code := gen("-match", "cleanup", "timers")
+	if code != 0 || !strings.Contains(timer, "timer {") || !strings.Contains(timer, `on_calendar = "daily"`) || !strings.Contains(timer, "persistent  = true") {
+		t.Fatalf("timer step (exit %d):\n%s", code, timer)
+	}
+	if out, code := gen("-match", "jitter", "timers"); code != 1 || !strings.Contains(out, "isn't adopted") {
+		t.Fatalf("an unadoptable timer (exit %d):\n%s", code, out)
+	}
 	if out, code := gen("-match", "nothing-like-this-*", "packages"); code != 1 || !strings.Contains(out, "matches none") {
 		t.Fatalf("a match for nothing (exit %d):\n%s", code, out)
 	}
@@ -148,13 +164,14 @@ func TestGenerateSteps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(strings.Replace(string(circuit), "# steps", steps+"\n"+pkg+"\n"+sysctl, 1)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Replace(string(circuit), "# steps", steps+"\n"+pkg+"\n"+sysctl+"\n"+timer, 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	w.mustConn3x("init", "-no-color")
 	out := w.mustConn3x("plan", "-no-color")
-	// sysctl keeps a setting in its own file, so adopting one writes it.
-	if !strings.Contains(out, "Plan: 4 to import, 0 to add, 1 to change, 0 to destroy.") || !strings.Contains(out, "conn3x_sysctl.box__net_ipv4_ip_forward[\"box\"] will be updated in-place") {
-		t.Fatalf("the generated steps should import, with only the sysctl file to write:\n%s", out)
+	// sysctl keeps a setting in its own file, and a timer step writes its
+	// units its own way, so adopting each writes files.
+	if !strings.Contains(out, "Plan: 5 to import, 0 to add, 2 to change, 0 to destroy.") || !strings.Contains(out, "conn3x_sysctl.box__net_ipv4_ip_forward[\"box\"] will be updated in-place") || !strings.Contains(out, "conn3x_timer.box__cleanup[\"box\"] will be updated in-place") {
+		t.Fatalf("the generated steps should import, with only the sysctl and timer files to write:\n%s", out)
 	}
 }
