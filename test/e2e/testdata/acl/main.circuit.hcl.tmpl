@@ -1,0 +1,48 @@
+circuit "share" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .Pkg}}
+  step "acl_tools" {
+    package {
+      name = "acl"
+    }
+  }
+{{end}}
+  step "data" {
+    directory {
+      path = "/srv/data"
+      mode = "0750"
+    }
+  }
+
+  step "daemon_reads" {
+    depends_on = [conn3x_directory.share__data{{if .Pkg}}, conn3x_package.share__acl_tools{{end}}]
+
+    acl {
+      path        = "/srv/data"
+      etype       = "user"
+      entity      = "daemon"
+      permissions = "rx"
+      state       = "{{.State}}"
+    }
+  }
+
+  step "new_files_too" {
+    depends_on = [conn3x_directory.share__data{{if .Pkg}}, conn3x_package.share__acl_tools{{end}}]
+
+    acl {
+      path        = "/srv/data"
+      etype       = "user"
+      entity      = "daemon"
+      permissions = "r"
+      default     = true
+      on_remove   = "delete"
+    }
+  }
+}

@@ -60,6 +60,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_crontab":              {crontabSchema, validateCrontab, planCrontab, readCrontab, applyCrontab, upgradeWith(crontabSchema)},
 	"conn3x_package_sources":      {packageSourcesSchema, validatePackageSources, planPackageSources, readPackageSources, applyPackageSources, upgradeWith(packageSourcesSchema)},
 	"conn3x_timer":                {timerSchema, validateTimer, planTimer, readTimer, applyTimer, upgradeWith(timerSchema)},
+	"conn3x_acl":                  {aclSchema, validateACL, planACL, readACL, applyACL, upgradeWith(aclSchema)},
 	"conn3x_sysctl":               {sysctlSchema, validateSysctl, planSysctl, readSysctl, applySysctl, upgradeWith(sysctlSchema)},
 	"conn3x_hostname":             {hostnameSchema, validateHostname, planHostname, readHostname, applyHostname, upgradeWith(hostnameSchema)},
 	"conn3x_timezone":             {timezoneSchema, validateTimezone, planTimezone, readTimezone, applyTimezone, upgradeWith(timezoneSchema)},

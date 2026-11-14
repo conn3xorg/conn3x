@@ -75,14 +75,19 @@ func planSynced(req providers.PlanResourceChangeRequest, kind string, keys, sett
 }
 
 // keyString renders a key attribute for an id: "" when null, numbers in
-// plain decimal, a list's elements joined with " > ", as eos_config's
-// parents nest.
+// plain decimal, a bool as "default" when true, as acl's is, a list's
+// elements joined with " > ", as eos_config's parents nest.
 func keyString(v cty.Value) string {
 	switch {
 	case v.IsNull():
 		return ""
 	case v.Type() == cty.Number:
 		return v.AsBigFloat().Text('f', -1)
+	case v.Type() == cty.Bool:
+		if v.True() {
+			return "default"
+		}
+		return ""
 	case v.Type().IsListType():
 		parts := make([]string, 0, v.LengthInt())
 		for _, e := range v.AsValueSlice() {
