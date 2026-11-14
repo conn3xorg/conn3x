@@ -654,7 +654,7 @@ func applyWinDC(ctx context.Context, req providers.ApplyResourceChangeRequest) p
 
 func winChildDomainSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A new child domain in an Active Directory forest that exists, with this Windows host as its first domain controller and DNS server. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the domain; nothing is demoted.",
+		Description: "A new domain in an Active Directory forest that exists, a child or a new tree, with this Windows host as its first domain controller and DNS server. It never reboots: reboot_required says Windows wants one, and windows_reboot does it. Removing the step leaves the domain; nothing is demoted.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":                 {Type: cty.String, Computed: true},
 			"revision":           revisionAttr(),

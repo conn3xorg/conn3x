@@ -1,5 +1,3 @@
-**Experimental.** Windows support is new, and this module may change between releases.
-
 Use `windows_ad_domain` to add a domain to a forest that exists, with this host as the new domain's first domain controller and DNS server. Shops that split by region or business unit add a child, such as `emea.lab.example.com` under `lab.example.com`. After a merger, a company with its own name often gets a new tree instead, such as `apac.example.net` beside `lab.example.com`, in the same forest. It never reboots the host. Promotion always needs a reboot, so follow it with a [`windows_reboot`](windows_reboot.md) step, then wait for AD to answer.
 
 ## Example usage

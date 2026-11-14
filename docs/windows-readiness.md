@@ -1,6 +1,6 @@
 # Windows modules: what each needs before it leaves experimental
 
-Each `windows_*` module starts out experimental. That's honest, but it's also a reason teams won't try them, so this page says what "ready" means and where each module stands. Twenty-three modules meet every point and have left experimental; the rest are marked in the table. Pick a gap, and the linked issue says how to close it.
+Each `windows_*` module starts out experimental. That's honest, but it's also a reason teams won't try them, so this page says what "ready" means and where each module stands. Twenty-four modules meet every point and have left experimental; the rest are marked in the table. Pick a gap, and the linked issue says how to close it.
 
 ## What "ready" means
 
@@ -19,7 +19,7 @@ A module drops the experimental label when all of these hold:
 | Module | Ready | Runner | Azure | Import | What's missing |
 | --- | --- | --- | --- | --- | --- |
 | `windows_acl` | yes | yes | yes | yes | |
-| `windows_ad_domain` | no | no | yes, through `azure-ad-child-domain` | yes | A tree domain, a new tree in the forest, isn't offered; `import` on a real domain controller: it's unit-tested only |
+| `windows_ad_domain` | yes | module-level: a child or a tree refused at its folder checks changes nothing and leaks no password | yes, through `azure-ad-child-domain`, a new tree beside it (#763), and `import` of both on their domain controllers | yes | |
 | `windows_ad_domain_controller` | yes | module-level: a promotion refused at its folder checks changes nothing and leaks no password | yes, through `azure-ad-lab`, and from a workgroup server (#395) | yes | |
 | `windows_ad_forest` | yes | yes | yes, and `import` on `azure-ad-lab`'s first domain controller | yes | |
 | `windows_ad_group` | yes | module-level | yes, including scope and category changes (#408), 5,000 members (#407), members across a two-way forest trust (#621) and the lockout guard's global-catalog lookup (#622) | yes | |
