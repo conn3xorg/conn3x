@@ -178,8 +178,11 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		}
 		var ok bool
 		typ, ok = configs.Conn3xStepModules()[module]
-		if !ok || strings.HasPrefix(typ, "conn3x_eos_") {
+		if !ok {
 			return fail("%q isn't a module conn3x run can run", module)
+		}
+		if strings.HasPrefix(typ, "conn3x_eos_") {
+			return fail("%q only runs in a circuit, which commits a switch's EOS steps together", module)
 		}
 		if args, err = runArgs(ctx, module, typ, o.args, o.module == ""); err != nil {
 			return fail("%s", err)

@@ -86,8 +86,13 @@ func loadTask(path string) (*runTask, error) {
 			}
 			mod := blocks.Type
 			typ, ok := modules[mod]
-			if !ok || strings.HasPrefix(typ, "conn3x_eos_") || strings.HasPrefix(typ, "conn3x_junos_") || strings.HasPrefix(typ, "conn3x_vyos_") {
+			if !ok {
 				return nil, fmt.Errorf("step %s: %q isn't a module a task can run", name, mod)
+			}
+			// Junos and VyOS steps outside a circuit commit on their own.
+			// EOS steps wait for a circuit's commit, which a task hasn't got.
+			if strings.HasPrefix(typ, "conn3x_eos_") {
+				return nil, fmt.Errorf("step %s: %q only runs in a circuit, which commits a switch's EOS steps together", name, mod)
 			}
 			t.steps = append(t.steps, taskStep{name: name, module: mod, typ: typ, body: blocks.Body})
 		}
