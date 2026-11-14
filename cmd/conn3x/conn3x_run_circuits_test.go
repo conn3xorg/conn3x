@@ -93,3 +93,32 @@ circuit "db" {
 		t.Errorf("empty dir: %v", err)
 	}
 }
+
+// Key and known_hosts paths relative to the circuit resolve against its
+// directory, so -circuits infra from the repository root finds them.
+func TestCircuitInventoryRelativePaths(t *testing.T) {
+	dir := t.TempDir()
+	src := "circuit \"web\" {\n  hosts = {\n    web1 = \"192.0.2.11\"\n    web2 = { address = \"192.0.2.12\", private_key_file = \"keys/web2\" }\n    web3 = { address = \"192.0.2.13\", private_key_file = \"/etc/conn3x/web3\" }\n  }\n  ssh {\n    private_key_file = \"./id_ed25519\"\n    known_hosts_file = \"known_hosts\"\n  }\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.circuit.hcl"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := circuitInventory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := inv.Group("all")
+	o := runOptions{}
+	for host, want := range map[string][2]string{
+		"web1": {filepath.Join(dir, "id_ed25519"), filepath.Join(dir, "known_hosts")},
+		"web2": {filepath.Join(dir, "keys/web2"), filepath.Join(dir, "known_hosts")},
+		"web3": {"/etc/conn3x/web3", filepath.Join(dir, "known_hosts")},
+	} {
+		ssh := o.sshFor(host, all.Vars(host))
+		if got := ssh["private_key_file"]; !got.RawEquals(cty.StringVal(want[0])) {
+			t.Errorf("%s private_key_file = %#v, want %q", host, got, want[0])
+		}
+		if got := ssh["known_hosts_file"]; !got.RawEquals(cty.StringVal(want[1])) {
+			t.Errorf("%s known_hosts_file = %#v, want %q", host, got, want[1])
+		}
+	}
+}

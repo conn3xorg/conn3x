@@ -59,7 +59,7 @@ func circuitInventory(dir string) (*ansible.Inventory, error) {
 			return nil, diags
 		}
 		for _, b := range content.Blocks {
-			if err := addCircuit(inv, b); err != nil {
+			if err := addCircuit(inv, b, dir); err != nil {
 				return nil, fmt.Errorf("%s: circuit %q: %w", path, b.Labels[0], err)
 			}
 			found++
@@ -72,7 +72,7 @@ func circuitInventory(dir string) (*ansible.Inventory, error) {
 	return inv, nil
 }
 
-func addCircuit(inv *ansible.Inventory, b *hcl.Block) error {
+func addCircuit(inv *ansible.Inventory, b *hcl.Block, dir string) error {
 	body, _, diags := b.Body.PartialContent(&hcl.BodySchema{
 		Attributes: []hcl.AttributeSchema{{Name: "hosts", Required: true}},
 		Blocks:     []hcl.BlockHeaderSchema{{Type: "ssh"}},
@@ -149,6 +149,13 @@ func addCircuit(inv *ansible.Inventory, b *hcl.Block) error {
 		for k, v := range common {
 			if _, set := vars[k]; !set {
 				vars[k] = v
+			}
+		}
+		// A relative path in a circuit is relative to its configuration, as
+		// when OpenTofu runs there, not to wherever conn3x run is started.
+		for _, k := range []string{"ansible_ssh_private_key_file", "conn3x_ssh_known_hosts_file"} {
+			if p := vars[k]; p != "" && !filepath.IsAbs(p) && !strings.HasPrefix(p, "~") {
+				vars[k] = filepath.Join(dir, p)
 			}
 		}
 		// A host in two circuits must reach the same way from both: which
