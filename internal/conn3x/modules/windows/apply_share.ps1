@@ -10,6 +10,7 @@ if (-not $share) {
   if ($null -ne $A.description) { $new.Description = $A.description }
   # Read for Everyone is New-SmbShare's own default; the lists below replace it.
   $null = New-SmbShare @new
+  if (-not (Get-SmbShare -Name $A.name -ErrorAction SilentlyContinue)) { throw "New-SmbShare didn't make share $($A.name) on $($A.path)" }
 } elseif ($null -ne $A.description -and $share.Description -ne $A.description) {
   Set-SmbShare -Name $A.name -Description $A.description -Force -ErrorAction Stop
 }

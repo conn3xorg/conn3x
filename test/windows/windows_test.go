@@ -1587,7 +1587,8 @@ func TestShare(t *testing.T) {
 	a, err := windows.ReadShare(ctx, c, s)
 	if ok, merr := s.Matches(a); err != nil || !ok || merr != nil {
 		shares := run(t, c, `Get-SmbShare | Select-Object Name, Path, ScopeName | ConvertTo-Json -Compress`, nil).Text
-		t.Fatalf("after create: %+v, %v, %v\nshares on the host: %s", a, err, merr, shares)
+		direct, derr := ps.User(ctx, c, `param($A) New-SmbShare -Name $A.n -Path $A.d -ErrorAction Stop | Select-Object Name, Path | ConvertTo-Json -Compress`, map[string]any{"n": name + "x", "d": dir}, time.Minute)
+		t.Fatalf("after create: %+v, %v, %v\nshares on the host: %s\nNew-SmbShare by hand: %q %q %v", a, err, merr, shares, direct.Text, direct.Stderr, derr)
 	}
 	for _, e := range a.Access {
 		if e.SID == "S-1-1-0" {
