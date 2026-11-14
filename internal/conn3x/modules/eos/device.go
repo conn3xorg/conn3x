@@ -101,6 +101,12 @@ func scrub(text, sent string) string {
 // starting with "% ", such as "% Invalid input at line 2".
 var cliError = regexp.MustCompile(`(?m)^% .*$`)
 
+type commandRefusedError struct {
+	message string
+}
+
+func (e *commandRefusedError) Error() string { return e.message }
+
 // echo matches the line the CLI prints back before some output, such as
 // "> show running-config", when it reads commands rather than a terminal.
 var echo = regexp.MustCompile(`(?m)^> .*\n?`)
@@ -130,7 +136,12 @@ func run(ctx context.Context, d Device, cmd string, stdin []byte) (string, error
 	if msg == "" {
 		msg = fmt.Sprintf("exit status %d: %s", res.ExitCode, strings.TrimSpace(string(res.Stdout)+string(res.Stderr)))
 	}
-	return out, fmt.Errorf("the switch refused %s: %s", describe(cmd), scrub(msg, cmd+"\n"+string(stdin)))
+	return out, &commandRefusedError{message: fmt.Sprintf("the switch refused %s: %s", describe(cmd), scrub(msg, cmd+"\n"+string(stdin)))}
+}
+
+func isCommandRefusal(err error) bool {
+	var refused *commandRefusedError
+	return errors.As(err, &refused) || errors.Is(err, ErrNotPrivileged)
 }
 
 func describe(cmd string) string {
@@ -190,9 +201,9 @@ type LLDPNeighbor struct {
 }
 
 // ReadFacts reads show version and show hostname, which must work, then show
-// interfaces status and show lldp neighbors, which may fail and leave their
-// lists empty. Interfaces are sorted by name, and neighbours by local port,
-// so the same switch always reads the same.
+// interfaces status and show lldp neighbors. A command refusal leaves that
+// list empty; other errors fail the read. Interfaces are sorted by name, and
+// neighbours by local port, so the same switch always reads the same.
 func ReadFacts(ctx context.Context, d Device) (Facts, error) {
 	var v struct {
 		ModelName        string `json:"modelName"`
@@ -218,7 +229,9 @@ func ReadFacts(ctx context.Context, d Device) (Facts, error) {
 			Description string `json:"description"`
 		} `json:"interfaceStatuses"`
 	}
-	if err := ShowJSON(ctx, d, "show interfaces status", &st); err == nil {
+	if err := ShowJSON(ctx, d, "show interfaces status", &st); err != nil && !isCommandRefusal(err) {
+		return Facts{}, err
+	} else if err == nil {
 		for name, s := range st.InterfaceStatuses {
 			f.Interfaces = append(f.Interfaces, PortStatus{Name: name, Status: s.LinkStatus, Description: s.Description})
 		}
@@ -231,7 +244,9 @@ func ReadFacts(ctx context.Context, d Device) (Facts, error) {
 			NeighborPort   string `json:"neighborPort"`
 		} `json:"lldpNeighbors"`
 	}
-	if err := ShowJSON(ctx, d, "show lldp neighbors", &lldp); err == nil {
+	if err := ShowJSON(ctx, d, "show lldp neighbors", &lldp); err != nil && !isCommandRefusal(err) {
+		return Facts{}, err
+	} else if err == nil {
 		for _, n := range lldp.LLDPNeighbors {
 			f.LLDPNeighbors = append(f.LLDPNeighbors, LLDPNeighbor{LocalPort: n.Port, NeighborName: n.NeighborDevice, NeighborPort: n.NeighborPort})
 		}

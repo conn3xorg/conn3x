@@ -567,7 +567,7 @@ func eosDeviceSchema() providers.Schema {
 			"serial":         {Type: cty.String, Computed: true, Description: "Serial number. cEOS-lab reports a made-up one."},
 			"system_mac":     {Type: cty.String, Computed: true, Description: "System MAC address."},
 			"interfaces":     {Type: cty.List(eosInterfaceType), Computed: true, Description: "Each port from show interfaces status, sorted by name: name, status (linkStatus, such as connected) and description."},
-			"lldp_neighbors": {Type: cty.List(eosLLDPNeighborType), Computed: true, Description: "Each LLDP neighbour from show lldp neighbors, sorted by local port: local_port, neighbor_name and neighbor_port."},
+			"lldp_neighbors": {Type: cty.List(eosLLDPNeighborType), Computed: true, Description: "Each LLDP neighbour from show lldp neighbors, sorted by local port: local_port, neighbor_name and neighbor_port. Empty when the switch has none or refuses the command; a check over this list should also check its length."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}

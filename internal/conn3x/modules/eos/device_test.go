@@ -187,6 +187,31 @@ func (j jsonSwitch) RunRaw(_ context.Context, cmd string, _ []byte) (ssh.Result,
 	return ssh.Result{Stdout: []byte(j[cmd])}, nil
 }
 
+type refusedJSONSwitch struct {
+	jsonSwitch
+	commands map[string]bool
+}
+
+func (j refusedJSONSwitch) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	if j.commands[cmd] {
+		return ssh.Result{Stdout: []byte("\n> " + cmd + "\n% Invalid input at line 1\n"), ExitCode: 1}, nil
+	}
+	return j.jsonSwitch.RunRaw(ctx, cmd, stdin)
+}
+
+type failedJSONSwitch struct {
+	jsonSwitch
+	command string
+	err     error
+}
+
+func (j failedJSONSwitch) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	if cmd == j.command {
+		return ssh.Result{}, j.err
+	}
+	return j.jsonSwitch.RunRaw(ctx, cmd, stdin)
+}
+
 func TestReadFacts(t *testing.T) {
 	f, err := ReadFacts(context.Background(), jsonSwitch{
 		"show version | json":           `{"modelName": "cEOSLab", "version": "4.37.0F-1234.4370F", "serialNumber": "", "systemMacAddress": "00:1c:73:00:00:01"}`,
@@ -208,12 +233,32 @@ func TestReadFacts(t *testing.T) {
 	if !reflect.DeepEqual(f.LLDPNeighbors, wantNbs) {
 		t.Errorf("lldp neighbors = %+v", f.LLDPNeighbors)
 	}
-	noNeighbours, err := ReadFacts(context.Background(), jsonSwitch{
+	noNeighbours, err := ReadFacts(context.Background(), refusedJSONSwitch{jsonSwitch: jsonSwitch{
 		"show version | json":  `{"modelName": "cEOSLab", "version": "4.37.0F-1234.4370F", "serialNumber": "", "systemMacAddress": "00:1c:73:00:00:01"}`,
 		"show hostname | json": `{"hostname": "leaf1", "fqdn": "leaf1"}`,
-	})
+	}, commands: map[string]bool{
+		"show interfaces status | json": true,
+		"show lldp neighbors | json":    true,
+	}})
 	if err != nil || noNeighbours.Hostname != "leaf1" || len(noNeighbours.Interfaces) != 0 || len(noNeighbours.LLDPNeighbors) != 0 {
 		t.Errorf("a switch that refuses interfaces and LLDP still reads its facts: %+v, %v", noNeighbours, err)
+	}
+	base := jsonSwitch{
+		"show version | json":           `{"modelName": "cEOSLab", "version": "4.37.0F-1234.4370F", "serialNumber": "", "systemMacAddress": "00:1c:73:00:00:01"}`,
+		"show hostname | json":          `{"hostname": "leaf1", "fqdn": "leaf1"}`,
+		"show interfaces status | json": `{"interfaceStatuses": {}}`,
+	}
+	wantErr := errors.New("connection lost")
+	if _, err := ReadFacts(context.Background(), failedJSONSwitch{jsonSwitch: base, command: "show lldp neighbors | json", err: wantErr}); !errors.Is(err, wantErr) {
+		t.Errorf("an SSH error reading LLDP should be returned, got %v", err)
+	}
+	if _, err := ReadFacts(context.Background(), jsonSwitch{
+		"show version | json":           `{"modelName": "cEOSLab", "version": "4.37.0F-1234.4370F", "serialNumber": "", "systemMacAddress": "00:1c:73:00:00:01"}`,
+		"show hostname | json":          `{"hostname": "leaf1", "fqdn": "leaf1"}`,
+		"show interfaces status | json": `{"interfaceStatuses": {}}`,
+		"show lldp neighbors | json":    `not JSON`,
+	}); err == nil || !strings.Contains(err.Error(), "didn't answer with JSON") {
+		t.Errorf("invalid LLDP JSON should be returned, got %v", err)
 	}
 	if _, err := ReadFacts(context.Background(), jsonSwitch{"show version | json": "bash: show: command not found"}); err == nil || !strings.Contains(err.Error(), "Arista EOS") {
 		t.Errorf("a shell, not EOS: %v", err)
