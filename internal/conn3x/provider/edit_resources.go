@@ -165,6 +165,37 @@ func xmlValueFrom(v cty.Value) edit.XMLValue {
 	return edit.XMLValue{XPath: stringOr(v.GetAttr("xpath"), ""), Value: stringOr(v.GetAttr("value"), ""), State: edit.State(stringOr(v.GetAttr("state"), ""))}
 }
 
+var jsonValueKind = editKind{
+	name: "json_value",
+	desc: "One value in a JSON file, which should or should not be there. The rest of the file stays as it was, byte for byte.",
+	attrs: map[string]*configschema.Attribute{
+		"key":   {Type: cty.String, Required: true, Description: "Where the value is: object keys joined by dots, with [n] for an array element, such as server.port or upstreams[0].host. Missing objects on the way are made."},
+		"value": {Type: cty.String, Optional: true, Description: "The value, as JSON: write it with jsonencode, such as jsonencode(8080), jsonencode(\"info\") or jsonencode({ enabled = true }). Required unless state is \"absent\". A value that's equal already, however it's written, is left alone."},
+		"state": {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which takes the key out."},
+	},
+	edit: func(v cty.Value) func(string) (string, error) {
+		c := jsonValueFrom(v)
+		return func(s string) (string, error) { return edit.ApplyJSONValue(s, c) }
+	},
+	remove: func(v cty.Value) func(string) (string, error) {
+		c := jsonValueFrom(v)
+		c.State = edit.Absent
+		return func(s string) (string, error) { return edit.ApplyJSONValue(s, c) }
+	},
+	check: func(v cty.Value) error {
+		c := jsonValueFrom(v)
+		if c.State != edit.Absent && v.GetAttr("value").IsNull() {
+			return errors.New("value is required unless state is \"absent\"")
+		}
+		return c.Validate()
+	},
+	missingOK: func(v cty.Value) bool { return jsonValueFrom(v).State == edit.Absent },
+}
+
+func jsonValueFrom(v cty.Value) edit.JSONValue {
+	return edit.JSONValue{Path: stringOr(v.GetAttr("key"), ""), Value: stringOr(v.GetAttr("value"), ""), State: edit.State(stringOr(v.GetAttr("state"), ""))}
+}
+
 var limitKind = editKind{
 	name: "limit",
 	desc: "One PAM limit in a limits.conf file, which should or should not be there. The rest of the file stays as it is.",
