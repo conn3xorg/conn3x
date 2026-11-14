@@ -4,11 +4,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,13 +80,107 @@ The host is checked against known_hosts (~/.ssh/known_hosts unless -known-hosts-
 	step.Run = func(command.Meta) int {
 		return runGenerateStep(context.Background(), o, stdout, os.Stderr)
 	}
+	var so generateOptions
+	var kind, match string
+	steps := command.Command{
+		Name:  "steps",
+		Short: "List what a host has, and print steps for what you pick",
+		Long: `Lists the packages, services, users or mounts a host has, and with -match prints a step with import = true for each one that matches, as generate step does for one. Adopting a long-lived server then takes one command per kind, not one per object.
+
+  conn3x generate steps -host 203.0.113.10 -user root packages
+  conn3x generate steps -host 203.0.113.10 -user root -match 'nginx*,postgresql-16' packages >> adopt.circuit.hcl
+  conn3x generate steps -host 203.0.113.10 -user root -match '*' mounts
+
+users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. -match takes globs, separated by commas.
+
+Each step is read the way generate step reads one, so pasting the steps into a circuit and planning adopts them with nothing to change. An object that can't be read is reported on stderr and the rest still print. Exits 0 when everything matched printed, 1 when anything failed.`,
+	}
+	steps.CommandLine.PositionalArg(&kind, "KIND", true)
+	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|services|users|mounts"
+	steps.CommandLine.StringVar(&so.host, "host", "", "Host name or address to read from.")
+	steps.CommandLine.StringVar(&so.user, "user", "", "User to log in as.")
+	steps.CommandLine.IntVar(&so.port, "port", 0, "SSH port. Defaults to 22.")
+	steps.CommandLine.StringVar(&so.keyFile, "private-key-file", "", "Private key to log in with. Defaults to the SSH agent.")
+	steps.CommandLine.StringVar(&so.knownHosts, "known-hosts-file", "", "known_hosts file to check the host against. Defaults to ~/.ssh/known_hosts.")
+	steps.CommandLine.BoolVar(&so.become, "become", false, "Read as root through sudo, as become in a circuit's ssh block.")
+	steps.CommandLine.StringVar(&match, "match", "", "Print steps for the objects matching these globs, separated by commas. Without it, list what the host has.")
+	steps.Run = func(command.Meta) int {
+		return runGenerateSteps(context.Background(), so, kind, match, stdout, os.Stderr)
+	}
 	return command.Command{
 		Name:     "generate",
 		Short:    "Write configuration from what already exists",
-		Long:     "Writes configuration from what already exists. Today that is a step from what a host already has.",
+		Long:     "Writes configuration from what already exists: a step from what a host already has, or steps for many of its objects at once.",
 		GroupID:  command.OtherCommandGroup.ID,
-		Commands: []command.Command{step},
+		Commands: []command.Command{step, steps},
 	}
+}
+
+// runGenerateSteps lists kind on the host, and with match prints a step for
+// each object that matches, through runGenerateStep so each is exactly what
+// generate step would print for it.
+func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string, stdout, stderr io.Writer) int {
+	fail := func(format string, a ...any) int {
+		fmt.Fprintln(stderr, termsafe.Escape(fmt.Sprintf("Error: "+format, a...)))
+		return 1
+	}
+	if o.host == "" {
+		return fail("-host is required, as in: conn3x generate steps -host 203.0.113.10 -user root packages")
+	}
+	k, ok := provider.ListKinds[kind]
+	if !ok {
+		return fail("%q isn't a kind generate steps lists: packages, services, users or mounts", kind)
+	}
+	names, err := provider.ListHost(ctx, kind, o.sshValue())
+	if err != nil {
+		return fail("listing %s on %s: %s", kind, o.host, err)
+	}
+	if match == "" {
+		for _, n := range names {
+			fmt.Fprintln(stdout, termsafe.Escape(n))
+		}
+		return 0
+	}
+	var globs []string
+	for _, g := range strings.Split(match, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			if _, err := path.Match(g, ""); err != nil {
+				return fail("-match %q isn't a valid glob", g)
+			}
+			globs = append(globs, g)
+		}
+	}
+	used, failed, printed := map[string]bool{}, 0, 0
+	for _, n := range names {
+		if !slices.ContainsFunc(globs, func(g string) bool { ok, _ := path.Match(g, n); return ok }) {
+			continue
+		}
+		one := o
+		one.module, one.args = k.Module, []string{k.Key + "=" + strconv.Quote(n)}
+		one.name = stepName(k.Module, map[string]cty.Value{k.Key: cty.StringVal(n)})
+		for i := 2; used[one.name]; i++ {
+			one.name = fmt.Sprintf("%s_%d", stepName(k.Module, map[string]cty.Value{k.Key: cty.StringVal(n)}), i)
+		}
+		used[one.name] = true
+		var out bytes.Buffer
+		if runGenerateStep(ctx, one, &out, stderr) != 0 {
+			failed++
+			continue
+		}
+		if printed > 0 {
+			fmt.Fprintln(stdout)
+		}
+		_, _ = stdout.Write(out.Bytes())
+		printed++
+	}
+	if printed == 0 && failed == 0 {
+		return fail("-match %q matches none of the %d %s on %s", match, len(names), kind, o.host)
+	}
+	if failed > 0 {
+		fmt.Fprintf(stderr, "%d of %d matching %s couldn't be read; the rest printed.\n", failed, failed+printed, kind)
+		return 1
+	}
+	return 0
 }
 
 // generateSeeds are arguments a module's read fills in only when they're
@@ -153,6 +250,26 @@ func runGenerateStep(ctx context.Context, o generateOptions, stdout, stderr io.W
 		args["content_wo"] = cty.StringVal(contentPlaceholder) // only marks the ID write-only
 	}
 
+	id, err := importid.Build(o.host, o.sshValue(), cty.ObjectVal(args))
+	if err != nil {
+		return fail("%s", err)
+	}
+	state, err := provider.ReadExisting(ctx, typ, id)
+	if err != nil {
+		return fail("%s", err)
+	}
+	name := o.name
+	if name == "" {
+		name = stepName(o.module, given)
+	}
+	if _, err := stdout.Write(renderStep(name, o.module, block, state, given, o.writeOnly)); err != nil {
+		return fail("%s", err)
+	}
+	return 0
+}
+
+// sshValue is the ssh block the flags describe.
+func (o generateOptions) sshValue() cty.Value {
 	ssh := map[string]cty.Value{"host": cty.StringVal(o.host)}
 	if o.user != "" {
 		ssh["user"] = cty.StringVal(o.user)
@@ -169,22 +286,7 @@ func runGenerateStep(ctx context.Context, o generateOptions, stdout, stderr io.W
 	if o.become {
 		ssh["become"] = cty.True
 	}
-	id, err := importid.Build(o.host, cty.ObjectVal(ssh), cty.ObjectVal(args))
-	if err != nil {
-		return fail("%s", err)
-	}
-	state, err := provider.ReadExisting(ctx, typ, id)
-	if err != nil {
-		return fail("%s", err)
-	}
-	name := o.name
-	if name == "" {
-		name = stepName(o.module, given)
-	}
-	if _, err := stdout.Write(renderStep(name, o.module, block, state, given, o.writeOnly)); err != nil {
-		return fail("%s", err)
-	}
-	return 0
+	return cty.ObjectVal(ssh)
 }
 
 // argValue reads a command-line value for an argument of type ty. A string
