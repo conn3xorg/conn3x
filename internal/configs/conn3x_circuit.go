@@ -69,6 +69,7 @@ var circuitModules = map[string]string{
 	"filesystem":           "conn3x_filesystem",
 	"lvm_volume_group":     "conn3x_lvm_volume_group",
 	"lvm_logical_volume":   "conn3x_lvm_logical_volume",
+	"partition":            "conn3x_partition",
 	"sudoers":              "conn3x_sudoers",
 	"nm_connection":        "conn3x_nm_connection",
 	"wait_for":             "conn3x_wait_for",

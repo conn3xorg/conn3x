@@ -22,14 +22,14 @@ func filesystemSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "A file system on a block device, made if the device holds none.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":       {Type: cty.String, Computed: true},
-			"revision": revisionAttr(),
-			"device":   {Type: cty.String, Required: true, Description: "The block device, such as /dev/sdb or /dev/vg0/data."},
-			"type":     {Type: cty.String, Required: true, Description: "The file system: " + strings.Join(storage.FilesystemTypes(), ", ") + "."},
-			"opts":     {Type: cty.List(cty.String), Optional: true, Description: "Extra mkfs options, one word each, such as [\"-L\", \"data\"]. Used only when the file system is made."},
-			"resize":   {Type: cty.Bool, Optional: true, Description: "Grow the file system to fill its device when the device grows. For ext2, ext3, ext4 and xfs; xfs grows only while mounted."},
-			"force":    {Type: cty.Bool, Optional: true, Description: "Make the file system over whatever else the device holds, erasing it. Never over a mounted one."},
-			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the device holds the file system, grown to fill it with resize."},
+			"id":                {Type: cty.String, Computed: true},
+			"revision":          revisionAttr(),
+			"device":            {Type: cty.String, Required: true, Description: "The block device, such as /dev/sdb or /dev/vg0/data."},
+			"type":              {Type: cty.String, Required: true, Description: "The file system: " + strings.Join(storage.FilesystemTypes(), ", ") + "."},
+			"opts":              {Type: cty.List(cty.String), Optional: true, Description: "Extra mkfs options, one word each, such as [\"-L\", \"data\"]. Used only when the file system is made."},
+			"resize":            {Type: cty.Bool, Optional: true, Description: "Grow the file system to fill its device when the device grows. For ext2, ext3, ext4 and xfs; xfs grows only while mounted."},
+			"force":             {Type: cty.Bool, Optional: true, Description: "Make the file system over whatever else the device holds, erasing it. Never over a mounted one."},
+			"in_sync":           {Type: cty.Bool, Computed: true, Description: "Whether the device holds the file system, grown to fill it with resize."},
 			"earlier_revisions": {Type: cty.DynamicPseudoType, Optional: true, Description: "Set by the circuit when resize is set, so leave it unset: the revisions of the steps before this one. A plan that changes any of them checks the file system's size again at apply time, so a volume an earlier step grows gets its file system grown in the same apply."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
@@ -97,6 +97,33 @@ func logicalVolumeSchema() providers.Schema {
 
 func logicalVolumeFrom(v cty.Value) storage.LogicalVolume {
 	return storage.LogicalVolume{VG: v.GetAttr("vg").AsString(), Name: v.GetAttr("name").AsString(), Size: v.GetAttr("size").AsString(), Force: boolOr(v.GetAttr("force"))}
+}
+
+func partitionSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "One partition on a disk, made with parted, with a partition table on a disk that has none. It never shrinks, moves or deletes a partition, and never relabels a disk.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
+			"device":   {Type: cty.String, Required: true, Description: "The disk, such as /dev/vdb or /dev/disk/by-id/...."},
+			"number":   {Type: cty.Number, Required: true, Description: "The partition's number, from 1. parted numbers a new partition with the lowest free one, so make them in order."},
+			"start":    {Type: cty.String, Required: true, Description: "Where it starts: a size in MiB, GiB or TiB, such as \"1MiB\" for the first."},
+			"end":      {Type: cty.String, Required: true, Description: "Where it ends: a size, such as \"20GiB\", or a percentage of the disk, such as \"100%\" for the rest of it."},
+			"label":    {Type: cty.String, Optional: true, Description: "The partition table to make on a disk without one: \"gpt\" (default) or \"msdos\". A disk with another table is refused, never relabelled."},
+			"flags":    {Type: cty.List(cty.String), Optional: true, Description: "The partition's whole set of flags, such as [\"lvm\"] or [\"esp\"]. Unset leaves them alone."},
+			"resize":   {Type: cty.Bool, Optional: true, Description: "Grow the partition when end moves out, as after a disk is enlarged. Shrinking is always refused."},
+			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the partition was there, from start to end, with its flags, at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func partitionFrom(v cty.Value) storage.Partition {
+	p := storage.Partition{Device: stringOr(v.GetAttr("device"), ""), Number: intOr(v.GetAttr("number"), 0), Start: stringOr(v.GetAttr("start"), ""), End: stringOr(v.GetAttr("end"), ""), Label: stringOr(v.GetAttr("label"), "gpt"), Resize: boolOr(v.GetAttr("resize"))}
+	if f := v.GetAttr("flags"); known(f) {
+		p.Flags = append([]string{}, stringList(f)...)
+	}
+	return p
 }
 
 // boolOr is a bool attribute, false when unset.
@@ -184,4 +211,27 @@ var storageTypes = map[string]resourceType{
 			}, func(context.Context, *hostConn, cty.Value) error { return nil })
 		},
 		upgradeWith(logicalVolumeSchema)},
+	"conn3x_partition": {partitionSchema, validateWith("device", func(v cty.Value) error { return partitionFrom(v).Validate() }),
+		func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+			return planSynced(req, "partition", []string{"device", "number"}, []string{"start", "end", "label", "flags", "resize"})
+		},
+		func(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+			return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+				p := partitionFrom(prior)
+				a, err := storage.ReadPartition(ctx, h, p)
+				if err != nil {
+					return cty.NilVal, err
+				}
+				return withSync(prior, p.InSync(a)), nil
+			})
+		},
+		func(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+			return applyPathResource(ctx, req, func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+				if err := storage.ApplyPartition(ctx, h, partitionFrom(planned)); err != nil {
+					return cty.NilVal, err
+				}
+				return withSync(planned, true), nil
+			}, func(context.Context, *hostConn, cty.Value) error { return nil })
+		},
+		upgradeWith(partitionSchema)},
 }

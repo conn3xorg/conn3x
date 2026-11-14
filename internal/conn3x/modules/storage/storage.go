@@ -47,7 +47,11 @@ func run(ctx context.Context, r modules.Runner, script string) (string, error) {
 		return "", err
 	}
 	if res.ExitCode != 0 {
-		return "", errors.New(strings.TrimSpace(string(res.Stderr) + string(res.Stdout)))
+		msg := strings.TrimSpace(string(res.Stderr) + string(res.Stdout))
+		if msg == "" {
+			msg = fmt.Sprintf("exit status %d, with nothing printed", res.ExitCode)
+		}
+		return "", errors.New(msg)
 	}
 	return string(res.Stdout), nil
 }

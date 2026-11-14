@@ -6,6 +6,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -207,4 +208,50 @@ type recorder struct{ ran []string }
 func (h *recorder) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error) {
 	h.ran = append(h.ran, unwrap(cmd))
 	return ssh.Result{}, nil
+}
+
+func TestPartition(t *testing.T) {
+	p := Partition{Device: "/dev/vdb", Number: 1, Start: "1MiB", End: "100%", Label: "gpt", Flags: []string{"lvm"}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// parted -m -s /dev/vdb unit B print, on a 10 GiB disk.
+	out := "BYT;\n/dev/vdb:10737418240B:virtblk:512:512:gpt:Virtio Block Device:;\n1:1048576B:10736369663B:10735321088B::primary:lvm;\n--\nLVM2_member\n"
+	a, err := parsePartition(out, 1)
+	if err != nil || !a.Exists || a.Table != "gpt" || a.Signature != "LVM2_member" || !slices.Equal(a.Numbers, []int{1}) {
+		t.Fatalf("parsed %+v, %v", a, err)
+	}
+	if !p.InSync(a) {
+		t.Errorf("100%% to the backup GPT should be in sync: %+v", a)
+	}
+	half := p
+	half.End = "5GiB"
+	if half.InSync(a) {
+		t.Error("a whole-disk partition matched 5GiB")
+	}
+	noFlag := p
+	noFlag.Flags = []string{}
+	if noFlag.InSync(a) {
+		t.Error("an lvm flag matched no flags")
+	}
+	blank, _ := parsePartition("BYT;\n/dev/vdb:10737418240B:virtblk:512:512:unknown:Virtio Block Device:;\n--\n", 1)
+	if blank.Table != "" || blank.Exists || blank.nextFree() != 1 {
+		t.Errorf("blank disk: %+v", blank)
+	}
+	two, _ := parsePartition("BYT;\n/dev/vdb:10737418240B:virtblk:512:512:gpt:x:;\n1:1048576B:5368709119B:5367660544B::a:;\n3:6442450944B:7516192767B:1073741824B::c:;\n--\n", 2)
+	if two.nextFree() != 2 || two.Exists {
+		t.Errorf("gap at 2: %+v", two)
+	}
+	for _, bad := range []Partition{
+		{Device: "vdb", Number: 1, Start: "1MiB", End: "100%", Label: "gpt"},
+		{Device: "/dev/vdb", Number: 0, Start: "1MiB", End: "100%", Label: "gpt"},
+		{Device: "/dev/vdb", Number: 1, Start: "1M", End: "100%", Label: "gpt"},
+		{Device: "/dev/vdb", Number: 1, Start: "1MiB", End: "101%", Label: "gpt"},
+		{Device: "/dev/vdb", Number: 5, Start: "1MiB", End: "100%", Label: "msdos"},
+		{Device: "/dev/vdb", Number: 1, Start: "1MiB", End: "100%", Label: "gpt", Flags: []string{"fast"}},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
 }

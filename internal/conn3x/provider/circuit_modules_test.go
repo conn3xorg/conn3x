@@ -26,6 +26,21 @@ func TestEveryResourceTypeIsAStepModule(t *testing.T) {
 	}
 }
 
+// And the other way: a step module the circuits know must have a resource
+// type the provider serves, or a circuit using it fails at plan with
+// "does not support resource type" (conn3x_partition nearly shipped so).
+func TestEveryStepModuleIsAResourceType(t *testing.T) {
+	served := map[string]bool{}
+	for _, rt := range ResourceTypeNames() {
+		served[rt] = true
+	}
+	for _, rt := range configs.Conn3xStepResourceTypes() {
+		if !served[rt] {
+			t.Errorf("%s is a step module, but the provider doesn't serve it; add it to resourceTypes in provider.go", rt)
+		}
+	}
+}
+
 // Circuits sort every ssh setting into ones a host object may override and
 // ones only the ssh block takes; a new setting must land in one of them.
 func TestCircuitsKnowEverySSHSetting(t *testing.T) {

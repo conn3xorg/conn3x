@@ -93,6 +93,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_filesystem":           storageTypes["conn3x_filesystem"],
 	"conn3x_lvm_volume_group":     storageTypes["conn3x_lvm_volume_group"],
 	"conn3x_lvm_logical_volume":   storageTypes["conn3x_lvm_logical_volume"],
+	"conn3x_partition":            storageTypes["conn3x_partition"],
 	"conn3x_wait_for":             {waitForSchema, validateWaitFor, planWaitFor, readWaitFor, applyWaitFor, upgradeWith(waitForSchema)},
 	"conn3x_reboot":               {rebootSchema, validateReboot, planReboot, readReboot, applyReboot, upgradeWith(rebootSchema)},
 	"conn3x_eos_config":           eosConfigKind.entry(eosConfigSchema, validateEOSConfig),
