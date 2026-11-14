@@ -21,9 +21,11 @@ The goal: anything you'd do with Terraform, OpenTofu, Ansible, Chef or Puppet, y
 - `strategy = "per_host"`, since v0.9.0, so a slow host doesn't hold up the others. Since v0.15.0, `-limit` runs a circuit on some hosts only, `batch_size` and `max_failures` roll it out a few hosts at a time, and `on` runs a step on another host.
 - Arista EOS switches over their own CLI, experimental since v0.9.0: `eos_config`, `eos_hostname`, `eos_vlan`, and since v0.10.0 `eos_interface` and `eos_user`, with one session and one commit per switch, tested on cEOS-lab, not yet on hardware. See [Network devices](https://docs.conn3x.org/network-devices). Since v0.13.0, circuits on one switch take turns at its config session, so one commit never makes another circuit's lines live.
 - Juniper Junos over its own CLI, experimental since v0.17.0: `junos_config`, `junos_hostname`, `junos_vlan`, `junos_interface` and `junos_user`, with a dry run before every commit, one `commit confirmed` per device per circuit and a confirm over a new login, tested on vJunos-switch, not yet on hardware.
+- VyOS over its own CLI, experimental since v0.18.0: `vyos_config`, `vyos_hostname` and `vyos_interface`, with a dry run before every commit, one `commit-confirm` per router per circuit and a confirm over a new login, tested on a VyOS rolling container, not yet on hardware.
 - Directories copied to hosts, since v0.17.0: `directory_copy` writes only the files that differ and names them in the plan.
 - `conn3x convert ansible` for bringing playbooks and, since v0.9.0, local roles across, and since v0.11.0 the roles a playbook runs, with their dependencies, and since v0.12.0 database tasks, `win_updates`, `tasks_from` and a role in a `loop`, since v0.13.0 a role call in an imported task file, since v0.14.0 `exclusive` keys, `recurse` and PostgreSQL database grants, since v0.15.0 `delegate_to`, `serial` and OpenSSL keys and requests, since v0.16.0 `block`/`rescue`/`always`, the storage and container modules and roles straight from Galaxy, and `conn3x drift` for both layers.
-- Ansible inventories, since v0.16.0: `provider::conn3x::inventory` reads INI or YAML with `group_vars` and `host_vars`, and `conn3x run` runs one command or module on a group of hosts without a circuit.
+- Ansible inventories, since v0.16.0: `provider::conn3x::inventory` reads INI or YAML with `group_vars` and `host_vars`, and `conn3x run` runs one command or module on a group of hosts without a circuit. Since v0.18.0, `provider::conn3x::hostdata` looks values up layer by layer, as Hiera does, and `conn3x run -task` runs a named set of steps on each host, as a Bolt task does.
+- Reading a host at plan, since v0.18.0: `data "conn3x_file"` and `data "conn3x_command"`, and `ephemeral "conn3x_ssh_tunnel"` for another provider to reach what only the host can.
 - Any OpenTofu provider. AWS, Azure, Google Cloud and DigitalOcean are tested end to end, each with a [tutorial](https://docs.conn3x.org/tutorials).
 
 ## Now
@@ -32,7 +34,7 @@ Windows at scale. A forest, member servers, more domain controllers, and the OUs
 
 ## Next
 
-Network devices over their own CLI, starting with Arista EOS: switches, routers and firewalls, in the same plan as the hosts behind them. The first three device circuits are already out, and they're experimental: [RouterOS baseline](https://docs.conn3x.org/circuits/routeros-baseline), [OPNsense VLANs](https://docs.conn3x.org/circuits/opnsense-vlans) and [Proxmox VE network](https://docs.conn3x.org/circuits/proxmox-network). They go through community OpenTofu providers and were tested on virtual images, not hardware. Since v0.9.0 Conn3x talks to Arista EOS itself, experimentally; since v0.10.0 every step on a switch shares one session and one commit, and `eos_interface` and `eos_user` are out. Junos joined it in v0.17.0. VyOS is next, then classic Cisco IOS.
+Network devices over their own CLI, starting with Arista EOS: switches, routers and firewalls, in the same plan as the hosts behind them. The first three device circuits are already out, and they're experimental: [RouterOS baseline](https://docs.conn3x.org/circuits/routeros-baseline), [OPNsense VLANs](https://docs.conn3x.org/circuits/opnsense-vlans) and [Proxmox VE network](https://docs.conn3x.org/circuits/proxmox-network). They go through community OpenTofu providers and were tested on virtual images, not hardware. Since v0.9.0 Conn3x talks to Arista EOS itself, experimentally; since v0.10.0 every step on a switch shares one session and one commit, and `eos_interface` and `eos_user` are out. Junos joined it in v0.17.0, and VyOS in v0.18.0. Classic Cisco IOS is next.
 
 ## After that
 
@@ -45,8 +47,7 @@ More circuits come alongside, when people ask for them.
 The rest, in order. The full roadmap says where each one fits among the items above.
 
 - The rest of OpenTofu on host steps. `import` and `lifecycle` on steps shipped in v0.8.0, and import on the rest of the Linux modules in v0.9.0; what's left is import on Windows.
-- Host data: values looked up by host, group and environment, as Hiera does. Ansible inventories with `group_vars` and `host_vars` shipped in v0.16.0.
-- Rolling updates and orchestration: batches with a failure limit, run-once and delegated steps, tasks and plans like Bolt's.
+- Rolling updates and orchestration: batches with a failure limit, run-once and delegated steps, and tasks shipped; plans that chain tasks, like Bolt's, are left.
 - Servers that keep themselves right: scheduled applies from the web UI, run reports and host facts you can search, then a pull mode.
 - Encrypted variable files you can commit, like Ansible Vault.
 - Compliance checks that only report, a test command on containers, and policy on plans.
