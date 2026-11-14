@@ -29,7 +29,7 @@ import (
 )
 
 type runOptions struct {
-	inventory, module, task, plan, args, user, keyFile, knownHosts, batchSize string
+	inventory, circuits, module, task, plan, args, user, keyFile, knownHosts, batchSize string
 	port, forks, maxFailures                                                  int
 	become, check, json                                                       bool
 	pattern                                                                   string
@@ -45,8 +45,9 @@ func runCommand() command.Command {
   conn3x run -i inventory.ini 'web*:!web3' -a 'systemctl status nginx'
   conn3x run -i inventory.ini webservers -m service -a 'name=nginx state=started enabled=true' -become
   conn3x run -i inventory.ini all -m package -a 'name=htop' -check
+  conn3x run -circuits . web -a uptime
 
-Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, and the group_vars and host_vars beside it. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names.
+Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, and the group_vars and host_vars beside it. Or, with -circuits DIR, from the circuits in DIR's .tf and .circuit.hcl files: each circuit is a group named after it, and its hosts keep its ssh settings and their own host objects', written out in full. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names.
 
 -a without -m runs a command through the host's shell. With -m, it's a module a step can use, and -a holds its arguments as NAME=VALUE, quoted as a shell would. -m file takes src=PATH too, a text file on this machine to send as the content, as Ansible's copy does. A module does what it does in a step: on a host that's already in line it changes nothing and says ok. -check stops before changing anything.
 
@@ -86,9 +87,10 @@ A step's arguments can use param.NAME, host.name and host.vars, the inventory's 
 Each host is checked against known_hosts, as a plan checks it. Exits 0 when every host succeeded, 2 when any failed, and 1 on errors before any host ran.`,
 	}
 	c.CommandLine.PositionalArg(&o.pattern, "PATTERN", true)
-	c.UsageOverride.Usage = "conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -a <COMMAND>\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -m <MODULE> -a <NAME=VALUE ...>\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -task <FILE> [-a <NAME=VALUE ...>]\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -plan <FILE> [-a <NAME=VALUE ...>]"
+	c.UsageOverride.Usage = "conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -a <COMMAND>\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -m <MODULE> -a <NAME=VALUE ...>\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -task <FILE> [-a <NAME=VALUE ...>]\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -plan <FILE> [-a <NAME=VALUE ...>]\n       conn3x [global options] run -circuits <DIR> [options] <PATTERN> ..."
 	c.CommandLine.StringVar(&o.inventory, "i", "", "Inventory file, INI or YAML, to take hosts from.")
 	c.CommandLine.StringVar(&o.inventory, "inventory", "", "Same as -i.")
+	c.CommandLine.StringVar(&o.circuits, "circuits", "", "Directory whose circuits to take hosts from, instead of an inventory: each circuit is a group of its hosts, with its ssh settings.")
 	c.CommandLine.StringVar(&o.module, "m", "", "Module to run, such as service or package. Without it, -a is a command.")
 	c.CommandLine.StringVar(&o.task, "task", "", "Task file to run: named steps, in order, on each host.")
 	c.CommandLine.StringVar(&o.plan, "plan", "", "Plan file to run: tasks, in order, each on its own hosts.")
@@ -123,8 +125,11 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, termsafe.Escape(fmt.Sprintf("Error: "+format, a...)))
 		return 1
 	}
-	if o.inventory == "" {
-		return fail("-i is required: conn3x run takes its hosts from an inventory, as in: conn3x run -i inventory.ini all -a uptime")
+	switch {
+	case o.inventory == "" && o.circuits == "":
+		return fail("-i or -circuits is required: conn3x run takes its hosts from an inventory, as in: conn3x run -i inventory.ini all -a uptime, or from the circuits in a directory, as in: conn3x run -circuits . web -a uptime")
+	case o.inventory != "" && o.circuits != "":
+		return fail("give -i or -circuits, not both")
 	}
 	if o.args == "" && o.module == "" && o.task == "" && o.plan == "" {
 		return fail("give -a with a command, -m with a module, -task with a task file, or -plan with a plan file")
@@ -189,7 +194,17 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		}
 	}
 
-	inv, err := ansible.ReadInventory(o.inventory)
+	var inv *ansible.Inventory
+	source := o.inventory
+	if o.circuits != "" {
+		if err := circuitsDirExists(o.circuits); err != nil {
+			return fail("%s", err)
+		}
+		inv, err = circuitInventory(o.circuits)
+		source = "the circuits in " + o.circuits
+	} else {
+		inv, err = ansible.ReadInventory(o.inventory)
+	}
 	if err != nil {
 		return fail("%s", err)
 	}
@@ -221,7 +236,7 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 	}
 	hosts := hostsFor(nil)
 	if len(hosts) == 0 {
-		return fail("%q matches no host in %s", o.pattern, o.inventory)
+		return fail("%q matches no host in %s", o.pattern, source)
 	}
 	o.runOn(ctx, hosts, task, params, typ, args)
 	return o.report(stdout, "", hosts, task != nil)
@@ -367,6 +382,17 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 	str("private_key_file", "ansible_ssh_private_key_file", o.keyFile)
 	if o.knownHosts != "" {
 		ssh["known_hosts_file"] = cty.StringVal(o.knownHosts)
+	} else if v := vars["conn3x_ssh_known_hosts_file"]; v != "" {
+		ssh["known_hosts_file"] = cty.StringVal(v)
+	}
+	// What -circuits carries over from a circuit's ssh block.
+	for _, key := range []string{"host_key", "timeout"} {
+		if v := vars["conn3x_ssh_"+key]; v != "" {
+			ssh[key] = cty.StringVal(v)
+		}
+	}
+	if vars["conn3x_ssh_become"] == "true" {
+		ssh["become"] = cty.True
 	}
 	if p, err := strconv.Atoi(vars["ansible_port"]); err == nil {
 		ssh["port"] = cty.NumberIntVal(int64(p))

@@ -76,6 +76,35 @@ func TestConn3xRun(t *testing.T) {
 	}
 }
 
+// conn3x run -circuits takes its hosts and their ssh settings from the
+// circuits in a directory, a group per circuit.
+func TestConn3xRunCircuits(t *testing.T) {
+	web1, db1 := startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web1, db1)
+	w := &workdir{t: t, dir: t.TempDir()}
+	circuit := func(name, host, port string) string {
+		return "circuit \"" + name + "\" {\n  hosts = { " + host + " = { address = \"127.0.0.1\", port = " + port + " } }\n  ssh {\n    user             = \"root\"\n    private_key_file = \"" + web1.keyFile + "\"\n    known_hosts_file = \"" + knownFile + "\"\n  }\n}\n"
+	}
+	src := circuit("web", "web1", web1.port) + circuit("db", "db1", db1.port)
+	if err := os.WriteFile(filepath.Join(w.dir, "main.circuit.hcl"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := w.conn3x("run", "-circuits", ".", "web,db", "-a", "echo hi from $(cat /etc/hostname)")
+	if code != 0 || !strings.Contains(out, "db1 | changed") || !strings.Contains(out, "web1 | changed") || strings.Count(out, "  hi from ") != 2 {
+		t.Errorf("a command on both circuits (exit %d):\n%s", code, out)
+	}
+	out, code = w.conn3x("run", "-circuits", ".", "db", "-m", "file", "-a", "path=/tmp/c3x content=db")
+	if code != 0 || !strings.Contains(out, "db1 | changed") || strings.Contains(out, "web1") {
+		t.Errorf("a module on circuit db (exit %d):\n%s", code, out)
+	}
+	if got := db1.exec("", "cat", "/tmp/c3x"); got != "db" {
+		t.Errorf("/tmp/c3x = %q", got)
+	}
+	if out, code := w.conn3x("run", "-circuits", ".", "-i", "x.ini", "all", "-a", "true"); code != 1 || !strings.Contains(out, "not both") {
+		t.Errorf("-circuits with -i (exit %d):\n%s", code, out)
+	}
+}
+
 // conn3x run -task runs a task file's steps in order on each host, with
 // params and the host's inventory variables, stopping a host at the first
 // step that fails.

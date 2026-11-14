@@ -565,3 +565,30 @@ func (g *Group) Values(key string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// NewInventory is an empty inventory, for hosts that come from somewhere
+// other than an inventory file, such as a configuration's circuits.
+func NewInventory() *Inventory {
+	return &Inventory{hostVars: map[string]map[string]string{}, groups: map[string]*groupDef{}}
+}
+
+// AddHost puts host in group with vars, as a line of an INI inventory would,
+// but taking the name as it is, without expanding ranges. A host already
+// there keeps the variables it has and gains any new ones.
+func (inv *Inventory) AddHost(group, host string, vars map[string]string) {
+	g := inv.group(group)
+	if !slices.Contains(g.hosts, host) {
+		g.hosts = append(g.hosts, host)
+	}
+	hv, ok := inv.hostVars[host]
+	if !ok {
+		hv = map[string]string{}
+		inv.hostVars[host] = hv
+		inv.order = append(inv.order, host)
+	}
+	for k, v := range vars {
+		if _, set := hv[k]; !set {
+			hv[k] = v
+		}
+	}
+}

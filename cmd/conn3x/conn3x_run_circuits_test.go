@@ -1,0 +1,95 @@
+// Copyright (c) The Conn3x Authors
+// SPDX-License-Identifier: MPL-2.0
+
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/zclconf/go-cty/cty"
+)
+
+func TestCircuitInventory(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, src string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("web.circuit.hcl", `circuit "web" {
+  hosts = {
+    web1 = "192.0.2.11"
+    web2 = { address = "192.0.2.12", user = "deploy", port = 2222, role = "edge" }
+  }
+  ssh {
+    user             = "ops"
+    private_key_file = "~/.ssh/id_ed25519"
+    known_hosts_file = "~/.ssh/known_hosts_lab"
+    become           = true
+  }
+  step "motd" {
+    file {
+      path    = "/etc/motd"
+      content = "hi"
+    }
+  }
+}
+`)
+	write("main.tf", `terraform {}
+circuit "db" {
+  hosts = { db1 = "192.0.2.21" }
+  ssh {
+    user = "dba"
+  }
+}
+`)
+	inv, err := circuitInventory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := inv.Ordered("web"); !slices.Equal(got, []string{"web1", "web2"}) {
+		t.Errorf("web: %q", got)
+	}
+	if got := inv.Ordered("db"); !slices.Equal(got, []string{"db1"}) {
+		t.Errorf("db: %q", got)
+	}
+	all := inv.Group("all")
+	o := runOptions{}
+	ssh := o.sshFor("web2", all.Vars("web2"))
+	want := map[string]cty.Value{
+		"host": cty.StringVal("192.0.2.12"), "user": cty.StringVal("deploy"), "port": cty.NumberIntVal(2222),
+		"private_key_file": cty.StringVal("~/.ssh/id_ed25519"), "known_hosts_file": cty.StringVal("~/.ssh/known_hosts_lab"), "become": cty.True,
+	}
+	for k, v := range want {
+		if !ssh[k].RawEquals(v) {
+			t.Errorf("web2 ssh %s = %#v, want %#v", k, ssh[k], v)
+		}
+	}
+	if u := o.sshFor("db1", all.Vars("db1"))["user"]; !u.RawEquals(cty.StringVal("dba")) {
+		t.Errorf("db1 user %#v", u)
+	}
+
+	for name, src := range map[string]string{
+		"var":      `circuit "x" { hosts = var.hosts }`,
+		"jump":     "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    jump_hosts = [\"b\"]\n  }\n}\n",
+		"no addr":  `circuit "x" { hosts = { a = { user = "u" } } }`,
+		"ssh func": "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = lower(\"OPS\")\n  }\n}\n",
+		"two ways": "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = \"one\"\n  }\n}\ncircuit \"y\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = \"two\"\n  }\n}\n",
+	} {
+		d := t.TempDir()
+		if err := os.WriteFile(filepath.Join(d, "c.circuit.hcl"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := circuitInventory(d); err == nil || !strings.Contains(err.Error(), "circuit \"") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := circuitInventory(t.TempDir()); err == nil || !strings.Contains(err.Error(), "no circuit") {
+		t.Errorf("empty dir: %v", err)
+	}
+}
