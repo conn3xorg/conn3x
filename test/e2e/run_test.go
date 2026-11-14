@@ -140,3 +140,81 @@ func TestConn3xRunTask(t *testing.T) {
 		t.Errorf("an unknown param (exit %d):\n%s", code, out)
 	}
 }
+
+// conn3x run -plan runs tasks in order, each on its own hosts, and stops
+// at the first run where a host fails.
+func TestConn3xRunPlan(t *testing.T) {
+	web1, db1 := startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web1, db1)
+	w := &workdir{t: t, dir: t.TempDir()}
+	files := map[string]string{
+		"hosts.ini": "[web]\nweb1 ansible_host=127.0.0.1 ansible_port=" + web1.port + "\n[db]\ndb1 ansible_host=127.0.0.1 ansible_port=" + db1.port + "\n[all:vars]\nansible_user=root\n",
+		"tasks/mark.task.hcl": `task "mark" {
+  param "name" {}
+  param "fail" { default = "false" }
+  step "write" {
+    file {
+      path    = "/tmp/${param.name}"
+      content = "${host.name}\n"
+    }
+  }
+  step "maybe-fail" {
+    command { command = param.fail == "true" ? "exit 4" : "true" }
+  }
+}
+`,
+		"release.plan.hcl": `plan "release" {
+  param "version" {}
+  param "fail_db" { default = "false" }
+  run "migrate" {
+    task   = "tasks/mark.task.hcl"
+    hosts  = "db"
+    params = { name = "migrated-${param.version}", fail = param.fail_db }
+  }
+  run "deploy" {
+    task   = "tasks/mark.task.hcl"
+    hosts  = "web"
+    params = { name = "deployed-${param.version}" }
+  }
+}
+`,
+	}
+	for name, body := range files {
+		p := filepath.Join(w.dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(args ...string) (string, int) {
+		return w.conn3x(append([]string{"run", "-i", "hosts.ini", "-private-key-file", web1.keyFile, "-known-hosts-file", knownFile, "-plan", "release.plan.hcl"}, args...)...)
+	}
+	exists := func(h *host, path string) bool {
+		return h.exec("", "sh", "-c", "test -e "+path+" && echo yes; true") == "yes\n"
+	}
+
+	out, code := run("all", "-a", "version=1")
+	if code != 0 || strings.Index(out, "== migrate") > strings.Index(out, "== deploy") || !strings.Contains(out, "db1 | changed") || !strings.Contains(out, "web1 | changed") {
+		t.Errorf("the plan (exit %d):\n%s", code, out)
+	}
+	if !exists(db1, "/tmp/migrated-1") || exists(web1, "/tmp/migrated-1") || !exists(web1, "/tmp/deployed-1") || exists(db1, "/tmp/deployed-1") {
+		t.Errorf("each run should touch only its own hosts")
+	}
+
+	out, code = run("all", "-a", "version=2 fail_db=true")
+	if code != 2 || !strings.Contains(out, "db1 | failed") || !strings.Contains(out, "== deploy: skipped, since migrate failed") || strings.Contains(out, "web1 |") {
+		t.Errorf("a failed run should stop the plan (exit %d):\n%s", code, out)
+	}
+	if exists(web1, "/tmp/deployed-2") {
+		t.Errorf("deploy ran after migrate failed")
+	}
+
+	if out, code := run("web", "-a", "version=3"); code != 0 || !strings.Contains(out, "== migrate: task mark, 0 host(s)") || !exists(web1, "/tmp/deployed-3") {
+		t.Errorf("PATTERN should narrow every run (exit %d):\n%s", code, out)
+	}
+	if out, code := run("all"); code != 1 || !strings.Contains(out, "needs param version") {
+		t.Errorf("a missing plan param (exit %d):\n%s", code, out)
+	}
+}

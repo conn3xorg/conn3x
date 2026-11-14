@@ -51,7 +51,7 @@ func TestLoadTask(t *testing.T) {
 	if task.name != "deploy" || len(task.steps) != 3 || task.steps[0].module != "package" || task.steps[1].typ != "conn3x_service" {
 		t.Fatalf("task = %+v", task)
 	}
-	params, err := task.paramValues(map[string]string{"version": "1.2"})
+	params, err := paramValues("task deploy", task.params, map[string]cty.Value{"version": cty.StringVal("1.2")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestLoadTask(t *testing.T) {
 	if _, err := bad.steps[0].args(context.Background(), params, host); err == nil || !strings.Contains(err.Error(), "ssh") {
 		t.Errorf("an ssh block in a step: %v", err)
 	}
-	if _, err := task.paramValues(nil); err == nil || !strings.Contains(err.Error(), "needs param version") {
+	if _, err := paramValues("task deploy", task.params, nil); err == nil || !strings.Contains(err.Error(), "needs param version") {
 		t.Errorf("missing param: %v", err)
 	}
 

@@ -67,22 +67,13 @@ func loadTask(path string) (*runTask, error) {
 	}
 	modules := configs.Conn3xStepModules()
 	seen := map[string]bool{}
+	var err error
 	for _, b := range body.Blocks {
 		name := b.Labels[0]
 		switch b.Type {
 		case "param":
-			attrs, diags := b.Body.JustAttributes()
-			if diags.HasErrors() {
-				return nil, diags
-			}
-			if d, ok := attrs["default"]; ok {
-				v, diags := d.Expr.Value(nil)
-				if diags.HasErrors() {
-					return nil, diags
-				}
-				t.params[name] = &v
-			} else {
-				t.params[name] = nil
+			if t.params[name], err = paramDefault(b); err != nil {
+				return nil, err
 			}
 		case "step":
 			if seen[name] {
@@ -107,6 +98,23 @@ func loadTask(path string) (*runTask, error) {
 	return t, nil
 }
 
+// paramDefault is a param block's default, nil when it has none.
+func paramDefault(b *hcl.Block) (*cty.Value, error) {
+	attrs, diags := b.Body.JustAttributes()
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	d, ok := attrs["default"]
+	if !ok {
+		return nil, nil
+	}
+	v, diags := d.Expr.Value(nil)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	return &v, nil
+}
+
 // stepModuleBlock is a step's one module block, whatever its type.
 func stepModuleBlock(body hcl.Body) (*hcl.Block, hcl.Diagnostics) {
 	var schema hcl.BodySchema
@@ -123,23 +131,23 @@ func stepModuleBlock(body hcl.Body) (*hcl.Block, hcl.Diagnostics) {
 	return content.Blocks[0], nil
 }
 
-// paramValues are the task's params from -a's NAME=VALUE pairs, with
-// defaults for the rest.
-func (t *runTask) paramValues(given map[string]string) (cty.Value, error) {
+// paramValues are a task's or a plan's params, from what was given, with
+// defaults for the rest. what names it in errors, as in "task deploy".
+func paramValues(what string, declared map[string]*cty.Value, given map[string]cty.Value) (cty.Value, error) {
 	vals := map[string]cty.Value{}
-	for name, def := range t.params {
+	for name, def := range declared {
 		switch v, ok := given[name]; {
 		case ok:
-			vals[name] = cty.StringVal(v)
+			vals[name] = v
 		case def != nil:
 			vals[name] = *def
 		default:
-			return cty.NilVal, fmt.Errorf("task %s needs param %s: give it with -a '%s=...'", t.name, name, name)
+			return cty.NilVal, fmt.Errorf("%s needs param %s: give it with -a '%s=...'", what, name, name)
 		}
 	}
 	for name := range given {
-		if _, ok := t.params[name]; !ok {
-			return cty.NilVal, fmt.Errorf("task %s has no param %q", t.name, name)
+		if _, ok := declared[name]; !ok {
+			return cty.NilVal, fmt.Errorf("%s has no param %q", what, name)
 		}
 	}
 	return cty.ObjectVal(vals), nil
