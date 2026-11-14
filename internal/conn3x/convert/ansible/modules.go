@@ -403,6 +403,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"wait_for":           waitForModule,
 	"uri":                uriModule,
 	"acl":                aclModule,
+	"selinux":            selinuxModule,
 	"apt_repository":     aptRepositoryModule,
 	"yum_repository":     yumRepositoryModule,
 	"locale_gen":         localeGenModule,
@@ -1299,6 +1300,23 @@ func aclModule(in *input) ([]step, string) {
 		attrs = append(attrs, s("state", "absent"))
 	}
 	return one("acl", attrs)
+}
+
+// selinuxModule sets the mode; disabling takes more than the config file.
+func selinuxModule(in *input) ([]step, string) {
+	st := in.state("", "enforcing", "permissive")
+	if c := in.str("configfile"); c != "" && c != "/etc/selinux/config" {
+		return nil, "uses the config file " + c + ", and selinux_mode keeps the mode in /etc/selinux/config"
+	}
+	if in.has("update_kernel_param") && truthy(in.str("update_kernel_param")) {
+		return nil, "sets update_kernel_param, and selinux_mode doesn't change boot parameters"
+	}
+	var notes []string
+	if in.has("policy") {
+		in.ignore("policy")
+		notes = append(notes, "policy dropped: selinux_mode leaves SELINUXTYPE as it is.")
+	}
+	return one("selinux_mode", []attr{s("mode", st)}, notes...)
 }
 
 func sudoersModule(in *input) ([]step, string) {
