@@ -100,5 +100,17 @@ func ApplyHold(ctx context.Context, r modules.Runner, family Family, h Hold) err
 	if err != nil && family == RPM && strings.Contains(err.Error(), "No such command") {
 		return fmt.Errorf("%s", versionlockHint)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// dnf versionlock exits 0 when it finds no package by that name, as
+	// with a typo, so only the list says whether the hold took.
+	held, err := ReadHold(ctx, r, family, h.Name)
+	if err != nil {
+		return err
+	}
+	if held != h.Held {
+		return fmt.Errorf("%s%s exited 0, but the hold didn't change; check that the package exists", cmd, h.Name)
+	}
+	return nil
 }
