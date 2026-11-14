@@ -52,6 +52,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_line":                 {lineKind.schema, lineKind.validate, lineKind.plan, lineKind.read, lineKind.apply, upgradeWith(lineKind.schema)},
 	"conn3x_block":                {blockKind.schema, blockKind.validate, blockKind.plan, blockKind.read, blockKind.apply, upgradeWith(blockKind.schema)},
 	"conn3x_ini":                  {iniKind.schema, iniKind.validate, iniKind.plan, iniKind.read, iniKind.apply, upgradeWith(iniKind.schema)},
+	"conn3x_xml_value":            {xmlValueKind.schema, xmlValueKind.validate, xmlValueKind.plan, xmlValueKind.read, xmlValueKind.apply, upgradeWith(xmlValueKind.schema)},
 	"conn3x_replace":              {replaceKind.schema, replaceKind.validate, replaceKind.plan, replaceKind.read, replaceKind.apply, upgradeWith(replaceKind.schema)},
 	"conn3x_limit":                {limitKind.schema, limitKind.validate, limitKind.plan, limitKind.read, limitKind.apply, upgradeWith(limitKind.schema)},
 	"conn3x_known_hosts":          {knownHostsSchema, validateKnownHosts, planKnownHosts, readKnownHosts, applyKnownHosts, upgradeWith(knownHostsSchema)},

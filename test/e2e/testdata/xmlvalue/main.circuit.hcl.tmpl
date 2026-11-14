@@ -1,0 +1,27 @@
+circuit "tomcat" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "http2" {
+    xml_value {
+      path  = "/etc/server.xml"
+      xpath = "/Server/Service/Connector[@port='8080']/@protocol"
+      value = "HTTP/2"
+    }
+  }
+
+  step "access_log" {
+    xml_value {
+      path      = "/etc/server.xml"
+      xpath     = "/Server/Service/Engine/Valve[@className='AccessLogValve']/@pattern"
+      value     = "common"
+      on_remove = "delete"
+    }
+  }
+}
