@@ -62,6 +62,7 @@ var circuitModules = map[string]string{
 	"modprobe":             "conn3x_modprobe",
 	"container":            "conn3x_container",
 	"mount":                "conn3x_mount",
+	"swap":                 "conn3x_swap",
 	"filesystem":           "conn3x_filesystem",
 	"lvm_volume_group":     "conn3x_lvm_volume_group",
 	"lvm_logical_volume":   "conn3x_lvm_logical_volume",
