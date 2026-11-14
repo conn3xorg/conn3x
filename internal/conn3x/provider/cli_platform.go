@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -57,9 +58,51 @@ type cliDevice interface {
 func (p *cliPlatform) device(h *hostConn, conn cty.Value) cliDevice {
 	if p.perCommand {
 		dial := p.reconnect(conn)
-		return ios.PerCommand(func(ctx context.Context) (ios.Device, error) { return dial(ctx) })
+		return ios.PerCommand(oneLoginAtATime(h.host, func(ctx context.Context) (ios.Device, error) { return dial(ctx) }))
 	}
 	return h.client
+}
+
+// freshLogins holds a one-token semaphore per host: a device that takes a
+// login per command gets one at a time, however many steps refresh at
+// once, so a plan can't run it out of vty lines or SSH startups (IOS XE's
+// ip ssh maxstartups is 10, and line vty 0 4 is 5).
+var freshLogins sync.Map // host -> chan struct{}
+
+// oneLoginAtATime wraps dial so the login it opens holds the host's token
+// until it's closed.
+func oneLoginAtATime(host string, dial func(context.Context) (ios.Device, error)) func(context.Context) (ios.Device, error) {
+	v, _ := freshLogins.LoadOrStore(host, make(chan struct{}, 1))
+	token := v.(chan struct{})
+	return func(ctx context.Context) (ios.Device, error) {
+		select {
+		case token <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		d, err := dial(ctx)
+		if err != nil {
+			<-token
+			return nil, err
+		}
+		return &heldLogin{Device: d, release: func() { <-token }}, nil
+	}
+}
+
+// heldLogin gives the host's token back when it's closed.
+type heldLogin struct {
+	ios.Device
+	release func()
+	once    sync.Once
+}
+
+func (l *heldLogin) Close() error {
+	var err error
+	if c, ok := l.Device.(interface{ Close() error }); ok {
+		err = c.Close()
+	}
+	l.once.Do(l.release)
+	return err
 }
 
 func (p *cliPlatform) withLines(config string, cmds []string) string {

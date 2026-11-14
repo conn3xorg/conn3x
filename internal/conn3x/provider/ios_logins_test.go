@@ -1,0 +1,72 @@
+// Copyright (c) The Conn3x Authors
+// SPDX-License-Identifier: MPL-2.0
+
+package provider
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/opentofu/opentofu/internal/conn3x/modules/ios"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+)
+
+// countedLogin is one fresh login: it counts how many are open at once.
+type countedLogin struct {
+	open, most *int32
+}
+
+func (c countedLogin) answer() (ssh.Result, error) {
+	time.Sleep(5 * time.Millisecond)
+	return ssh.Result{Stdout: []byte("%No Rollback Confirmed Change pending\n")}, nil
+}
+
+func (c countedLogin) RunRaw(context.Context, string, []byte) (ssh.Result, error) { return c.answer() }
+func (c countedLogin) RunShell(context.Context, []byte) (ssh.Result, error)        { return c.answer() }
+func (c countedLogin) Close() error                                                { atomic.AddInt32(c.open, -1); return nil }
+
+// Eight steps refreshing at once on one IOS device open one login at a
+// time, not a login each (Foothills' review of #836).
+func TestOneFreshLoginPerHost(t *testing.T) {
+	var open, most int32
+	dial := func(context.Context) (ios.Device, error) {
+		n := atomic.AddInt32(&open, 1)
+		for m := atomic.LoadInt32(&most); n > m && !atomic.CompareAndSwapInt32(&most, m, n); m = atomic.LoadInt32(&most) {
+		}
+		return countedLogin{&open, &most}, nil
+	}
+	d := ios.PerCommand(oneLoginAtATime("203.0.113.20", dial))
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := ios.Pending(context.Background(), d); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if most != 1 || open != 0 {
+		t.Errorf("at most %d logins open at once, %d left open; want 1 and 0", most, open)
+	}
+
+	// A login that fails gives the token back, and a cancelled wait gives up.
+	failing := oneLoginAtATime("203.0.113.21", func(context.Context) (ios.Device, error) { return nil, context.DeadlineExceeded })
+	if _, err := failing(context.Background()); err == nil {
+		t.Fatal("no error")
+	}
+	held, err := oneLoginAtATime("203.0.113.21", dial)(context.Background())
+	if err != nil {
+		t.Fatalf("the failed login kept the token: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := oneLoginAtATime("203.0.113.21", dial)(ctx); err == nil {
+		t.Error("a second login got in while the first was open")
+	}
+	_ = held.(interface{ Close() error }).Close()
+}
