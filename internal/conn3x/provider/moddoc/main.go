@@ -184,6 +184,14 @@ func inPair(b *configschema.Block, attr string) bool {
 	if other := pairedAttr(b, attr); other != "" {
 		return true
 	}
+	// "Set one of path, port and url." names a group the attribute is in.
+	if m := oneOfRe.FindStringSubmatch(b.Attributes[attr].Description); m != nil {
+		for _, name := range regexp.MustCompile(`[a-z_]+`).FindAllString(strings.ReplaceAll(m[1], " and ", ", "), -1) {
+			if _, ok := b.Attributes[name]; ok && name != attr {
+				return true
+			}
+		}
+	}
 	for name, at := range b.Attributes {
 		if at.Optional && pairedAttr(b, name) == attr {
 			return true
@@ -204,3 +212,5 @@ func pairedAttr(b *configschema.Block, attr string) string {
 }
 
 var pairRe = regexp.MustCompile(`Set this or ([a-z_]+)\b`)
+
+var oneOfRe = regexp.MustCompile(`Set one of ([a-z_]+(?:, [a-z_]+)* and [a-z_]+)\.`)

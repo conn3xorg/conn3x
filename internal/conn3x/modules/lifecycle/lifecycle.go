@@ -19,18 +19,28 @@ import (
 // DefaultWait is how long WaitFor waits when no timeout is given.
 const DefaultWait = 5 * time.Minute
 
-// WaitFor waits until a path exists or a TCP port is listening on the host.
+// WaitFor waits until a path exists, a TCP port is listening, or a URL
+// answers on the host.
 type WaitFor struct {
 	Path    string
 	Port    int
+	URL     URLCheck
 	Timeout time.Duration
 }
 
 // Validate checks a WaitFor before anything reaches the host.
 func (w WaitFor) Validate() error {
+	set := 0
+	for _, on := range []bool{w.Path != "", w.Port != 0, w.URL.URL != ""} {
+		if on {
+			set++
+		}
+	}
 	switch {
-	case (w.Path == "") == (w.Port == 0):
-		return errors.New("set exactly one of path or port")
+	case set != 1:
+		return errors.New("set exactly one of path, port or url")
+	case w.URL.URL != "":
+		return w.URL.Validate()
 	case w.Path != "" && (!path.IsAbs(w.Path) || strings.ContainsAny(w.Path, "\r\n")):
 		return fmt.Errorf("path %q must be an absolute path", w.Path)
 	case w.Path == "" && (w.Port < 1 || w.Port > 65535):
@@ -49,6 +59,9 @@ func (w WaitFor) condition() string {
 }
 
 func (w WaitFor) String() string {
+	if w.URL.URL != "" {
+		return w.URL.URL
+	}
 	if w.Path != "" {
 		return w.Path
 	}
@@ -57,6 +70,10 @@ func (w WaitFor) String() string {
 
 // Ready reports whether the wait is already over.
 func (w WaitFor) Ready(ctx context.Context, r modules.Runner) (bool, error) {
+	if w.URL.URL != "" {
+		why, err := w.URL.check(ctx, r)
+		return err == nil && why == "", err
+	}
 	res, err := r.Run(ctx, w.condition(), nil)
 	if err != nil {
 		return false, err
@@ -72,6 +89,9 @@ func (w WaitFor) Wait(ctx context.Context, r modules.Runner) error {
 	timeout := w.Timeout
 	if timeout <= 0 {
 		timeout = DefaultWait
+	}
+	if w.URL.URL != "" {
+		return w.URL.wait(ctx, r, timeout)
 	}
 	secs := int(timeout.Round(time.Second) / time.Second)
 	script := fmt.Sprintf(`i=0

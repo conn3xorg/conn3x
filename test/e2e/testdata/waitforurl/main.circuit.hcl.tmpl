@@ -1,0 +1,37 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # Listens only on the host's own loopback, three seconds from now, as a
+  # transient unit, so the command step doesn't wait for it.
+  step "slow_app" {
+    command {
+      command = <<-SH
+        mkdir -p /run/www && echo healthy > /run/www/healthz
+        cat > /run/www/serve.py <<'PY'
+        import functools, http.server, time
+        time.sleep(3)
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory="/run/www")
+        http.server.HTTPServer(("127.0.0.1", 8080), handler).serve_forever()
+        PY
+        systemd-run --unit c3x-http python3 /run/www/serve.py
+      SH
+    }
+  }
+
+  step "healthy" {
+    depends_on = [conn3x_command.app__slow_app]
+
+    wait_for {
+      url           = "http://127.0.0.1:8080/healthz"
+      body_contains = "healthy"
+      timeout       = "30s"
+    }
+  }
+}
