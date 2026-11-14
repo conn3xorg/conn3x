@@ -1,6 +1,6 @@
 # Windows modules: what each needs before it leaves experimental
 
-Each `windows_*` module starts out experimental. That's honest, but it's also a reason teams won't try them, so this page says what "ready" means and where each module stands. Twenty-four modules meet every point and have left experimental; the rest are marked in the table. Pick a gap, and the linked issue says how to close it.
+Each `windows_*` module starts out experimental. That's honest, but it's also a reason teams won't try them, so this page says what "ready" means and where each module stands. All 25 modules meet every point and have left experimental. A new module starts out experimental and joins the table with what it still needs. Pick a gap, and the linked issue says how to close it.
 
 ## What "ready" means
 
@@ -40,7 +40,7 @@ A module drops the experimental label when all of these hold:
 | `windows_registry_value` | yes | yes | yes | yes | |
 | `windows_scheduled_task` | yes | yes | yes, through `azure-windows-fleet` | yes | |
 | `windows_service` | yes | yes | yes | yes | |
-| `windows_update` | no | reads only | run by hand once | n/a | An install on the runner is slow and pointless; a large cumulative update on a real host |
+| `windows_update` | yes | reads only: an install on the runner is slow and pointless | yes, and an 8-month-behind Windows Server 2022 brought current with its cumulative and .NET updates (#583) | n/a | |
 | `windows_user` | yes | yes | yes, on an `azure-ad-lab` member server | yes | |
 | `windows_wait_for` | yes | yes | yes | n/a | |
 
