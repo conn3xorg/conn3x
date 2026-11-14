@@ -1504,3 +1504,63 @@ func TestInventory(t *testing.T) {
 		t.Errorf("features: %v", err)
 	}
 }
+
+// windows_environment and windows_path keep a variable's kind: the machine
+// Path stays ExpandString, with %SystemRoot% unexpanded, after an element
+// comes and goes.
+func TestEnvironmentAndPath(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	name := "CONN3X_TEST_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	for _, user := range []bool{false, true} {
+		e := windows.EnvVar{Name: name, Value: `C:\Conn3x\'"` + "`$env:WINDIR %TEMP%", User: user}
+		if err := windows.ApplyEnv(ctx, c, e); err != nil {
+			t.Fatalf("user=%v: %v", user, err)
+		}
+		a, err := windows.ReadEnv(ctx, c, name, user)
+		if err != nil || !e.Matches(a) || a.Kind != "ExpandString" {
+			t.Errorf("user=%v: read back %+v, %v", user, a, err)
+		}
+		e.Value = "plain"
+		if err := windows.ApplyEnv(ctx, c, e); err != nil {
+			t.Fatal(err)
+		}
+		if a, _ := windows.ReadEnv(ctx, c, name, user); a.Value != "plain" || a.Kind != "ExpandString" {
+			t.Errorf("user=%v: a new value changed the kind: %+v", user, a)
+		}
+		e.Absent = true
+		if err := windows.ApplyEnv(ctx, c, e); err != nil {
+			t.Fatal(err)
+		}
+		if a, _ := windows.ReadEnv(ctx, c, name, user); a.Exists {
+			t.Errorf("user=%v: remove left it", user)
+		}
+	}
+
+	before, err := windows.ReadEnv(ctx, c, "Path", false)
+	if err != nil || !before.Exists || before.Kind != "ExpandString" || !strings.Contains(before.Value, "%SystemRoot%") {
+		t.Fatalf("machine Path before: %+v, %v", before, err)
+	}
+	elem := `C:\Conn3x Test\` + name
+	p := windows.PathEntry{Element: elem}
+	if err := windows.ApplyPath(ctx, c, p); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := windows.ReadEnv(ctx, c, "Path", false)
+	if !p.Matches(a) || a.Kind != "ExpandString" || a.Value != before.Value+";"+elem {
+		t.Errorf("after adding: %+v", a)
+	}
+	if err := windows.ApplyPath(ctx, c, p); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := windows.ReadEnv(ctx, c, "Path", false); again.Value != a.Value {
+		t.Error("adding it twice changed Path")
+	}
+	p.Absent = true
+	if err := windows.ApplyPath(ctx, c, p); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := windows.ReadEnv(ctx, c, "Path", false); after.Value != before.Value || after.Kind != "ExpandString" {
+		t.Errorf("after removing: %+v, want %q", after, before.Value)
+	}
+}

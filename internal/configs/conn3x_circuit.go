@@ -127,6 +127,8 @@ var circuitModules = map[string]string{
 	"windows_reboot":               "conn3x_windows_reboot",
 	"windows_update":               "conn3x_windows_update",
 	"windows_registry_value":       "conn3x_windows_registry_value",
+	"windows_environment":          "conn3x_windows_environment",
+	"windows_path":                 "conn3x_windows_path",
 	"windows_scheduled_task":       "conn3x_windows_scheduled_task",
 	"windows_service":              "conn3x_windows_service",
 	"windows_user":                 "conn3x_windows_user",
