@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	shellwords "github.com/mattn/go-shellwords"
 	"github.com/zclconf/go-cty/cty"
@@ -46,7 +48,7 @@ func runCommand() command.Command {
 
 Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, and the group_vars and host_vars beside it. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names.
 
--a without -m runs a command through the host's shell. With -m, it's a module a step can use, and -a holds its arguments as NAME=VALUE, quoted as a shell would. A module does what it does in a step: on a host that's already in line it changes nothing and says ok. -check stops before changing anything.
+-a without -m runs a command through the host's shell. With -m, it's a module a step can use, and -a holds its arguments as NAME=VALUE, quoted as a shell would. -m file takes src=PATH too, a text file on this machine to send as the content, as Ansible's copy does. A module does what it does in a step: on a host that's already in line it changes nothing and says ok. -check stops before changing anything.
 
 -task runs a task file instead: named steps, in order, on each host, stopping a host at its first failure. -a then holds the task's params as NAME=VALUE.
 
@@ -357,12 +359,31 @@ func runArgs(ctx context.Context, module, typ, raw string, asCommand bool) (map[
 	out := map[string]cty.Value{}
 	for _, w := range words {
 		name, text, ok := strings.Cut(w, "=")
+		// src is Ansible's copy: a file here, sent as the step's content.
+		if ok && module == "file" && name == "src" {
+			b, err := os.ReadFile(text)
+			if err != nil {
+				return nil, fmt.Errorf("-a: src: %w", err)
+			}
+			if !utf8.Valid(b) {
+				return nil, fmt.Errorf("-a: src: %s isn't text, and file sends text", text)
+			}
+			name, text = "content", string(b)
+			if _, dup := out["content"]; dup {
+				return nil, errors.New("-a: give src or content, not both")
+			}
+			out[name] = cty.StringVal(text)
+			continue
+		}
 		attr := block.Attributes[name]
 		switch {
 		case !ok:
 			return nil, fmt.Errorf("-a: %q isn't NAME=VALUE", w)
 		case attr == nil || (attr.Computed && !attr.Optional) || slices.Contains([]string{"id", "revision", "in_sync", "on_remove"}, name):
 			return nil, fmt.Errorf("-a: %s has no argument %q", module, name)
+		}
+		if _, dup := out[name]; dup {
+			return nil, fmt.Errorf("-a: %s is given twice, or with src", name)
 		}
 		v, err := convert.Convert(argValue(text, attr.Type), attr.Type)
 		if err != nil {
