@@ -80,10 +80,21 @@ func holdError(family Family, out string, code int) error {
 	return fmt.Errorf("%s (exit status %d)", strings.TrimSpace(out), code)
 }
 
-// ApplyHold holds or releases the package.
+// ApplyHold holds or releases the package. A hold needs the package
+// installed: apt-mark would hold one apt merely knows of, and dnf would
+// lock each version it has available, none of them chosen.
 func ApplyHold(ctx context.Context, r modules.Runner, family Family, h Hold) error {
 	if err := h.Validate(); err != nil {
 		return err
+	}
+	if h.Held {
+		a, err := Read(ctx, r, family, h.Name, false)
+		if err != nil {
+			return err
+		}
+		if !a.Installed {
+			return fmt.Errorf("%s isn't installed, so there's no version to hold: install it first, with a package step before this one", h.Name)
+		}
 	}
 	var cmd string
 	switch {
