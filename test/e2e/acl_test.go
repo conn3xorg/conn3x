@@ -22,7 +22,9 @@ func TestACL(t *testing.T) {
 	for _, image := range linuxImages {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)
-			facl := func() string { return h.exec("", "sh", "-c", "getfacl --omit-header --absolute-names /srv/data 2>&1; true") }
+			facl := func() string {
+				return h.exec("", "sh", "-c", "getfacl --omit-header --absolute-names /srv/data 2>&1; true")
+			}
 			w := newWorkdir(t, "acl")
 			vars := aclVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, State: "present"}
 			w.writeAs("main.circuit.hcl", vars)
