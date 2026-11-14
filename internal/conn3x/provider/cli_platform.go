@@ -12,6 +12,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules/ios"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/junos"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/setcfg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/vyos"
@@ -55,32 +56,10 @@ type cliDevice interface {
 
 func (p *cliPlatform) device(h *hostConn, conn cty.Value) cliDevice {
 	if p.perCommand {
-		return freshDevice{p.reconnect(conn)}
+		dial := p.reconnect(conn)
+		return ios.PerCommand(func(ctx context.Context) (ios.Device, error) { return dial(ctx) })
 	}
 	return h.client
-}
-
-// freshDevice dials for every command and closes the connection after it.
-type freshDevice struct {
-	dial func(context.Context) (*ssh.Client, error)
-}
-
-func (f freshDevice) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
-	c, err := f.dial(ctx)
-	if err != nil {
-		return ssh.Result{}, err
-	}
-	defer c.Close()
-	return c.RunRaw(ctx, cmd, stdin)
-}
-
-func (f freshDevice) RunShell(ctx context.Context, stdin []byte) (ssh.Result, error) {
-	c, err := f.dial(ctx)
-	if err != nil {
-		return ssh.Result{}, err
-	}
-	defer c.Close()
-	return c.RunShell(ctx, stdin)
 }
 
 func (p *cliPlatform) withLines(config string, cmds []string) string {

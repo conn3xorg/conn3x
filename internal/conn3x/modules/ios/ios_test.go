@@ -240,3 +240,28 @@ func TestPending(t *testing.T) {
 		t.Errorf("none %q %v", says, err)
 	}
 }
+
+type closingIOS struct {
+	fakeIOS
+	closed *int
+}
+
+func (c closingIOS) Close() error { *c.closed++; return nil }
+
+// IOS XE ends the connection with the session, so each command dials anew.
+func TestPerCommand(t *testing.T) {
+	dials, closed := 0, 0
+	d := PerCommand(func(context.Context) (Device, error) {
+		dials++
+		return closingIOS{fakeIOS{show: map[string]string{"show running-config": showRun}}, &closed}, nil
+	})
+	if _, err := RunningConfig(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Pending(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	if dials != 2 || closed != 2 {
+		t.Errorf("%d dials, %d closes; want 2 each", dials, closed)
+	}
+}

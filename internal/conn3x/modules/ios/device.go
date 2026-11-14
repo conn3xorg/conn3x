@@ -34,6 +34,37 @@ type Device interface {
 	RunShell(ctx context.Context, stdin []byte) (ssh.Result, error)
 }
 
+// PerCommand is a Device that dials for every command and closes the
+// connection after it: IOS XE ends the connection when a session ends, so
+// a second session on the same one fails.
+func PerCommand(dial func(context.Context) (Device, error)) Device { return perCommand(dial) }
+
+type perCommand func(context.Context) (Device, error)
+
+func (dial perCommand) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	d, err := dial(ctx)
+	if err != nil {
+		return ssh.Result{}, err
+	}
+	defer closeDevice(d)
+	return d.RunRaw(ctx, cmd, stdin)
+}
+
+func (dial perCommand) RunShell(ctx context.Context, stdin []byte) (ssh.Result, error) {
+	d, err := dial(ctx)
+	if err != nil {
+		return ssh.Result{}, err
+	}
+	defer closeDevice(d)
+	return d.RunShell(ctx, stdin)
+}
+
+func closeDevice(d Device) {
+	if c, ok := d.(interface{ Close() error }); ok {
+		_ = c.Close()
+	}
+}
+
 // commandTimeout bounds one command or script.
 const commandTimeout = 2 * time.Minute
 
