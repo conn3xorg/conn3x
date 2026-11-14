@@ -15,6 +15,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/service"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/windows"
 )
 
 // ListKind is one kind of object conn3x generate steps can list on a host:
@@ -31,6 +32,11 @@ var ListKinds = map[string]ListKind{
 	"users":    {"user", "name", ""},
 	"mounts":   {"mount", "path", ""},
 	"sysctl":   {"sysctl", "name", "value"},
+
+	"windows_features": {"windows_feature", "name", ""},
+	"windows_services": {"windows_service", "name", ""},
+	"windows_users":    {"windows_user", "name", ""},
+	"windows_groups":   {"windows_group", "name", ""},
 }
 
 // ListHost lists the objects of kind a host has, by the value of the
@@ -45,6 +51,11 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 		return nil, nil, err
 	}
 	switch kind {
+	case "windows_features", "windows_services", "windows_users", "windows_groups":
+		names, err = windows.Inventory(ctx, h.client, strings.TrimPrefix(kind, "windows_"))
+		if err != nil {
+			return nil, nil, err
+		}
 	case "packages":
 		family, err := pkg.DetectFamily(ctx, h)
 		if err != nil {
@@ -115,7 +126,7 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 			}
 		}
 	default:
-		return nil, nil, fmt.Errorf("can't list %q; conn3x generate steps lists packages, services, users, mounts and sysctl", kind)
+		return nil, nil, fmt.Errorf("can't list %q; conn3x generate steps lists packages, services, users, mounts and sysctl, and on Windows windows_features, windows_services, windows_users and windows_groups", kind)
 	}
 	sort.Strings(names)
 	return names, values, nil
