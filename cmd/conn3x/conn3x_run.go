@@ -27,10 +27,10 @@ import (
 )
 
 type runOptions struct {
-	inventory, module, task, args, user, keyFile, knownHosts string
-	port, forks                                              int
-	become, check, json                                      bool
-	pattern                                                  string
+	inventory, module, task, plan, args, user, keyFile, knownHosts string
+	port, forks                                                    int
+	become, check, json                                            bool
+	pattern                                                        string
 }
 
 func runCommand() command.Command {
@@ -65,14 +65,31 @@ Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_por
 
 A step's arguments can use param.NAME, host.name and host.vars, the inventory's variables for the host.
 
+-plan runs a plan file: task runs in order, each on its own hosts, as a Bolt plan does. A run where any host fails stops the plan. PATTERN narrows every run's hosts; give all for none.
+
+  plan "release" {
+    param "version" {}
+    run "migrate" {
+      task   = "migrate.task.hcl"
+      hosts  = "db[0]"
+      params = { version = param.version }
+    }
+    run "deploy" {
+      task   = "deploy.task.hcl"
+      hosts  = "web"
+      params = { version = param.version }
+    }
+  }
+
 Each host is checked against known_hosts, as a plan checks it. Exits 0 when every host succeeded, 2 when any failed, and 1 on errors before any host ran.`,
 	}
 	c.CommandLine.PositionalArg(&o.pattern, "PATTERN", true)
-	c.UsageOverride.Usage = "conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -a <COMMAND>\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -m <MODULE> -a <NAME=VALUE ...>\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -task <FILE> [-a <NAME=VALUE ...>]"
+	c.UsageOverride.Usage = "conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -a <COMMAND>\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -m <MODULE> -a <NAME=VALUE ...>\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -task <FILE> [-a <NAME=VALUE ...>]\n       conn3x [global options] run -i <INVENTORY> [options] <PATTERN> -plan <FILE> [-a <NAME=VALUE ...>]"
 	c.CommandLine.StringVar(&o.inventory, "i", "", "Inventory file, INI or YAML, to take hosts from.")
 	c.CommandLine.StringVar(&o.inventory, "inventory", "", "Same as -i.")
 	c.CommandLine.StringVar(&o.module, "m", "", "Module to run, such as service or package. Without it, -a is a command.")
 	c.CommandLine.StringVar(&o.task, "task", "", "Task file to run: named steps, in order, on each host.")
+	c.CommandLine.StringVar(&o.plan, "plan", "", "Plan file to run: tasks, in order, each on its own hosts.")
 	c.CommandLine.StringVar(&o.args, "a", "", "The command, or the module's arguments as NAME=VALUE.")
 	c.CommandLine.StringVar(&o.user, "user", "", "User to log in as, where the inventory doesn't set ansible_user.")
 	c.CommandLine.IntVar(&o.port, "port", 0, "SSH port, where the inventory doesn't set ansible_port. Defaults to 22.")
@@ -105,11 +122,11 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 	if o.inventory == "" {
 		return fail("-i is required: conn3x run takes its hosts from an inventory, as in: conn3x run -i inventory.ini all -a uptime")
 	}
-	if o.args == "" && o.module == "" && o.task == "" {
-		return fail("give -a with a command, -m with a module, or -task with a task file")
+	if o.args == "" && o.module == "" && o.task == "" && o.plan == "" {
+		return fail("give -a with a command, -m with a module, -task with a task file, or -plan with a plan file")
 	}
-	if o.task != "" && o.module != "" {
-		return fail("give -m or -task, not both")
+	if n := len(slices.DeleteFunc([]string{o.module, o.task, o.plan}, func(s string) bool { return s == "" })); n > 1 {
+		return fail("give one of -m, -task and -plan")
 	}
 	pattern, err := hostpattern.Parse(o.pattern)
 	if err != nil {
@@ -119,9 +136,21 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		typ    string
 		args   map[string]cty.Value
 		task   *runTask
+		plan   *taskPlan
 		params cty.Value
 	)
-	if o.task != "" {
+	if o.plan != "" {
+		if plan, err = loadPlan(o.plan); err != nil {
+			return fail("%s", err)
+		}
+		given, err := taskParams(o.args)
+		if err != nil {
+			return fail("%s", err)
+		}
+		if params, err = paramValues("plan "+plan.name, plan.params, given); err != nil {
+			return fail("%s", err)
+		}
+	} else if o.task != "" {
 		if task, err = loadTask(o.task); err != nil {
 			return fail("%s", err)
 		}
@@ -129,7 +158,7 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		if err != nil {
 			return fail("%s", err)
 		}
-		if params, err = task.paramValues(given); err != nil {
+		if params, err = paramValues("task "+task.name, task.params, given); err != nil {
 			return fail("%s", err)
 		}
 	} else {
@@ -164,19 +193,30 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		return inv.Ordered(g)
 	})
 	all := inv.Group("all")
-	var hosts []*runHost
-	for _, h := range all.Names() {
-		if !pattern.MatchIn(h, groups[h]) {
-			continue
+	hostsFor := func(p *hostpattern.Pattern) []*runHost {
+		var hosts []*runHost
+		for _, h := range all.Names() {
+			if pattern.MatchIn(h, groups[h]) && (p == nil || p.MatchIn(h, groups[h])) {
+				hosts = append(hosts, &runHost{name: h, ssh: o.sshFor(h, all.Vars(h)), vars: all.Vars(h)})
+			}
 		}
-		hosts = append(hosts, &runHost{name: h, ssh: o.sshFor(h, all.Vars(h)), vars: all.Vars(h)})
+		return hosts
 	}
+
+	if plan != nil {
+		return o.runPlanOn(ctx, plan, params, inv, hostsFor, stdout, stderr)
+	}
+	hosts := hostsFor(nil)
 	if len(hosts) == 0 {
 		return fail("%q matches no host in %s", o.pattern, o.inventory)
 	}
+	o.runOn(ctx, hosts, task, params, typ, args)
+	return o.report(stdout, "", hosts, task != nil)
+}
 
-	forks := max(o.forks, 1)
-	sem := make(chan struct{}, forks)
+// runOn runs a task, or a module with args, on hosts, o.forks at a time.
+func (o runOptions) runOn(ctx context.Context, hosts []*runHost, task *runTask, params cty.Value, typ string, args map[string]cty.Value) {
+	sem := make(chan struct{}, max(o.forks, 1))
 	var wg sync.WaitGroup
 	for _, h := range hosts {
 		wg.Add(1)
@@ -203,23 +243,29 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		}()
 	}
 	wg.Wait()
+}
 
+// report prints each host's outcome, and returns 2 when any failed. run
+// names the plan's run the hosts belong to, if any.
+func (o runOptions) report(stdout io.Writer, run string, hosts []*runHost, isTask bool) int {
 	code := 0
 	for _, h := range hosts {
 		if h.status == "failed" {
 			code = 2
 		}
-		if o.json && task != nil {
-			line, _ := json.Marshal(map[string]any{"host": h.name, "status": h.status, "steps": h.steps})
-			fmt.Fprintln(stdout, string(line))
-			continue
-		}
 		if o.json {
-			line, _ := json.Marshal(map[string]any{"host": h.name, "status": h.status, "error": h.message, "stdout": h.result.Stdout, "stderr": h.result.Stderr})
+			obj := map[string]any{"host": h.name, "status": h.status, "error": h.message, "stdout": h.result.Stdout, "stderr": h.result.Stderr}
+			if isTask {
+				obj = map[string]any{"host": h.name, "status": h.status, "steps": h.steps}
+			}
+			if run != "" {
+				obj["run"] = run
+			}
+			line, _ := json.Marshal(obj)
 			fmt.Fprintln(stdout, string(line))
 			continue
 		}
-		if task != nil {
+		if isTask {
 			fmt.Fprintln(stdout, termsafe.Escape(h.name+" | "+h.status))
 			for _, st := range h.steps {
 				line := "  " + st.Step + ": " + st.Status
@@ -279,19 +325,19 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 	return ssh
 }
 
-// taskParams reads -a's NAME=VALUE pairs for -task.
-func taskParams(raw string) (map[string]string, error) {
+// taskParams reads -a's NAME=VALUE pairs for -task and -plan.
+func taskParams(raw string) (map[string]cty.Value, error) {
 	words, err := shellwords.Parse(raw)
 	if err != nil {
 		return nil, fmt.Errorf("-a: %w", err)
 	}
-	out := map[string]string{}
+	out := map[string]cty.Value{}
 	for _, w := range words {
 		name, text, ok := strings.Cut(w, "=")
 		if !ok {
 			return nil, fmt.Errorf("-a: %q isn't NAME=VALUE", w)
 		}
-		out[name] = text
+		out[name] = cty.StringVal(text)
 	}
 	return out, nil
 }
