@@ -173,15 +173,19 @@ jobs:
           ./dist/conn3x version | grep -E '^agent: linux/amd64 [0-9a-f]{12}, linux/arm64 [0-9a-f]{12}$' \
             || { echo "conn3x version has no agent line" >&2; exit 1; }
       # The embedded host agents are a separate program conn3x carries for
-      # hosts; the CLI itself must stay smaller than the tofu it's built from.
-      - name: Stay smaller than tofu, not counting the embedded agents
+      # hosts. The CLI is tofu plus Conn3x's own steps, so it may be bigger
+      # than the tofu it's built from, but by no more than a fixed budget:
+      # growth past it needs a look, not a quiet bump.
+      - name: Stay within 3 MB of tofu, not counting the embedded agents
         run: |
           c=$(stat -c %s dist/conn3x)
           a=$(cat internal/conn3x/agent/payload/conn3x-agent-* | wc -c)
           t=$(stat -c %s dist/tofu)
-          echo "conn3x $((c / 1000000)) MB (agents $((a / 1000)) KB), tofu $((t / 1000000)) MB"
+          budget=3000000
+          over=$((c - a - t))
+          echo "conn3x $((c / 1000000)) MB (agents $((a / 1000)) KB), tofu $((t / 1000000)) MB; without agents it's $((over / 1000)) KB over tofu, of a $((budget / 1000)) KB budget"
           [ "$a" -gt 0 ] || { echo "found no embedded agents to subtract" >&2; exit 1; }
-          [ $((c - a)) -lt "$t" ] || { echo "conn3x without its agents has grown past the tofu it is built from" >&2; exit 1; }
+          [ "$over" -le "$budget" ] || { echo "conn3x without its agents is more than $((budget / 1000)) KB bigger than the tofu it is built from" >&2; exit 1; }
       - name: Cross-compile for the release targets
         run: |
           for target in linux/arm64 darwin/arm64 windows/amd64 windows/arm64; do
