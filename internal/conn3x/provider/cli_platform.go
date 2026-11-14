@@ -22,24 +22,71 @@ import (
 
 // cliPlatform is what differs between devices whose configuration is set
 // statements, committed with a rollback timer and confirmed over a new
-// login: Junos and VyOS. cliKind and cliStaged do the rest the same way.
+// login: Junos and VyOS, and IOS under its revert timer. cliKind and
+// cliStaged do the rest the same way.
 type cliPlatform struct {
-	name string // "junos" or "vyos": the step prefix, host lock and log name
+	name string // "junos", "vyos" or "ios": the step prefix, host lock and log name
 	// running reads the configuration as set lines.
-	running func(context.Context, *ssh.Client) (string, error)
+	running func(context.Context, cliDevice) (string, error)
 	// pending says how the device shows a commit waiting for its confirm,
 	// "" when none is; pendingErr is the refusal to change anything then.
-	pending    func(context.Context, *ssh.Client) (string, error)
+	pending    func(context.Context, cliDevice) (string, error)
 	pendingErr func(says string) error
-	check      func(context.Context, *ssh.Client, []string) error
-	apply      func(ctx context.Context, c *ssh.Client, reconnect func(context.Context) (*ssh.Client, error), base string, cmds []string, confirmAfter time.Duration) (string, error)
+	check      func(context.Context, cliDevice, []string) error
+	apply      func(ctx context.Context, d cliDevice, reconnect func(context.Context) (*ssh.Client, error), base string, cmds []string, confirmAfter time.Duration) (string, error)
 	// notLive reports whether err left nothing live on the device.
 	notLive        func(error) bool
 	defaultConfirm time.Duration
 	revertAfter    time.Duration
+	// merge is config once cmds have gone in, for a platform whose
+	// configuration isn't set lines; nil is setcfg's.
+	merge func(config string, cmds []string) string
+	// perCommand is for a device that closes the connection after one
+	// session, as IOS XE does: each command gets a connection of its own.
+	perCommand bool
+}
+
+// cliDevice is what a platform's hooks talk to: the pooled connection, or
+// one that dials anew for each command.
+type cliDevice interface {
+	RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error)
+	RunShell(ctx context.Context, stdin []byte) (ssh.Result, error)
+}
+
+func (p *cliPlatform) device(h *hostConn, conn cty.Value) cliDevice {
+	if p.perCommand {
+		return freshDevice{p.reconnect(conn)}
+	}
+	return h.client
+}
+
+// freshDevice dials for every command and closes the connection after it.
+type freshDevice struct {
+	dial func(context.Context) (*ssh.Client, error)
+}
+
+func (f freshDevice) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	c, err := f.dial(ctx)
+	if err != nil {
+		return ssh.Result{}, err
+	}
+	defer c.Close()
+	return c.RunRaw(ctx, cmd, stdin)
+}
+
+func (f freshDevice) RunShell(ctx context.Context, stdin []byte) (ssh.Result, error) {
+	c, err := f.dial(ctx)
+	if err != nil {
+		return ssh.Result{}, err
+	}
+	defer c.Close()
+	return c.RunShell(ctx, stdin)
 }
 
 func (p *cliPlatform) withLines(config string, cmds []string) string {
+	if p.merge != nil {
+		return p.merge(config, cmds)
+	}
 	return setcfg.WithLines(config, cmds)
 }
 
@@ -64,11 +111,11 @@ func (p *cliPlatform) reconnect(conn cty.Value) func(context.Context) (*ssh.Clie
 
 var junosPlatform = &cliPlatform{
 	name:       "junos",
-	running:    func(ctx context.Context, c *ssh.Client) (string, error) { return junos.RunningConfig(ctx, c) },
-	pending:    func(ctx context.Context, c *ssh.Client) (string, error) { return junos.Pending(ctx, c) },
+	running:    func(ctx context.Context, c cliDevice) (string, error) { return junos.RunningConfig(ctx, c) },
+	pending:    func(ctx context.Context, c cliDevice) (string, error) { return junos.Pending(ctx, c) },
 	pendingErr: func(says string) error { return junos.PendingError{Says: says} },
-	check:      func(ctx context.Context, c *ssh.Client, cmds []string) error { return junos.Check(ctx, c, cmds) },
-	apply: func(ctx context.Context, c *ssh.Client, reconnect func(context.Context) (*ssh.Client, error), base string, cmds []string, after time.Duration) (string, error) {
+	check:      func(ctx context.Context, c cliDevice, cmds []string) error { return junos.Check(ctx, c, cmds) },
+	apply: func(ctx context.Context, c cliDevice, reconnect func(context.Context) (*ssh.Client, error), base string, cmds []string, after time.Duration) (string, error) {
 		return junos.Apply(ctx, c, func(ctx context.Context) (junos.Device, error) { return reconnect(ctx) }, base, cmds, after)
 	},
 	notLive: func(err error) bool {
@@ -80,16 +127,16 @@ var junosPlatform = &cliPlatform{
 
 var vyosPlatform = &cliPlatform{
 	name:    "vyos",
-	running: func(ctx context.Context, c *ssh.Client) (string, error) { return vyos.RunningConfig(ctx, c) },
-	pending: func(ctx context.Context, c *ssh.Client) (string, error) {
+	running: func(ctx context.Context, c cliDevice) (string, error) { return vyos.RunningConfig(ctx, c) },
+	pending: func(ctx context.Context, c cliDevice) (string, error) {
 		if pending, err := vyos.Pending(ctx, c); err != nil || !pending {
 			return "", err
 		}
 		return "commit-confirm.timer is active", nil
 	},
 	pendingErr: func(string) error { return vyos.ErrPending },
-	check:      func(ctx context.Context, c *ssh.Client, cmds []string) error { return vyos.Check(ctx, c, cmds) },
-	apply: func(ctx context.Context, c *ssh.Client, reconnect func(context.Context) (*ssh.Client, error), base string, cmds []string, after time.Duration) (string, error) {
+	check:      func(ctx context.Context, c cliDevice, cmds []string) error { return vyos.Check(ctx, c, cmds) },
+	apply: func(ctx context.Context, c cliDevice, reconnect func(context.Context) (*ssh.Client, error), base string, cmds []string, after time.Duration) (string, error) {
 		return vyos.Apply(ctx, c, func(ctx context.Context) (vyos.Device, error) { return reconnect(ctx) }, base, cmds, after)
 	},
 	notLive:        func(err error) bool { return errors.As(err, new(vyos.NotLiveError)) },
@@ -138,12 +185,13 @@ func (k cliKind) read(ctx context.Context, req providers.ReadResourceRequest) pr
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	running, err := k.p.running(ctx, h.client)
+	d := k.p.device(h, req.PriorState.GetAttr("ssh"))
+	running, err := k.p.running(ctx, d)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("%s_%s: %w", k.p.name, k.name, err))
 		return resp
 	}
-	pending, err := k.p.pending(ctx, h.client)
+	pending, err := k.p.pending(ctx, d)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("%s_%s: %w", k.p.name, k.name, err))
 		return resp
@@ -199,13 +247,13 @@ func (k cliKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 		view = k.p.withLines(st.base, st.cmds)
 	} else {
 		// Checked before the lines: with nothing to send, Apply never looks.
-		if says, err := k.p.pending(ctx, h.client); err != nil || says != "" {
+		if says, err := k.p.pending(ctx, k.p.device(h, conn)); err != nil || says != "" {
 			if err == nil {
 				err = k.p.pendingErr(says)
 			}
 			return fail(err)
 		}
-		if view, err = k.p.running(ctx, h.client); err != nil {
+		if view, err = k.p.running(ctx, k.p.device(h, conn)); err != nil {
 			return fail(err)
 		}
 	}
@@ -225,7 +273,7 @@ func (k cliKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	case circuit == "" || (removing && st.cmds == nil && !st.batch[circuit]):
 		// Outside a circuit there's no commit resource to wait for, and a
 		// step dropped from a circuit that stays has none coming.
-		diff, err := k.p.apply(ctx, h.client, k.p.reconnect(conn), view, cmds, k.p.confirmAfter(conn))
+		diff, err := k.p.apply(ctx, k.p.device(h, conn), k.p.reconnect(conn), view, cmds, k.p.confirmAfter(conn))
 		if diff != "" {
 			log.Printf("[INFO] conn3x: %s_%s on %s: lines sent:\n%s", k.p.name, k.name, h.host, diff)
 		}

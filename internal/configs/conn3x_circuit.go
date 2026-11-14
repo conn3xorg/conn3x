@@ -105,6 +105,7 @@ var circuitModules = map[string]string{
 	"vyos_hostname":                "conn3x_vyos_hostname",
 	"vyos_interface":               "conn3x_vyos_interface",
 	"vyos_static_route":            "conn3x_vyos_static_route",
+	"ios_config":                   "conn3x_ios_config",
 	"windows_acl":                  "conn3x_windows_acl",
 	"windows_ad_domain":            "conn3x_windows_ad_domain",
 	"windows_ad_domain_controller": "conn3x_windows_ad_domain_controller",
@@ -336,9 +337,9 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	diags = append(diags, warnOnConflictingEdits(content.Blocks.OfType("step"))...)
 
 	// Network devices commit once per device per circuit: EOS through a
-	// config session, Junos and VyOS through lines the provider holds until
-	// then.
-	for _, kind := range []string{"eos", "junos", "vyos"} {
+	// config session, Junos, VyOS and IOS through lines the provider holds
+	// until then.
+	for _, kind := range []string{"eos", "junos", "vyos", "ios"} {
 		var deviceSteps []*Resource
 		for _, r := range resources {
 			if strings.HasPrefix(r.Type, "conn3x_"+kind+"_") {
