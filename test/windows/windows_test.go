@@ -1488,7 +1488,9 @@ cmd /c mklink /J (Join-Path $A.d 'junction') (Join-Path $A.d 'real') | Out-Null`
 // users and local groups with windows.Inventory.
 func TestInventory(t *testing.T) {
 	c := connect(t)
-	for kind, want := range map[string]string{"services": "sshd", "users": "Administrator", "groups": "Administrators"} {
+	// The runner images rename the built-in Administrator, so look for the
+	// account the test logs in with instead.
+	for kind, want := range map[string]string{"services": "sshd", "users": env(t, "CONN3X_WIN_USER"), "groups": "Administrators"} {
 		got, err := windows.Inventory(context.Background(), c, kind)
 		if err != nil {
 			t.Fatalf("%s: %v", kind, err)
