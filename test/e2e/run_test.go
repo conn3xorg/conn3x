@@ -225,4 +225,31 @@ func TestConn3xRunPlan(t *testing.T) {
 	if out, code := run("all"); code != 1 || !strings.Contains(out, "needs param version") {
 		t.Errorf("a missing plan param (exit %d):\n%s", code, out)
 	}
+
+	// A later run reads what an earlier one printed.
+	if err := os.WriteFile(filepath.Join(w.dir, "tasks/read.task.hcl"), []byte(`task "read" {
+  step "ask" {
+    command { command = "cat /tmp/migrated-1" }
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.dir, "chain.plan.hcl"), []byte(`plan "chain" {
+  run "ask" {
+    task  = "tasks/read.task.hcl"
+    hosts = "db"
+  }
+  run "tell" {
+    task   = "tasks/mark.task.hcl"
+    hosts  = "web"
+    params = { name = "from-${trimspace(run.ask.db1.ask.stdout)}" }
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := w.conn3x("run", "-i", "hosts.ini", "-private-key-file", web1.keyFile, "-known-hosts-file", knownFile, "-plan", "chain.plan.hcl", "all"); code != 0 || !exists(web1, "/tmp/from-db1") {
+		t.Errorf("a run's params from an earlier run's stdout (exit %d):\n%s", code, out)
+	}
 }

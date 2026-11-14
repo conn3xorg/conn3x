@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
+	"github.com/zclconf/go-cty/cty/function"
+	"github.com/zclconf/go-cty/cty/function/stdlib"
 
 	"github.com/opentofu/opentofu/internal/conn3x/convert/ansible"
 	"github.com/opentofu/opentofu/internal/conn3x/hostpattern"
@@ -127,7 +129,11 @@ func (o runOptions) runPlanOn(ctx context.Context, plan *taskPlan, params cty.Va
 		fmt.Fprintln(stderr, termsafe.Escape(fmt.Sprintf("Error: "+format, a...)))
 		return 1
 	}
-	ectx := &hcl.EvalContext{Variables: map[string]cty.Value{"param": params}}
+	// run is what earlier runs did; before anything runs it's unknown, so
+	// params that read it are checked for their names now and evaluated
+	// just before their run.
+	funcs := map[string]function.Function{"trimspace": stdlib.TrimSpaceFunc, "upper": stdlib.UpperFunc, "lower": stdlib.LowerFunc, "join": stdlib.JoinFunc, "format": stdlib.FormatFunc}
+	ectx := &hcl.EvalContext{Variables: map[string]cty.Value{"param": params, "run": cty.DynamicVal}, Functions: funcs}
 	var steps []planStep
 	for _, r := range plan.runs {
 		hv, diags := r.hosts.Value(ectx)
@@ -136,7 +142,7 @@ func (o runOptions) runPlanOn(ctx context.Context, plan *taskPlan, params cty.Va
 		}
 		hv, err := convert.Convert(hv, cty.String)
 		if err != nil || hv.IsNull() || !hv.IsKnown() {
-			return fail("run %s: hosts must be a host pattern, as a string", r.name)
+			return fail("run %s: hosts must be a host pattern, as a string, known before the plan starts, so not from run.*", r.name)
 		}
 		pat, err := hostpattern.Parse(hv.AsString())
 		if err != nil {
@@ -166,11 +172,25 @@ func (o runOptions) runPlanOn(ctx context.Context, plan *taskPlan, params cty.Va
 		steps = append(steps, planStep{run: r, hosts: hostsFor(pat), params: tp})
 	}
 
+	done := map[string]cty.Value{}
 	for i, s := range steps {
+		if s.run.params != nil && len(done) > 0 {
+			ectx.Variables["run"] = cty.ObjectVal(done)
+			pv, diags := s.run.params.Value(ectx)
+			if diags.HasErrors() {
+				return fail("run %s: params: %s", s.run.name, diags.Error())
+			}
+			tp, err := paramValues("run "+s.run.name+": task "+s.run.task.name, s.run.task.params, pv.AsValueMap())
+			if err != nil {
+				return fail("%s", err)
+			}
+			s.params = tp
+		}
 		if !o.json {
 			fmt.Fprintln(stdout, termsafe.Escape(fmt.Sprintf("== %s: task %s, %d host(s)", s.run.name, s.run.task.name, len(s.hosts))))
 		}
 		o.runOn(ctx, s.hosts, s.run.task, s.params, "", nil)
+		done[s.run.name] = runOutputs(s.hosts)
 		if o.report(stdout, s.run.name, s.hosts, true) == 0 {
 			continue
 		}
@@ -185,4 +205,20 @@ func (o runOptions) runPlanOn(ctx context.Context, plan *taskPlan, params cty.Va
 		return 2
 	}
 	return 0
+}
+
+// runOutputs is what a run did, for later runs' params: by host, then by
+// step, its status, stdout and stderr, as run.NAME.HOST.STEP.stdout.
+func runOutputs(hosts []*runHost) cty.Value {
+	byHost := map[string]cty.Value{}
+	for _, h := range hosts {
+		steps := map[string]cty.Value{}
+		for _, st := range h.steps {
+			steps[st.Step] = cty.ObjectVal(map[string]cty.Value{
+				"status": cty.StringVal(st.Status), "stdout": cty.StringVal(st.Stdout), "stderr": cty.StringVal(st.Stderr),
+			})
+		}
+		byHost[h.name] = cty.ObjectVal(steps)
+	}
+	return cty.ObjectVal(byHost)
 }

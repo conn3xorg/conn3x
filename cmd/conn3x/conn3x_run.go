@@ -67,7 +67,7 @@ Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_por
 
 A step's arguments can use param.NAME, host.name and host.vars, the inventory's variables for the host.
 
--plan runs a plan file: task runs in order, each on its own hosts, as a Bolt plan does. A run where any host fails stops the plan. PATTERN narrows every run's hosts; give all for none.
+-plan runs a plan file: task runs in order, each on its own hosts, as a Bolt plan does. A run where any host fails stops the plan. PATTERN narrows every run's hosts; give all for none. A run's params can read what earlier runs did, as run.NAME.HOST.STEP.stdout, stderr and status; trimspace() takes the newline off.
 
   plan "release" {
     param "version" {}
