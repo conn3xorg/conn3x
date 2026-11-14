@@ -2,6 +2,11 @@ variable "image" {
   type = string
 }
 
+variable "present" {
+  type    = bool
+  default = true
+}
+
 circuit "app" {
   hosts = {
     box = { address = "127.0.0.1", port = {{.PortA}} }
@@ -15,6 +20,7 @@ circuit "app" {
 
   step "web" {
     import = true
+    when = var.present
     container {
       name      = "web"
       image     = var.image
