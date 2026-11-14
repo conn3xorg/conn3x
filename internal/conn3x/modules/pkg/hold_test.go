@@ -34,8 +34,6 @@ func TestHeldIn(t *testing.T) {
 	}
 }
 
-// dnf versionlock exits 0 for a name it cant
-
 // dnf versionlock exits 0 for a name it can't find, so apply reads the list
 // back rather than report a hold that isn't there.
 func TestApplyHoldReadsTheListBack(t *testing.T) {
