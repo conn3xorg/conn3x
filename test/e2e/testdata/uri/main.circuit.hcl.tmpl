@@ -1,0 +1,53 @@
+variable "release" {
+  type    = string
+  default = "1"
+}
+
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # A small API on the host's loopback that logs each call.
+  step "api" {
+    command {
+      command = <<-SH
+        cat > /run/api.py <<'PY'
+        import http.server
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                with open("/run/api.log", "a") as f:
+                    f.write(self.headers.get("Authorization", "") + " " + body.decode() + "\n")
+                self.send_response(201)
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+        http.server.HTTPServer(("127.0.0.1", 8081), H).serve_forever()
+        PY
+        systemd-run --unit c3x-api python3 /run/api.py
+      SH
+    }
+  }
+
+  step "ready" {
+    wait_for {
+      port = 8081
+    }
+  }
+
+  step "register" {
+    uri {
+      url          = "http://127.0.0.1:8081/hosts"
+      method       = "POST"
+      headers      = { "Content-Type" = "application/json" }
+      headers_wo   = { Authorization = "Bearer s3cret" }
+      body         = jsonencode({ host = "box", version = var.release })
+      status_codes = [201]
+    }
+  }
+}
