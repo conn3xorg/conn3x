@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -100,6 +101,12 @@ func scrub(text, sent string) string {
 // starting with "% ", such as "% Invalid input at line 2".
 var cliError = regexp.MustCompile(`(?m)^% .*$`)
 
+type commandRefusedError struct {
+	message string
+}
+
+func (e *commandRefusedError) Error() string { return e.message }
+
 // echo matches the line the CLI prints back before some output, such as
 // "> show running-config", when it reads commands rather than a terminal.
 var echo = regexp.MustCompile(`(?m)^> .*\n?`)
@@ -129,7 +136,12 @@ func run(ctx context.Context, d Device, cmd string, stdin []byte) (string, error
 	if msg == "" {
 		msg = fmt.Sprintf("exit status %d: %s", res.ExitCode, strings.TrimSpace(string(res.Stdout)+string(res.Stderr)))
 	}
-	return out, fmt.Errorf("the switch refused %s: %s", describe(cmd), scrub(msg, cmd+"\n"+string(stdin)))
+	return out, &commandRefusedError{message: fmt.Sprintf("the switch refused %s: %s", describe(cmd), scrub(msg, cmd+"\n"+string(stdin)))}
+}
+
+func isCommandRefusal(err error) bool {
+	var refused *commandRefusedError
+	return errors.As(err, &refused) || errors.Is(err, ErrNotPrivileged)
 }
 
 func describe(cmd string) string {
@@ -164,14 +176,34 @@ func RunningConfig(ctx context.Context, d Device) (string, error) {
 
 // Facts are what a circuit can check before it changes a switch.
 type Facts struct {
-	Hostname  string
-	Model     string
-	Version   string
-	Serial    string
-	SystemMAC string
+	Hostname      string
+	Model         string
+	Version       string
+	Serial        string
+	SystemMAC     string
+	Interfaces    []PortStatus
+	LLDPNeighbors []LLDPNeighbor
 }
 
-// ReadFacts reads show version and show hostname.
+// PortStatus is one port, from show interfaces status.
+type PortStatus struct {
+	Name        string
+	Status      string // linkStatus, such as connected or notconnect
+	Description string
+}
+
+// LLDPNeighbor is one LLDP neighbour, from show lldp neighbors: the local
+// port it was heard on, and the neighbour's name and port.
+type LLDPNeighbor struct {
+	LocalPort    string
+	NeighborName string
+	NeighborPort string
+}
+
+// ReadFacts reads show version and show hostname, which must work, then show
+// interfaces status and show lldp neighbors. A command refusal leaves that
+// list empty; other errors fail the read. Interfaces are sorted by name, and
+// neighbours by local port, so the same switch always reads the same.
 func ReadFacts(ctx context.Context, d Device) (Facts, error) {
 	var v struct {
 		ModelName        string `json:"modelName"`
@@ -188,7 +220,39 @@ func ReadFacts(ctx context.Context, d Device) (Facts, error) {
 	if err := ShowJSON(ctx, d, "show hostname", &h); err != nil {
 		return Facts{}, err
 	}
-	return Facts{Hostname: h.Hostname, Model: v.ModelName, Version: v.Version, Serial: v.SerialNumber, SystemMAC: v.SystemMacAddress}, nil
+	f := Facts{Hostname: h.Hostname, Model: v.ModelName, Version: v.Version, Serial: v.SerialNumber, SystemMAC: v.SystemMacAddress}
+	// The interfaces and neighbours are extra: a switch or account that
+	// refuses either command still reads its version facts, with the list empty.
+	var st struct {
+		InterfaceStatuses map[string]struct {
+			LinkStatus  string `json:"linkStatus"`
+			Description string `json:"description"`
+		} `json:"interfaceStatuses"`
+	}
+	if err := ShowJSON(ctx, d, "show interfaces status", &st); err != nil && !isCommandRefusal(err) {
+		return Facts{}, err
+	} else if err == nil {
+		for name, s := range st.InterfaceStatuses {
+			f.Interfaces = append(f.Interfaces, PortStatus{Name: name, Status: s.LinkStatus, Description: s.Description})
+		}
+		sort.Slice(f.Interfaces, func(i, j int) bool { return f.Interfaces[i].Name < f.Interfaces[j].Name })
+	}
+	var lldp struct {
+		LLDPNeighbors []struct {
+			Port           string `json:"port"`
+			NeighborDevice string `json:"neighborDevice"`
+			NeighborPort   string `json:"neighborPort"`
+		} `json:"lldpNeighbors"`
+	}
+	if err := ShowJSON(ctx, d, "show lldp neighbors", &lldp); err != nil && !isCommandRefusal(err) {
+		return Facts{}, err
+	} else if err == nil {
+		for _, n := range lldp.LLDPNeighbors {
+			f.LLDPNeighbors = append(f.LLDPNeighbors, LLDPNeighbor{LocalPort: n.Port, NeighborName: n.NeighborDevice, NeighborPort: n.NeighborPort})
+		}
+		sort.Slice(f.LLDPNeighbors, func(i, j int) bool { return f.LLDPNeighbors[i].LocalPort < f.LLDPNeighbors[j].LocalPort })
+	}
+	return f, nil
 }
 
 // sessionName is a config session's name, new for every apply so two runs
