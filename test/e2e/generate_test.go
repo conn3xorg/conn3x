@@ -101,3 +101,50 @@ func TestGenerateStepKeepsEscapeSequencesOffTheTerminal(t *testing.T) {
 		}
 	}
 }
+
+// generate steps lists what a host has, and prints import steps for the
+// objects that match, which plan as imports with nothing to change.
+func TestGenerateSteps(t *testing.T) {
+	h := startHost(t, "ubuntu2404")
+	h.exec("", "sh", "-c", "useradd -m -u 1500 -s /bin/sh alice && useradd -m -u 1501 -s /bin/sh bob")
+	w := newWorkdir(t, "generate")
+	gen := func(args ...string) (string, int) {
+		t.Helper()
+		base := []string{"generate", "steps", "-host", "127.0.0.1", "-port", h.port, "-user", "root",
+			"-private-key-file", h.keyFile, "-known-hosts-file", h.knownHosts}
+		return w.conn3x(append(base, args...)...)
+	}
+	list, code := gen("users")
+	if code != 0 || !strings.Contains(list, "alice\n") || !strings.Contains(list, "bob\n") || strings.Contains(list, "root\n") {
+		t.Fatalf("users list (exit %d):\n%s", code, list)
+	}
+	if pkgs, code := gen("packages"); code != 0 || !strings.Contains(pkgs, "openssh-server\n") {
+		t.Fatalf("packages list (exit %d):\n%s", code, pkgs)
+	}
+	steps, code := gen("-match", "alice,bob", "users")
+	if code != 0 || !strings.Contains(steps, `step "alice"`) || !strings.Contains(steps, `step "bob"`) || strings.Count(steps, "import = true") != 2 {
+		t.Fatalf("user steps (exit %d):\n%s", code, steps)
+	}
+	pkg, code := gen("-match", "openssh-server", "packages")
+	if code != 0 {
+		t.Fatalf("package step (exit %d):\n%s", code, pkg)
+	}
+	if out, code := gen("-match", "nothing-like-this-*", "packages"); code != 1 || !strings.Contains(out, "matches none") {
+		t.Fatalf("a match for nothing (exit %d):\n%s", code, out)
+	}
+
+	w.writeAs("main.circuit.hcl", struct{ Port, KeyFile, KnownHosts string }{h.port, h.keyFile, h.knownHosts})
+	path := filepath.Join(w.dir, "main.circuit.hcl")
+	circuit, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(circuit), "# steps", steps+"\n"+pkg, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.mustConn3x("init", "-no-color")
+	out := w.mustConn3x("plan", "-no-color")
+	if !strings.Contains(out, "Plan: 3 to import, 0 to add, 0 to change, 0 to destroy.") {
+		t.Fatalf("the generated steps should import with nothing to change:\n%s", out)
+	}
+}
