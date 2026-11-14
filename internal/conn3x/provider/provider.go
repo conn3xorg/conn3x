@@ -104,6 +104,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_junos_hostname":       junosHostnameKind.entry(junosHostnameSchema, validateJunosHostname),
 	"conn3x_junos_vlan":           junosVLANKind.entry(junosVLANSchema, validateJunosVLAN),
 	"conn3x_junos_interface":      junosInterfaceKind.entry(junosInterfaceSchema, validateJunosInterface),
+	"conn3x_junos_static_route":   junosStaticRouteKind.entry(junosStaticRouteSchema, validateJunosStaticRoute),
 	"conn3x_junos_user":           {junosUserSchema, validateJunosUser, planJunosUser, junosUserKind.read, applyJunosUser, upgradeWith(junosUserSchema)},
 	"conn3x_vyos_config":          vyosConfigKind.entry(vyosConfigSchema, validateVyOSConfig),
 	"conn3x_vyos_hostname":        vyosHostnameKind.entry(vyosHostnameSchema, validateVyOSHostname),
