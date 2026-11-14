@@ -105,6 +105,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_vyos_config":          vyosConfigKind.entry(vyosConfigSchema, validateVyOSConfig),
 	"conn3x_vyos_hostname":        vyosHostnameKind.entry(vyosHostnameSchema, validateVyOSHostname),
 	"conn3x_vyos_interface":       vyosInterfaceKind.entry(vyosInterfaceSchema, validateVyOSInterface),
+	"conn3x_vyos_static_route":    vyosStaticRouteKind.entry(vyosStaticRouteSchema, validateVyOSStaticRoute),
 	"conn3x_vyos_commit":          vyosCommitTypes["conn3x_vyos_commit"],
 	"conn3x_vyos_removals":        vyosCommitTypes["conn3x_vyos_removals"],
 	"conn3x_junos_commit":         junosCommitTypes["conn3x_junos_commit"],

@@ -182,6 +182,53 @@ func validateVyOSInterface(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
+func vyosStaticRouteFrom(v cty.Value) vyos.StaticRoute {
+	r := vyos.StaticRoute{Prefix: stringOr(v.GetAttr("prefix"), ""), Distance: intOr(v.GetAttr("distance"), 0)}
+	if l := v.GetAttr("next_hops"); known(l) {
+		r.NextHops = stringList(l)
+	}
+	return r
+}
+
+var vyosStaticRouteKind = cliKind{
+	p:        vyosPlatform,
+	name:     "static_route",
+	keys:     []string{"prefix"},
+	settings: []string{"next_hops", "distance"},
+	config:   func(v cty.Value) cliWant { return vyosStaticRouteFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return vyosStaticRouteFrom(v).RemoveCommands(running) },
+	warn:     func(_ cty.Value, config string) string { return vyosWarnReboot(config) },
+}
+
+func vyosStaticRouteSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: junosExperimental + "One static route on a VyOS router, owned whole: its next hops are exactly these, and anything else under the route is deleted.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
+			"prefix":    {Type: cty.String, Required: true, Description: "The network, such as 10.20.0.0/16 or 2001:db8:20::/48. An IPv6 one goes under route6."},
+			"next_hops": {Type: cty.List(cty.String), Required: true, Description: "The next hop addresses, of the prefix's family. With more than one, VyOS spreads traffic across them."},
+			"distance":  {Type: cty.Number, Optional: true, Description: "Administrative distance for every next hop, 1 to 255. Unset is VyOS's default, 1; 255 disables the route."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the router when this resource is removed: \"forget\" (default) leaves the route, \"delete\" deletes it."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the router had this route, and nothing else under it, at the last refresh."},
+			"circuit":   eosCircuitAttr(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateVyOSStaticRoute(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := vyosStaticRouteFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("prefix", err.Error()))
+	}
+	return diags
+}
+
 // vyosDeviceSchema is the conn3x_vyos_device data source.
 func vyosDeviceSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
