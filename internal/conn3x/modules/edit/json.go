@@ -340,7 +340,7 @@ func insertMember(b []byte, obj span, key string, val []byte) []byte {
 // that went with it.
 func dropMember(b []byte, obj span, i int) []byte {
 	m := obj.members[i]
-	start, end := m.keyStart, m.valEnd
+	var start, end int
 	if i+1 < len(obj.members) {
 		// Up to the next key: its comma and line go with this member.
 		end = obj.members[i+1].keyStart
@@ -354,9 +354,9 @@ func dropMember(b []byte, obj span, i int) []byte {
 		}
 	} else if i > 0 {
 		// The last one: from the end of the one before, comma included.
-		start = obj.members[i-1].valEnd
+		start, end = obj.members[i-1].valEnd, m.valEnd
 	} else {
-		// The only one: leave {} with what was inside the braces' edges.
+		// The only one: leave {}.
 		start, end = obj.start+1, obj.end-1
 	}
 	out := append([]byte{}, b[:start]...)
