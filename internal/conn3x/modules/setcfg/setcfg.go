@@ -144,7 +144,9 @@ func (c Config) Commands(config string) []string {
 	if c.Match == MatchBlock {
 		for _, h := range have {
 			if Under(h, c.Prefix) && !slices.Contains(c.Lines, h) && !coveredBy(h, c.Lines) {
-				cmds = append(cmds, DeleteOf(h))
+				if d := c.deleteFor(h); !slices.Contains(cmds, d) {
+					cmds = append(cmds, d)
+				}
 			}
 		}
 	}
@@ -154,6 +156,48 @@ func (c Config) Commands(config string) []string {
 		}
 	}
 	return cmds
+}
+
+// deleteFor is the delete that takes extra line h away: at the highest
+// node below the prefix that holds no wanted line, not at h's last word.
+// Deleting only a leaf can leave its node behind: on VyOS, deleting
+// "next-hop 192.0.2.2 distance 10" leaves next-hop 192.0.2.2 routing
+// traffic, and on Junos, deleting "preference 10" leaves an empty
+// preference that the commit refuses. Found on VyOS rolling and vJunos-
+// switch 26.2 (#833).
+func (c Config) deleteFor(h string) string {
+	words := splitWords(strings.TrimPrefix(h, "set "))
+	floor := len(splitWords(c.Prefix))
+	for n := floor + 1; n < len(words); n++ {
+		node := strings.Join(words[:n], " ")
+		if !slices.ContainsFunc(c.Lines, func(w string) bool { return Under(w, node) }) {
+			return "delete " + node
+		}
+	}
+	return DeleteOf(h)
+}
+
+// splitWords splits a statement at spaces outside double quotes.
+func splitWords(s string) []string {
+	var words []string
+	quoted, start := false, 0
+	for i := 0; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && quoted:
+			i++
+		case s[i] == '"':
+			quoted = !quoted
+		case s[i] == ' ' && !quoted:
+			if i > start {
+				words = append(words, s[start:i])
+			}
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		words = append(words, s[start:])
+	}
+	return words
 }
 
 // coveredBy reports whether line h is a prefix of a wanted line: Junos

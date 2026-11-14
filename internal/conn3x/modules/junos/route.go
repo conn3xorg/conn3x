@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
-	"strings"
 )
 
 // StaticRoute is one static route, which junos_static_route owns whole:
@@ -71,20 +70,10 @@ func (r StaticRoute) Config() Config {
 // InSync reports whether the device has the route as r has it.
 func (r StaticRoute) InSync(config string) bool { return r.Config().InSync(config) }
 
-// Commands are what makes the route r, deleting what else is under it.
-// preference holds more than its value, so deleting "preference 10"
-// leaves an empty preference, which Junos refuses at commit ("Missing
-// mandatory statement: <metric_value>"); it's deleted whole instead.
-func (r StaticRoute) Commands(config string) []string {
-	cmds := r.Config().Commands(config)
-	pref := "delete " + r.path() + " preference "
-	for i, c := range cmds {
-		if strings.HasPrefix(c, pref) {
-			cmds[i] = strings.TrimSuffix(pref, " ")
-		}
-	}
-	return cmds
-}
+// Commands are what makes the route r, deleting what else is under it. A
+// preference no longer wanted goes whole: setcfg deletes the node, since
+// an empty preference fails the commit.
+func (r StaticRoute) Commands(config string) []string { return r.Config().Commands(config) }
 
 // RemoveCommands delete the whole route, when it's there.
 func (r StaticRoute) RemoveCommands(config string) []string {

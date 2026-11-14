@@ -48,7 +48,7 @@ func TestConfigLines(t *testing.T) {
 
 func TestConfigBlock(t *testing.T) {
 	c := Config{Prefix: "interfaces ge-0/0/2", Lines: []string{"set interfaces ge-0/0/2 description uplink"}, Match: MatchBlock}
-	want := []string{"delete interfaces ge-0/0/2 description from-file", "delete interfaces ge-0/0/2 mtu 9000", "set interfaces ge-0/0/2 description uplink"}
+	want := []string{"delete interfaces ge-0/0/2 description from-file", "delete interfaces ge-0/0/2 mtu", "set interfaces ge-0/0/2 description uplink"}
 	if got := c.Commands(running); !slices.Equal(got, want) {
 		t.Errorf("Commands = %q, want %q", got, want)
 	}
