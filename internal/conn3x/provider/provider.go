@@ -71,6 +71,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_locale":               {localeSchema, validateLocale, planLocale, readLocale, applyLocale, upgradeWith(localeSchema)},
 	"conn3x_firewalld":            {firewalldSchema, validateFirewalld, planRule("firewalld", []string{"zone", "service", "port"}), readFirewalld, applyFirewalld, upgradeWith(firewalldSchema)},
 	"conn3x_ufw_rule":             {ufwRuleSchema, validateUFWRule, planRule("ufw", []string{"action", "port", "from"}), readUFWRule, applyUFWRule, upgradeWith(ufwRuleSchema)},
+	"conn3x_nftables":             {nftablesSchema, validateNftables, planNftables, readNftables, applyNftables, upgradeWith(nftablesSchema)},
 	"conn3x_selinux_boolean":      {selinuxBooleanSchema, validateSELinuxBoolean, planSELinuxBoolean, readSELinuxBoolean, applySELinuxBoolean, upgradeWith(selinuxBooleanSchema)},
 	"conn3x_selinux_fcontext":     {selinuxFcontextSchema, validateSELinuxFcontext, planSELinuxFcontext, readSELinuxFcontext, applySELinuxFcontext, upgradeWith(selinuxFcontextSchema)},
 	"conn3x_selinux_mode":         {selinuxModeSchema, validateSELinuxMode, planSELinuxMode, readSELinuxMode, applySELinuxMode, upgradeWith(selinuxModeSchema)},

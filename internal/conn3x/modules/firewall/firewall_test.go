@@ -144,3 +144,26 @@ func TestUndo(t *testing.T) {
 		t.Errorf("an add that changed nothing: %q", got)
 	}
 }
+
+func TestNFTable(t *testing.T) {
+	tb := NFTable{Family: "inet", Name: "conn3x", Content: "chain input {\n  type filter hook input priority 0; policy accept;\n  tcp dport 22 accept\n}\n"}
+	if err := tb.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	want := "table inet conn3x\ndelete table inet conn3x\ntable inet conn3x {\nchain input {\n  type filter hook input priority 0; policy accept;\n  tcp dport 22 accept\n}\n}\n"
+	if got := tb.Script(); got != want {
+		t.Errorf("script:\n%s", got)
+	}
+	for _, bad := range []NFTable{
+		{Family: "inet6", Name: "x", Content: "chain c {}"},
+		{Family: "inet", Name: "1x", Content: "chain c {}"},
+		{Family: "inet", Name: "x", Content: " "},
+		{Family: "inet", Name: "x", Content: "chain c {}\nflush ruleset"},
+		{Family: "inet", Name: "x", Content: "table ip other { }"},
+		{Family: "inet", Name: "x", Content: "include \"/etc/other.nft\""},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
+}

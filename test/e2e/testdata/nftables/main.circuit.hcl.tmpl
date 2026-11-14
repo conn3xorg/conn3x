@@ -1,0 +1,34 @@
+circuit "fw" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "nft" {
+    package {
+      name = "nftables"
+    }
+  }
+
+  step "table" {
+    depends_on = [conn3x_package.fw__nft]
+
+    nftables {
+      table   = "conn3x"
+      content = <<-NFT
+        chain input {
+          type filter hook input priority 0; policy accept;
+          tcp dport 22 accept
+          tcp dport {{.Port2}} accept
+        }
+      NFT
+{{- if .Confirm}}
+      confirm_after = "15s"
+{{- end}}
+    }
+  }
+}

@@ -210,3 +210,77 @@ func applyUFWRule(ctx context.Context, req providers.ApplyResourceChangeRequest)
 			return withSync(planned, true), nil
 		}, set(false))
 }
+
+func nftablesSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "One nftables table, owned whole: its chains, sets and rules, loaded in one nft transaction and again at every boot.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"family":        {Type: cty.String, Optional: true, Description: "The table's family: \"inet\" (default), \"ip\", \"ip6\", \"arp\", \"bridge\" or \"netdev\"."},
+			"table":         {Type: cty.String, Required: true, Description: "The table's name, such as filter or conn3x."},
+			"content":       {Type: cty.String, Required: true, Description: "The table's body in nft syntax: its chains, sets and rules, as they'd sit inside table FAMILY NAME { ... }. nft checks it with nft -c before anything is loaded."},
+			"confirm_after": ruleConfirmAfter(),
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) deletes the table, and the unit that loads it at boot, when the step goes; \"forget\" leaves them."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the table was as loaded, and set to load at boot, at the last refresh. A rule added or deleted by hand shows here."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func nftablesFrom(v cty.Value) firewall.NFTable {
+	return firewall.NFTable{Family: stringOr(v.GetAttr("family"), "inet"), Name: stringOr(v.GetAttr("table"), ""), Content: stringOr(v.GetAttr("content"), "")}
+}
+
+func validateNftables(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	diags = diags.Append(validateRuleConfirmAfter(cfg))
+	if err := nftablesFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("content", err.Error()))
+	}
+	return diags
+}
+
+func planNftables(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planSynced(deleteByDefault(req), "nftables", []string{"family", "table"}, []string{"content"})
+}
+
+func readNftables(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		ok, err := firewall.ReadNFTable(ctx, h, nftablesFrom(prior))
+		if err != nil {
+			return cty.NilVal, err
+		}
+		return withSync(prior, ok), nil
+	})
+}
+
+func applyNftables(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	set := func(present bool) func(context.Context, *hostConn, cty.Value) error {
+		return func(ctx context.Context, h *hostConn, v cty.Value) error {
+			t := nftablesFrom(v)
+			undo := func() ([]string, error) { return firewall.SaveNFUndo(ctx, h, t) }
+			change := func() error {
+				if present {
+					return firewall.ApplyNFTable(ctx, h, t)
+				}
+				return firewall.DeleteNFTable(ctx, h, t)
+			}
+			if err := guardRule(ctx, h, v, undo, change); err != nil {
+				return fmt.Errorf("nftables %s %s: %w", t.Family, t.Name, err)
+			}
+			return nil
+		}
+	}
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			if err := set(true)(ctx, h, planned); err != nil {
+				return cty.NilVal, err
+			}
+			return withSync(planned, true), nil
+		}, set(false))
+}
