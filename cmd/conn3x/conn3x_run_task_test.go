@@ -95,12 +95,18 @@ func TestLoadTask(t *testing.T) {
 	for body, want := range map[string]string{
 		"task \"a\" {\n}\n":                      "has no steps",
 		"task \"a\" {\n  step \"x\" {\n  }\n}\n": "holds one module block",
-		"task \"a\" {\n  step \"x\" {\n    eos_vlan {\n      vlan_id = 1\n    }\n  }\n}\n": "isn't a module a task can run",
+		"task \"a\" {\n  step \"x\" {\n    eos_vlan {\n      vlan_id = 1\n    }\n  }\n}\n": "only runs in a circuit",
 		"task \"a\" {\n" + cmd("x") + cmd("x") + "}\n":                                     "two steps named x",
 		"task \"a\" {\n" + cmd("x") + "}\ntask \"b\" {\n" + cmd("x") + "}\n":               "one task block",
 	} {
 		if _, err := loadTask(write(body)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v, want %q", body, err, want)
+		}
+	}
+	// Junos and VyOS steps commit on their own outside a circuit.
+	for _, mod := range []string{"junos_vlan", "vyos_hostname"} {
+		if _, err := loadTask(write("task \"a\" {\n  step \"x\" {\n    " + mod + " {\n    }\n  }\n}\n")); err != nil {
+			t.Errorf("%s: %v", mod, err)
 		}
 	}
 }
