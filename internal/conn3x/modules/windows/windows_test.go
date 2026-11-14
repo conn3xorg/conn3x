@@ -256,3 +256,17 @@ func TestFeatureInSyncWantsWhatWasAsked(t *testing.T) {
 		t.Error("removal asked about sub-features")
 	}
 }
+
+func TestInventory(t *testing.T) {
+	f := &fake{answers: []map[string]any{{"ok": true, "value": map[string]any{"names": []string{"Web-Server", "FS-FileServer"}}}}}
+	got, err := Inventory(context.Background(), f, "features")
+	if err != nil || len(got) != 2 || got[0] != "Web-Server" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if f.sent[0]["args"].(map[string]any)["kind"] != "features" {
+		t.Errorf("sent %v", f.sent[0]["args"])
+	}
+	if _, err := Inventory(context.Background(), &fake{}, "drivers"); err == nil {
+		t.Error("an unknown kind was asked for")
+	}
+}

@@ -91,12 +91,12 @@ The host is checked against known_hosts (~/.ssh/known_hosts unless -known-hosts-
   conn3x generate steps -host 203.0.113.10 -user root -match 'nginx*,postgresql-16' packages >> adopt.circuit.hcl
   conn3x generate steps -host 203.0.113.10 -user root -match '*' mounts
 
-users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. sysctl lists the kernel parameters set in /etc/sysctl.conf and /etc/sysctl.d, with their values; a sysctl step keeps its setting in a file of its own, /etc/sysctl.d/90-conn3x-NAME.conf, so the first apply after adopting one writes that file. The file it came from stays, and since the kernel reads these files in name order, a later one's value wins at boot: take the setting out of it once the step is in. -match takes globs, separated by commas.
+users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. sysctl lists the kernel parameters set in /etc/sysctl.conf and /etc/sysctl.d, with their values; a sysctl step keeps its setting in a file of its own, /etc/sysctl.d/90-conn3x-NAME.conf, so the first apply after adopting one writes that file. The file it came from stays, and since the kernel reads these files in name order, a later one's value wins at boot: take the setting out of it once the step is in. On a Windows host, windows_features lists the installed features, windows_services the services, and windows_users and windows_groups the local accounts; their steps hold the name alone, since a Windows module leaves the rest as it is until you set it. -match takes globs, separated by commas.
 
 Each step is read the way generate step reads one, so pasting the steps into a circuit and planning adopts them with nothing to change. An object that can't be read is reported on stderr and the rest still print. Exits 0 when everything matched printed, 1 when anything failed.`,
 	}
 	steps.CommandLine.PositionalArg(&kind, "KIND", true)
-	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|services|users|mounts|sysctl"
+	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|services|users|mounts|sysctl|windows_features|windows_services|windows_users|windows_groups"
 	steps.CommandLine.StringVar(&so.host, "host", "", "Host name or address to read from.")
 	steps.CommandLine.StringVar(&so.user, "user", "", "User to log in as.")
 	steps.CommandLine.IntVar(&so.port, "port", 0, "SSH port. Defaults to 22.")
@@ -129,7 +129,7 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 	}
 	k, ok := provider.ListKinds[kind]
 	if !ok {
-		return fail("%q isn't a kind generate steps lists: packages, services, users, mounts or sysctl", kind)
+		return fail("%q isn't a kind generate steps lists: packages, services, users, mounts, sysctl, windows_features, windows_services, windows_users or windows_groups", kind)
 	}
 	names, values, err := provider.ListHost(ctx, kind, o.sshValue())
 	if err != nil {
@@ -169,7 +169,16 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 		}
 		used[one.name] = true
 		var out bytes.Buffer
-		if runGenerateStep(ctx, one, &out, stderr) != 0 {
+		if strings.HasPrefix(kind, "windows_") {
+			// A Windows read only says whether the host matches, so a step
+			// holds the name alone; its other arguments are left as they are
+			// until set, so it adopts what's there with nothing to change.
+			f := hclwrite.NewEmptyFile()
+			step := f.Body().AppendNewBlock("step", []string{one.name}).Body()
+			step.SetAttributeValue("import", cty.True)
+			step.AppendNewBlock(k.Module, nil).Body().SetAttributeValue(k.Key, cty.StringVal(n))
+			out.Write(f.Bytes())
+		} else if runGenerateStep(ctx, one, &out, stderr) != 0 {
 			failed++
 			continue
 		}

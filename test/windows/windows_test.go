@@ -1483,3 +1483,22 @@ cmd /c mklink /J (Join-Path $A.d 'junction') (Join-Path $A.d 'real') | Out-Null`
 		}
 	}
 }
+
+// conn3x generate steps lists a Windows host's features, services, local
+// users and local groups with windows.Inventory.
+func TestInventory(t *testing.T) {
+	c := connect(t)
+	for kind, want := range map[string]string{"services": "sshd", "users": "Administrator", "groups": "Administrators"} {
+		got, err := windows.Inventory(context.Background(), c, kind)
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		if !slices.Contains(got, want) {
+			t.Errorf("%s: %d names, none %q", kind, len(got), want)
+		}
+	}
+	// A runner may have no optional feature installed, but the list reads.
+	if _, err := windows.Inventory(context.Background(), c, "features"); err != nil {
+		t.Errorf("features: %v", err)
+	}
+}
