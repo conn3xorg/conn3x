@@ -157,6 +157,48 @@ func inventory(args []cty.Value) providers.CallFunctionResponse {
 	return providers.CallFunctionResponse{Result: cty.ObjectVal(hosts)}
 }
 
+// hostDataVars reads hostdata's vars: each a string or a list of strings.
+// why says what's wrong, "" when nothing is.
+func hostDataVars(v cty.Value) (map[string][]string, string) {
+	vars := map[string][]string{}
+	if v.IsNull() {
+		return vars, ""
+	}
+	if !v.Type().IsObjectType() && !v.Type().IsMapType() {
+		return nil, "vars must be a map or object, such as { host = each.key, group = [\"web\"] }"
+	}
+	for k, e := range v.AsValueMap() {
+		switch {
+		case e.IsNull():
+		case e.Type() == cty.String:
+			vars[k] = []string{e.AsString()}
+		case e.CanIterateElements():
+			for it := e.ElementIterator(); it.Next(); {
+				_, item := it.Element()
+				if item.Type() != cty.String || item.IsNull() {
+					return nil, fmt.Sprintf("vars.%s must be a string or a list of strings", k)
+				}
+				vars[k] = append(vars[k], item.AsString())
+			}
+		default:
+			return nil, fmt.Sprintf("vars.%s must be a string or a list of strings", k)
+		}
+	}
+	return vars, ""
+}
+
+// hostDataResult is hostdata's result: values, and the file each came from.
+func hostDataResult(res hostdata.Result) (values, from cty.Value) {
+	f := map[string]cty.Value{}
+	for k, file := range res.From {
+		f[k] = cty.StringVal(file)
+	}
+	if len(res.Values) == 0 {
+		return cty.EmptyObjectVal, cty.MapValEmpty(cty.String)
+	}
+	return cty.ObjectVal(res.Values), cty.MapVal(f)
+}
+
 // hostData is provider::conn3x::hostdata.
 func hostData(args []cty.Value) providers.CallFunctionResponse {
 	if len(args) != 2 {
@@ -169,40 +211,14 @@ func hostData(args []cty.Value) providers.CallFunctionResponse {
 	if !args[0].IsKnown() || !args[1].IsWhollyKnown() {
 		return providers.CallFunctionResponse{Result: cty.DynamicVal}
 	}
-	vars := map[string][]string{}
-	if v := args[1]; !v.IsNull() {
-		if !v.Type().IsObjectType() && !v.Type().IsMapType() {
-			return providers.CallFunctionResponse{Error: &providers.CallFunctionArgumentError{Text: "vars must be a map or object, such as { host = each.key, group = [\"web\"] }", FunctionArgument: 1}}
-		}
-		for k, e := range v.AsValueMap() {
-			switch {
-			case e.IsNull():
-			case e.Type() == cty.String:
-				vars[k] = []string{e.AsString()}
-			case e.CanIterateElements():
-				for it := e.ElementIterator(); it.Next(); {
-					_, item := it.Element()
-					if item.Type() != cty.String || item.IsNull() {
-						return providers.CallFunctionResponse{Error: &providers.CallFunctionArgumentError{Text: fmt.Sprintf("vars.%s must be a string or a list of strings", k), FunctionArgument: 1}}
-					}
-					vars[k] = append(vars[k], item.AsString())
-				}
-			default:
-				return providers.CallFunctionResponse{Error: &providers.CallFunctionArgumentError{Text: fmt.Sprintf("vars.%s must be a string or a list of strings", k), FunctionArgument: 1}}
-			}
-		}
+	vars, why := hostDataVars(args[1])
+	if why != "" {
+		return providers.CallFunctionResponse{Error: &providers.CallFunctionArgumentError{Text: why, FunctionArgument: 1}}
 	}
 	res, err := hostdata.Load(args[0].AsString(), vars)
 	if err != nil {
 		return providers.CallFunctionResponse{Error: fmt.Errorf("hostdata: %w", err)}
 	}
-	from := map[string]cty.Value{}
-	for k, f := range res.From {
-		from[k] = cty.StringVal(f)
-	}
-	values, fromVal := cty.EmptyObjectVal, cty.MapValEmpty(cty.String)
-	if len(res.Values) > 0 {
-		values, fromVal = cty.ObjectVal(res.Values), cty.MapVal(from)
-	}
+	values, fromVal := hostDataResult(res)
 	return providers.CallFunctionResponse{Result: cty.ObjectVal(map[string]cty.Value{"values": values, "from": fromVal})}
 }

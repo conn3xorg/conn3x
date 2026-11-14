@@ -171,7 +171,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 			"conn3x_packages": packagesDataSchema(), "conn3x_services": servicesDataSchema(),
 			"conn3x_file": fileDataSchema(), "conn3x_command": commandDataSchema(),
 		},
-		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema(), tunnelType: tunnelSchema()},
+		EphemeralResources: map[string]providers.Schema{secretsType: secretsSchema(), tunnelType: tunnelSchema(), hostdataType: hostdataSchema()},
 		Functions:          functions,
 	}
 }
@@ -233,8 +233,11 @@ func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.V
 }
 
 func (p *Provider) ValidateEphemeralConfig(_ context.Context, req providers.ValidateEphemeralConfigRequest) providers.ValidateEphemeralConfigResponse {
-	if req.TypeName == tunnelType {
+	switch req.TypeName {
+	case tunnelType:
 		return providers.ValidateEphemeralConfigResponse{Diagnostics: validateTunnel(req.Config)}
+	case hostdataType:
+		return providers.ValidateEphemeralConfigResponse{Diagnostics: validateHostdataEphemeral(req.Config)}
 	}
 	return validateSecrets(req)
 }
@@ -416,14 +419,17 @@ func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSou
 }
 
 func (p *Provider) OpenEphemeralResource(ctx context.Context, req providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
-	if req.TypeName == tunnelType {
+	switch req.TypeName {
+	case tunnelType:
 		return openTunnel(ctx, req)
+	case hostdataType:
+		return openHostdata(req)
 	}
 	return openSecrets(req)
 }
 
-// RenewEphemeralResource has nothing to do: a secrets file is read once,
-// and a tunnel stays open until it's closed.
+// RenewEphemeralResource has nothing to do: a secrets file and host data
+// are read once, and a tunnel stays open until it's closed.
 func (p *Provider) RenewEphemeralResource(context.Context, providers.RenewEphemeralResourceRequest) providers.RenewEphemeralResourceResponse {
 	return providers.RenewEphemeralResourceResponse{}
 }

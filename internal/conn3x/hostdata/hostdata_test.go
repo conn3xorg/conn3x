@@ -69,7 +69,7 @@ func TestLoadRefuses(t *testing.T) {
 		"unknown var":   {map[string]string{HierarchyFile: "hierarchy: [\"hosts/{hostname}.yaml\"]\n"}, map[string][]string{"host": {"web1"}}, "{hostname}"},
 		"path escape":   {map[string]string{HierarchyFile: "hierarchy: [\"hosts/{host}.yaml\"]\n"}, map[string][]string{"host": {"../../etc/passwd"}}, "letters, digits"},
 		"leaves dir":    {map[string]string{HierarchyFile: "hierarchy: [../outside.yaml]\n"}, nil, "leaves the data directory"},
-		"sops":          {map[string]string{HierarchyFile: "hierarchy: [common.yaml]\n", "common.yaml": "password: ENC[x]\nsops:\n  version: 3.9.0\n"}, nil, "conn3x_secrets"},
+		"sops":          {map[string]string{HierarchyFile: "hierarchy: [common.yaml]\n", "common.yaml": "password: ENC[x]\nsops:\n  version: 3.9.0\n"}, nil, "conn3x_hostdata"},
 		"not a mapping": {map[string]string{HierarchyFile: "hierarchy: [common.yaml]\n", "common.yaml": "- a\n- b\n"}, nil, "mapping"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -80,5 +80,32 @@ func TestLoadRefuses(t *testing.T) {
 				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// An ephemeral reader decrypts a SOPS layer, and its values take their
+// place in the hierarchy: a host's layer still wins over the shared one.
+func TestLoadDecrypting(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{
+		HierarchyFile:      "hierarchy: [\"hosts/{host}.yaml\", common.sops.yaml]\n",
+		"hosts/web1.yaml":  "db.password: from-the-host-layer\n",
+		"common.sops.yaml": "db:\n  password: ENC[x]\napi_token: ENC[y]\nsops:\n  version: 3.9.0\n",
+	})
+	decrypt := func(path string) (map[string]string, error) {
+		if !strings.HasSuffix(path, "common.sops.yaml") {
+			t.Errorf("decrypted %s", path)
+		}
+		return map[string]string{"db.password": "shared", "api_token": "t0ken"}, nil
+	}
+	res, err := LoadDecrypting(dir, map[string][]string{"host": {"web1"}}, decrypt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Values["db.password"].AsString(); got != "from-the-host-layer" || res.From["db.password"] != "hosts/web1.yaml" {
+		t.Errorf("db.password = %q from %s", got, res.From["db.password"])
+	}
+	if got := res.Values["api_token"].AsString(); got != "t0ken" || res.From["api_token"] != "common.sops.yaml" {
+		t.Errorf("api_token = %q from %s", got, res.From["api_token"])
 	}
 }
