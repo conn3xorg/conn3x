@@ -1,0 +1,29 @@
+circuit "keys" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "deploy_user" {
+    user {
+      name = "deploy"
+    }
+  }
+
+  step "deploy_key" {
+    depends_on = [conn3x_user.keys__deploy_user]
+
+    ssh_keypair {
+      path      = "/home/deploy/.ssh/id_deploy"
+      type      = "{{.Type}}"{{if .Bits}}
+      bits      = {{.Bits}}{{end}}
+      comment   = "{{.Comment}}"
+      owner     = "deploy"
+      on_remove = "delete"
+    }
+  }
+}
