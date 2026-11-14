@@ -1,0 +1,226 @@
+// Copyright (c) The Conn3x Authors
+// SPDX-License-Identifier: MPL-2.0
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
+	"github.com/zclconf/go-cty/cty/function"
+	"github.com/zclconf/go-cty/cty/function/stdlib"
+
+	"github.com/opentofu/opentofu/internal/configs"
+	"github.com/opentofu/opentofu/internal/conn3x/convert/ansible"
+	"github.com/opentofu/opentofu/internal/conn3x/provider"
+)
+
+// runTask is a task file: steps run in order on each host, without state,
+// as Bolt runs a task. Its steps are the same module blocks a circuit's
+// steps hold.
+type runTask struct {
+	name   string
+	params map[string]*cty.Value // nil: required
+	steps  []taskStep
+}
+
+type taskStep struct {
+	name, module, typ string
+	body              hcl.Body
+}
+
+var taskFileSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "task", LabelNames: []string{"name"}}}}
+
+var taskSchema = &hcl.BodySchema{
+	Attributes: []hcl.AttributeSchema{{Name: "description"}},
+	Blocks: []hcl.BlockHeaderSchema{
+		{Type: "param", LabelNames: []string{"name"}},
+		{Type: "step", LabelNames: []string{"name"}},
+	},
+}
+
+// loadTask reads the one task in path.
+func loadTask(path string) (*runTask, error) {
+	f, diags := hclparse.NewParser().ParseHCLFile(path)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	content, diags := f.Body.Content(taskFileSchema)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	if len(content.Blocks) != 1 {
+		return nil, fmt.Errorf("%s must hold one task block, not %d", path, len(content.Blocks))
+	}
+	tb := content.Blocks[0]
+	t := &runTask{name: tb.Labels[0], params: map[string]*cty.Value{}}
+	body, diags := tb.Body.Content(taskSchema)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	modules := configs.Conn3xStepModules()
+	seen := map[string]bool{}
+	for _, b := range body.Blocks {
+		name := b.Labels[0]
+		switch b.Type {
+		case "param":
+			attrs, diags := b.Body.JustAttributes()
+			if diags.HasErrors() {
+				return nil, diags
+			}
+			if d, ok := attrs["default"]; ok {
+				v, diags := d.Expr.Value(nil)
+				if diags.HasErrors() {
+					return nil, diags
+				}
+				t.params[name] = &v
+			} else {
+				t.params[name] = nil
+			}
+		case "step":
+			if seen[name] {
+				return nil, fmt.Errorf("task %s has two steps named %s", t.name, name)
+			}
+			seen[name] = true
+			blocks, diags := stepModuleBlock(b.Body)
+			if diags.HasErrors() {
+				return nil, diags
+			}
+			mod := blocks.Type
+			typ, ok := modules[mod]
+			if !ok || strings.HasPrefix(typ, "conn3x_eos_") || strings.HasPrefix(typ, "conn3x_junos_") || strings.HasPrefix(typ, "conn3x_vyos_") {
+				return nil, fmt.Errorf("step %s: %q isn't a module a task can run", name, mod)
+			}
+			t.steps = append(t.steps, taskStep{name: name, module: mod, typ: typ, body: blocks.Body})
+		}
+	}
+	if len(t.steps) == 0 {
+		return nil, fmt.Errorf("task %s has no steps", t.name)
+	}
+	return t, nil
+}
+
+// stepModuleBlock is a step's one module block, whatever its type.
+func stepModuleBlock(body hcl.Body) (*hcl.Block, hcl.Diagnostics) {
+	var schema hcl.BodySchema
+	for name := range configs.Conn3xStepModules() {
+		schema.Blocks = append(schema.Blocks, hcl.BlockHeaderSchema{Type: name})
+	}
+	content, diags := body.Content(&schema)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	if len(content.Blocks) != 1 {
+		return nil, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "A task step holds one module block", Detail: fmt.Sprintf("This step has %d.", len(content.Blocks)), Subject: body.MissingItemRange().Ptr()}}
+	}
+	return content.Blocks[0], nil
+}
+
+// paramValues are the task's params from -a's NAME=VALUE pairs, with
+// defaults for the rest.
+func (t *runTask) paramValues(given map[string]string) (cty.Value, error) {
+	vals := map[string]cty.Value{}
+	for name, def := range t.params {
+		switch v, ok := given[name]; {
+		case ok:
+			vals[name] = cty.StringVal(v)
+		case def != nil:
+			vals[name] = *def
+		default:
+			return cty.NilVal, fmt.Errorf("task %s needs param %s: give it with -a '%s=...'", t.name, name, name)
+		}
+	}
+	for name := range given {
+		if _, ok := t.params[name]; !ok {
+			return cty.NilVal, fmt.Errorf("task %s has no param %q", t.name, name)
+		}
+	}
+	return cty.ObjectVal(vals), nil
+}
+
+// args evaluates a step's module arguments for one host.
+func (s taskStep) args(ctx context.Context, params, host cty.Value) (map[string]cty.Value, error) {
+	p, _ := provider.New()
+	block := p.GetProviderSchema(ctx).ResourceTypes[s.typ].Block
+	attrs, diags := s.body.JustAttributes()
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("step %s: %s (a task's module blocks take arguments, not nested blocks)", s.name, diags.Error())
+	}
+	ectx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{"param": params, "host": host},
+		Functions: map[string]function.Function{"upper": stdlib.UpperFunc, "lower": stdlib.LowerFunc, "join": stdlib.JoinFunc, "format": stdlib.FormatFunc},
+	}
+	out := map[string]cty.Value{}
+	for name, a := range attrs {
+		attr := block.Attributes[name]
+		if attr == nil || (attr.Computed && !attr.Optional) || slices.Contains([]string{"id", "revision", "in_sync", "on_remove"}, name) {
+			return nil, fmt.Errorf("step %s: %s has no argument %q", s.name, s.module, name)
+		}
+		v, diags := a.Expr.Value(ectx)
+		if diags.HasErrors() {
+			return nil, fmt.Errorf("step %s: %s", s.name, diags.Error())
+		}
+		cv, err := convert.Convert(v, attr.Type)
+		if err != nil {
+			return nil, fmt.Errorf("step %s: %s: %w", s.name, name, err)
+		}
+		out[name] = cv
+	}
+	return out, nil
+}
+
+// taskResult is one step's outcome on one host.
+type taskResult struct {
+	Step   string `json:"step"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+	Stdout string `json:"stdout,omitempty"`
+	Stderr string `json:"stderr,omitempty"`
+}
+
+// runTaskOn runs every step on one host in order, stopping at the first
+// that fails, and returns the host's status: failed, changed or ok.
+func runTaskOn(ctx context.Context, t *runTask, params cty.Value, name string, vars map[string]string, ssh map[string]cty.Value, check bool) (string, []taskResult) {
+	hv := cty.MapValEmpty(cty.String)
+	if m := map[string]cty.Value{}; len(vars) > 0 {
+		for k, v := range vars {
+			if !ansible.Encrypted(v) {
+				m[k] = cty.StringVal(v)
+			}
+		}
+		if len(m) > 0 {
+			hv = cty.MapVal(m)
+		}
+	}
+	host := cty.ObjectVal(map[string]cty.Value{"name": cty.StringVal(name), "vars": hv})
+	status := "ok"
+	var results []taskResult
+	for _, s := range t.steps {
+		args, err := s.args(ctx, params, host)
+		if err == nil {
+			var res provider.RunResult
+			res, err = provider.RunOnce(ctx, s.typ, args, ssh, check)
+			r := taskResult{Step: s.name, Status: "ok", Stdout: res.Stdout, Stderr: res.Stderr}
+			switch {
+			case err != nil:
+			case res.Changed && check:
+				r.Status, status = "would change", "would change"
+			case res.Changed:
+				r.Status, status = "changed", "changed"
+			}
+			if err == nil {
+				results = append(results, r)
+				continue
+			}
+		}
+		results = append(results, taskResult{Step: s.name, Status: "failed", Error: err.Error()})
+		return "failed", results
+	}
+	return status, results
+}

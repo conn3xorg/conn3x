@@ -59,3 +59,68 @@ func TestConn3xRun(t *testing.T) {
 		t.Errorf("run should write nothing but leave hosts.ini: %v", entries)
 	}
 }
+
+// conn3x run -task runs a task file's steps in order on each host, with
+// params and the host's inventory variables, stopping a host at the first
+// step that fails.
+func TestConn3xRunTask(t *testing.T) {
+	web1, db1 := startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web1, db1)
+	w := &workdir{t: t, dir: t.TempDir()}
+	inv := "[web]\nweb1 ansible_host=127.0.0.1 ansible_port=" + web1.port + " role=front\n[db]\ndb1 ansible_host=127.0.0.1 ansible_port=" + db1.port + " role=data\n[all:vars]\nansible_user=root\n"
+	task := `task "motd" {
+  param "greeting" {}
+  param "fail" { default = "false" }
+  step "write" {
+    file {
+      path    = "/tmp/motd"
+      content = "${param.greeting} from ${host.name}, ${host.vars.role}\n"
+    }
+  }
+  step "maybe-fail" {
+    command { command = param.fail == "true" ? "exit 4" : "true" }
+  }
+  step "after" {
+    file {
+      path    = "/tmp/after"
+      content = "ran\n"
+    }
+  }
+}
+`
+	for name, body := range map[string]string{"hosts.ini": inv, "motd.task.hcl": task} {
+		if err := os.WriteFile(filepath.Join(w.dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(args ...string) (string, int) {
+		return w.conn3x(append([]string{"run", "-i", "hosts.ini", "-private-key-file", web1.keyFile, "-known-hosts-file", knownFile, "-task", "motd.task.hcl"}, args...)...)
+	}
+
+	out, code := run("all", "-a", "greeting=hello")
+	if code != 0 || !strings.Contains(out, "web1 | changed") || !strings.Contains(out, "db1 | changed") || !strings.Contains(out, "  write: changed") {
+		t.Errorf("the task on all (exit %d):\n%s", code, out)
+	}
+	if got := web1.exec("", "cat", "/tmp/motd"); got != "hello from web1, front\n" {
+		t.Errorf("web1 /tmp/motd = %q", got)
+	}
+	if got := db1.exec("", "cat", "/tmp/motd"); got != "hello from db1, data\n" {
+		t.Errorf("db1 /tmp/motd = %q", got)
+	}
+
+	db1.exec("", "rm", "-f", "/tmp/after")
+	out, code = run("db", "-a", "greeting=hello fail=true")
+	if code != 2 || !strings.Contains(out, "db1 | failed") || !strings.Contains(out, "maybe-fail: failed") || strings.Contains(out, "after:") {
+		t.Errorf("a failing step should stop the host (exit %d):\n%s", code, out)
+	}
+	if got := db1.exec("", "sh", "-c", "test -e /tmp/after && echo there; true"); got != "" {
+		t.Errorf("the step after a failure ran: %q", got)
+	}
+
+	if out, code := run("all"); code != 1 || !strings.Contains(out, "needs param greeting") {
+		t.Errorf("a missing param (exit %d):\n%s", code, out)
+	}
+	if out, code := run("all", "-a", "greeting=x nope=1"); code != 1 || !strings.Contains(out, `no param "nope"`) {
+		t.Errorf("an unknown param (exit %d):\n%s", code, out)
+	}
+}
