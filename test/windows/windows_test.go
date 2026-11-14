@@ -1574,7 +1574,7 @@ func TestShare(t *testing.T) {
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
 	dir := `C:\Conn3xShare` + suffix
 	name := "Conn3xTest" + suffix
-	run(t, c, `param($A) $null = New-Item -ItemType Directory -Force -LiteralPath $A.d`, map[string]any{"d": dir})
+	run(t, c, `param($A) $null = [IO.Directory]::CreateDirectory($A.d)`, map[string]any{"d": dir})
 	t.Cleanup(func() {
 		_ = windows.ApplyShareRemove(context.Background(), c, name)
 		_, _ = ps.User(context.Background(), c, `param($A) Remove-Item -LiteralPath $A.d -Recurse -Force`, map[string]any{"d": dir}, time.Minute)
