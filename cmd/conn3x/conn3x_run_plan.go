@@ -154,7 +154,7 @@ func (o runOptions) runPlanOn(ctx context.Context, plan *taskPlan, params cty.Va
 			if diags.HasErrors() {
 				return fail("run %s: params: %s", r.name, diags.Error())
 			}
-			if pv.IsNull() || !(pv.Type().IsObjectType() || pv.Type().IsMapType()) {
+			if pv.IsNull() || !pv.Type().IsObjectType() && !pv.Type().IsMapType() {
 				return fail("run %s: params must be an object, such as { version = param.version }", r.name)
 			}
 			given = pv.AsValueMap()
