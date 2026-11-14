@@ -91,7 +91,15 @@ func (b *Become) runPrompted(ctx context.Context, inner string, stdin []byte) (R
 	if err != nil {
 		return Result{}, err
 	}
-	defer p.Close()
+	// The input writer below may not have run yet when this returns. The SSH
+	// channel can't take its Write and Close's CloseWrite at once, so close
+	// the session first, which ends a Write in progress, and wait for it.
+	var writing sync.WaitGroup
+	defer func() {
+		_ = p.session.Close()
+		writing.Wait()
+		_ = p.Close()
+	}()
 
 	type exit struct {
 		stdout []byte
@@ -150,10 +158,10 @@ func (b *Become) runPrompted(ctx context.Context, inner string, stdin []byte) (R
 				poll = nil
 				// The command may exit without reading its input, and a
 				// large input may block: neither should hold up the loop.
-				go func() {
+				writing.Go(func() {
 					_, _ = p.stdin.Write(stdin)
 					_ = p.stdin.Close()
-				}()
+				})
 			case n > 1:
 				return Result{}, SudoFailure([]byte("incorrect password"), b.Client.addr)
 			case n == 1 && !answered:
