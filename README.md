@@ -46,7 +46,7 @@ To take a release only once it has been out for a week, use `conn3xorg/tap/conn3
 Or download a release:
 
 ```sh
-VERSION=0.18.0 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.19.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
@@ -56,7 +56,7 @@ Since v0.14.0 each release also has a `.deb` and an `.rpm` for Linux on amd64 an
 On Windows, the zip holds `conn3x.exe`. Put it somewhere on your `PATH`:
 
 ```powershell
-$v = "0.18.0"
+$v = "0.19.0"
 Invoke-WebRequest "https://github.com/conn3xorg/conn3x/releases/download/v$v/conn3x_${v}_windows_amd64.zip" -OutFile conn3x.zip
 Expand-Archive conn3x.zip -DestinationPath conn3x
 ```
@@ -158,16 +158,15 @@ container, in about five.
   off, the host puts the old one back by itself.
 - **Reaches Windows Server too, in preview.** Files, access rules, the registry,
   services, users and groups, firewall rules, MSI packages, scheduled tasks, IIS,
-  Windows Update, and Active Directory forests and child domains with their OUs, groups
-  and users, on Windows Server 2022 and 2025, over OpenSSH. Eight of those modules take
-  `import`, so
-  a server you already run is adopted rather than set up again. The
-  [module pages](https://docs.conn3x.org/modules/windows_file) say what may still change.
-- **Starts on network switches, experimentally.** `eos_config`, `eos_hostname`,
-  `eos_vlan`, `eos_interface` and `eos_user` steps configure an Arista EOS switch over
-  its own CLI. Every step on a switch goes into one config session and one commit, with
-  a revert timer that rolls the change back if it cuts Conn3x off. Tested on cEOS-lab, not yet
-  on hardware. See [Network devices](https://docs.conn3x.org/network-devices).
+  Windows Update, and Active Directory forests, child domains and new trees with their
+  OUs, groups and users, on Windows Server 2022 and 2025, over OpenSSH. All 25 modules
+  are out of experimental, and 21 take `import`, so a server you already run is adopted
+  rather than set up again.
+- **Starts on network devices, experimentally.** Arista EOS, Juniper Junos and VyOS
+  steps configure a switch or router over its own CLI. Every step on a device goes into
+  one commit, with a timer that rolls the change back if it cuts Conn3x off. Tested on
+  cEOS-lab, vJunos-switch and a VyOS container, not yet on hardware. See
+  [Network devices](https://docs.conn3x.org/network-devices).
 - **Tells you what changed by hand.** `conn3x drift` reports changes made outside Conn3x,
   in the cloud and on your servers, and exits 2 when it finds some, so a scheduled job
   can alert on it.
@@ -203,10 +202,9 @@ It's early. Conn3x configures Rocky, RHEL, AlmaLinux, Fedora, Debian and Ubuntu 
 and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian 13.
 Windows Server 2022 and 2025 are in preview, with tested Azure examples for one server,
 a small domain, a whole Active Directory lab, and a domain controller with up to five
-IIS servers. Fifteen of the 25 Windows modules, from files and services to firewall
-rules, scheduled tasks and IIS, are out of experimental; the Active Directory ones,
-local users and groups, and `windows_update` aren't yet. Arista EOS switches are
-experimental. Windows at scale is the work now, then more network devices.
+IIS servers. All 25 Windows modules, Active Directory and `windows_update` included,
+are out of experimental. Arista EOS, Juniper Junos and VyOS devices are experimental.
+Windows at scale is the work now, then more network devices.
 See the [roadmap](ROADMAP.md).
 
 ## Built on OpenTofu
