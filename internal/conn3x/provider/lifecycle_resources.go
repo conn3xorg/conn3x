@@ -33,21 +33,34 @@ func durationOr(v cty.Value, fallback time.Duration) (time.Duration, error) {
 
 func waitForSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Waits until a path exists or a TCP port is listening on the host. Refresh checks again, so a later apply waits again if it stopped.",
+		Description: "Waits until a path exists, a TCP port is listening, or a URL answers on the host. Refresh checks again, so a later apply waits again if it stopped.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":       {Type: cty.String, Computed: true},
-			"revision": revisionAttr(),
-			"path":     {Type: cty.String, Optional: true, Description: "Path to wait for. Set this or port."},
-			"port":     {Type: cty.Number, Optional: true, Description: "TCP port to wait for a listener on. Set this or path."},
-			"timeout":  {Type: cty.String, Optional: true, Description: "How long to wait. Defaults to \"5m\"."},
-			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether it was ready at the last refresh."},
+			"id":              {Type: cty.String, Computed: true},
+			"revision":        revisionAttr(),
+			"path":            {Type: cty.String, Optional: true, Description: "Path to wait for. Set one of path, port and url."},
+			"port":            {Type: cty.Number, Optional: true, Description: "TCP port to wait for a listener on. Set one of path, port and url."},
+			"url":             {Type: cty.String, Optional: true, Description: "An http:// or https:// URL to GET until it answers with one of status_codes, such as http://127.0.0.1:8080/healthz. The request is the host's own: it goes through the SSH connection and leaves from the host, so 127.0.0.1 is the host, and it needs no curl there. Set one of path, port and url."},
+			"status_codes":    {Type: cty.List(cty.Number), Optional: true, Description: "The answers that count for url. Defaults to [200]. Redirects are followed first."},
+			"body_contains":   {Type: cty.String, Optional: true, Description: "Text the answer's body must hold for url, such as \"ok\". The first MiB is read."},
+			"skip_tls_verify": {Type: cty.Bool, Optional: true, Description: "true accepts any certificate for an https:// url, such as a self-signed one on a new host. Defaults to false."},
+			"timeout":         {Type: cty.String, Optional: true, Description: "How long to wait. Defaults to \"5m\"."},
+			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether it was ready at the last refresh."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
 }
 
 func waitForFrom(v cty.Value) (lifecycle.WaitFor, error) {
-	w := lifecycle.WaitFor{Path: stringOr(v.GetAttr("path"), "")}
+	w := lifecycle.WaitFor{Path: stringOr(v.GetAttr("path"), ""), URL: lifecycle.URLCheck{
+		URL: stringOr(v.GetAttr("url"), ""), BodyContains: stringOr(v.GetAttr("body_contains"), ""),
+		SkipTLSVerify: boolOr(v.GetAttr("skip_tls_verify")),
+	}}
+	if codes := v.GetAttr("status_codes"); !codes.IsNull() {
+		for _, c := range codes.AsValueSlice() {
+			n, _ := c.AsBigFloat().Int64()
+			w.URL.StatusCodes = append(w.URL.StatusCodes, int(n))
+		}
+	}
 	if p := v.GetAttr("port"); !p.IsNull() {
 		n, _ := p.AsBigFloat().Int64()
 		w.Port = int(n)
@@ -73,7 +86,8 @@ func validateWaitFor(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planWaitFor(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "wait_for", []string{"path", "port"}, nil)
+	// url and its settings change in place, so existing steps keep their ids.
+	return planSynced(req, "wait_for", []string{"path", "port"}, []string{"url", "status_codes", "body_contains", "skip_tls_verify"})
 }
 
 func readWaitFor(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

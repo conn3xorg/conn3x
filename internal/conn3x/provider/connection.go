@@ -129,6 +129,11 @@ var errNoAgent = fmt.Errorf("no conn3x agent: %w", errors.ErrUnsupported)
 // ReadFile reads a file through the agent when one is attached. Without
 // one, or where the agent can't match the shell, file.Read runs its shell
 // command instead.
+// DialRemote opens a TCP connection from the host, for wait_for's url.
+func (h *hostConn) DialRemote(ctx context.Context, addr string) (net.Conn, error) {
+	return h.client.DialRemote(ctx, addr)
+}
+
 func (h *hostConn) ReadFile(ctx context.Context, path string) (modules.FileStat, error) {
 	h.mu.Lock()
 	a := h.agent
