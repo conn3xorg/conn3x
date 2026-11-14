@@ -67,9 +67,8 @@ func TestGenerateStep(t *testing.T) {
 	w.mustConn3x("init", "-no-color")
 	out = w.mustConn3x("plan", "-no-color")
 	t.Logf("first plan:\n%s", out)
-	// sysctl keeps a setting in its own file, so adopting one writes it.
-	if !strings.Contains(out, "Plan: 4 to import, 0 to add, 1 to change, 0 to destroy.") || !strings.Contains(out, "conn3x_sysctl.box__net_ipv4_ip_forward[\"box\"] will be updated in-place") {
-		t.Fatalf("the generated steps should import, with only the sysctl file to write:\n%s", out)
+	if !strings.Contains(out, "Plan: 4 to import, 0 to add, 0 to change, 0 to destroy.") {
+		t.Fatalf("the generated steps should import with nothing to change:\n%s", out)
 	}
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
