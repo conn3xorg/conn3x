@@ -60,6 +60,14 @@ func TestConn3xRun(t *testing.T) {
 	if code != 2 || !strings.Contains(out, "web1 | failed") {
 		t.Errorf("a failing command should exit 2 (exit %d):\n%s", code, out)
 	}
+	// One host at a time: once the first fails, the second is never reached.
+	out, code = run("all", "-a", "exit 3", "-batch-size", "1")
+	if code != 2 || strings.Count(out, "| failed") != 1 || !strings.Contains(out, "| skipped: 1 hosts failed, more than -max-failures 0") {
+		t.Errorf("-batch-size 1 with a failing command (exit %d):\n%s", code, out)
+	}
+	if out, code := run("all", "-a", "exit 3", "-batch-size", "1", "-max-failures", "1"); code != 2 || strings.Count(out, "| failed") != 2 {
+		t.Errorf("-max-failures 1 should reach both hosts (exit %d):\n%s", code, out)
+	}
 	if out, code := run("nothing*", "-a", "true"); code != 1 || !strings.Contains(out, "matches no host") {
 		t.Errorf("a pattern matching nothing (exit %d):\n%s", code, out)
 	}

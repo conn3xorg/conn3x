@@ -29,10 +29,10 @@ import (
 )
 
 type runOptions struct {
-	inventory, module, task, plan, args, user, keyFile, knownHosts string
-	port, forks                                                    int
-	become, check, json                                            bool
-	pattern                                                        string
+	inventory, module, task, plan, args, user, keyFile, knownHosts, batchSize string
+	port, forks, maxFailures                                                  int
+	become, check, json                                                       bool
+	pattern                                                                   string
 }
 
 func runCommand() command.Command {
@@ -101,6 +101,8 @@ Each host is checked against known_hosts, as a plan checks it. Exits 0 when ever
 	c.CommandLine.BoolVar(&o.check, "check", false, "Say what would change, and change nothing.")
 	c.CommandLine.BoolVar(&o.json, "json", false, "Print one JSON object per host instead of lines for people.")
 	c.CommandLine.IntVar(&o.forks, "forks", 10, "How many hosts to run on at once.")
+	c.CommandLine.StringVar(&o.batchSize, "batch-size", "", "Run on this many hosts at a time, or a percentage such as 20%, starting the next batch only once a batch is done.")
+	c.CommandLine.IntVar(&o.maxFailures, "max-failures", 0, "With -batch-size, how many hosts may fail before no more batches start.")
 	c.Run = func(command.Meta) int { return runRun(context.Background(), o, stdout, os.Stderr) }
 	c.GroupID = command.OtherCommandGroup.ID
 	return c
@@ -129,6 +131,12 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 	}
 	if n := len(slices.DeleteFunc([]string{o.module, o.task, o.plan}, func(s string) bool { return s == "" })); n > 1 {
 		return fail("give one of -m, -task and -plan")
+	}
+	if err := checkBatchSize(o.batchSize); err != nil {
+		return fail("%s", err)
+	}
+	if o.maxFailures < 0 {
+		return fail("-max-failures can't be negative")
 	}
 	pattern, err := hostpattern.Parse(o.pattern)
 	if err != nil {
@@ -216,8 +224,45 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 	return o.report(stdout, "", hosts, task != nil)
 }
 
-// runOn runs a task, or a module with args, on hosts, o.forks at a time.
+// runOn runs a task, or a module with args, on hosts, o.forks at a time,
+// in batches with -batch-size. Once more hosts have failed than
+// -max-failures allows, no more batches start, and the hosts they'd have
+// had are skipped.
 func (o runOptions) runOn(ctx context.Context, hosts []*runHost, task *runTask, params cty.Value, typ string, args map[string]cty.Value) {
+	size := batchOf(o.batchSize, len(hosts))
+	failed := 0
+	for start := 0; start < len(hosts); start += size {
+		batch := hosts[start:min(start+size, len(hosts))]
+		if failed > o.maxFailures {
+			for _, h := range batch {
+				h.status, h.message = "skipped", fmt.Sprintf("%d hosts failed, more than -max-failures %d", failed, o.maxFailures)
+			}
+			continue
+		}
+		o.runBatch(ctx, batch, task, params, typ, args)
+		for _, h := range batch {
+			if h.status == "failed" {
+				failed++
+			}
+		}
+	}
+}
+
+// batchOf is -batch-size as a number of hosts out of n: all of them when
+// it's unset, and at least one.
+func batchOf(size string, n int) int {
+	if size == "" {
+		return max(n, 1)
+	}
+	if pct, ok := strings.CutSuffix(size, "%"); ok {
+		p, _ := strconv.Atoi(pct)
+		return max((n*p+99)/100, 1)
+	}
+	b, _ := strconv.Atoi(size)
+	return max(b, 1)
+}
+
+func (o runOptions) runBatch(ctx context.Context, hosts []*runHost, task *runTask, params cty.Value, typ string, args map[string]cty.Value) {
 	sem := make(chan struct{}, max(o.forks, 1))
 	var wg sync.WaitGroup
 	for _, h := range hosts {
@@ -252,7 +297,7 @@ func (o runOptions) runOn(ctx context.Context, hosts []*runHost, task *runTask, 
 func (o runOptions) report(stdout io.Writer, run string, hosts []*runHost, isTask bool) int {
 	code := 0
 	for _, h := range hosts {
-		if h.status == "failed" {
+		if h.status == "failed" || h.status == "skipped" {
 			code = 2
 		}
 		if o.json {
@@ -268,7 +313,11 @@ func (o runOptions) report(stdout io.Writer, run string, hosts []*runHost, isTas
 			continue
 		}
 		if isTask {
-			fmt.Fprintln(stdout, termsafe.Escape(h.name+" | "+h.status))
+			head := h.name + " | " + h.status
+			if h.message != "" {
+				head += ": " + h.message
+			}
+			fmt.Fprintln(stdout, termsafe.Escape(head))
 			for _, st := range h.steps {
 				line := "  " + st.Step + ": " + st.Status
 				if st.Error != "" {
@@ -325,6 +374,20 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 		ssh["become"] = cty.True
 	}
 	return ssh
+}
+
+// checkBatchSize accepts what -batch-size takes: a whole number of hosts
+// from 1, or a percentage from 1% to 100%.
+func checkBatchSize(size string) error {
+	if size == "" {
+		return nil
+	}
+	pct, isPct := strings.CutSuffix(size, "%")
+	n, err := strconv.Atoi(pct)
+	if err != nil || n < 1 || (isPct && n > 100) {
+		return fmt.Errorf("-batch-size %q must be a number of hosts, such as 2, or a percentage, such as 20%%", size)
+	}
+	return nil
 }
 
 // taskParams reads -a's NAME=VALUE pairs for -task and -plan.
