@@ -55,6 +55,15 @@ func TestStorageOnLoopDevices(t *testing.T) {
 		t.Errorf("a second plan should be clean:\n%s", out)
 	}
 
+	// Another configuration adopts the group, the volume and the file
+	// system with import, and finds nothing to change.
+	adopt := newWorkdir(t, "storage_import")
+	adopt.writeAs("main.circuit.hcl", chainVars{PortA: box.port, Key: box.keyFile, KnownHosts: knownFile})
+	adopt.mustConn3x("init", "-no-color")
+	if out := adopt.mustConn3x("plan", "-no-color", "-var=size=200m", one); !strings.Contains(out, "Plan: 3 to import, 0 to add, 0 to change, 0 to destroy.") {
+		t.Errorf("importing the disk:\n%s", out)
+	}
+
 	// Grow the group and the volume; the file system follows.
 	w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=size=1200m", both)
 	if got := lvSize(); got != "1200.00" {

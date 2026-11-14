@@ -1,0 +1,51 @@
+variable "size" {
+  type = string
+}
+
+variable "pvs" {
+  type = list(string)
+}
+
+variable "fs_type" {
+  type    = string
+  default = "ext4"
+}
+
+# The same disk, adopted by a configuration that never made it.
+circuit "disk" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "vg" {
+    import = true
+    lvm_volume_group {
+      name = "c3vg"
+      pvs  = var.pvs
+    }
+  }
+
+  step "lv" {
+    import = true
+    lvm_logical_volume {
+      vg   = "c3vg"
+      name = "data"
+      size = var.size
+    }
+  }
+
+  step "fs" {
+    import = true
+    filesystem {
+      device = "/dev/c3vg/data"
+      type   = var.fs_type
+      resize = var.fs_type == "ext4"
+    }
+  }
+}
