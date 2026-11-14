@@ -1,0 +1,29 @@
+variable "image" {
+  type = string
+}
+
+circuit "app" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "web" {
+    import = true
+    container {
+      name      = "web"
+      image     = var.image
+      command   = ["sh", "-c", "echo $GREETING > /data/greeting && exec sleep 3600"]
+      env       = { GREETING = "hello" }
+      volumes   = ["/srv/c3:/data"]
+      restart   = "always"
+      engine    = "podman"
+      on_remove = "delete"
+    }
+  }
+}

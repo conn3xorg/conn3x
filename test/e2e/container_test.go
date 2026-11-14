@@ -35,6 +35,14 @@ func TestContainerStep(t *testing.T) {
 		t.Errorf("a second plan should be clean:\n%s", out)
 	}
 
+	// Another configuration adopts the container with import.
+	adopt := newWorkdir(t, "container_import")
+	adopt.writeAs("main.circuit.hcl", chainVars{PortA: box.port, Key: box.keyFile, KnownHosts: knownFile})
+	adopt.mustConn3x("init", "-no-color")
+	if out := adopt.mustConn3x("plan", "-no-color", "-var=image=docker.io/library/busybox:1.36"); !strings.Contains(out, "Plan: 1 to import, 0 to add, 0 to change, 0 to destroy.") {
+		t.Errorf("importing the container:\n%s", out)
+	}
+
 	w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=image=docker.io/library/busybox:1.37")
 	if got := inspect(); got != "true docker.io/library/busybox:1.37" {
 		t.Errorf("a new tag should recreate it: %q", got)
