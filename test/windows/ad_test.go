@@ -408,9 +408,10 @@ $dcpromo = Test-Path -LiteralPath 'C:\Windows\debug\dcpromo.log'
 }
 
 // A join or a promotion that fails, here for a domain that doesn't exist,
-// changes nothing and leaves the passwords out of the error. The promotion
-// runs as far as its folder checks, which windows_ad_forest shares, or to the
-// AD DS check on a host without the role.
+// changes nothing and leaves the passwords out of the error. A promotion,
+// to a domain controller or a new domain, runs as far as its folder checks,
+// which windows_ad_forest shares, or to the AD DS check on a host without
+// the role.
 func TestJoinAndDCFailWithoutPasswords(t *testing.T) {
 	c := connect(t)
 	ctx := context.Background()
@@ -432,6 +433,16 @@ func TestJoinAndDCFailWithoutPasswords(t *testing.T) {
 	_, err = windows.ApplyDomainController(ctx, c, windows.DomainController{DomainName: "nowhere.conn3x.invalid", Username: `NOWHERE\admin`, DatabasePath: base}, pw, dsrm, 5*time.Minute)
 	if err == nil || !strings.Contains(err.Error(), "can rename or replace") || strings.Contains(err.Error(), pw) || strings.Contains(err.Error(), dsrm) {
 		t.Errorf("dc with an open folder: %v", err)
+	}
+	// A new domain, child or tree, stops at the same folder checks.
+	for _, d := range []windows.ChildDomain{
+		{DomainName: "emea.nowhere.conn3x.invalid", Username: "admin@nowhere.conn3x.invalid", DatabasePath: base},
+		{DomainName: "apac.conn3x.invalid", Tree: true, ParentName: "nowhere.conn3x.invalid", Username: "admin@nowhere.conn3x.invalid", DatabasePath: base},
+	} {
+		_, err = windows.ApplyChildDomain(ctx, c, d, pw, dsrm, 5*time.Minute)
+		if err == nil || !strings.Contains(err.Error(), "can rename or replace") || strings.Contains(err.Error(), pw) || strings.Contains(err.Error(), dsrm) {
+			t.Errorf("%s with an open folder: %v", d.DomainName, err)
+		}
 	}
 	if after, err := windows.ReadForest(ctx, c); err != nil || after != before {
 		t.Errorf("after: %+v, %v", after, err)

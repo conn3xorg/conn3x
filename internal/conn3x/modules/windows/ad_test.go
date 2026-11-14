@@ -302,3 +302,33 @@ func TestApplyChildDomainPasswords(t *testing.T) {
 		t.Error("accepted an empty password")
 	}
 }
+
+func TestTreeDomain(t *testing.T) {
+	c := ChildDomain{DomainName: "apac.example.net", Tree: true, ParentName: "lab.test", Username: "admin@lab.test"}
+	if _, err := c.Check(); err != nil || c.Parent() != "lab.test" {
+		t.Fatalf("%v, parent %q", err, c.Parent())
+	}
+	// A tree's own name may have a single dot: it's named in full.
+	if _, err := (ChildDomain{DomainName: "apac.test", Tree: true, ParentName: "lab.test", Username: "admin@lab.test"}).Check(); err != nil {
+		t.Error(err)
+	}
+	for want, c := range map[string]ChildDomain{
+		"parent_domain_name": {DomainName: "apac.test", Tree: true, Username: "a@lab.test"},
+		"domain_name":        {DomainName: "emea.lab.test", Tree: true, ParentName: "lab.test", Username: "a@lab.test"},
+		"username":           {DomainName: "apac.test", Tree: true, ParentName: "lab.test", Username: "a@apac.test"},
+	} {
+		if attr, err := c.Check(); attr != want || err == nil {
+			t.Errorf("%+v: %s, %v", c, attr, err)
+		}
+	}
+	if attr, _ := (ChildDomain{DomainName: "emea.lab.test", ParentName: "lab.test", Username: "a@lab.test"}).Check(); attr != "parent_domain_name" {
+		t.Errorf("a child with parent_domain_name: %q", attr)
+	}
+	f := &fake{answers: []map[string]any{{"ok": true, "value": map[string]any{"restart": true}}}}
+	if _, err := ApplyChildDomain(context.Background(), f, c, "pw-Admin-1!", "pw-Dsrm-1!", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if args := f.sent[0]["args"].(map[string]any); args["label"] != "apac.example.net" || args["parent"] != "lab.test" || args["tree"] != true {
+		t.Errorf("sent %v", args)
+	}
+}
