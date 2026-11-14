@@ -6,13 +6,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hcldec"
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/zclconf/go-cty/cty"
-	"github.com/zclconf/go-cty/cty/convert"
 	"github.com/zclconf/go-cty/cty/function"
 	"github.com/zclconf/go-cty/cty/function/stdlib"
 
@@ -144,33 +145,33 @@ func (t *runTask) paramValues(given map[string]string) (cty.Value, error) {
 	return cty.ObjectVal(vals), nil
 }
 
-// args evaluates a step's module arguments for one host.
+// args evaluates a step's module block for one host, nested blocks
+// included, as a circuit would decode it.
 func (s taskStep) args(ctx context.Context, params, host cty.Value) (map[string]cty.Value, error) {
 	p, _ := provider.New()
 	block := p.GetProviderSchema(ctx).ResourceTypes[s.typ].Block
-	attrs, diags := s.body.JustAttributes()
-	if diags.HasErrors() {
-		return nil, fmt.Errorf("step %s: %s (a task's module blocks take arguments, not nested blocks)", s.name, diags.Error())
-	}
 	ectx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{"param": params, "host": host},
 		Functions: map[string]function.Function{"upper": stdlib.UpperFunc, "lower": stdlib.LowerFunc, "join": stdlib.JoinFunc, "format": stdlib.FormatFunc},
 	}
+	// The ssh block comes from the inventory and flags, so a step can't set one.
+	noSSH := *block
+	noSSH.BlockTypes = maps.Clone(block.BlockTypes)
+	delete(noSSH.BlockTypes, "ssh")
+	val, diags := hcldec.Decode(s.body, noSSH.DecoderSpec(), ectx)
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("step %s: %s", s.name, diags.Error())
+	}
 	out := map[string]cty.Value{}
-	for name, a := range attrs {
+	for name, v := range val.AsValueMap() {
+		if v.IsNull() {
+			continue
+		}
 		attr := block.Attributes[name]
-		if attr == nil || (attr.Computed && !attr.Optional) || slices.Contains([]string{"id", "revision", "in_sync", "on_remove"}, name) {
+		if attr != nil && ((attr.Computed && !attr.Optional) || slices.Contains([]string{"id", "revision", "in_sync", "on_remove"}, name)) {
 			return nil, fmt.Errorf("step %s: %s has no argument %q", s.name, s.module, name)
 		}
-		v, diags := a.Expr.Value(ectx)
-		if diags.HasErrors() {
-			return nil, fmt.Errorf("step %s: %s", s.name, diags.Error())
-		}
-		cv, err := convert.Convert(v, attr.Type)
-		if err != nil {
-			return nil, fmt.Errorf("step %s: %s: %w", s.name, name, err)
-		}
-		out[name] = cv
+		out[name] = v
 	}
 	return out, nil
 }

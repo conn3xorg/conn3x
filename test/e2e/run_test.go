@@ -86,6 +86,16 @@ func TestConn3xRunTask(t *testing.T) {
       content = "ran\n"
     }
   }
+  step "cron" {
+    crontab {
+      user = "root"
+      job {
+        name     = "greet"
+        schedule = "@daily"
+        command  = "echo ${param.greeting}"
+      }
+    }
+  }
 }
 `
 	for name, body := range map[string]string{"hosts.ini": inv, "motd.task.hcl": task} {
@@ -97,6 +107,9 @@ func TestConn3xRunTask(t *testing.T) {
 		return w.conn3x(append([]string{"run", "-i", "hosts.ini", "-private-key-file", web1.keyFile, "-known-hosts-file", knownFile, "-task", "motd.task.hcl"}, args...)...)
 	}
 
+	for _, h := range []*host{web1, db1} {
+		h.exec("", "sh", "-c", "dnf install -y -q cronie >/dev/null")
+	}
 	out, code := run("all", "-a", "greeting=hello")
 	if code != 0 || !strings.Contains(out, "web1 | changed") || !strings.Contains(out, "db1 | changed") || !strings.Contains(out, "  write: changed") {
 		t.Errorf("the task on all (exit %d):\n%s", code, out)
@@ -106,6 +119,9 @@ func TestConn3xRunTask(t *testing.T) {
 	}
 	if got := db1.exec("", "cat", "/tmp/motd"); got != "hello from db1, data\n" {
 		t.Errorf("db1 /tmp/motd = %q", got)
+	}
+	if got := web1.exec("", "crontab", "-l", "-u", "root"); !strings.Contains(got, "@daily echo hello") {
+		t.Errorf("a nested job block should reach the crontab:\n%s", got)
 	}
 
 	db1.exec("", "rm", "-f", "/tmp/after")

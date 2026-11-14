@@ -34,11 +34,21 @@ func TestLoadTask(t *testing.T) {
       state = "started"
     }
   }
+  step "cron" {
+    crontab {
+      user = "root"
+      job {
+        name     = "backup"
+        schedule = "@daily"
+        command  = "backup ${param.version}"
+      }
+    }
+  }
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.name != "deploy" || len(task.steps) != 2 || task.steps[0].module != "package" || task.steps[1].typ != "conn3x_service" {
+	if task.name != "deploy" || len(task.steps) != 3 || task.steps[0].module != "package" || task.steps[1].typ != "conn3x_service" {
 		t.Fatalf("task = %+v", task)
 	}
 	params, err := task.paramValues(map[string]string{"version": "1.2"})
@@ -56,6 +66,24 @@ func TestLoadTask(t *testing.T) {
 	args, err = task.steps[1].args(context.Background(), params, host)
 	if err != nil || args["name"].AsString() != "WEB1" {
 		t.Errorf("svc args = %v, %v", args, err)
+	}
+	args, err = task.steps[2].args(context.Background(), params, host)
+	if err != nil || args["job"].LengthInt() != 1 || args["job"].Index(cty.NumberIntVal(0)).GetAttr("command").AsString() != "backup 1.2" {
+		t.Errorf("cron args = %v, %v", args, err)
+	}
+	bad, err := loadTask(write("task \"a\" {\n  step \"x\" {\n    file {\n      path = \"/x\"\n      id   = \"y\"\n    }\n  }\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bad.steps[0].args(context.Background(), params, host); err == nil || !strings.Contains(err.Error(), `no argument "id"`) {
+		t.Errorf("a computed argument: %v", err)
+	}
+	bad, err = loadTask(write("task \"a\" {\n  step \"x\" {\n    file {\n      path = \"/x\"\n      ssh {\n        host = \"h\"\n      }\n    }\n  }\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bad.steps[0].args(context.Background(), params, host); err == nil || !strings.Contains(err.Error(), "ssh") {
+		t.Errorf("an ssh block in a step: %v", err)
 	}
 	if _, err := task.paramValues(nil); err == nil || !strings.Contains(err.Error(), "needs param version") {
 		t.Errorf("missing param: %v", err)
