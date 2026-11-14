@@ -16,7 +16,6 @@ Let the `backup` user read a directory:
 
 ```hcl
 step "backup_reads" {
-  depends_on = [conn3x_package.files__acl_tools]
 
   acl {
     path        = "/srv/data"
