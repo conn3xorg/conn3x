@@ -44,6 +44,17 @@ type Result struct {
 // variable vars doesn't have is an error, since a typo would otherwise
 // quietly skip it.
 func Load(dir string, vars map[string][]string) (Result, error) {
+	return load(dir, vars, nil)
+}
+
+// LoadDecrypting is Load for an ephemeral reader: a SOPS layer, which Load
+// refuses, is decrypted with decrypt, and its values, strings with nested
+// keys joined by dots, take their place in the hierarchy like any other.
+func LoadDecrypting(dir string, vars map[string][]string, decrypt func(path string) (map[string]string, error)) (Result, error) {
+	return load(dir, vars, decrypt)
+}
+
+func load(dir string, vars map[string][]string, decrypt func(string) (map[string]string, error)) (Result, error) {
 	b, err := os.ReadFile(filepath.Join(dir, HierarchyFile))
 	if err != nil {
 		return Result{}, fmt.Errorf("reading %s: %w; it lists the layers, such as hosts/{host}.yaml and common.yaml", HierarchyFile, err)
@@ -71,7 +82,7 @@ func Load(dir string, vars map[string][]string) (Result, error) {
 			if !filepath.IsLocal(rel) {
 				return Result{}, fmt.Errorf("layer %q leaves the data directory", pattern)
 			}
-			values, err := readLayer(filepath.Join(dir, rel))
+			values, err := readLayer(filepath.Join(dir, rel), decrypt)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
@@ -108,7 +119,7 @@ func expand(pattern string, vars map[string][]string) ([]string, error) {
 }
 
 // readLayer reads one YAML file of top-level keys.
-func readLayer(path string) (map[string]cty.Value, error) {
+func readLayer(path string, decrypt func(string) (map[string]string, error)) (map[string]cty.Value, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -129,7 +140,17 @@ func readLayer(path string) (map[string]cty.Value, error) {
 	}
 	values := v.AsValueMap()
 	if _, ok := values["sops"]; ok {
-		return nil, errors.New("is encrypted with SOPS; read it with ephemeral \"conn3x_secrets\" instead, so its values stay out of state")
+		if decrypt == nil {
+			return nil, errors.New("is encrypted with SOPS; read the hierarchy with ephemeral \"conn3x_hostdata\" instead, so its values stay out of state")
+		}
+		plain, err := decrypt(path)
+		if err != nil {
+			return nil, err
+		}
+		values = make(map[string]cty.Value, len(plain))
+		for k, s := range plain {
+			values[k] = cty.StringVal(s)
+		}
 	}
 	return values, nil
 }
