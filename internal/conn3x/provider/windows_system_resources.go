@@ -476,7 +476,7 @@ const defaultUpdateTimeout = 2 * time.Hour
 func winUpdateSchema() providers.Schema {
 	list := cty.List(cty.String)
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. The Windows updates a host should have installed, such as this month's security updates. It never reboots: reboot_required says whether Windows wants one, and windows_reboot does it.",
+		Description: "The Windows updates a host should have installed, such as this month's security updates. It never reboots: reboot_required says whether Windows wants one, and windows_reboot does it.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":              {Type: cty.String, Computed: true},
 			"revision":        revisionAttr(),
