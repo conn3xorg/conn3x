@@ -1,5 +1,7 @@
 param($A)
-if ($A.remove) {
+# Not $A.remove: when the key is missing, that's the hashtable's own Remove
+# method, which is truthy.
+if ($A.drop) {
   if (Get-SmbShare -Name $A.name -ErrorAction SilentlyContinue) { Remove-SmbShare -Name $A.name -Force -ErrorAction Stop }
   return
 }

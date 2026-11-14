@@ -217,6 +217,6 @@ func ApplyShare(ctx context.Context, r ps.Runner, s Share) error {
 
 // ApplyShareRemove removes the share and leaves its folder.
 func ApplyShareRemove(ctx context.Context, r ps.Runner, name string) error {
-	_, err := ps.Apply(ctx, r, script("apply_share.ps1"), map[string]any{"name": name, "remove": true}, time.Minute)
+	_, err := ps.Apply(ctx, r, script("apply_share.ps1"), map[string]any{"name": name, "drop": true}, time.Minute)
 	return err
 }
