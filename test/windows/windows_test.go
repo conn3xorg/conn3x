@@ -1622,3 +1622,62 @@ func TestShare(t *testing.T) {
 		t.Error("remove took the folder")
 	}
 }
+
+// windows_certificate imports a .cer and a password-protected .pfx made on
+// the host, finds them by thumbprint, sees a renewed file as drift, and
+// removes them.
+func TestCertificate(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	dir := `C:\Conn3xCerts` + strconv.FormatInt(time.Now().UnixNano(), 36)
+	pw := `pfx 'pass' "with" $env:WINDIR`
+	made := run(t, c, `param($A)
+$null = [IO.Directory]::CreateDirectory($A.d)
+$one = New-SelfSignedCertificate -Subject 'CN=conn3x-test-one' -CertStoreLocation Cert:\LocalMachine\My
+$two = New-SelfSignedCertificate -Subject 'CN=conn3x-test-two' -CertStoreLocation Cert:\LocalMachine\My
+$null = Export-Certificate -Cert $one -FilePath "$($A.d)\one.cer"
+$sec = ConvertTo-SecureString -String $A.pw -AsPlainText -Force
+$null = Export-PfxCertificate -Cert $two -FilePath "$($A.d)\two.pfx" -Password $sec
+Remove-Item -LiteralPath "Cert:\LocalMachine\My\$($one.Thumbprint)", "Cert:\LocalMachine\My\$($two.Thumbprint)"
+"$($one.Thumbprint) $($two.Thumbprint)"`, map[string]any{"d": dir, "pw": pw})
+	thumbs := strings.Fields(made.Text)
+	if len(thumbs) != 2 {
+		t.Fatalf("setup: %q", made.Text)
+	}
+	t.Cleanup(func() {
+		_, _ = ps.User(context.Background(), c, `param($A) foreach ($t in $A.t) { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$t", "Cert:\LocalMachine\My\$t" -ErrorAction SilentlyContinue }; Remove-Item -LiteralPath $A.d -Recurse -Force`, map[string]any{"d": dir, "t": thumbs}, time.Minute)
+	})
+
+	cer := windows.Certificate{Path: dir + `\one.cer`, Location: "LocalMachine", Store: "TrustedPeople"}
+	pfx := windows.Certificate{Path: dir + `\two.pfx`, Location: "LocalMachine", Store: "My", Password: pw}
+	for i, cert := range []windows.Certificate{cer, pfx} {
+		before, err := windows.ReadCertificate(ctx, c, cert, thumbs[i])
+		if err != nil || before.InStore {
+			t.Fatalf("%s before: %+v, %v", cert.Path, before, err)
+		}
+		thumb, sum, err := windows.ApplyCertificate(ctx, c, cert, "")
+		if err != nil || !strings.EqualFold(thumb, thumbs[i]) || sum == "" {
+			t.Fatalf("%s import: %q %q %v", cert.Path, thumb, sum, err)
+		}
+		a, err := windows.ReadCertificate(ctx, c, cert, thumb)
+		if err != nil || !cert.Matches(a, sum) {
+			t.Errorf("%s after import: %+v, %v", cert.Path, a, err)
+		}
+		// Another file at the path is drift.
+		if cert.Matches(windows.ActualCertificate{InStore: true, HasKey: true, FileExists: true, FileSHA256: "different"}, sum) {
+			t.Errorf("%s: a renewed file matched", cert.Path)
+		}
+		cert.Absent = true
+		if _, _, err := windows.ApplyCertificate(ctx, c, cert, thumb); err != nil {
+			t.Fatal(err)
+		}
+		if a, _ := windows.ReadCertificate(ctx, c, cert, thumb); a.InStore {
+			t.Errorf("%s: still in the store after removal", cert.Path)
+		}
+	}
+	// A wrong password fails without echoing it.
+	pfx.Password = "wrong-" + pw
+	if _, _, err := windows.ApplyCertificate(ctx, c, pfx, ""); err == nil || strings.Contains(err.Error(), "wrong-") {
+		t.Errorf("wrong password: %v", err)
+	}
+}
