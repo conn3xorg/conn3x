@@ -242,7 +242,7 @@ func TestPending(t *testing.T) {
 }
 
 type closingIOS struct {
-	fakeIOS
+	*fakeIOS
 	closed *int
 }
 
@@ -253,7 +253,7 @@ func TestPerCommand(t *testing.T) {
 	dials, closed := 0, 0
 	d := PerCommand(func(context.Context) (Device, error) {
 		dials++
-		return closingIOS{fakeIOS{show: map[string]string{"show running-config": showRun}}, &closed}, nil
+		return closingIOS{&fakeIOS{show: map[string]string{"show running-config": showRun}}, &closed}, nil
 	})
 	if _, err := RunningConfig(context.Background(), d); err != nil {
 		t.Fatal(err)
