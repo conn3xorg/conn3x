@@ -253,3 +253,69 @@ func TestStaticRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestForShell(t *testing.T) {
+	for in, want := range map[string]string{
+		`set system login user ops authentication encrypted-password "$6$salt$hash"`: `set system login user ops authentication encrypted-password '$6$salt$hash'`,
+		`set interfaces ethernet eth0 description "uplink to core"`:                 `set interfaces ethernet eth0 description 'uplink to core'`,
+		`set system host-name r1`:                                                   `set system host-name r1`,
+	} {
+		if got := forShell(in); got != want {
+			t.Errorf("forShell(%q) = %q", in, got)
+		}
+	}
+}
+
+const edKey = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+
+func TestUser(t *testing.T) {
+	name := "Alice Ops"
+	u := User{Name: "alice", FullName: &name, WantSecret: true, Secret: "$6$abc$def", SSHKeys: []string{"ssh-ed25519 " + edKey + " alice@laptop"}}
+	if err := u.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cmds := u.Commands("")
+	want := []string{
+		`set system login user alice full-name "Alice Ops"`,
+		`set system login user alice authentication encrypted-password "$6$abc$def"`,
+		"set system login user alice authentication public-keys alice@laptop key " + edKey,
+		"set system login user alice authentication public-keys alice@laptop type ssh-ed25519",
+	}
+	if !slices.Equal(cmds, want) {
+		t.Fatalf("commands %q", cmds)
+	}
+	// As show configuration commands prints it, normalized: in sync.
+	shown := Normalize("set system login user alice authentication encrypted-password '$6$abc$def'") + "\n" +
+		"set system login user alice authentication public-keys lab key '" + edKey + "'\n" +
+		"set system login user alice authentication public-keys lab type 'ssh-ed25519'\n" +
+		Normalize("set system login user alice full-name 'Alice Ops'") + "\n"
+	u.SecretIs = func(h string) bool { return h == "$6$abc$def" }
+	norm := ""
+	for _, l := range strings.Split(strings.TrimSpace(shown), "\n") {
+		norm += Normalize(l) + "\n"
+	}
+	if got := u.Commands(norm); got != nil {
+		t.Errorf("in sync, but %q", got)
+	}
+	// A key not listed goes, label and all; another password is replaced.
+	u.SSHKeys, u.SecretIs = []string{}, func(string) bool { return false }
+	if got := u.Commands(norm); !slices.Equal(got, []string{
+		`set system login user alice authentication encrypted-password "$6$abc$def"`,
+		"delete system login user alice authentication public-keys lab",
+	}) {
+		t.Errorf("rotate: %q", got)
+	}
+	if u.Guard("alice") == nil || u.Guard("vyos") != nil {
+		t.Error("guard")
+	}
+	for _, bad := range []User{{Name: "root"}, {Name: "Alice"}, {Name: "a", SSHKeys: []string{"not a key"}}, {Name: "a", FullName: &[]string{`O'Hara`}[0]}} {
+		if bad.Validate() == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
+	// Keys without a usable comment get a label from their body.
+	noComment := User{Name: "bob", SSHKeys: []string{"ssh-ed25519 " + edKey}}
+	if got := noComment.Commands(""); !strings.Contains(got[0], "public-keys conn3x-") {
+		t.Errorf("label %q", got)
+	}
+}

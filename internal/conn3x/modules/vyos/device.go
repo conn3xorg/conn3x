@@ -117,7 +117,21 @@ func RunningConfig(ctx context.Context, d Device) (string, error) {
 
 // script runs lines as a vbash script, after the template and configure.
 func script(ctx context.Context, d Device, lines ...string) (string, error) {
-	return run(ctx, d, "vbash -s", []byte(template+"\nconfigure\n"+strings.Join(lines, "\n")+"\n"))
+	sent := make([]string, len(lines))
+	for i, l := range lines {
+		sent[i] = forShell(l)
+	}
+	return run(ctx, d, "vbash -s", []byte(template+"\nconfigure\n"+strings.Join(sent, "\n")+"\n"))
+}
+
+// doubleQuoted is a value Normalize double-quoted, with no quote inside.
+var doubleQuoted = regexp.MustCompile(`"([^"'\\]*)"`)
+
+// forShell single-quotes what Normalize double-quoted: vbash expands $ and
+// backquotes inside double quotes, so a hash such as "$6$..." would reach
+// VyOS as something else.
+func forShell(line string) string {
+	return doubleQuoted.ReplaceAllString(line, "'$1'")
 }
 
 // Pending reports whether a commit-confirm waits for its confirm: VyOS says

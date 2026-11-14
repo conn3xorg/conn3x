@@ -5,6 +5,8 @@ package provider
 
 import (
 	"context"
+	"crypto/hmac"
+	"errors"
 	"fmt"
 	"time"
 
@@ -262,3 +264,124 @@ func readVyOSDevice(ctx context.Context, req providers.ReadDataSourceRequest) pr
 
 // vyosCommitTypes are the resources circuits add for VyOS routers.
 var vyosCommitTypes = cliCommitTypes(vyosPlatform)
+
+func vyosUserFrom(v cty.Value) vyos.User {
+	u := vyos.User{Name: stringOr(v.GetAttr("name"), ""), FullName: optString(v.GetAttr("full_name"))}
+	if l := v.GetAttr("ssh_keys"); known(l) {
+		u.SSHKeys = append([]string{}, stringList(l)...)
+	}
+	// password_hmac is unknown while a new password is planned.
+	stored := v.GetAttr("password_hmac")
+	u.WantSecret = !stored.IsNull()
+	// Without the key that made password_hmac, a read can't tell which
+	// password the router holds, only that it has one.
+	if key, err := hmacKey(false); err == nil && known(stored) && checkHMACKey(stored.AsString(), key) == nil {
+		id := vyosUserID(v)
+		u.SecretIs = func(hash string) bool {
+			return hmac.Equal([]byte(eosSecretHMAC(key, id, hash)), []byte(stored.AsString()))
+		}
+	}
+	return u
+}
+
+func vyosUserID(v cty.Value) string {
+	return passwordID("vyos_user", stringOr(v.GetAttr("ssh").GetAttr("host"), ""), stringOr(v.GetAttr("name"), ""))
+}
+
+var vyosUserKind = cliKind{
+	p:        vyosPlatform,
+	name:     "user",
+	keys:     []string{"name"},
+	settings: []string{"full_name", "ssh_keys", "password_hmac"},
+	deletes:  true,
+	config:   func(v cty.Value) cliWant { return vyosUserFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return vyosUserFrom(v).RemoveCommands(running) },
+	guard: func(v cty.Value, _, _ string) error {
+		return vyosUserFrom(v).Guard(stringOr(v.GetAttr("ssh").GetAttr("user"), ""))
+	},
+	warn: func(_ cty.Value, config string) string { return vyosWarnReboot(config) },
+}
+
+func vyosUserSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: junosExperimental + "A local account on a VyOS router: its full name, password and SSH keys. Every VyOS account can configure the router. Conn3x won't delete the account it logs in as, or take all its keys away.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"name":          {Type: cty.String, Required: true, Description: "The account name: lower-case letters, digits, _ . and -. Not root."},
+			"full_name":     {Type: cty.String, Optional: true, Description: "The account's full name or description. No quotes. Unset leaves it alone."},
+			"password_wo":   {Type: cty.String, Optional: true, Sensitive: true, WriteOnly: true, Description: "Write-only: the password, never kept in state. Conn3x hashes it here and sends the router the salted SHA-512 crypt hash, as encrypted-password, so the password itself never reaches the CLI; a new value plans a change through password_hmac. Unset leaves the account's password alone."},
+			"password_hmac": {Type: cty.String, Computed: true, Description: "An HMAC of the hash the router should hold for password_wo, keyed outside state. A new password plans a change, and a refresh finds an account with another one out of sync."},
+			"ssh_keys":      {Type: cty.List(cty.String), Optional: true, Description: "The account's public keys, one line each, such as \"ssh-ed25519 AAAA... alice@laptop\". Each is labelled on the router by its comment, or by a hash of the key without one. Keys not listed are deleted; [] deletes them all, and unset leaves them alone."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) deletes the account when the step goes, as with every step that grants access; \"forget\" leaves it."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the account matched at the last refresh."},
+			"circuit":       eosCircuitAttr(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateVyOSUser(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := vyosUserFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func planVyOSUser(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planPasswordAs(deleteByDefault(req), "vyos_user", vyosUserKind.settings, planSynced, eosPasswordHMAC)
+}
+
+// applyVyOSUser hashes the step's password, which only the config holds,
+// as applyJunosUser does: VyOS takes the salted SHA-512 crypt hash as
+// encrypted-password.
+func applyVyOSUser(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	if req.PlannedState.IsNull() && !req.PriorState.IsNull() && req.PriorState.GetAttr("on_remove").AsString() == onRemoveDelete {
+		if name := req.PriorState.GetAttr("name").AsString(); name == stringOr(req.PriorState.GetAttr("ssh").GetAttr("user"), "") {
+			var resp providers.ApplyResourceChangeResponse
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("vyos_user: Conn3x logs in as %s, so it won't delete that account; set on_remove = \"forget\" to drop the step", name))
+			return resp
+		}
+	}
+	k := vyosUserKind
+	var mac string
+	if !req.PlannedState.IsNull() && vyosUserFrom(req.PlannedState).WantSecret {
+		var resp providers.ApplyResourceChangeResponse
+		password := ""
+		if !req.Config.IsNull() {
+			password = stringOr(req.Config.GetAttr("password_wo"), "")
+		}
+		if password == "" {
+			resp.Diagnostics = resp.Diagnostics.Append(errors.New("vyos_user: password_wo didn't reach the apply; it's write-only, so set it in the step's config"))
+			return resp
+		}
+		key, err := hmacKey(true)
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("password_wo", err.Error()))
+			return resp
+		}
+		id := vyosUserID(req.PlannedState)
+		hash := eosSecret(key, id, password)
+		mac = eosSecretHMAC(key, id, hash)
+		k.config = func(v cty.Value) cliWant {
+			u := vyosUserFrom(v)
+			u.Secret, u.SecretIs = hash, func(h string) bool { return h == hash }
+			return u
+		}
+	}
+	resp := k.apply(ctx, req)
+	if !resp.NewState.IsNull() {
+		vals := resp.NewState.AsValueMap()
+		vals["password_wo"] = cty.NullVal(cty.String)
+		if mac != "" {
+			vals["password_hmac"] = cty.StringVal(mac)
+		}
+		resp.NewState = cty.ObjectVal(vals)
+	}
+	return resp
+}
