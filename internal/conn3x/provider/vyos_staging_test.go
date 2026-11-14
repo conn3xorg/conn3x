@@ -104,6 +104,7 @@ func TestVyOSStepsShareOneCommit(t *testing.T) {
 	step(vyosHostnameKind, "conn3x_vyos_hostname", map[string]cty.Value{"name": cty.StringVal("r2")})
 	step(vyosInterfaceKind, "conn3x_vyos_interface", map[string]cty.Value{"name": cty.StringVal("eth1"), "mtu": cty.NumberIntVal(9000)})
 	step(vyosConfigKind, "conn3x_vyos_config", map[string]cty.Value{"lines": cty.ListVal([]cty.Value{cty.StringVal("set service ntp server 10.0.0.1")})})
+	step(vyosStaticRouteKind, "conn3x_vyos_static_route", map[string]cty.Value{"prefix": cty.StringVal("10.20.0.0/16"), "next_hops": cty.ListVal([]cty.Value{cty.StringVal("192.0.2.1")})})
 	if f.commits != 0 {
 		t.Fatalf("%d commits before the circuit's commit", f.commits)
 	}
@@ -133,7 +134,7 @@ func TestVyOSStepsShareOneCommit(t *testing.T) {
 	if f.commits != 1 || f.confirms != 1 || f.saves != 1 {
 		t.Errorf("%d commits, %d confirms, %d saves; want 1 each", f.commits, f.confirms, f.saves)
 	}
-	for _, want := range []string{"set system host-name r2", "set interfaces ethernet eth1 mtu 9000", "set service ntp server 10.0.0.1"} {
+	for _, want := range []string{"set system host-name r2", "set interfaces ethernet eth1 mtu 9000", "set service ntp server 10.0.0.1", "set protocols static route 10.20.0.0/16 next-hop 192.0.2.1"} {
 		if !slices.Contains(f.running, want) {
 			t.Errorf("running is missing %q: %q", want, f.running)
 		}

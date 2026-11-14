@@ -202,3 +202,54 @@ func TestFactsAndReboot(t *testing.T) {
 		t.Error("the default, reboot, wasn't noticed")
 	}
 }
+
+func TestStaticRoute(t *testing.T) {
+	r := StaticRoute{Prefix: "10.20.0.0/16", NextHops: []string{"192.0.2.1", "192.0.2.2"}, Distance: 10}
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	config := "set protocols static route 10.20.0.0/16 next-hop 192.0.2.1 distance '10'\nset protocols static route 10.20.0.0/16 next-hop 192.0.2.9\nset protocols static route 10.200.0.0/16 next-hop 192.0.2.1\n"
+	norm := ""
+	for _, l := range strings.Split(strings.TrimSpace(config), "\n") {
+		norm += Normalize(l) + "\n"
+	}
+	want := []string{
+		"delete protocols static route 10.20.0.0/16 next-hop 192.0.2.9",
+		"set protocols static route 10.20.0.0/16 next-hop 192.0.2.2 distance 10",
+	}
+	if got := r.Commands(norm); !slices.Equal(got, want) {
+		t.Errorf("commands %q, want %q", got, want)
+	}
+	// What the lab router showed: deleting a hop's distance leaves the hop,
+	// so a hop that's not wanted goes whole.
+	one := StaticRoute{Prefix: "10.20.0.0/16", NextHops: []string{"192.0.2.1"}}
+	both := "set protocols static route 10.20.0.0/16 next-hop 192.0.2.1 distance 10\nset protocols static route 10.20.0.0/16 next-hop 192.0.2.2 distance 10\nset protocols static route 10.20.0.0/16 blackhole\n"
+	if got := one.Commands(both); !slices.Equal(got, []string{
+		"delete protocols static route 10.20.0.0/16 blackhole",
+		"delete protocols static route 10.20.0.0/16 next-hop 192.0.2.2",
+		"delete protocols static route 10.20.0.0/16 next-hop 192.0.2.1 distance",
+	}) {
+		t.Errorf("one hop, no distance: %q", got)
+	}
+	if got := one.Commands("set protocols static route 10.20.0.0/16 next-hop 192.0.2.1\n"); got != nil {
+		t.Errorf("in sync, but %q", got)
+	}
+	if got := r.RemoveCommands(norm); !slices.Equal(got, []string{"delete protocols static route 10.20.0.0/16"}) {
+		t.Errorf("remove %q", got)
+	}
+	if v6 := (StaticRoute{Prefix: "2001:db8:20::/48", NextHops: []string{"2001:db8::1"}}); v6.Validate() != nil || !strings.HasPrefix(v6.Commands("")[0], "set protocols static route6 2001:db8:20::/48 next-hop 2001:db8::1") {
+		t.Errorf("v6: %v %q", v6.Validate(), v6.Commands(""))
+	}
+	for _, bad := range []StaticRoute{
+		{Prefix: "10.20.0.1/16", NextHops: []string{"192.0.2.1"}},
+		{Prefix: "10.20.0.0/16"},
+		{Prefix: "10.20.0.0/16", NextHops: []string{"2001:db8::1"}},
+		{Prefix: "10.20.0.0/16", NextHops: []string{"gw"}},
+		{Prefix: "10.20.0.0/16", NextHops: []string{"192.0.2.1"}, Distance: 256},
+		{Prefix: "10.20.0.0", NextHops: []string{"192.0.2.1"}},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
+}
