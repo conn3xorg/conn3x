@@ -1551,7 +1551,10 @@ func uriRetry(t map[string]*yaml.Node) *uriWait {
 	reg, until := scalar(t["register"]), strings.TrimSpace(scalar(t["until"]))
 	retries, err1 := strconv.Atoi(scalar(t["retries"]))
 	delay, err2 := strconv.Atoi(scalar(t["delay"]))
-	if reg == "" || err1 != nil || err2 != nil || retries < 1 || delay < 0 {
+	// With delay 0, Ansible retries back to back, and how long that takes
+	// depends on each request, so retries * delay says nothing: a "0s"
+	// wait_for would ask once. It stays for review.
+	if reg == "" || err1 != nil || err2 != nil || retries < 1 || delay < 1 {
 		return nil
 	}
 	w := &uriWait{seconds: retries * delay}

@@ -30,10 +30,11 @@ func TestConvertURIWait(t *testing.T) {
 		}
 	}
 	for play, reason := range map[string]string{
-		wait("other.status == 200", ""):                          "uses",
-		wait("health.json.ready", ""):                            "uses",
-		wait("health.status == 200", "        method: POST\n"):   "POST",
-		"- hosts: all\n  tasks:\n    - uri: { url: http://x }\n": "only a uri task that retries",
+		wait("other.status == 200", ""):                                              "uses",
+		wait("health.json.ready", ""):                                                "uses",
+		wait("health.status == 200", "        method: POST\n"):                       "POST",
+		"- hosts: all\n  tasks:\n    - uri: { url: http://x }\n":                     "only a uri task that retries",
+		strings.Replace(wait("health.status == 200", ""), "delay: 2", "delay: 0", 1): "uses delay",
 	} {
 		res := convertString(t, play)
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
