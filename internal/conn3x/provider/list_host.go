@@ -111,18 +111,24 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
   [ -f "$t" ] && [ ! -L "$t" ] || continue
   n=$(basename "$t" .timer)
   printf '\036%s\037' "$n"; cat "$t"; printf '\037'; cat "/etc/systemd/system/$n.service" 2>/dev/null
+  printf '\037'
+  for d in /etc/systemd/system /run/systemd/system; do
+    for u in "$n.timer" "$n.service"; do
+      ls "$d/$u.d/"*.conf >/dev/null 2>&1 && printf '%s ' "$d/$u.d"
+    done
+  done
 done; true`, nil)
 		if err != nil {
 			return nil, nil, err
 		}
 		values = map[string]string{}
 		for _, rec := range strings.Split(string(res.Stdout), "\x1e")[1:] {
-			parts := strings.SplitN(rec, "\x1f", 3)
-			if len(parts) != 3 {
+			parts := strings.SplitN(rec, "\x1f", 4)
+			if len(parts) != 4 {
 				continue
 			}
 			names = append(names, parts[0])
-			values[parts[0]] = timerJSON(parts[0], parts[2], parts[1])
+			values[parts[0]] = timerJSON(parts[0], parts[2], parts[1], strings.Fields(parts[3]))
 		}
 	case "users", "mounts":
 		cmd := "getent passwd"
@@ -176,8 +182,13 @@ func fullSSH(conn cty.Value) cty.Value {
 
 // timerJSON is a timer's step arguments, or why it can't be adopted, as
 // ListKind.Full describes.
-func timerJSON(name, service, timer string) string {
+// dropIns are the timer's and its service's drop-in directories: systemd
+// applies them over the units, so what the units say isn't what runs.
+func timerJSON(name, service, timer string, dropIns []string) string {
 	t, why := schedule.ParseTimer(name, service, timer)
+	if why == "" && len(dropIns) > 0 {
+		why = "drop-ins in " + strings.Join(dropIns, " and ") + " change what the units say, and a timer step reads only the units; fold them in first"
+	}
 	if why != "" {
 		b, _ := json.Marshal(map[string]string{"skip": why})
 		return string(b)

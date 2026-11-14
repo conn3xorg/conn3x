@@ -143,8 +143,13 @@ func TestGenerateSteps(t *testing.T) {
 	h.exec("", "sh", "-c", `printf '[Unit]\nDescription=Clean tmp\n\n[Service]\nExecStart=/usr/bin/find /tmp -mtime +7 -delete\n' > /etc/systemd/system/cleanup.service
 printf '[Timer]\nOnCalendar=daily\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' > /etc/systemd/system/cleanup.timer
 printf '[Service]\nExecStart=/bin/true\n' > /etc/systemd/system/jitter.service
-printf '[Timer]\nOnCalendar=hourly\nRandomizedDelaySec=5m\n' > /etc/systemd/system/jitter.timer`)
-	if list, code := gen("timers"); code != 0 || !strings.Contains(list, "cleanup = daily: /usr/bin/find /tmp -mtime +7 -delete") || !strings.Contains(list, "jitter  (can't adopt: [Timer] RandomizedDelaySec") {
+printf '[Timer]\nOnCalendar=hourly\nRandomizedDelaySec=5m\n' > /etc/systemd/system/jitter.timer
+printf '[Service]\nType=oneshot\nExecStart=/bin/true\n' > /etc/systemd/system/nightly.service
+printf '[Timer]\nOnCalendar=daily\n' > /etc/systemd/system/nightly.timer
+mkdir -p /etc/systemd/system/nightly.timer.d
+printf '[Timer]\nOnCalendar=\nOnCalendar=hourly\n' > /etc/systemd/system/nightly.timer.d/override.conf`)
+	if list, code := gen("timers"); code != 0 || !strings.Contains(list, "cleanup = daily: /usr/bin/find /tmp -mtime +7 -delete") || !strings.Contains(list, "jitter  (can't adopt: [Timer] RandomizedDelaySec") ||
+		!strings.Contains(list, "nightly  (can't adopt: drop-ins in /etc/systemd/system/nightly.timer.d") {
 		t.Fatalf("timers list (exit %d):\n%s", code, list)
 	}
 	timer, code := gen("-match", "cleanup", "timers")
