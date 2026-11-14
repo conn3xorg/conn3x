@@ -188,7 +188,7 @@ func applyWinADOU(ctx context.Context, req providers.ApplyResourceChangeRequest)
 
 func winADGroupSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A group in Active Directory, and who is in it, run on a domain controller. Settings left unset are left as they are.",
+		Description: "A group in Active Directory, and who is in it, run on a domain controller. Settings left unset are left as they are.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":              {Type: cty.String, Computed: true},
 			"revision":        revisionAttr(),
