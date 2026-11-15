@@ -465,6 +465,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"uri":                uriModule,
 	"acl":                aclModule,
 	"selinux":            selinuxModule,
+	"alternatives":       alternativesModule,
 	"apt_repository":     aptRepositoryModule,
 	"yum_repository":     yumRepositoryModule,
 	"locale_gen":         localeGenModule,
@@ -1384,6 +1385,20 @@ func selinuxModule(in *input) ([]step, string) {
 		notes = append(notes, "policy dropped: selinux_mode leaves SELINUXTYPE as it is.")
 	}
 	return one("selinux_mode", []attr{s("mode", st)}, notes...)
+}
+
+// alternativesModule selects a path; the other states and slave links have
+// no step yet.
+func alternativesModule(in *input) ([]step, string) {
+	in.state("selected", "selected")
+	if in.has("subcommands") {
+		return nil, "sets subcommands, and the alternatives step has no slave links"
+	}
+	attrs := in.optional([]attr{s("name", in.str("name")), s("path", in.str("path"))}, "link", "link")
+	if in.has("priority") {
+		attrs = append(attrs, in.number("priority"))
+	}
+	return one("alternatives", attrs)
 }
 
 func sudoersModule(in *input) ([]step, string) {
