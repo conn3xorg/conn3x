@@ -268,6 +268,27 @@ var pool = struct {
 	conns map[string]*pooledConn
 }{conns: map[string]*pooledConn{}}
 
+// ClosePool closes every pooled connection, for when Conn3x is about to
+// exit. A connection through proxy_command then takes the proxy's process
+// tree with it, rather than leaving it to notice its stdin closed. Not on
+// the provider's Close: apply closes the provider between its plan and
+// apply walks, and the connections are worth keeping across that.
+func ClosePool() {
+	pool.Lock()
+	open := pool.conns
+	pool.conns = map[string]*pooledConn{}
+	pool.Unlock()
+	for _, e := range open {
+		select {
+		case <-e.ready:
+			if e.err == nil && e.conn != nil && e.conn.client != nil {
+				_ = e.conn.client.Close()
+			}
+		default: // still dialing, so nothing to close yet
+		}
+	}
+}
+
 // defaultAgent is whether hosts run commands through the agent when
 // neither the agent attribute nor CONN3X_AGENT says.
 const defaultAgent = false
