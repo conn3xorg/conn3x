@@ -1,0 +1,30 @@
+---
+- name: Check for the marker.
+  command: test -e /etc/probe-marker
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  register: marker
+
+- name: Read the kernel name.
+  ansible.builtin.command: uname -s
+  changed_when: false
+  register: kernel
+
+- name: Say the marker was missing.
+  copy:
+    dest: /etc/probe-missing
+    content: "missing\n"
+  when: marker.rc != 0
+
+- name: Say the marker was there.
+  copy:
+    dest: /etc/probe-found
+    content: "found\n"
+  when: marker.rc == 0
+
+- name: Linux only.
+  copy:
+    dest: /etc/probe-linux
+    content: "linux\n"
+  when: kernel.stdout == 'Linux'

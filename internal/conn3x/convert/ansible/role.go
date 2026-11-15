@@ -59,6 +59,10 @@ type role struct {
 	maps      map[string][]map[string]string
 	mapFields map[string]map[string]*string
 	mapKeys   map[string][]string
+	// probes are the register names of probes converted to data sources,
+	// and probeBlocks those blocks, written after the circuit.
+	probes      map[string]*probe
+	probeBlocks []string
 }
 
 type roleDefault struct {
@@ -94,7 +98,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -196,6 +200,9 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	c.steps(cb, at(seq(tasks), c.file), seq(handlers), handlersFile, false, vars)
 	if r.familyUsed {
 		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
+	}
+	for _, b := range r.probeBlocks {
+		body.AppendUnstructuredTokens(rawTokens(b))
 	}
 
 	for _, k := range order {
@@ -777,13 +784,17 @@ variable "ssh_become" {
 // itself, through the bool filter, or either negated, as
 // apache_create_vhosts | bool or not (ntp_enabled | bool). It also takes
 // a text default compared to text, as docker_install_method == 'package'.
-// A default can't change during a run, so either reads the same anywhere.
-// "" for any other when.
+// A default can't change during a run, so either reads the same anywhere,
+// and neither can a probe's result, read once at plan time, so a when on
+// one converts here too. "" for any other when.
 func (r *role) boolWhen(n *yaml.Node) string {
 	if n.Kind != yaml.ScalarNode {
 		return ""
 	}
 	cond := strings.Join(strings.Fields(n.Value), " ")
+	if p := r.probeWhen(cond); p != "" {
+		return p
+	}
 	if m := textWhenRe.FindStringSubmatch(cond); m != nil {
 		if d, ok := r.defaults[m[1]]; !ok || d.boolean || d.number {
 			return ""

@@ -1571,24 +1571,35 @@ func containerModule(engine string, keys ...string) func(*input) ([]step, string
 	}
 }
 
-func commandModule(in *input) ([]step, string) {
+// commandLine is a command or shell task's command as /bin/sh runs it, in
+// its chdir, or why the converter can't read it as one.
+func commandLine(in *input) (string, string) {
 	cmd := in.str("cmd")
 	if n, ok := in.args["_raw"]; ok {
 		for _, f := range strings.Fields(n.Value) {
 			if k, _, ok := strings.Cut(f, "="); ok && inlineArgs[k] {
-				return nil, "sets " + k + " inside the command line; move it under args so the converter can read it"
+				return "", "sets " + k + " inside the command line; move it under args so the converter can read it"
 			}
 		}
 		cmd = in.render("command", n.Value)
 	}
 	if cmd == "" {
-		return nil, "has no command"
+		return "", "has no command"
 	}
 	if in.mod == "command" && shellSyntax.MatchString(cmd) {
-		return nil, "uses characters a shell reads, such as ; | $ * or >, which Ansible's command module hands to the program as plain text and a command step would run through /bin/sh; write it as you mean the shell to read it, in a command step"
+		return "", "uses characters a shell reads, such as ; | $ * or >, which Ansible's command module hands to the program as plain text and a command step would run through /bin/sh; write it as you mean the shell to read it, in a command step"
 	}
 	if in.has("chdir") {
 		cmd = "cd " + shellQuote(in.str("chdir")) + " && " + cmd
+	}
+	in.ignore("executable")
+	return cmd, ""
+}
+
+func commandModule(in *input) ([]step, string) {
+	cmd, why := commandLine(in)
+	if why != "" {
+		return nil, why
 	}
 	attrs := []attr{s("command", cmd)}
 	attrs = in.optional(attrs, "creates", "creates")
@@ -1598,7 +1609,6 @@ func commandModule(in *input) ([]step, string) {
 			return nil, k + " is a glob pattern; Conn3x tests the path as written"
 		}
 	}
-	in.ignore("executable")
 	if !in.has("creates") && !in.has("removes") {
 		return nil, "runs on every play; give it a creates, removes or unless guard, or triggers, so Conn3x knows when it's done"
 	}

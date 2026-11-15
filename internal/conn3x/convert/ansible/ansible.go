@@ -124,6 +124,9 @@ type converter struct {
 	// factsAfter marks the current play's tasks that a later task or handler
 	// reads facts after.
 	factsAfter map[*yaml.Node]bool
+	// probeWhy holds the role's probes, by task: "" for one converted to a
+	// data source, else why it stays.
+	probeWhy map[*yaml.Node]string
 	// block is the task being converted's place in a block with rescue or
 	// always, if it has one.
 	block taskAt
@@ -411,6 +414,7 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	}
 	used := map[string]int{}
 	c.jsonPairs(tasks)
+	c.findProbes(tasks, vars)
 	for _, t := range tasks {
 		c.file = t.file
 		if t.reason != "" {
@@ -744,6 +748,17 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	if c.role != nil && node == c.role.familyInclude {
 		body.AppendNewline()
 		comment(body, fmt.Sprintf("Task %q (%s line %d) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.", name, c.file, node.Line))
+		c.res.Converted++
+		return
+	}
+	if why, ok := c.probeWhy[node]; ok {
+		if why != "" {
+			c.issue(body, name, node, why)
+			return
+		}
+		reg := scalar(t["register"])
+		body.AppendNewline()
+		comment(body, fmt.Sprintf("Task %q (%s line %d) probes each host: data.conn3x_command.%s, after the circuit, runs it at plan time, and the steps whose when read %s test its result.", name, c.file, node.Line, reg, reg))
 		c.res.Converted++
 		return
 	}
