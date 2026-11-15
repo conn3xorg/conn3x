@@ -19,10 +19,12 @@ circuit "mixed" {
   #   - name: Pick the OS tasks
   #     include_tasks: "{{ ansible_os_family }}.yml"
 
-  # TODO(convert): Task "Only on Debian" (tasks/main.yml line 4) sets when on import_tasks, which applies it to every task it imports; the converter can't translate that yet.
-  #   - name: Only on Debian
-  #     import_tasks: debian.yml
-  #     when: ansible_os_family == "Debian"
+  step "package" {
+    when = local.os_family[each.key] == "debian"
+    package {
+      name = "apt-transport-https"
+    }
+  }
 
   # TODO(convert): Task "Missing file" (tasks/main.yml line 8) imports nowhere.yml, which wasn't found beside tasks/main.yml.
   #   - name: Missing file
@@ -67,4 +69,36 @@ circuit "mixed" {
   #     copy:
   #       src: ../../etc/passwd
   #       dest: /tmp/passwd
+}
+
+# Each host's OS family, for the values the role loads per family. A host
+# object's os, such as "ubuntu", is used when given, as for a host this
+# plan creates; otherwise its facts are read.
+data "conn3x_host" "facts" {
+  for_each = var.hosts
+
+  ssh {
+    host             = try(each.value.address, each.value)
+    port             = try(each.value.port, var.ssh_port)
+    user             = try(each.value.user, var.ssh_user)
+    host_key         = try(each.value.host_key, null)
+    private_key_file = var.ssh_private_key_file
+    known_hosts_file = var.ssh_known_hosts_file
+    become           = var.ssh_become
+  }
+
+  lifecycle {
+    postcondition {
+      condition     = try(local.os_families[each.value.os], self.os_family) == self.os_family
+      error_message = "Host ${each.key} is ${self.os_family} family, not what its os says."
+    }
+  }
+}
+
+locals {
+  os_families = {
+    debian = "debian", ubuntu = "debian",
+    rhel   = "redhat", rocky = "redhat", almalinux = "redhat", fedora = "redhat",
+  }
+  os_family = { for name, h in var.hosts : name => try(local.os_families[h.os], data.conn3x_host.facts[name].os_family) }
 }

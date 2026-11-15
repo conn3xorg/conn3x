@@ -77,7 +77,6 @@ func TestConvertRoleRefuses(t *testing.T) {
 		"runs the roles common, geerlingguy.firewall first",
 		"checks the role's arguments",
 		"includes a file per family, and for Debian hosts it imports Debian.yml, which wasn't found",
-		"sets when on import_tasks",
 		"imports nowhere.yml, which wasn't found",
 		"which is already being imported",
 		"uses include_role",
@@ -95,7 +94,8 @@ func TestConvertRoleRefuses(t *testing.T) {
 			t.Errorf("no review item says %q: %+v", want, res.Review)
 		}
 	}
-	if res.Converted != 0 || len(res.Review) != 12 {
+	// The import behind a family when converts, as each task given it.
+	if res.Converted != 1 || len(res.Review) != 11 {
 		t.Errorf("converted %d, review %d", res.Converted, len(res.Review))
 	}
 }
@@ -519,5 +519,42 @@ func TestStaticIncludeTasks(t *testing.T) {
 	}
 	if len(res.Review) != 5 {
 		t.Errorf("review %d, want 5: %+v", len(res.Review), res.Review)
+	}
+}
+
+// An import's when goes on every task it imports, as Ansible does. An
+// include's goes on them only when it's a role's on-off switch, which no
+// step can change between the include and its tasks.
+func TestWhenOnImportsAndIncludes(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"defaults/main.yml":  "ban_enabled: true\nport: 22\n",
+		"tasks/fail2ban.yml": "- name: Fail2ban\n  package: {name: fail2ban}\n",
+		"tasks/main.yml": `- import_tasks: fail2ban.yml
+  when: ban_enabled | bool
+- include_tasks: fail2ban.yml
+  when: not ban_enabled
+- include_tasks: fail2ban.yml
+  when: port == 22
+- import_tasks: fail2ban.yml
+  when: port == 22
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{"when = var.ban_enabled", "when = !var.ban_enabled"} {
+		if !strings.Contains(main, want) {
+			t.Errorf("no %q:\n%s", want, main)
+		}
+	}
+	if res.Converted != 2 || len(res.Review) != 2 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	// The include's when isn't a switch, so it stays whole; the import's
+	// goes on its task, which then can't convert that when.
+	if !strings.Contains(res.Review[0].Reason, "include_tasks") || res.Review[1].File != "tasks/fail2ban.yml" || !strings.Contains(res.Review[1].Reason, "uses when") {
+		t.Errorf("review %+v", res.Review)
 	}
 }

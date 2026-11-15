@@ -82,6 +82,11 @@ func (c *converter) flattenIn(nodes []*yaml.Node, file string, stack []string, k
 		mod, args := moduleOf(t)
 		switch mod {
 		case "import_tasks":
+			// Ansible gives an import's when to every task it imports.
+			if w := mapping(n)["when"]; w != nil {
+				out = append(out, c.inlineWhen(n, args, file, stack, kind, group, w)...)
+				continue
+			}
 			sub, tasks, why := c.importFile(n, args, file, stack)
 			if why != "" {
 				out = append(out, taskAt{node: n, file: file, reason: why, kind: kind, group: group})
@@ -91,6 +96,13 @@ func (c *converter) flattenIn(nodes []*yaml.Node, file string, stack []string, k
 		case "include_tasks", "include":
 			if tasks, ok := c.familyInclude(n, args, file, stack); ok {
 				out = append(out, tasks...)
+				continue
+			}
+			// An include tests its when once, where an import tests it for
+			// every task; for a role's on-off switch, which no step can
+			// change, that's the same.
+			if w := mapping(n)["when"]; w != nil && staticInclude(withoutWhen(n), args) && c.switchesOnly(w) {
+				out = append(out, c.inlineWhen(n, args, file, stack, kind, group, w)...)
 				continue
 			}
 			// One fixed file, with nothing that applies to the include
@@ -112,6 +124,55 @@ func (c *converter) flattenIn(nodes []*yaml.Node, file string, stack []string, k
 		}
 	}
 	return out
+}
+
+// inlineWhen inlines the file an import or include names, each of its
+// tasks given the when w, after any when of its own.
+func (c *converter) inlineWhen(n *yaml.Node, args map[string]*yaml.Node, file string, stack []string, kind string, group *blockGroup, w *yaml.Node) []taskAt {
+	sub, tasks, why := c.importFile(withoutWhen(n), args, file, stack)
+	if why != "" {
+		return []taskAt{{node: n, file: file, reason: why, kind: kind, group: group}}
+	}
+	conds := []*yaml.Node{w}
+	if w.Kind == yaml.SequenceNode {
+		conds = w.Content
+	}
+	out := c.flattenIn(tasks, sub, append(stack, sub), kind, group)
+	for i := range out {
+		if mod, _ := moduleOf(mapping(out[i].node)); mod == "include_role" || mod == "import_role" {
+			out[i].reason = "calls a role from a file imported with a when, which the converter can't put on a role call yet"
+			continue
+		}
+		if out[i].reason != "" {
+			continue
+		}
+		for _, cnd := range conds {
+			if cnd.Kind != yaml.ScalarNode {
+				out[i].reason = "is imported with a when the converter can't read"
+				break
+			}
+			out[i].node = withWhen(out[i].node, cnd.Value)
+		}
+	}
+	return out
+}
+
+// switchesOnly reports whether every condition in w turns on a role
+// default that's true or false.
+func (c *converter) switchesOnly(w *yaml.Node) bool {
+	if c.role == nil {
+		return false
+	}
+	conds := []*yaml.Node{w}
+	if w.Kind == yaml.SequenceNode {
+		conds = w.Content
+	}
+	for _, cnd := range conds {
+		if c.role.boolWhen(cnd) == "" {
+			return false
+		}
+	}
+	return len(conds) > 0
 }
 
 // staticInclude reports whether an include_tasks names one file without

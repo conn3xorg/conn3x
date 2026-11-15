@@ -494,7 +494,7 @@ func TestConvertPlayRolesInImports(t *testing.T) {
 	if r := res.Review[0]; r.File != "more.yml" || r.Line != 5 {
 		t.Errorf("the task left in the import is reported at %s line %d, want more.yml line 5: %+v", r.File, r.Line, r)
 	}
-	if r := res.Review[1]; r.File != "p.yml" || !strings.Contains(r.Reason, "sets when on import_tasks") {
+	if r := res.Review[1]; r.File != "deeper.yml" || !strings.Contains(r.Reason, "imported with a when") {
 		t.Errorf("the import behind when: %+v", r)
 	}
 }

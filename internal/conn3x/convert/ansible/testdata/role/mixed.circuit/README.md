@@ -2,7 +2,7 @@
 
 A [Conn3x](https://conn3x.org) circuit converted from the Ansible role `mixed` by `conn3x convert ansible -role`.
 
-12 things still need you. Each is marked `TODO(convert)` in `main.circuit.hcl`, with the reason.
+11 things still need you. Each is marked `TODO(convert)` in `main.circuit.hcl`, with the reason.
 
 ## Usage
 

@@ -1,10 +1,15 @@
 variable "hosts" {
   type        = any
-  description = "The hosts to configure: a map of names to addresses, or to host objects with an address and settings such as host_key."
+  description = "The hosts to configure: a map of names to addresses, or to host objects with an address and settings such as host_key, and os (debian, ubuntu, rocky, almalinux, rhel or fedora) for a host whose facts can't be read yet."
 
   validation {
     condition     = can(keys(var.hosts)) && alltrue([for v in values(var.hosts) : can(tostring(v)) || can(tostring(v.address))])
     error_message = "hosts must be a map whose values are addresses, or objects with an address."
+  }
+
+  validation {
+    condition     = alltrue([for h in var.hosts : contains(["debian", "ubuntu", "rocky", "almalinux", "rhel", "fedora"], try(h.os, "debian"))])
+    error_message = "A host object's os must be one of debian, ubuntu, rocky, almalinux, rhel or fedora. CentOS Linux reached end of life on 30 June 2024: use Rocky Linux."
   }
 }
 
