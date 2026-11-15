@@ -79,6 +79,14 @@ nfpms:
         dst: /usr/share/doc/conn3x/copyright
         packager: deb
         file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+    # Signed when the release job has the packages key, which the apt and
+    # dnf repositories check (#684); unsigned in snapshots and forks.
+    deb:
+      signature:
+        key_file: '{{ envOrDefault "PACKAGES_GPG_KEY_FILE" "" }}'
+    rpm:
+      signature:
+        key_file: '{{ envOrDefault "PACKAGES_GPG_KEY_FILE" "" }}'
 
 checksum:
   name_template: checksums.txt

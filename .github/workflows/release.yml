@@ -45,6 +45,14 @@ jobs:
             || { echo "HOMEBREW_TAP_TOKEN cannot write to conn3xorg/homebrew-tap" >&2; exit 1; }
           gh api repos/conn3xorg/scoop-bucket/git/blobs -f content=preflight --silent \
             || { echo "HOMEBREW_TAP_TOKEN cannot write to conn3xorg/scoop-bucket" >&2; exit 1; }
+      - name: Check the packages key and the packages site
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          PACKAGES_GPG_KEY: ${{ secrets.PACKAGES_GPG_KEY }}
+        run: |
+          [ -n "$PACKAGES_GPG_KEY" ] || { echo "PACKAGES_GPG_KEY is empty" >&2; exit 1; }
+          gh api repos/conn3xorg/packages/git/blobs -f content=preflight --silent \
+            || { echo "HOMEBREW_TAP_TOKEN cannot write to conn3xorg/packages" >&2; exit 1; }
       - name: Check the winget token can write to the fork
         env:
           GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
@@ -73,6 +81,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Load the packages key
+        env:
+          PACKAGES_GPG_KEY: ${{ secrets.PACKAGES_GPG_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$PACKAGES_GPG_KEY" > "$RUNNER_TEMP/packages.asc"
+          echo "PACKAGES_GPG_KEY_FILE=$RUNNER_TEMP/packages.asc" >> "$GITHUB_ENV"
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           # An exact version, like every action here: the tool that builds
@@ -103,3 +118,6 @@ jobs:
         run: |
           cp "$BUNDLE" "conn3x_${VERSION}.intoto.jsonl"
           gh release upload "v$VERSION" "conn3x_${VERSION}.intoto.jsonl" --repo "$GITHUB_REPOSITORY"
+      - name: Forget the packages key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/packages.asc"
