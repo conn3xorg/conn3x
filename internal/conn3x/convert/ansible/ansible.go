@@ -924,6 +924,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				}
 				if !ok {
 					reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set, so Ansible would stop on %s hosts", n, f.ansible, f.ansible)
+					if c.role.shadowed[n] {
+						reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set, so %s hosts get the role default, which the converter can't mix with values per family yet", n, f.ansible, f.ansible)
+					}
 					break
 				}
 				fv[n] = v

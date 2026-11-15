@@ -597,3 +597,42 @@ func TestWhenListOfSwitchesAndFamily(t *testing.T) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// A default that a file under vars/ also sets loses to it in Ansible once
+// an include_vars loads that file, so it isn't a variable: tasks get the
+// per-family value, or stay for review.
+func TestDefaultShadowedByFamilyVars(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"defaults/main.yml": "pkg: generic\nflag: true\nonly_deb: fallback\n",
+		"vars/Debian.yml":   "pkg: deb-pkg\nflag: false\nonly_deb: deb-only\n",
+		"vars/RedHat.yml":   "pkg: rh-pkg\nflag: false\n",
+		"tasks/main.yml": `- name: Load OS vars
+  include_vars: "{{ ansible_os_family }}.yml"
+- name: Install
+  package: {name: "{{ pkg }}"}
+- name: Flagged
+  package: {name: jq}
+  when: flag | bool
+- name: Debian only value
+  package: {name: "{{ only_deb }}"}
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
+	if strings.Contains(main, "var.pkg") || strings.Contains(main, "var.flag") || !strings.Contains(main, `"deb-pkg"`) || !strings.Contains(main, `"rh-pkg"`) {
+		t.Errorf("main.circuit.hcl:\n%s", main)
+	}
+	if strings.Contains(vars, `variable "pkg"`) || !strings.Contains(vars, `Default "pkg" (defaults/main.yml line 1) is also set in vars/Debian.yml and vars/RedHat.yml`) {
+		t.Errorf("variables.tf:\n%s", vars)
+	}
+	var got []string
+	for _, r := range res.Review {
+		got = append(got, r.Task+": "+r.Reason)
+	}
+	if len(got) != 2 || !strings.Contains(got[0], "Flagged") || !strings.Contains(got[1], "RedHat hosts get the role default") {
+		t.Errorf("review:\n%s", strings.Join(got, "\n"))
+	}
+}

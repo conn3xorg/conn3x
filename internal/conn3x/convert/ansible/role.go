@@ -44,6 +44,8 @@ type role struct {
 	defaultTasks map[*yaml.Node]string
 	defaultOf    map[string]string
 	defaultUsed  map[string]bool
+	// shadowed are defaults a file under vars/ also sets.
+	shadowed map[string]bool
 	// lists are the defaults that are lists of plain values, kept apart
 	// so only a loop over one uses them; listUsed are those a loop reads,
 	// which become variables.
@@ -84,7 +86,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -120,7 +122,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	for _, kv := range pairs(defaultsNode) {
 		k := kv[0].Value
 		where := fmt.Sprintf("Default %q (%s line %d)", k, defaultsFile, kv[0].Line)
-		if items, ok := plainList(kv[1]); ok && !has(vars, k) && !reserved[k] && identifier.MatchString(k) {
+		if items, ok := plainList(kv[1]); ok && !has(vars, k) && len(r.varFiles[k]) == 0 && !reserved[k] && identifier.MatchString(k) {
 			r.lists[k] = items
 			listOrder = append(listOrder, k)
 			listWhere[k] = where
@@ -134,6 +136,11 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		switch {
 		case has(vars, k):
 			why = "is also set in " + varsFile + ", which wins in Ansible, so it stays fixed"
+		case len(r.varFiles[k]) > 0:
+			// Role vars beat defaults, so once an include_vars loads one of
+			// these, the default no longer counts.
+			why = "is also set in " + joinAnd(r.varFiles[k]) + ", which wins in Ansible once an include_vars loads it, so tasks use the value from there"
+			r.shadowed[k] = true
 		case reserved[k] || !identifier.MatchString(k):
 			why = "has a name the circuit can't use for a variable"
 		case why != "":
