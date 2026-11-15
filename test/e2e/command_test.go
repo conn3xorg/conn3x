@@ -21,6 +21,10 @@ func TestCommandStep(t *testing.T) {
 	// In the environment: OpenTofu logs its command line, -var values too.
 	w.env = append(w.env, "TF_VAR_token=T0ken-on-stdin")
 	w.mustConn3x("init", "-no-color")
+	// -json names each step and host, not just the generated address.
+	if out := w.mustConn3x("plan", "-json"); !strings.Contains(out, `"conn3x":{"circuit":"box","step":"build","host":"box"}`) {
+		t.Fatalf("plan -json has no step identity:\n%s", out)
+	}
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	// stdin_wo reached the command, and neither its command line nor state.
 	if got := h.exec("", "cat", "/var/tmp/conn3x-token"); got != "T0ken-on-stdin" {
