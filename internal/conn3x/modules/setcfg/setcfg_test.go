@@ -5,6 +5,7 @@ package setcfg
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -56,5 +57,85 @@ func TestSplitWords(t *testing.T) {
 	got := splitWords(`interfaces eth0 description "a b \"c\" d" mtu 1500`)
 	if !slices.Equal(got, []string{"interfaces", "eth0", "description", `"a b \"c\" d"`, "mtu", "1500"}) {
 		t.Errorf("%q", got)
+	}
+}
+
+func TestConfigSecrets(t *testing.T) {
+	for line, want := range map[string]string{
+		"set protocols bgp neighbor 192.0.2.1 password 'x'":                              "set protocols bgp neighbor 192.0.2.1 password",
+		`set system login user bob authentication encrypted-password "$6$salt$hash"`:     "set system login user bob authentication encrypted-password",
+		`set protocols ospf area 0 interface ge-0/0/0 authentication md5 1 key "$9$abc"`: "set protocols ospf area 0 interface ge-0/0/0 authentication md5 1 key",
+		`set security ike policy p pre-shared-key ascii-text "two words"`:                "set security ike policy p pre-shared-key ascii-text",
+		"set vpn ipsec authentication psk peer1 secret 's3cret'":                         "set vpn ipsec authentication psk peer1 secret",
+	} {
+		if got, err := SecretPath(line); err != nil || got != want {
+			t.Errorf("SecretPath(%q) = %q, %v; want %q", line, got, err, want)
+		}
+	}
+	for _, bad := range []string{
+		"set system host-name r1",
+		"set system login user bob authentication plaintext-password 'x'",
+		"set service snmp community s3cret authorization ro",
+		"set service snmp community key",
+	} {
+		if _, err := SecretPath(bad); err == nil {
+			t.Errorf("SecretPath(%q) took it", bad)
+		}
+	}
+
+	running := "set protocols bgp neighbor 192.0.2.1 password 'old'\nset protocols bgp neighbor 192.0.2.1 remote-as 65001\nset protocols bgp neighbor 192.0.2.2 password 'theirs'\n"
+	path := "set protocols bgp neighbor 192.0.2.1 password"
+	c := Config{Prefix: "protocols bgp neighbor 192.0.2.1", Match: MatchBlock, Lines: []string{"set protocols bgp neighbor 192.0.2.1 remote-as 65001"},
+		Secrets: []string{path + " 'new'"}, Paths: []string{path}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// Present by path: in sync whatever the secret, and block mode keeps it.
+	if !c.InSync(running) || c.Commands(running) != nil {
+		t.Errorf("in sync %v, commands %v", c.InSync(running), c.Commands(running))
+	}
+	c.Resend = true
+	if cmds := c.Commands(running); !slices.Equal(cmds, []string{"delete protocols bgp neighbor 192.0.2.1 password", path + " 'new'"}) {
+		t.Errorf("resend: %v", cmds)
+	}
+	if rm := c.RemoveCommands(running); !slices.Equal(rm, []string{"delete protocols bgp neighbor 192.0.2.1 remote-as 65001", "delete protocols bgp neighbor 192.0.2.1 password"}) {
+		t.Errorf("remove: %v", rm)
+	}
+	gone := "set protocols bgp neighbor 192.0.2.1 remote-as 65001\n"
+	c.Resend = false
+	if c.InSync(gone) {
+		t.Error("in sync without the password")
+	}
+	if cmds := c.Commands(gone); !slices.Equal(cmds, []string{path + " 'new'"}) {
+		t.Errorf("missing: %v", cmds)
+	}
+	// A block delete never takes the node that holds the secret.
+	wide := Config{Prefix: "protocols bgp", Match: MatchBlock, Secrets: []string{path + " 'new'"}, Paths: []string{path}}
+	for _, d := range wide.Commands(running) {
+		if strings.HasPrefix(path, "set "+strings.TrimPrefix(d, "delete ")+" ") {
+			t.Errorf("block delete %q takes the secret", d)
+		}
+	}
+
+	for _, bad := range []Config{
+		{Secrets: []string{"set system host-name r1"}},
+		{Secrets: []string{path + " 'a'", path + " 'b'"}},
+		{Secrets: []string{path + " 'a'"}, Lines: []string{path + " 'b'"}},
+		{Prefix: "system", Match: MatchBlock, Secrets: []string{path + " 'a'"}},
+		{Secrets: []string{path + " 'a | b"}},
+	} {
+		err := bad.Validate()
+		if err == nil {
+			t.Errorf("accepted %+v", bad)
+			continue
+		}
+		for _, l := range bad.Secrets {
+			if v := splitWords(l); strings.Contains(err.Error(), v[len(v)-1]) && len(v[len(v)-1]) > 3 {
+				t.Errorf("error quotes a secret: %v", err)
+			}
+		}
+	}
+	if !LooksSecret(path+" 'x'") || LooksSecret("set system host-name r1") {
+		t.Error("LooksSecret")
 	}
 }
