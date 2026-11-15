@@ -223,3 +223,28 @@ alpha
 		}
 	}
 }
+
+func TestReadInventoryQuotedHostVars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.ini")
+	src := `[edge]
+iap1 ansible_user=deploy ansible_ssh_common_args='-o ProxyCommand="gcloud compute start-iap-tunnel %h %p --listen-on-stdin"' motd="hello there"
+`
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := ReadInventory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := inv.Group("all").Vars("iap1")
+	want := map[string]string{
+		"ansible_user":            "deploy",
+		"ansible_ssh_common_args": `-o ProxyCommand="gcloud compute start-iap-tunnel %h %p --listen-on-stdin"`,
+		"motd":                    "hello there",
+	}
+	for k, w := range want {
+		if v[k] != w {
+			t.Errorf("%s = %q, want %q", k, v[k], w)
+		}
+	}
+}

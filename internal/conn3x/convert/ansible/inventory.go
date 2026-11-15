@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	shellwords "github.com/mattn/go-shellwords"
 	"gopkg.in/yaml.v3"
 )
 
@@ -278,10 +279,20 @@ func (inv *Inventory) readINI(src string) error {
 			inv.group(section).children = append(inv.group(section).children, fields[0])
 			inv.group(fields[0])
 		case "":
+			// A host line splits as a shell would, as Ansible's shlex does,
+			// so a quoted value keeps its spaces:
+			// ansible_ssh_common_args='-o ProxyCommand="..."'.
+			fields, err := shellwords.Parse(line)
+			if err != nil {
+				return fmt.Errorf("line %d: %w", n, err)
+			}
+			if len(fields) == 0 {
+				continue
+			}
 			vars := map[string]string{}
 			for _, kv := range fields[1:] {
 				if k, v, ok := strings.Cut(kv, "="); ok {
-					vars[k] = unquote(v)
+					vars[k] = v
 				}
 			}
 			if err := inv.addHost(section, fields[0], vars); err != nil {
