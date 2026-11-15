@@ -400,3 +400,39 @@ func writeRole(t *testing.T, files map[string]string) string {
 	}
 	return dir
 }
+
+// A true-or-false default becomes a bool variable, and a when that switches
+// on it becomes the step's when. Printing one stays for review: Ansible
+// writes True, HCL true.
+func TestRoleBoolDefaultSwitch(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "web_enabled: yes\nweb_extra: false\n",
+		"tasks/main.yml": `- name: Install web
+  package: { name: nginx }
+  when: web_enabled | bool
+- name: Remove extra
+  file: { path: /etc/extra, state: absent }
+  when: not (web_extra | bool)
+- name: Keep extra
+  file: { path: /etc/keep, state: directory }
+  when: web_extra
+- name: Print it
+  copy: { dest: /etc/flag, content: "{{ web_enabled }}" }
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
+	for _, w := range []string{"when = var.web_enabled", "when = !var.web_extra", "when = var.web_extra"} {
+		if !strings.Contains(hcl, w) {
+			t.Errorf("missing %q:\n%s", w, hcl)
+		}
+	}
+	if !strings.Contains(vars, "type        = bool\n  default     = true") || !strings.Contains(vars, "default     = false") {
+		t.Errorf("bool variables:\n%s", vars)
+	}
+	if res.Converted != 3 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "True or False") {
+		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}

@@ -26,5 +26,6 @@ Then run `conn3x init` and `conn3x apply`.
 
 | Name | Default |
 | --- | --- |
+| `mixed_enabled` | `true` |
 | `mixed_mode` | `"0644"` |
 | `mixed_conf_dir` | `"/etc/mixed"` |

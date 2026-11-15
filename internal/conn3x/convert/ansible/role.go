@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -46,8 +47,9 @@ type role struct {
 }
 
 type roleDefault struct {
-	value  string
-	number bool
+	value   string
+	number  bool
+	boolean bool // yes, no, true, false, on or off, as YAML 1.1 reads them
 }
 
 // reserved are variable names the circuit already uses or HCL won't take.
@@ -113,6 +115,10 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		k := kv[0].Value
 		where := fmt.Sprintf("Default %q (%s line %d)", k, defaultsFile, kv[0].Line)
 		v, number, why := plainValue(kv[1])
+		boolean := false
+		if b, ok := yamlBool(kv[1]); ok {
+			v, boolean, why = strconv.FormatBool(b), true, ""
+		}
 		switch {
 		case has(vars, k):
 			why = "is also set in " + varsFile + ", which wins in Ansible, so it stays fixed"
@@ -126,7 +132,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			comment(vb, where+" "+why+". Tasks that use it are marked TODO(convert).")
 			continue
 		}
-		r.defaults[k] = &roleDefault{value: v, number: number}
+		r.defaults[k] = &roleDefault{value: v, number: number, boolean: boolean}
 		order = append(order, k)
 	}
 	// The loop's item beats the role's vars/ and defaults, as a task's
@@ -162,10 +168,14 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	for _, k := range order {
 		d := r.defaults[k]
 		b := hclwrite.NewBlock("variable", []string{k})
-		if d.number {
+		switch {
+		case d.boolean:
+			b.Body().SetAttributeRaw("type", rawTokens("bool"))
+			b.Body().SetAttributeRaw("default", rawTokens(d.value))
+		case d.number:
 			b.Body().SetAttributeRaw("type", rawTokens("number"))
 			b.Body().SetAttributeRaw("default", rawTokens(d.value))
-		} else {
+		default:
 			b.Body().SetAttributeRaw("type", rawTokens("string"))
 			b.Body().SetAttributeValue("default", cty.StringVal(d.value))
 		}
@@ -433,6 +443,9 @@ func (in *input) template(p string) (source, vars, why string) {
 		switch {
 		case has(in.vars, name):
 			lines = append(lines, name+" = "+string(hclwrite.TokensForValue(cty.StringVal(in.vars[name])).Bytes()))
+		case in.role.defaults[name] != nil && in.role.defaults[name].boolean:
+			// Ansible prints a boolean the Python way, True or False.
+			return "", "", fmt.Sprintf("prints %q, a true-or-false default that Ansible writes as True or False and Conn3x as true or false", name)
 		case in.role.defaults[name] != nil:
 			lines = append(lines, name+" = var."+name)
 		default:
@@ -497,7 +510,7 @@ func readme(base, name string, review int, order []string, defaults map[string]*
 	for _, k := range order {
 		d := defaults[k]
 		v := d.value
-		if !d.number {
+		if !d.number && !d.boolean {
 			v = string(hclwrite.TokensForValue(cty.StringVal(v)).Bytes())
 		}
 		fmt.Fprintf(&b, "| `%s` | `%s` |\n", k, strings.ReplaceAll(v, "|", `\|`))
@@ -547,3 +560,43 @@ variable "ssh_become" {
   description = "Run every command as root through sudo. Set this when ssh_user isn't root."
 }
 `
+
+// boolWhen is a role task's when as a step's when, for the shapes a role
+// uses to switch a feature on a default that's true or false: the default
+// itself, through the bool filter, or either negated, as
+// apache_create_vhosts | bool or not (ntp_enabled | bool). "" for any
+// other when.
+func (r *role) boolWhen(n *yaml.Node) string {
+	if n.Kind != yaml.ScalarNode {
+		return ""
+	}
+	m := boolWhenRe.FindStringSubmatch(strings.Join(strings.Fields(n.Value), " "))
+	if m == nil {
+		return ""
+	}
+	name := m[2] + m[3]
+	if d, ok := r.defaults[name]; !ok || !d.boolean {
+		return ""
+	}
+	if m[1] != "" {
+		return "!var." + name
+	}
+	return "var." + name
+}
+
+var boolWhenRe = regexp.MustCompile(`^(not )?(?:\(([A-Za-z_][A-Za-z0-9_]*) ?\| ?bool\)|([A-Za-z_][A-Za-z0-9_]*)(?: ?\| ?bool)?)$`)
+
+// yamlBool reads a plain scalar as YAML 1.1, as Ansible does, where yes,
+// no, on and off are booleans too.
+func yamlBool(n *yaml.Node) (bool, bool) {
+	if n == nil || n.Kind != yaml.ScalarNode || n.Style != 0 {
+		return false, false
+	}
+	switch strings.ToLower(n.Value) {
+	case "yes", "true", "on", "y":
+		return true, true
+	case "no", "false", "off", "n":
+		return false, true
+	}
+	return false, false
+}

@@ -198,6 +198,11 @@ func (in *input) render(key, s string) string {
 				in.fail(fmt.Sprintf("%s refers to the role default %q, and the converter keeps a default as a variable only where Conn3x uses its value exactly as Ansible does, whatever it is set to; here it would have to check the value first", key, name))
 				return m
 			}
+			if in.role.defaults[name].boolean {
+				// Ansible prints a boolean the Python way, True or False.
+				in.fail(fmt.Sprintf("%s prints the true-or-false role default %q, which Ansible writes as True or False and Conn3x as true or false", key, name))
+				return m
+			}
 			if packageModules[in.mod] {
 				in.commaFree = append(in.commaFree, name)
 			}

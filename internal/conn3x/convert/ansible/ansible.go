@@ -779,6 +779,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			fams, familyCond = allowed, true
 		}
 	}
+	// A when that switches a role default on or off, as role_feature | bool,
+	// becomes the step's when over the variable.
+	var boolCond string
+	if w := t["when"]; w != nil && c.role != nil && !familyCond {
+		boolCond = c.role.boolWhen(w)
+	}
 	wait := uriRetry(t)
 	module, delegate := "", ""
 	for _, k := range sortedKeys(t) {
@@ -796,7 +802,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			}
 			continue
 		}
-		if k == "when" && familyCond {
+		if k == "when" && (familyCond || boolCond != "") {
 			continue
 		}
 		// The PostgreSQL steps run psql as postgres themselves.
@@ -1049,6 +1055,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if familyCond && len(fams) < len(osFamilies) {
 			sb.SetAttributeRaw("when", rawTokens(fmt.Sprintf("local.os_family[each.key] == %q", fams[0].conn3x)))
 			c.role.familyUsed = true
+		}
+		if boolCond != "" {
+			sb.SetAttributeRaw("when", rawTokens(boolCond))
 		}
 		mb := sb.AppendNewBlock(s.module, nil).Body()
 		for _, a := range s.attrs {
