@@ -47,7 +47,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
         run: |
           repo="ghcr.io/conn3xorg/test-$IMAGE"
-          docker buildx build "test/images/$IMAGE" \
+          docker buildx build "test/images/$IMAGE" --file "test/images/$IMAGE/Containerfile" \
             --platform linux/amd64,linux/arm64 \
             --label "org.opencontainers.image.source=https://github.com/conn3xorg/conn3x" \
             --label "org.opencontainers.image.description=A throwaway $IMAGE host with systemd and sshd, for testing circuits with conn3x test" \
