@@ -468,6 +468,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"selinux":            selinuxModule,
 	"alternatives":       alternativesModule,
 	"debconf":            debconfModule,
+	"snap":               snapModule,
 	"apt_repository":     aptRepositoryModule,
 	"yum_repository":     yumRepositoryModule,
 	"locale_gen":         localeGenModule,
@@ -1428,6 +1429,41 @@ func alternativesModule(in *input) ([]step, string) {
 		attrs = append(attrs, in.number("priority"))
 	}
 	return one("alternatives", attrs)
+}
+
+// snapModule installs or removes each named snap; enabling, disabling,
+// options and dangerous installs have no step yet.
+func snapModule(in *input) ([]step, string) {
+	st := in.state("present", "present", "absent")
+	for _, k := range []string{"options", "dangerous"} {
+		if in.has(k) {
+			return nil, "sets " + k + ", which the snap step doesn't have"
+		}
+	}
+	names := in.list("name")
+	channel := in.str("channel")
+	classic := in.bool("classic", false)
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if len(names) == 0 {
+		return nil, "names no snap"
+	}
+	var steps []step
+	for _, n := range names {
+		attrs := []attr{s("name", n)}
+		if st == "absent" {
+			attrs = append(attrs, s("state", st))
+		}
+		if channel != "" {
+			attrs = append(attrs, s("channel", channel))
+		}
+		if classic {
+			attrs = append(attrs, attr{key: "classic", val: cty.True})
+		}
+		steps = append(steps, step{module: "snap", attrs: attrs, suffix: n})
+	}
+	return steps, ""
 }
 
 func sudoersModule(in *input) ([]step, string) {

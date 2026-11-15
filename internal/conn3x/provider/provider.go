@@ -94,6 +94,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_mount":                {mountSchema, validateWith("path", func(v cty.Value) error { return mountFrom(v).Validate() }), planMount, readMount, applyMount, upgradeWith(mountSchema)},
 	"conn3x_swap":                 {swapSchema, validateWith("path", func(v cty.Value) error { return swapFrom(v).Validate() }), planSwap, readSwap, applySwap, upgradeWith(swapSchema)},
 	"conn3x_alternatives":         {alternativesSchema, validateWith("name", func(v cty.Value) error { return alternativeFrom(v).Validate() }), planAlternatives, readAlternatives, applyAlternatives, upgradeWith(alternativesSchema)},
+	"conn3x_snap":                 {snapSchema, validateWith("name", validateSnap), planSnap, readSnap, applySnap, upgradeWith(snapSchema)},
 	"conn3x_filesystem":           storageTypes["conn3x_filesystem"],
 	"conn3x_lvm_volume_group":     storageTypes["conn3x_lvm_volume_group"],
 	"conn3x_lvm_logical_volume":   storageTypes["conn3x_lvm_logical_volume"],

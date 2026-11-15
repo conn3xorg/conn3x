@@ -1,0 +1,19 @@
+circuit "snaps" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .Channel}}
+  step "hello" {
+    snap {
+      name      = "hello-world"
+      channel   = "{{.Channel}}"
+      on_remove = "delete"
+    }
+  }
+{{end}}
+}
