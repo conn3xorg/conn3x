@@ -93,6 +93,17 @@ func (c *converter) flattenIn(nodes []*yaml.Node, file string, stack []string, k
 				out = append(out, tasks...)
 				continue
 			}
+			// One fixed file, with nothing that applies to the include
+			// itself, reads the same tasks as an import of it would.
+			if staticInclude(n, args) {
+				sub, tasks, why := c.importFile(n, args, file, stack)
+				if why != "" {
+					out = append(out, taskAt{node: n, file: file, reason: why, kind: kind, group: group})
+					continue
+				}
+				out = append(out, c.flattenIn(tasks, sub, append(stack, sub), kind, group)...)
+				continue
+			}
 			out = append(out, taskAt{node: n, file: file, reason: "uses " + mod + ", which Ansible reads only when the play reaches it, so its file, loop and when can change from run to run; the converter can't translate that yet. If it names one file and has no loop or when, change it to import_tasks and convert again"})
 		case "include_role", "import_role":
 			out = append(out, taskAt{node: n, file: file, reason: "uses " + mod + ", which runs another role here; the converter only calls roles run from a play's own task lists, with -out, so convert that role with -role and call its circuit as a module"})
@@ -101,6 +112,24 @@ func (c *converter) flattenIn(nodes []*yaml.Node, file string, stack []string, k
 		}
 	}
 	return out
+}
+
+// staticInclude reports whether an include_tasks names one file without
+// Jinja and sets nothing but a name or tags: no when, loop or vars, whose
+// meaning differs between an include and an import.
+func staticInclude(n *yaml.Node, args map[string]*yaml.Node) bool {
+	for k := range mapping(n) {
+		if (keywords[k] || strings.HasPrefix(k, "with_")) && !importKeys[k] {
+			return false
+		}
+	}
+	name := scalar(args["file"])
+	if raw := scalar(args["_raw"]); raw != "" && len(args) == 1 {
+		name = raw
+	} else if len(args) != 1 {
+		return false
+	}
+	return name != "" && !strings.Contains(name, "{{") && !strings.Contains(name, "{%")
 }
 
 // flattenBlock flattens a block: its tasks, then its rescue tasks, which become

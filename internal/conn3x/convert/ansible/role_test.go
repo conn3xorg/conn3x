@@ -487,3 +487,37 @@ func TestRoleLoopOverAListDefault(t *testing.T) {
 		t.Errorf("review %+v", res.Review)
 	}
 }
+
+// An include_tasks of one fixed file, with nothing on it but a name or
+// tags, reads what an import would, so it's inlined. A when, a loop,
+// a never tag or a file named by Jinja keeps it for review.
+func TestStaticIncludeTasks(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"tasks/configure.yml": "- name: Tools\n  package: {name: jq}\n",
+		"tasks/main.yml": `- include_tasks: configure.yml
+- name: Named, tagged, FQCN
+  ansible.builtin.include_tasks:
+    file: configure.yml
+  tags: [config]
+- include_tasks: configure.yml
+  when: thing | bool
+- include_tasks: configure.yml
+  with_items: [a, b]
+- include_tasks: configure.yml
+  loop: [a, b]
+- include_tasks: configure.yml
+  tags: [never]
+- include_tasks: "{{ which }}.yml"
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Converted != 2 || strings.Count(string(res.Files["main.circuit.hcl"]), `name = "jq"`) != 2 {
+		t.Errorf("converted %d\n%s", res.Converted, res.Files["main.circuit.hcl"])
+	}
+	if len(res.Review) != 5 {
+		t.Errorf("review %d, want 5: %+v", len(res.Review), res.Review)
+	}
+}
