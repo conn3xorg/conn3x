@@ -94,7 +94,7 @@ run "converge" {
 		}
 	}
 	w.mustConn3x("init")
-	out := w.mustConn3x("test")
+	out := w.mustConn3x("test", "-no-color")
 	for _, want := range []string{`run "host"... pass`, `run "converge"... pass`, "2 passed, 0 failed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
