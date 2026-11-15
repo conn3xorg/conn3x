@@ -44,6 +44,11 @@ type role struct {
 	defaultTasks map[*yaml.Node]string
 	defaultOf    map[string]string
 	defaultUsed  map[string]bool
+	// lists are the defaults that are lists of plain values, kept apart
+	// so only a loop over one uses them; listUsed are those a loop reads,
+	// which become variables.
+	lists    map[string][]string
+	listUsed map[string]bool
 }
 
 type roleDefault struct {
@@ -79,7 +84,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -110,10 +115,17 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	vf := hclwrite.NewEmptyFile()
 	vb := vf.Body()
 	defaultsNode, defaultsFile := c.main(body, "defaults")
-	var order []string
+	var order, listOrder []string
+	listWhere := map[string]string{}
 	for _, kv := range pairs(defaultsNode) {
 		k := kv[0].Value
 		where := fmt.Sprintf("Default %q (%s line %d)", k, defaultsFile, kv[0].Line)
+		if items, ok := plainList(kv[1]); ok && !has(vars, k) && !reserved[k] && identifier.MatchString(k) {
+			r.lists[k] = items
+			listOrder = append(listOrder, k)
+			listWhere[k] = where
+			continue
+		}
 		v, number, why := plainValue(kv[1])
 		boolean := false
 		if b, ok := yamlBool(kv[1]); ok {
@@ -187,6 +199,26 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		}
 		vb.AppendNewline()
 		vb.AppendBlock(b)
+	}
+
+	for _, k := range listOrder {
+		vb.AppendNewline()
+		if !r.listUsed[k] {
+			comment(vb, listWhere[k]+" is a list, which the converter carries over as a variable only for a loop over it. Tasks that use it are marked TODO(convert).")
+			continue
+		}
+		vals := make([]cty.Value, len(r.lists[k]))
+		for i, it := range r.lists[k] {
+			vals[i] = cty.StringVal(it)
+		}
+		b := vb.AppendNewBlock("variable", []string{k}).Body()
+		b.SetAttributeRaw("type", rawTokens("list(string)"))
+		if len(vals) == 0 {
+			b.SetAttributeRaw("default", rawTokens("[]"))
+		} else {
+			b.SetAttributeValue("default", cty.ListVal(vals))
+		}
+		b.SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+". Each item is one pass of the loop that uses it, so the list can't hold the same value twice."))
 	}
 
 	var looped []string
@@ -348,6 +380,23 @@ func (c *converter) note(body *hclwrite.Body, what, file string, line int, reaso
 		where = fmt.Sprintf("%s line %d", file, line)
 	}
 	comment(body, fmt.Sprintf("TODO(convert): %s (%s) %s.", what, where, reason))
+}
+
+// plainList reads a default that's a list of plain values, as plainValue
+// reads each, all different, since a step's for_each refuses repeats.
+func plainList(n *yaml.Node) ([]string, bool) {
+	if n == nil || n.Kind != yaml.SequenceNode {
+		return nil, false
+	}
+	items := []string{}
+	for _, e := range n.Content {
+		v, _, why := plainValue(e)
+		if why != "" || slices.Contains(items, v) {
+			return nil, false
+		}
+		items = append(items, v)
+	}
+	return items, true
 }
 
 // plainValue reads a role variable as Ansible prints it into a string: plain

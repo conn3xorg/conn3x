@@ -40,8 +40,6 @@ variable "ssh_become" {
 
 # Default "mixed_conf" (defaults/main.yml line 4) is a Jinja expression, which the converter can't carry over as a variable yet. Tasks that use it are marked TODO(convert).
 
-# Default "mixed_ports" (defaults/main.yml line 5) is a list, a map or an alias, which the converter can't carry over as a variable yet. Tasks that use it are marked TODO(convert).
-
 # Default "mixed_umask" (defaults/main.yml line 6) is a value YAML could read as a number or a date, which the converter can't carry over as a variable yet. Tasks that use it are marked TODO(convert).
 
 variable "mixed_enabled" {
@@ -61,3 +59,5 @@ variable "mixed_conf_dir" {
   default     = "/etc/mixed"
   description = "From the role's defaults/main.yml."
 }
+
+# Default "mixed_ports" (defaults/main.yml line 5) is a list, which the converter carries over as a variable only for a loop over it. Tasks that use it are marked TODO(convert).

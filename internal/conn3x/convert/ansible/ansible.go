@@ -747,14 +747,26 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.res.Converted++
 		return
 	}
+	// A loop over a role default that's a list becomes for_each over its
+	// variable. with_items flattens one level, which a list of plain
+	// values doesn't have.
+	listVar := ""
 	for k := range t {
+		if (k == "loop" || k == "with_items") && c.role != nil {
+			if m := bareRef.FindStringSubmatch(scalar(t[k])); m != nil && c.role.lists[m[1]] != nil {
+				listVar = m[1]
+				continue
+			}
+		}
 		if strings.HasPrefix(k, "with_") {
 			c.issue(body, name, node, "uses "+k+", a loop, which the converter can't translate yet")
 			return
 		}
 	}
 	var items []string
-	if l, ok := t["loop"]; ok {
+	if listVar != "" {
+		items = c.role.lists[listVar]
+	} else if l, ok := t["loop"]; ok {
 		var why string
 		if items, why = literalLoop(l); why != "" {
 			c.issue(body, name, node, why)
@@ -788,7 +800,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	wait := uriRetry(t)
 	module, delegate := "", ""
 	for _, k := range sortedKeys(t) {
-		if k == "loop" && items != nil {
+		if (k == "loop" || k == "with_items" && listVar != "") && items != nil {
 			continue
 		}
 		if wait != nil && (k == "until" || k == "retries" || k == "delay" || k == "register") {
@@ -1045,7 +1057,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if delegate != "" {
 			sb.SetAttributeValue("on", cty.StringVal(delegate))
 		}
-		if items != nil {
+		if listVar != "" {
+			sb.SetAttributeRaw("for_each", rawTokens("var."+listVar))
+			c.role.listUsed[listVar] = true
+		} else if items != nil {
 			vals := make([]cty.Value, len(items))
 			for i, it := range items {
 				vals[i] = cty.StringVal(it)

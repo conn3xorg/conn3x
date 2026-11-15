@@ -436,3 +436,54 @@ func TestRoleBoolDefaultSwitch(t *testing.T) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// A loop over a role default that's a list of plain values becomes
+// for_each over a list(string) variable. Anything else about the list, or
+// a list used other than as a loop, stays for review.
+func TestRoleLoopOverAListDefault(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"defaults/main.yml": "admins: [alice, bob]\nnone_yet: []\nvhosts: [{name: a}]\ntwice: [a, a]\nunused: [x]\n",
+		"tasks/main.yml": `- name: Admins
+  user: {name: "{{ item }}"}
+  with_items: "{{ admins }}"
+- name: Nobody yet
+  user: {name: "{{ item }}"}
+  loop: "{{ none_yet }}"
+- name: Vhosts
+  file: {path: "/srv/{{ item.name }}", state: directory}
+  with_items: "{{ vhosts }}"
+- name: Twice
+  user: {name: "{{ item }}"}
+  loop: "{{ twice }}"
+- name: As a value
+  package: {name: "{{ admins }}"}
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
+	for _, want := range []string{"for_each = var.admins", "for_each = var.none_yet"} {
+		if !strings.Contains(main, want) {
+			t.Errorf("main.circuit.hcl has no %q:\n%s", want, main)
+		}
+	}
+	for _, want := range []string{`variable "admins" {`, `type        = list(string)`, `default     = ["alice", "bob"]`, `variable "none_yet" {`, `default     = []`, `Default "unused" (defaults/main.yml line 5) is a list`} {
+		if !strings.Contains(vars, want) {
+			t.Errorf("variables.tf has no %q:\n%s", want, vars)
+		}
+	}
+	for _, gone := range []string{`variable "vhosts"`, `variable "twice"`, `variable "unused"`} {
+		if strings.Contains(vars, gone) {
+			t.Errorf("variables.tf has %s:\n%s", gone, vars)
+		}
+	}
+	var tasks []string
+	for _, r := range res.Review {
+		tasks = append(tasks, r.Task)
+	}
+	if strings.Join(tasks, ",") != "Vhosts,Twice,As a value" {
+		t.Errorf("review %+v", res.Review)
+	}
+}
