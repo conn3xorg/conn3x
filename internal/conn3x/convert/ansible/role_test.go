@@ -662,3 +662,40 @@ func TestWithItemsLiteralList(t *testing.T) {
 		t.Errorf("review %+v", res.Review)
 	}
 }
+
+// A text default compared to text is a when that can't change in a run,
+// so it converts, alone, in a list, or on an include. A number default
+// compared to text stays: Jinja and HCL both say false, but it's a bug.
+func TestWhenTextDefault(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"defaults/main.yml": "method: package\nport: 80\n",
+		"tasks/snap.yml":    "- name: Snap\n  package: {name: snapd}\n",
+		"tasks/main.yml": `- name: From packages
+  package: {name: docker-ce}
+  when: method == 'package'
+- name: Not on Debian from source
+  package: {name: gcc}
+  when:
+    - method != "package"
+    - ansible_facts.os_family == 'RedHat'
+- include_tasks: snap.yml
+  when: method == 'snap'
+- name: Number
+  package: {name: x}
+  when: port == '80'
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := strings.Join(strings.Fields(string(res.Files["main.circuit.hcl"])), " ")
+	for _, want := range []string{`when = var.method == "package"`, `when = local.os_family[each.key] == "redhat" && var.method != "package"`, `when = var.method == "snap"`} {
+		if !strings.Contains(main, want) {
+			t.Errorf("no %q:\n%s", want, main)
+		}
+	}
+	if res.Converted != 3 || len(res.Review) != 1 || res.Review[0].Task != "Number" {
+		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}

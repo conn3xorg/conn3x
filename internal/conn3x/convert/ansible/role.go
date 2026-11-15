@@ -620,13 +620,22 @@ variable "ssh_become" {
 // boolWhen is a role task's when as a step's when, for the shapes a role
 // uses to switch a feature on a default that's true or false: the default
 // itself, through the bool filter, or either negated, as
-// apache_create_vhosts | bool or not (ntp_enabled | bool). "" for any
-// other when.
+// apache_create_vhosts | bool or not (ntp_enabled | bool). It also takes
+// a text default compared to text, as docker_install_method == 'package'.
+// A default can't change during a run, so either reads the same anywhere.
+// "" for any other when.
 func (r *role) boolWhen(n *yaml.Node) string {
 	if n.Kind != yaml.ScalarNode {
 		return ""
 	}
-	m := boolWhenRe.FindStringSubmatch(strings.Join(strings.Fields(n.Value), " "))
+	cond := strings.Join(strings.Fields(n.Value), " ")
+	if m := textWhenRe.FindStringSubmatch(cond); m != nil {
+		if d, ok := r.defaults[m[1]]; !ok || d.boolean || d.number {
+			return ""
+		}
+		return fmt.Sprintf("var.%s %s \"%s\"", m[1], m[2], quoted(m[3]+m[4]))
+	}
+	m := boolWhenRe.FindStringSubmatch(cond)
 	if m == nil {
 		return ""
 	}
@@ -639,6 +648,8 @@ func (r *role) boolWhen(n *yaml.Node) string {
 	}
 	return "var." + name
 }
+
+var textWhenRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*) ?(==|!=) ?(?:'([^'\\]*)'|"([^"\\]*)")$`)
 
 var boolWhenRe = regexp.MustCompile(`^(not )?(?:\(([A-Za-z_][A-Za-z0-9_]*) ?\| ?bool\)|([A-Za-z_][A-Za-z0-9_]*)(?: ?\| ?bool)?)$`)
 
