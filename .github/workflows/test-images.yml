@@ -1,0 +1,58 @@
+name: test-images
+
+# Publishes the e2e hosts in test/images, which boot systemd and sshd, so
+# a circuit's own conn3x test can apply to a container that runs services
+# (#535). Rebuilt weekly for the base images' security fixes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - test/images/rocky10/**
+      - test/images/debian13/**
+      - test/images/ubuntu2404/**
+      - .github/workflows/test-images.yml
+  schedule:
+    - cron: "40 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'conn3xorg/conn3x'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signatures
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [rocky10, debian13, ubuntu2404]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build, push and sign
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          repo="ghcr.io/conn3xorg/test-$IMAGE"
+          docker buildx build "test/images/$IMAGE" \
+            --platform linux/amd64,linux/arm64 \
+            --label "org.opencontainers.image.source=https://github.com/conn3xorg/conn3x" \
+            --label "org.opencontainers.image.description=A throwaway $IMAGE host with systemd and sshd, for testing circuits with conn3x test" \
+            --label "org.opencontainers.image.licenses=MPL-2.0" \
+            --tag "$repo:latest" --tag "$repo:$(date -u +%Y%m%d)" \
+            --metadata-file meta.json --push
+          digest=$(jq -r '."containerimage.digest"' meta.json)
+          cosign sign --yes "$repo@$digest"
