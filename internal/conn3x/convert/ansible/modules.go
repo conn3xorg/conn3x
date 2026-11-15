@@ -79,6 +79,10 @@ type input struct {
 	out map[string][]byte
 	// wait is set for a uri task that retries until a status answers.
 	wait *uriWait
+	// jsonEdits are a copy's json_patch chain on the slurp before it, or
+	// jsonWhy why that chain can't convert.
+	jsonEdits []jsonEdit
+	jsonWhy   string
 }
 
 // verbatim lists, by module, the arguments Conn3x uses exactly as Ansible
@@ -463,6 +467,12 @@ var exact = map[string]bool{
 var fullNameOnly = []string{"microsoft.ad."}
 
 func copyModule(in *input) ([]step, string) {
+	if in.jsonWhy != "" {
+		return nil, in.jsonWhy
+	}
+	if in.jsonEdits != nil {
+		return jsonValueSteps(in, in.jsonEdits)
+	}
 	attrs := []attr{s("path", in.str("dest"))}
 	switch {
 	case in.has("content"):

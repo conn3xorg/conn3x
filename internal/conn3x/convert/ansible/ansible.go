@@ -85,6 +85,11 @@ func ConvertWith(path string, opts Options) (Result, error) {
 
 type converter struct {
 	dir, file string // file is the one being read, relative to dir
+	// jsonRead holds slurps that only feed a json_patch chain, by task;
+	// jsonEdits and jsonWhy that chain's copy, as steps or why not.
+	jsonRead  map[*yaml.Node]string
+	jsonEdits map[*yaml.Node][]jsonEdit
+	jsonWhy   map[*yaml.Node]string
 	inv       *Inventory
 	role      *role // set while converting a role
 	// roleCalls is Options.Roles. roles are those converted so far, by
@@ -405,10 +410,17 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 		later = later || readsFacts(tasks[i].node)
 	}
 	used := map[string]int{}
+	c.jsonPairs(tasks)
 	for _, t := range tasks {
 		c.file = t.file
 		if t.reason != "" {
 			c.issue(cb, scalar(mapping(t.node)["name"]), t.node, t.reason)
+			continue
+		}
+		if src, ok := c.jsonRead[t.node]; ok {
+			cb.AppendNewline()
+			comment(cb, fmt.Sprintf("Task %q (%s line %d) reads %s for the next task, whose json_value steps edit it in place.", scalar(mapping(t.node)["name"]), t.file, t.node.Line, src))
+			c.res.Converted++
 			continue
 		}
 		c.block = t
@@ -827,6 +839,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		in := c.input(mod, args, vars, items)
 		in.factsLater = c.factsAfter[node]
 		in.wait = wait
+		in.jsonEdits, in.jsonWhy = c.jsonEdits[node], c.jsonWhy[node]
 		steps, reason := m(in)
 		if reason == "" && items != nil {
 			reason = loopSteps(in.itemUsed)
