@@ -122,3 +122,45 @@ func TestCircuitInventoryRelativePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestRunProxyCommand(t *testing.T) {
+	dir := t.TempDir()
+	src := "circuit \"x\" {\n  hosts = { a = \"i-0abc\" }\n  ssh {\n    proxy_command = [\"aws\", \"ssm\", \"start-session\", \"--target\", \"%h\"]\n  }\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.circuit.hcl"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := circuitInventory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := cty.ListVal([]cty.Value{cty.StringVal("aws"), cty.StringVal("ssm"), cty.StringVal("start-session"), cty.StringVal("--target"), cty.StringVal("%h")})
+	if got := (runOptions{}).sshFor("a", inv.Group("all").Vars("a"))["proxy_command"]; !got.RawEquals(want) {
+		t.Errorf("-circuits proxy_command = %#v", got)
+	}
+
+	iap := []string{"gcloud", "compute", "start-iap-tunnel", "%h", "%p", "--listen-on-stdin", "--zone", "us-central1-a"}
+	for name, vars := range map[string]map[string]string{
+		"common args": {"ansible_ssh_common_args": `-o ProxyCommand="gcloud compute start-iap-tunnel %h %p --listen-on-stdin --zone us-central1-a"`},
+		"joined -o":   {"ansible_ssh_common_args": `-o StrictHostKeyChecking=no '-oProxyCommand=gcloud compute start-iap-tunnel %h %p --listen-on-stdin --zone us-central1-a'`},
+		"space form":  {"ansible_ssh_extra_args": `-o "proxycommand gcloud compute start-iap-tunnel %h %p --listen-on-stdin --zone us-central1-a"`},
+	} {
+		got, err := proxyCommandOf(vars)
+		if err != nil || !slices.Equal(got, iap) {
+			t.Errorf("%s: %q, %v", name, got, err)
+		}
+	}
+	if got, err := proxyCommandOf(map[string]string{"ansible_ssh_common_args": "-o ServerAliveInterval=30"}); err != nil || got != nil {
+		t.Errorf("no ProxyCommand: %q, %v", got, err)
+	}
+	if _, err := proxyCommandOf(map[string]string{"ansible_ssh_common_args": `-o ProxyCommand="nc %h %p | tee log"`}); err == nil {
+		t.Error("a ProxyCommand that needs a shell was accepted")
+	}
+
+	bad := "circuit \"x\" {\n  hosts = { a = \"b\" }\n  ssh {\n    proxy_command = \"aws ssm\"\n  }\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.circuit.hcl"), []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := circuitInventory(dir); err == nil || !strings.Contains(err.Error(), "list of strings") {
+		t.Errorf("a string proxy_command: %v", err)
+	}
+}

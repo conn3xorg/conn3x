@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,9 +88,29 @@ func addCircuit(inv *ansible.Inventory, b *hcl.Block, dir string) error {
 			return diags
 		}
 		for name, a := range attrs {
+			if name == "proxy_command" {
+				v, err := literalValue(a.Expr, "ssh proxy_command")
+				if err != nil {
+					return err
+				}
+				list, err := convert.Convert(v, cty.List(cty.String))
+				if err != nil || list.IsNull() || !list.IsWhollyKnown() || list.LengthInt() == 0 {
+					return fmt.Errorf("ssh proxy_command must be a list of strings, such as [\"aws\", \"ssm\", ...]")
+				}
+				var args []string
+				for _, w := range list.AsValueSlice() {
+					if w.IsNull() {
+						return fmt.Errorf("ssh proxy_command must be a list of strings, such as [\"aws\", \"ssm\", ...]")
+					}
+					args = append(args, w.AsString())
+				}
+				js, _ := json.Marshal(args)
+				common["conn3x_ssh_proxy_command"] = string(js)
+				continue
+			}
 			key, ok := circuitSSHVars[name]
 			if !ok {
-				return fmt.Errorf("ssh %s isn't something conn3x run -circuits carries over yet; use an inventory with -i", name)
+				return fmt.Errorf("ssh %s isn't something conn3x run carries over yet", name)
 			}
 			v, err := literal(a.Expr, "ssh "+name)
 			if err != nil {
@@ -178,6 +199,9 @@ func addCircuit(inv *ansible.Inventory, b *hcl.Block, dir string) error {
 func sshSettingOf(key string) string {
 	if key == "ansible_host" {
 		return "address"
+	}
+	if key == "conn3x_ssh_proxy_command" {
+		return "proxy_command"
 	}
 	for setting, k := range circuitSSHVars {
 		if k == key {

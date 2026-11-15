@@ -26,13 +26,14 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/hostpattern"
 	"github.com/opentofu/opentofu/internal/conn3x/provider"
 	"github.com/opentofu/opentofu/internal/conn3x/termsafe"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
 type runOptions struct {
 	inventory, circuits, module, task, plan, args, user, keyFile, knownHosts, batchSize string
-	port, forks, maxFailures                                                  int
-	become, check, json                                                       bool
-	pattern                                                                   string
+	port, forks, maxFailures                                                            int
+	become, check, json                                                                 bool
+	pattern                                                                             string
 }
 
 func runCommand() command.Command {
@@ -221,6 +222,11 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		return inv.Ordered(g)
 	})
 	all := inv.Group("all")
+	for _, h := range all.Names() {
+		if _, err := proxyCommandOf(all.Vars(h)); err != nil {
+			return fail("host %s: %s", h, err)
+		}
+	}
 	hostsFor := func(p *hostpattern.Pattern) []*runHost {
 		var hosts []*runHost
 		for _, h := range all.Names() {
@@ -391,6 +397,13 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 			ssh[key] = cty.StringVal(v)
 		}
 	}
+	if args, _ := proxyCommandOf(vars); len(args) > 0 {
+		words := make([]cty.Value, len(args))
+		for i, a := range args {
+			words[i] = cty.StringVal(a)
+		}
+		ssh["proxy_command"] = cty.ListVal(words)
+	}
 	if vars["conn3x_ssh_become"] == "true" {
 		ssh["become"] = cty.True
 	}
@@ -403,6 +416,49 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 		ssh["become"] = cty.True
 	}
 	return ssh
+}
+
+// proxyCommandOf is a host's proxy command: the list -circuits carries
+// over, or the ProxyCommand in Ansible's ssh args variables, which is how
+// an inventory reaches hosts through SSM or IAP. It's split as ssh_config's
+// is, without a shell, so a pipe or a $ is refused.
+func proxyCommandOf(vars map[string]string) ([]string, error) {
+	if v := vars["conn3x_ssh_proxy_command"]; v != "" {
+		var args []string
+		return args, json.Unmarshal([]byte(v), &args)
+	}
+	for _, key := range []string{"ansible_ssh_common_args", "ansible_ssh_extra_args"} {
+		if ansible.Encrypted(vars[key]) {
+			continue
+		}
+		words, err := shellwords.Parse(vars[key])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		for i := 0; i < len(words); i++ {
+			opt, ok := strings.CutPrefix(words[i], "-o")
+			if !ok {
+				continue
+			}
+			if opt == "" && i+1 < len(words) {
+				i++
+				opt = words[i]
+			}
+			name, val, found := strings.Cut(opt, "=")
+			if !found {
+				name, val, _ = strings.Cut(opt, " ")
+			}
+			if !strings.EqualFold(strings.TrimSpace(name), "ProxyCommand") {
+				continue
+			}
+			args, err := ssh.SplitProxyCommand(strings.TrimSpace(val))
+			if err != nil {
+				return nil, fmt.Errorf("%s: ProxyCommand: %w", key, err)
+			}
+			return args, nil
+		}
+	}
+	return nil, nil
 }
 
 // checkBatchSize accepts what -batch-size takes: a whole number of hosts
