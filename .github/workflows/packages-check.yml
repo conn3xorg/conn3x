@@ -1,0 +1,53 @@
+name: packages-check
+
+# Builds the apt and dnf repositories from the latest release with a
+# throwaway key, then installs Conn3x from them on Debian and Rocky, so a
+# change to scripts/publish-packages.sh is tried before a release uses it.
+on:
+  pull_request:
+    paths:
+      - scripts/publish-packages.sh
+      - .github/workflows/packages-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q apt-utils createrepo-c
+      - name: Build the repositories with a throwaway key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gpg --batch --passphrase '' --quick-gen-key "Conn3x packages check <check@invalid>" ed25519 sign never
+          GPG_KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
+          export GPG_KEY_ID
+          tag=$(gh release view -R conn3xorg/conn3x --json tagName -q .tagName)
+          PACKAGES_SITE_URL=http://127.0.0.1:8000 scripts/publish-packages.sh site "$tag"
+          find site -type f | sort
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+      - name: Serve them
+        run: (cd site && python3 -m http.server 8000 >/dev/null 2>&1 &) && sleep 1
+      - name: apt install on Debian 13
+        run: |
+          docker run --rm --network host -v "$PWD/site:/site:ro" debian:trixie sh -euc '
+            apt-get update -q && apt-get install -y -q ca-certificates >/dev/null
+            mkdir -p /etc/apt/keyrings && cp /site/conn3x.asc /etc/apt/keyrings/conn3x.asc
+            cp /site/apt/conn3x.sources /etc/apt/sources.list.d/
+            apt-get update -q && apt-get install -y -q conn3x
+            conn3x version'
+      - name: dnf install on Rocky 10
+        run: |
+          # The release's RPMs predate package signing, so this checks the
+          # signed metadata (repo_gpgcheck) and the xml:base download.
+          docker run --rm --network host -v "$PWD/site:/site:ro" rockylinux/rockylinux:10 sh -euc '
+            sed "s/^gpgcheck=1/gpgcheck=0/" /site/rpm/conn3x.repo > /etc/yum.repos.d/conn3x.repo
+            dnf -y -q install conn3x
+            conn3x version'
