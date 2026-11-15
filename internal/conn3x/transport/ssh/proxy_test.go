@@ -8,9 +8,11 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 
@@ -73,6 +75,11 @@ func TestExpandAndSplitProxyCommand(t *testing.T) {
 			t.Errorf("expanded %q", bad)
 		}
 	}
+	for _, hu := range [][2]string{{"-oProxyCommand=x", "u"}, {"h", "-u"}, {"h x", "u"}, {"h\n", "u"}} {
+		if _, err := ExpandProxyCommand([]string{"nc", "%h"}, hu[0], 22, hu[1]); err == nil {
+			t.Errorf("took host %q user %q", hu[0], hu[1])
+		}
+	}
 	args, err := SplitProxyCommand(`aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'`)
 	if err != nil || len(args) != 9 || args[8] != "portNumber=%p" {
 		t.Errorf("split: %q, %v", args, err)
@@ -81,5 +88,22 @@ func TestExpandAndSplitProxyCommand(t *testing.T) {
 		if _, err := SplitProxyCommand(bad); err == nil {
 			t.Errorf("split %q", bad)
 		}
+	}
+}
+
+// Close takes the proxy's children with it and doesn't wait for them, as
+// aws's session-manager-plugin is a child of aws.
+func TestProxyCloseKillsItsChildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	p, err := dialProxy([]string{"sh", "-c", "sleep 30 & cat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_ = p.Close()
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("Close took %s; it waited for the proxy's child", d)
 	}
 }

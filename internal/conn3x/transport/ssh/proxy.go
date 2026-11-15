@@ -14,12 +14,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // ExpandProxyCommand fills in OpenSSH's ProxyCommand tokens: %h the host,
 // %p the port, %r the user and %% a percent sign. Any other token is an
 // error, so a typo doesn't reach the command.
 func ExpandProxyCommand(args []string, host string, port int, user string) ([]string, error) {
+	// As OpenSSH 9.6 does (CVE-2023-51385): a host or user from an
+	// inventory that starts with - would reach the command as an option.
+	for what, v := range map[string]string{"host": host, "user": user} {
+		if strings.HasPrefix(v, "-") || strings.ContainsFunc(v, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return nil, fmt.Errorf("proxy_command can't take the %s %q: it starts with - or holds whitespace or a control character", what, v)
+		}
+	}
 	out := make([]string, len(args))
 	for i, a := range args {
 		var b strings.Builder
@@ -111,6 +119,10 @@ type proxyConn struct {
 // a context: the connection outlives the dial, and Close ends it.
 func dialProxy(args []string) (*proxyConn, error) {
 	cmd := exec.Command(args[0], args[1:]...)
+	ownGroup(cmd)
+	// A child holding stderr open can't make Wait hang once the proxy is
+	// killed.
+	cmd.WaitDelay = time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -130,14 +142,13 @@ func dialProxy(args []string) (*proxyConn, error) {
 func (p *proxyConn) Read(b []byte) (int, error)  { return p.stdout.Read(b) }
 func (p *proxyConn) Write(b []byte) (int, error) { return p.stdin.Write(b) }
 
-// Close ends the command. It's killed, since a proxy such as the SSM
-// plugin may not exit on its own when its stdin closes.
+// Close ends the command and whatever it started. It's killed, since a
+// proxy such as the SSM plugin may not exit on its own when its stdin
+// closes.
 func (p *proxyConn) Close() error {
 	p.once.Do(func() {
 		_ = p.stdin.Close()
-		if p.cmd.Process != nil {
-			_ = p.cmd.Process.Kill()
-		}
+		killTree(p.cmd)
 		_ = p.cmd.Wait()
 	})
 	return nil
