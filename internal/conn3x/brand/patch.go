@@ -22,6 +22,13 @@ var patches = map[string][][2]string{
 		{`"tofu", version,`, `"tofu", version, "conn3x", conn3xversion.Version,`},
 		{"import (", "import (\n\tconn3xversion \"github.com/opentofu/opentofu/internal/conn3x/version\""},
 	},
+	// Every resource object in the -json stream names the circuit step and
+	// host it is, for UIs and CI tools reading the stream (#526).
+	"internal/command/jsonentities/resource_addr.go": {
+		{"ResourceKey     ctyjson.SimpleJSONValue `json:\"resource_key\"`", "ResourceKey     ctyjson.SimpleJSONValue `json:\"resource_key\"`\n\tConn3x *jsonstep.Step `json:\"conn3x,omitempty\"`"},
+		{"ResourceKey:     resourceKey,", "ResourceKey:     resourceKey,\n\t\tConn3x: jsonstep.Of(addr),"},
+		{"import (", "import (\n\t\"github.com/opentofu/opentofu/internal/conn3x/jsonstep\""},
+	},
 	// A plan, show or state show prints a multi-line string as it is, line
 	// by line. Hosts write many of them, a file's content for one, so
 	// control characters in them are written out as escapes. A single-line
