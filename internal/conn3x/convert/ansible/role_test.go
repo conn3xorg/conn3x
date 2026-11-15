@@ -820,3 +820,36 @@ func TestRoleLoopOverMaps(t *testing.T) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// Ansible's YAML reads y and n as text, so a bare when on one is true even
+// for n. They stay for review, not a bool. No and OFF are booleans.
+func TestRoleYAMLBoolLikeAnsible(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "demo_feature: n\ndemo_other: No\ndemo_off: OFF\n",
+		"tasks/main.yml": `- name: Only when on
+  package: { name: htop }
+  when: demo_feature
+- name: Other
+  package: { name: tree }
+  when: demo_other
+- name: Off
+  package: { name: jq }
+  when: not demo_off
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
+	if strings.Contains(vars, `variable "demo_feature"`) || strings.Contains(hcl, "var.demo_feature") {
+		t.Errorf("n became a variable:\n%s\n%s", vars, hcl)
+	}
+	for _, w := range []string{"when = var.demo_other", "when = !var.demo_off"} {
+		if !strings.Contains(hcl, w) {
+			t.Errorf("missing %q:\n%s", w, hcl)
+		}
+	}
+	if res.Converted != 2 || len(res.Review) != 1 {
+		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}

@@ -582,7 +582,9 @@ func plainValue(n *yaml.Node) (val string, number bool, why string) {
 		return v, true, ""
 	}
 	switch strings.ToLower(v) {
-	case "", "~", "null", "yes", "no", "true", "false", "on", "off", "y", "n":
+	case "y", "n":
+		return "", false, "y or n, which Ansible reads as text: a bare when finds it true, but | bool reads n as false"
+	case "", "~", "null", "yes", "no", "true", "false", "on", "off":
 		return "", false, "true, false or empty"
 	}
 	if !textStart.MatchString(v) {
@@ -806,16 +808,18 @@ var textWhenRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*) ?(==|!=) ?(?:'([^
 
 var boolWhenRe = regexp.MustCompile(`^(not )?(?:\(([A-Za-z_][A-Za-z0-9_]*) ?\| ?bool\)|([A-Za-z_][A-Za-z0-9_]*)(?: ?\| ?bool)?)$`)
 
-// yamlBool reads a plain scalar as YAML 1.1, as Ansible does, where yes,
-// no, on and off are booleans too.
+// yamlBool reads a plain scalar as Ansible's YAML loader, PyYAML, does:
+// yes, no, on and off are booleans too, in lower, title or upper case.
+// y and n aren't, though YAML 1.1 lists them, and neither is a mixed case
+// such as yEs: Ansible reads those as text, which a bare when finds true.
 func yamlBool(n *yaml.Node) (bool, bool) {
 	if n == nil || n.Kind != yaml.ScalarNode || n.Style != 0 {
 		return false, false
 	}
-	switch strings.ToLower(n.Value) {
-	case "yes", "true", "on", "y":
+	switch n.Value {
+	case "yes", "Yes", "YES", "true", "True", "TRUE", "on", "On", "ON":
 		return true, true
-	case "no", "false", "off", "n":
+	case "no", "No", "NO", "false", "False", "FALSE", "off", "Off", "OFF":
 		return false, true
 	}
 	return false, false
