@@ -758,15 +758,23 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				continue
 			}
 		}
+		// with_items over a written list of plain values is loop over it.
+		if k == "with_items" && t[k].Kind == yaml.SequenceNode {
+			continue
+		}
 		if strings.HasPrefix(k, "with_") {
 			c.issue(body, name, node, "uses "+k+", a loop, which the converter can't translate yet")
 			return
 		}
 	}
+	if t["loop"] != nil && t["with_items"] != nil {
+		c.issue(body, name, node, "sets both loop and with_items, which Ansible refuses")
+		return
+	}
 	var items []string
 	if listVar != "" {
 		items = c.role.lists[listVar]
-	} else if l, ok := t["loop"]; ok {
+	} else if l := firstNode(t["loop"], t["with_items"]); l != nil {
 		var why string
 		if items, why = literalLoop(l); why != "" {
 			c.issue(body, name, node, why)
@@ -824,7 +832,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	wait := uriRetry(t)
 	module, delegate := "", ""
 	for _, k := range sortedKeys(t) {
-		if (k == "loop" || k == "with_items" && listVar != "") && items != nil {
+		if (k == "loop" || k == "with_items") && items != nil {
 			continue
 		}
 		if wait != nil && (k == "until" || k == "retries" || k == "delay" || k == "register") {
@@ -1487,6 +1495,16 @@ func seq(n *yaml.Node) []*yaml.Node {
 		return nil
 	}
 	return n.Content
+}
+
+// firstNode is the first of nodes that's set.
+func firstNode(nodes ...*yaml.Node) *yaml.Node {
+	for _, n := range nodes {
+		if n != nil {
+			return n
+		}
+	}
+	return nil
 }
 
 func scalar(n *yaml.Node) string {

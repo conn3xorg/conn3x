@@ -636,3 +636,29 @@ func TestDefaultShadowedByFamilyVars(t *testing.T) {
 		t.Errorf("review:\n%s", strings.Join(got, "\n"))
 	}
 }
+
+// with_items over a written list of plain values is loop over it; a list
+// of maps, or both loop and with_items, stays for review.
+func TestWithItemsLiteralList(t *testing.T) {
+	res := convertString(t, `- hosts: all
+  tasks:
+    - name: Tools
+      package: {name: "{{ item }}"}
+      with_items: [git, jq]
+    - name: Users
+      user: {name: "{{ item.name }}"}
+      with_items:
+        - {name: a}
+    - name: Both
+      package: {name: "{{ item }}"}
+      loop: [a]
+      with_items: [b]
+`)
+	hcl := string(res.HCL)
+	if !strings.Contains(hcl, `for_each = ["git", "jq"]`) || res.Converted != 1 || len(res.Review) != 2 {
+		t.Errorf("converted %d, review %+v\n%s", res.Converted, res.Review, hcl)
+	}
+	if len(res.Review) == 2 && !strings.Contains(res.Review[1].Reason, "both loop and with_items") {
+		t.Errorf("review %+v", res.Review)
+	}
+}
