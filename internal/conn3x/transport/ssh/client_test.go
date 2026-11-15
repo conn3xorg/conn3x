@@ -891,6 +891,8 @@ func TestDialRemote(t *testing.T) {
 // next waits for one to finish, or gives up with its context.
 func TestJumpStartupSlots(t *testing.T) {
 	addr := "bastion.test:22"
+	// The slots are process-wide, and this test ends holding all of them.
+	t.Cleanup(func() { jumpStartups.Delete(addr); jumpStartups.Delete("other.test:22") })
 	var held []func()
 	for range maxJumpStartups {
 		release, err := startupSlot(context.Background(), addr)
