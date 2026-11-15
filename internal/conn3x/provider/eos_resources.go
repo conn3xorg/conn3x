@@ -358,7 +358,11 @@ func (st *staged) salvage(ctx context.Context, h *hostConn, removed [][]string, 
 	}
 	var lines []string
 	for _, cmds := range removed {
-		lines = append(lines, strings.Join(cmds, "; "))
+		masked := make([]string, len(cmds))
+		for i, c := range cmds {
+			masked[i] = eos.Mask(c) // a removed secret line still holds its hash
+		}
+		lines = append(lines, strings.Join(masked, "; "))
 	}
 	if errors.As(err, new(eos.SessionGoneError)) {
 		// Another run has the switch; a session of ours would abort its.
@@ -458,13 +462,14 @@ func stringList(v cty.Value) []string {
 }
 
 func eosConfigFrom(v cty.Value) eos.Config {
-	return eos.Config{Parents: stringList(v.GetAttr("parents")), Lines: stringList(v.GetAttr("lines")), Match: stringOr(v.GetAttr("match"), eos.MatchLines)}
+	return eos.Config{Parents: stringList(v.GetAttr("parents")), Lines: stringList(v.GetAttr("lines")), Match: stringOr(v.GetAttr("match"), eos.MatchLines),
+		Prefixes: stringList(v.GetAttr("lines_wo_prefixes"))}
 }
 
 var eosConfigKind = eosKind{
 	name:     "config",
 	keys:     []string{"parents"},
-	settings: []string{"lines", "match"},
+	settings: []string{"lines", "match", "lines_hmac", "lines_wo_prefixes"},
 	config:   func(v cty.Value) eosWant { return eosConfigFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return eosConfigFrom(v).RemoveCommands(running) },
 }
@@ -473,14 +478,17 @@ func eosConfigSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: eosExperimental + "Lines of an Arista EOS switch's configuration, under a parent block such as an interface. Only the lines named here are owned; with match = \"block\" the block must hold exactly these.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":        {Type: cty.String, Computed: true},
-			"revision":  revisionAttr(),
-			"parents":   {Type: cty.List(cty.String), Optional: true, Description: "The block the lines go under, outermost first, as show running-config prints it, such as [\"interface Ethernet1\"] or [\"router bgp 65000\", \"address-family ipv4\"]. Leave unset for top-level lines."},
-			"lines":     {Type: cty.List(cty.String), Optional: true, Description: "The lines, as show running-config prints them, without the indent. The switch must print a line back exactly as written, or it never shows as in sync."},
-			"match":     {Type: cty.String, Optional: true, Description: "\"lines\" (default): these lines must be there, and others under the parent are left alone. \"block\": the block must be exactly these lines, so others under it are removed. Needs parents."},
-			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the switch when this resource is removed: \"forget\" (default) leaves the lines, \"delete\" removes them with \"no\" and leaves the parent."},
-			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the switch had these lines at the last refresh."},
-			"circuit":   eosCircuitAttr(),
+			"id":                {Type: cty.String, Computed: true},
+			"revision":          revisionAttr(),
+			"parents":           {Type: cty.List(cty.String), Optional: true, Description: "The block the lines go under, outermost first, as show running-config prints it, such as [\"interface Ethernet1\"] or [\"router bgp 65000\", \"address-family ipv4\"]. Leave unset for top-level lines."},
+			"lines":             {Type: cty.List(cty.String), Optional: true, Description: "The lines, as show running-config prints them, without the indent. The switch must print a line back exactly as written, or it never shows as in sync. State keeps them, so put lines holding a secret in lines_wo."},
+			"lines_wo":          {Type: cty.List(cty.String), Optional: true, Sensitive: true, WriteOnly: true, Description: "Write-only: lines that hold a secret, such as \"tacacs-server key MyKey\" or \"snmp-server community MyCommunity ro\", never kept in state. The switch shows these hashed or encrypted, so each is matched by its start, the line up to its secret (\"tacacs-server key\"): it owns every line under the parent that starts that way, and is in sync when one is there. A change to any of them sends them all again."},
+			"lines_hmac":        {Type: cty.String, Computed: true, Description: "An HMAC of lines_wo, keyed outside state, so a change plans an update."},
+			"lines_wo_prefixes": {Type: cty.List(cty.String), Computed: true, Description: "How each lines_wo line starts, up to its secret, such as \"tacacs-server key\". A refresh checks these are there, and a removal takes them out."},
+			"match":             {Type: cty.String, Optional: true, Description: "\"lines\" (default): these lines must be there, and others under the parent are left alone. \"block\": the block must be exactly these lines, so others under it are removed. Needs parents."},
+			"on_remove":         {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the switch when this resource is removed: \"forget\" (default) leaves the lines, \"delete\" removes them with \"no\" and leaves the parent."},
+			"in_sync":           {Type: cty.Bool, Computed: true, Description: "Whether the switch had these lines at the last refresh."},
+			"circuit":           eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -492,10 +500,121 @@ func validateEOSConfig(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	if err := eosConfigFrom(cfg).Validate(); err != nil {
+	c := eosConfigFrom(cfg)
+	c.Secrets = stringList(cfg.GetAttr("lines_wo"))
+	if err := c.Validate(); err != nil {
 		diags = diags.Append(attrError("lines", err.Error()))
 	}
+	for _, l := range c.Lines {
+		if eos.LooksSecret(l) {
+			diags = diags.Append(tfdiags.AttributeValue(tfdiags.Warning, "A line in lines holds a secret",
+				"A line in lines looks like it holds a key, secret, password or community, and state keeps lines as written. Move it to lines_wo, which keeps only an HMAC.", cty.GetAttrPath("lines")))
+			break
+		}
+	}
 	return diags
+}
+
+// eosConfigID ties lines_hmac to the switch and the block.
+func eosConfigID(v cty.Value) string {
+	return passwordID("eos_config", stringOr(v.GetAttr("ssh").GetAttr("host"), ""), strings.Join(stringList(v.GetAttr("parents")), "\n"))
+}
+
+func eosLinesHMAC(key []byte, v cty.Value, lines []string) string {
+	return passwordHMAC(key, eosConfigID(v), strings.Join(lines, "\n"))
+}
+
+// planEOSConfig records an HMAC of lines_wo, and how each line starts, in
+// place of the lines.
+func planEOSConfig(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	if req.ProposedNewState.IsNull() {
+		return eosConfigKind.plan(req)
+	}
+	var resp providers.PlanResourceChangeResponse
+	vals := req.ProposedNewState.AsValueMap()
+	vals["lines_wo"] = cty.NullVal(cty.List(cty.String))
+	vals["lines_hmac"], vals["lines_wo_prefixes"] = cty.NullVal(cty.String), cty.NullVal(cty.List(cty.String))
+	var warn error
+	if wo := req.Config.GetAttr("lines_wo"); !wo.IsNull() {
+		vals["lines_hmac"], vals["lines_wo_prefixes"] = cty.UnknownVal(cty.String), cty.UnknownVal(cty.List(cty.String))
+		key, err := hmacKey(true)
+		if err == nil && !req.PriorState.IsNull() {
+			if stored := req.PriorState.GetAttr("lines_hmac"); known(stored) {
+				err = checkHMACKey(stored.AsString(), key)
+			}
+		}
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("lines_wo", err.Error()))
+			return resp
+		}
+		warn = hmacKeyPermissionWarning()
+		next := cty.ObjectVal(vals)
+		if wo.IsWhollyKnown() && known(next.GetAttr("ssh").GetAttr("host")) && next.GetAttr("parents").IsWhollyKnown() {
+			lines := stringList(wo)
+			var prefixes []cty.Value
+			for _, l := range lines {
+				p, _ := eos.SecretPrefix(l) // validate refused lines without one
+				prefixes = append(prefixes, cty.StringVal(p))
+			}
+			vals["lines_hmac"], vals["lines_wo_prefixes"] = cty.StringVal(eosLinesHMAC(key, next, lines)), cty.ListVal(prefixes)
+		}
+	}
+	req.ProposedNewState = cty.ObjectVal(vals)
+	resp = eosConfigKind.plan(req)
+	if warn != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(warn.Error()))
+	}
+	return resp
+}
+
+// applyEOSConfig gives the commands the lines_wo lines, which only the
+// config holds. They're all sent again when lines_hmac changed, since the
+// switch can't show which secret it holds.
+func applyEOSConfig(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	k := eosConfigKind
+	var mac string
+	var prefixes cty.Value
+	if !req.PlannedState.IsNull() && !req.PlannedState.GetAttr("lines_hmac").IsNull() {
+		var resp providers.ApplyResourceChangeResponse
+		var lines []string
+		if !req.Config.IsNull() {
+			lines = stringList(req.Config.GetAttr("lines_wo"))
+		}
+		if len(lines) == 0 {
+			resp.Diagnostics = resp.Diagnostics.Append(errors.New("eos_config: lines_wo didn't reach the apply; it's write-only, so set it in the step's config"))
+			return resp
+		}
+		key, err := hmacKey(true)
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("lines_wo", err.Error()))
+			return resp
+		}
+		mac = eosLinesHMAC(key, req.PlannedState, lines)
+		var ps []cty.Value
+		var prefix []string
+		for _, l := range lines {
+			p, _ := eos.SecretPrefix(l)
+			ps, prefix = append(ps, cty.StringVal(p)), append(prefix, p)
+		}
+		prefixes = cty.ListVal(ps)
+		resend := req.PriorState.IsNull() || stringOr(req.PriorState.GetAttr("lines_hmac"), "") != mac
+		k.config = func(v cty.Value) eosWant {
+			c := eosConfigFrom(v)
+			c.Secrets, c.Prefixes, c.Resend = lines, prefix, resend
+			return c
+		}
+	}
+	resp := k.apply(ctx, req)
+	if !resp.NewState.IsNull() {
+		vals := resp.NewState.AsValueMap()
+		vals["lines_wo"] = cty.NullVal(cty.List(cty.String))
+		if mac != "" {
+			// Unknown in a plan that didn't know the lines.
+			vals["lines_hmac"], vals["lines_wo_prefixes"] = cty.StringVal(mac), prefixes
+		}
+		resp.NewState = cty.ObjectVal(vals)
+	}
+	return resp
 }
 
 var eosHostnameKind = eosKind{

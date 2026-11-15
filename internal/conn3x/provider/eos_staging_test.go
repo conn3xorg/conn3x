@@ -695,3 +695,83 @@ func TestEOSFinishReportsRemovalsLeftBehind(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// lines_wo keeps its lines out of state: an HMAC of them, and how each
+// starts, are what a refresh and a change go by.
+func TestEOSConfigLinesWO(t *testing.T) {
+	t.Setenv(hmacKeyEnv, strings.Repeat("k", 32))
+	f, ssh := newFakeEOS(t, block{head: "vlan 10"})
+	cfgFor := func(secret string) cty.Value {
+		return onSwitch(eosStep("conn3x_eos_config", map[string]cty.Value{
+			"parents":   cty.ListVal([]cty.Value{cty.StringVal("vlan 10")}),
+			"lines_wo":  cty.ListVal([]cty.Value{cty.StringVal("ip ospf authentication-key " + secret)}),
+			"on_remove": cty.StringVal(onRemoveDelete),
+		}, nil), ssh)
+	}
+	set := func(prior cty.Value, secret string) cty.Value {
+		t.Helper()
+		cfg := cfgFor(secret)
+		if prior == cty.NilVal {
+			prior = cty.NullVal(cfg.Type())
+		}
+		plan := planEOSConfig(providers.PlanResourceChangeRequest{PriorState: prior, Config: cfg, ProposedNewState: cfg})
+		if err := plan.Diagnostics.Err(); err != nil {
+			t.Fatal(err)
+		}
+		p := plan.PlannedState
+		if !p.GetAttr("lines_wo").IsNull() || !known(p.GetAttr("lines_hmac")) || p.GetAttr("lines_wo_prefixes").Equals(cty.ListVal([]cty.Value{cty.StringVal("ip ospf authentication-key")})).False() {
+			t.Fatalf("planned %#v", p)
+		}
+		resp := applyEOSConfig(ctx, providers.ApplyResourceChangeRequest{PriorState: prior, PlannedState: p, Config: cfg})
+		if err := resp.Diagnostics.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := create(commitApply, commitFor(ssh, true)); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(fmt.Sprintf("%#v", resp.NewState), secret) {
+			t.Fatalf("state holds the secret: %#v", resp.NewState)
+		}
+		return resp.NewState
+	}
+	inSync := func(state cty.Value) bool {
+		t.Helper()
+		resp := eosConfigKind.read(ctx, providers.ReadResourceRequest{PriorState: state})
+		if err := resp.Diagnostics.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return resp.NewState.GetAttr("in_sync").True()
+	}
+
+	state := set(cty.NilVal, "First1")
+	if running, _, _, _ := f.state(); !strings.Contains(running, "ip ospf authentication-key First1") || !inSync(state) {
+		t.Fatalf("not applied:\n%s", running)
+	}
+	// A new secret replaces the line, though the old one looks present.
+	state = set(state, "Second2")
+	if running, _, _, _ := f.state(); strings.Contains(running, "First1") || !strings.Contains(running, "ip ospf authentication-key Second2") {
+		t.Fatalf("not replaced:\n%s", running)
+	}
+	f.mu.Lock()
+	f.running = apply(f.running, []string{"vlan 10", "no ip ospf authentication-key Second2"})
+	f.mu.Unlock()
+	if inSync(state) {
+		t.Error("in sync with the line removed by hand")
+	}
+	f.mu.Lock()
+	f.running = apply(f.running, []string{"vlan 10", "ip ospf authentication-key 7 Hashed=="})
+	f.mu.Unlock()
+	if !inSync(state) {
+		t.Error("the line as the switch prints it isn't in sync")
+	}
+	if err := destroy(configApply, state); err != nil {
+		t.Fatal(err)
+	}
+	if running, _, _, _ := f.state(); strings.Contains(running, "authentication-key") {
+		t.Errorf("removal left the line:\n%s", running)
+	}
+}
+
+func configApply(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applyEOSConfig(ctx, req)
+}

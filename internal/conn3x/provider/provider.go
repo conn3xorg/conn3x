@@ -96,7 +96,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_partition":            storageTypes["conn3x_partition"],
 	"conn3x_wait_for":             {waitForSchema, validateWaitFor, planWaitFor, readWaitFor, applyWaitFor, upgradeWith(waitForSchema)},
 	"conn3x_reboot":               {rebootSchema, validateReboot, planReboot, readReboot, applyReboot, upgradeWith(rebootSchema)},
-	"conn3x_eos_config":           eosConfigKind.entry(eosConfigSchema, validateEOSConfig),
+	"conn3x_eos_config":           {eosConfigSchema, validateEOSConfig, planEOSConfig, eosConfigKind.read, applyEOSConfig, upgradeWith(eosConfigSchema)},
 	"conn3x_eos_hostname":         eosHostnameKind.entry(eosHostnameSchema, validateEOSHostname),
 	"conn3x_eos_vlan":             eosVLANKind.entry(eosVLANSchema, validateEOSVLAN),
 	"conn3x_eos_interface":        eosInterfaceKind.entry(eosInterfaceSchema, validateEOSInterface),

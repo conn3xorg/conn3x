@@ -94,11 +94,57 @@ type Config struct {
 	Parents []string
 	Lines   []string
 	Match   string
+	// Secrets are lines that hold a secret, known only at apply. The switch
+	// prints them hashed or encrypted, so each one is matched by its prefix,
+	// the line up to its secret: it owns every line under the parent that
+	// starts that way.
+	Secrets  []string
+	Prefixes []string // the Secrets' prefixes, which state keeps
+	// Resend sends every secret line, as when one of them changed: the
+	// switch can't show which secret it holds.
+	Resend bool
+}
+
+// SecretPrefix is line up to its secret, such as "tacacs-server key" for
+// "tacacs-server key 7 0207165218120E". An error when line holds none.
+func SecretPrefix(line string) (string, error) {
+	for _, m := range secretWord.FindAllStringSubmatchIndex(line, -1) {
+		if !strings.EqualFold(line[m[4]:m[5]], "ssh-key") {
+			return strings.TrimSpace(line[:m[6]]), nil
+		}
+	}
+	return "", fmt.Errorf("line %q holds no secret Conn3x knows, such as a key, secret, password or snmp-server community; put it in lines instead", line)
+}
+
+// secretLine reports whether have is one of the lines the prefixes own.
+func (c Config) secretLine(have string) bool {
+	for _, p := range c.Prefixes {
+		if strings.HasPrefix(have, p+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// secretsMissing are the prefixes that no line in have starts with.
+func (c Config) secretsMissing(have []string) []string {
+	var missing []string
+	for _, p := range c.Prefixes {
+		if !slices.ContainsFunc(have, func(h string) bool { return strings.HasPrefix(h, p+" ") }) {
+			missing = append(missing, p)
+		}
+	}
+	return missing
+}
+
+// plain is have without the lines the secrets own.
+func (c Config) plain(have []string) []string {
+	return slices.DeleteFunc(slices.Clone(have), c.secretLine)
 }
 
 // Validate checks a Config before anything reaches the device.
 func (c Config) Validate() error {
-	if len(c.Lines) == 0 && c.Match != MatchBlock {
+	if len(c.Lines) == 0 && len(c.Secrets) == 0 && c.Match != MatchBlock {
 		return errors.New("lines must not be empty")
 	}
 	if c.Match != "" && c.Match != MatchLines && c.Match != MatchBlock {
@@ -112,7 +158,34 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	seen := map[string]bool{}
+	for _, l := range c.Secrets {
+		// Never quote a secret line back: errors are printed.
+		if err := checkLine(l); err != nil {
+			return errors.New("a line in lines_wo is not a single CLI line as show running-config prints it, or would leave the config session")
+		}
+		p, err := SecretPrefix(l)
+		if err != nil {
+			return errors.New("a line in lines_wo holds no secret Conn3x knows, such as a key, secret, password or snmp-server community; put it in lines instead")
+		}
+		if seen[p] {
+			return fmt.Errorf("two lines in lines_wo start %q, and the switch can't show which secret each holds; give each its own start", p)
+		}
+		seen[p] = true
+		for _, plain := range c.Lines {
+			if strings.HasPrefix(plain, p+" ") {
+				return fmt.Errorf("line %q in lines starts like a line in lines_wo (%q), which owns every line starting that way; take it out of one of them", plain, p)
+			}
+		}
+	}
 	return nil
+}
+
+// LooksSecret reports whether a line in lines holds a secret, which state
+// would then keep.
+func LooksSecret(line string) bool {
+	_, err := SecretPrefix(line)
+	return err == nil
 }
 
 // sessionWords are the commands that leave or end a config session, run
@@ -160,8 +233,8 @@ func (c Config) InSync(config string) bool {
 	if !found {
 		return false
 	}
-	missing, extra := Diff(have, c.Lines)
-	return len(missing) == 0 && (c.Match != MatchBlock || len(extra) == 0)
+	missing, extra := Diff(c.plain(have), c.Lines)
+	return len(missing) == 0 && (c.Match != MatchBlock || len(extra) == 0) && len(c.secretsMissing(have)) == 0
 }
 
 // Commands are what to type in a config session to bring config in line:
@@ -169,18 +242,33 @@ func (c Config) InSync(config string) bool {
 // missing. Nil when nothing needs to change.
 func (c Config) Commands(config string) []string {
 	have, found := Section(config, c.Parents)
-	missing, extra := Diff(have, c.Lines)
+	missing, extra := Diff(c.plain(have), c.Lines)
 	if c.Match != MatchBlock {
 		extra = nil
 	}
-	if found && len(missing) == 0 && len(extra) == 0 {
+	// A changed secret replaces every line its prefix owns.
+	var secrets []string
+	absent := c.secretsMissing(have)
+	for _, l := range c.Secrets {
+		p, _ := SecretPrefix(l)
+		if !c.Resend && !slices.Contains(absent, p) {
+			continue
+		}
+		for _, h := range have {
+			if strings.HasPrefix(h, p+" ") {
+				extra = append(extra, h)
+			}
+		}
+		secrets = append(secrets, l)
+	}
+	if found && len(missing) == 0 && len(extra) == 0 && len(secrets) == 0 {
 		return nil
 	}
 	cmds := slices.Clone(c.Parents)
 	for _, e := range extra {
 		cmds = append(cmds, negate(e))
 	}
-	return append(cmds, missing...)
+	return append(append(cmds, missing...), secrets...)
 }
 
 // RemoveCommands take out the lines c owns that config still has, leaving
@@ -191,6 +279,11 @@ func (c Config) RemoveCommands(config string) []string {
 	for _, l := range c.Lines {
 		if slices.Contains(have, l) {
 			cmds = append(cmds, negate(l))
+		}
+	}
+	for _, h := range have {
+		if c.secretLine(h) {
+			cmds = append(cmds, negate(h))
 		}
 	}
 	if cmds == nil {
