@@ -24,6 +24,8 @@ jobs:
   stable:
     if: github.ref == 'refs/heads/main' && github.repository == 'conn3xorg/conn3x'
     runs-on: ubuntu-24.04
+    # The tap token lives in the main-only release environment.
+    environment: release
     timeout-minutes: 10
     permissions:
       contents: read
