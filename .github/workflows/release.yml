@@ -16,6 +16,9 @@ jobs:
   release:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    # The tap and winget tokens live in this environment, which only main
+    # can deploy to, so no other branch's workflow can read them.
+    environment: release
     permissions:
       contents: write
       packages: write
