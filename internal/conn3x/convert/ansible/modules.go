@@ -83,6 +83,9 @@ type input struct {
 	// jsonWhy why that chain can't convert.
 	jsonEdits []jsonEdit
 	jsonWhy   string
+	// itemVar names the role default a loop runs over, whose items the
+	// caller sets, so item is held to what a default is held to.
+	itemVar string
 }
 
 // verbatim lists, by module, the arguments Conn3x uses exactly as Ansible
@@ -188,6 +191,13 @@ func (in *input) render(key, s string) string {
 		name := jinja.FindStringSubmatch(m)[1]
 		if name == "item" && in.loop {
 			in.itemUsed = true
+			if in.itemVar != "" && !slices.Contains(verbatim[in.mod], key) {
+				in.fail(fmt.Sprintf("%s uses item from the role default %q, and the converter keeps a default as a variable only where Conn3x uses its value exactly as Ansible does, whatever it is set to; here it would have to check each item first", key, in.itemVar))
+				return m
+			}
+			if in.itemVar != "" && packageModules[in.mod] {
+				in.commaFree = append(in.commaFree, in.itemVar)
+			}
 			return itemMark
 		}
 		if v, ok := in.vars[name]; ok {

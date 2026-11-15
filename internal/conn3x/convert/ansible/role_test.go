@@ -699,3 +699,29 @@ func TestWhenTextDefault(t *testing.T) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// item from a role's list default is held to what the default itself is:
+// only where Conn3x uses the value exactly as Ansible does, and a package
+// name without a comma.
+func TestListDefaultItemIsHeldLikeADefault(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"defaults/main.yml": "dirs: [/srv/a]\npkgs: [git, jq]\n",
+		"tasks/main.yml": `- name: Dirs
+  file: {path: "{{ item }}", state: directory}
+  loop: "{{ dirs }}"
+- name: Packages
+  package: {name: "{{ item }}"}
+  loop: "{{ pkgs }}"
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Converted != 1 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, `path uses item from the role default "dirs"`) {
+		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	if vars := string(res.Files["variables.tf"]); !strings.Contains(vars, `alltrue([for p in var.pkgs : !strcontains(p, ",")])`) {
+		t.Errorf("no comma check on pkgs:\n%s", vars)
+	}
+}

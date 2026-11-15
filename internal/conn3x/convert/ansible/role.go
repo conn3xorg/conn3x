@@ -226,6 +226,11 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			b.SetAttributeValue("default", cty.ListVal(vals))
 		}
 		b.SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+". Each item is one pass of the loop that uses it, so the list can't hold the same value twice."))
+		if r.commaFree[k] {
+			v := b.AppendNewBlock("validation", nil).Body()
+			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`alltrue([for p in var.%s : !strcontains(p, ",")])`, k)))
+			v.SetAttributeValue("error_message", cty.StringVal("Each item of "+k+" names one package, so it can't have a comma; Ansible would read one as a list."))
+		}
 	}
 
 	var looped []string
