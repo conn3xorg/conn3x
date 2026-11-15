@@ -149,6 +149,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_path":                 {winPathSchema, validateWinPath, planWinPath, readWinPath, applyWinPath, upgradeWith(winPathSchema)},
 	"conn3x_windows_share":                {winShareSchema, validateWinShare, planWinShare, readWinShare, applyWinShare, upgradeWith(winShareSchema)},
 	"conn3x_windows_certificate":          {winCertSchema, validateWinCert, planWinCert, readWinCert, applyWinCert, upgradeWith(winCertSchema)},
+	"conn3x_windows_dns_record":           {winDNSRecordSchema, validateWinDNSRecord, planWinDNSRecord, readWinDNSRecord, applyWinDNSRecord, upgradeWith(winDNSRecordSchema)},
 	"conn3x_windows_update":               {winUpdateSchema, validateWinUpdate, planWinUpdate, readWinUpdate, applyWinUpdate, upgradeWith(winUpdateSchema)},
 	"conn3x_windows_reboot":               {winRebootSchema, validateReboot, planWinReboot, readWinReboot, applyWinReboot, upgradeWith(winRebootSchema)},
 	"conn3x_windows_scheduled_task":       {winTaskSchema, validateWinTask, planWinTask, readWinTask, applyWinTask, upgradeWith(winTaskSchema)},

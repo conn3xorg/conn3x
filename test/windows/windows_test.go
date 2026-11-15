@@ -1681,3 +1681,57 @@ Remove-Item -LiteralPath "Cert:\LocalMachine\My\$($one.Thumbprint)", "Cert:\Loca
 		t.Errorf("wrong password: %v", err)
 	}
 }
+
+// windows_dns_record keeps a name's records of a type as a set on a DNS
+// server: adds and removes values, sets the TTL in place, and removes them.
+func TestDNSRecord(t *testing.T) {
+	c := connect(t)
+	ctx := context.Background()
+	zone := "conn3x-" + strconv.FormatInt(time.Now().UnixNano(), 36) + ".test"
+	run(t, c, `param($A)
+if (-not (Get-WindowsFeature DNS).Installed) { $null = Install-WindowsFeature DNS -IncludeManagementTools -ErrorAction Stop }
+Add-DnsServerPrimaryZone -Name $A.z -ZoneFile "$($A.z).dns" -ErrorAction Stop`, map[string]any{"z": zone})
+	t.Cleanup(func() {
+		_, _ = ps.User(context.Background(), c, `param($A) Remove-DnsServerZone -Name $A.z -Force`, map[string]any{"z": zone}, time.Minute)
+	})
+	www := windows.DNSRecord{Zone: zone, Name: "www", Type: "A", Values: []string{"192.0.2.10", "192.0.2.11"}, TTL: 300}
+	if err := windows.ApplyDNSRecord(ctx, c, www); err != nil {
+		t.Fatal(err)
+	}
+	a, err := windows.ReadDNSRecord(ctx, c, www)
+	if err != nil || !www.Matches(a) {
+		t.Fatalf("after create: %+v, %v", a, err)
+	}
+	// One value swapped and a new TTL: the other record stays, set in place.
+	www.Values, www.TTL = []string{"192.0.2.11", "192.0.2.12"}, 600
+	if err := windows.ApplyDNSRecord(ctx, c, www); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := windows.ReadDNSRecord(ctx, c, www); !www.Matches(a) {
+		t.Errorf("after change: %+v", a)
+	}
+	cname := windows.DNSRecord{Zone: zone, Name: "app", Type: "CNAME", Values: []string{"www." + zone}}
+	if err := windows.ApplyDNSRecord(ctx, c, cname); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := windows.ReadDNSRecord(ctx, c, cname); !cname.Matches(a) {
+		t.Errorf("cname: %+v", a)
+	}
+	txt := windows.DNSRecord{Zone: zone, Name: "@", Type: "TXT", Values: []string{`v=spf1 -all "quoted" $env:x`}}
+	if err := windows.ApplyDNSRecord(ctx, c, txt); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := windows.ReadDNSRecord(ctx, c, txt); !txt.Matches(a) {
+		t.Errorf("txt: %+v", a)
+	}
+	if err := windows.ApplyDNSRecordRemove(ctx, c, www); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := windows.ReadDNSRecord(ctx, c, www); len(a.Values) != 0 {
+		t.Errorf("remove left %v", a.Values)
+	}
+	missing := windows.DNSRecord{Zone: "no-such-zone.test", Name: "x", Type: "A", Values: []string{"192.0.2.1"}}
+	if err := windows.ApplyDNSRecord(ctx, c, missing); err == nil || !strings.Contains(err.Error(), "no DNS zone") {
+		t.Errorf("missing zone: %v", err)
+	}
+}

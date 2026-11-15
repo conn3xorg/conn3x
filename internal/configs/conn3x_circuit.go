@@ -133,6 +133,7 @@ var circuitModules = map[string]string{
 	"windows_path":                 "conn3x_windows_path",
 	"windows_share":                "conn3x_windows_share",
 	"windows_certificate":          "conn3x_windows_certificate",
+	"windows_dns_record":           "conn3x_windows_dns_record",
 	"windows_scheduled_task":       "conn3x_windows_scheduled_task",
 	"windows_service":              "conn3x_windows_service",
 	"windows_user":                 "conn3x_windows_user",
