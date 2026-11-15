@@ -10,14 +10,15 @@ import (
 )
 
 // Every resource type the provider serves must be usable as a circuit step,
-// except the action that handlers lower to and the commit circuits add.
+// except the action that handlers lower to, the commit circuits add, and
+// conn3x_test_container, which a test's setup module makes, not a host.
 func TestEveryResourceTypeIsAStepModule(t *testing.T) {
 	steps := map[string]bool{}
 	for _, rt := range configs.Conn3xStepResourceTypes() {
 		steps[rt] = true
 	}
 	for _, rt := range ResourceTypeNames() {
-		if rt == "conn3x_service_action" || rt == "conn3x_eos_commit" || rt == "conn3x_eos_removals" || rt == "conn3x_junos_commit" || rt == "conn3x_junos_removals" || rt == "conn3x_vyos_commit" || rt == "conn3x_vyos_removals" || rt == "conn3x_ios_commit" || rt == "conn3x_ios_removals" {
+		if rt == "conn3x_service_action" || rt == "conn3x_eos_commit" || rt == "conn3x_eos_removals" || rt == "conn3x_junos_commit" || rt == "conn3x_junos_removals" || rt == "conn3x_vyos_commit" || rt == "conn3x_vyos_removals" || rt == "conn3x_ios_commit" || rt == "conn3x_ios_removals" || rt == "conn3x_test_container" {
 			continue
 		}
 		if !steps[rt] {
