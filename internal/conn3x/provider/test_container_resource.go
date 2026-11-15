@@ -44,6 +44,7 @@ func testContainerSchema() providers.Schema {
 			"user":             {Type: cty.String, Computed: true, Description: "The user to log in as: root."},
 			"private_key_file": {Type: cty.String, Computed: true, Description: "The key Conn3x made for this container, which root's authorized_keys holds."},
 			"known_hosts_file": {Type: cty.String, Computed: true, Description: "A known_hosts file with the container's host key, for the ssh block's known_hosts_file."},
+			"host_key":         {Type: cty.String, Computed: true, Description: "The container's host key, as host_key takes it. A host object can set it, with port and private_key_file, so one circuit can test several containers."},
 		},
 	}}
 }
@@ -63,7 +64,7 @@ func validateTestContainer(cfg cty.Value) tfdiags.Diagnostics {
 // so a run that was killed can be cleaned up with podman ps --filter.
 const testContainerLabel = "io.conn3x.test-container=true"
 
-var testContainerComputed = []string{"id", "address", "port", "user", "private_key_file", "known_hosts_file"}
+var testContainerComputed = []string{"id", "address", "port", "user", "private_key_file", "known_hosts_file", "host_key"}
 
 func planTestContainer(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	var resp providers.PlanResourceChangeResponse
@@ -207,6 +208,7 @@ func startTestContainer(ctx context.Context, planned cty.Value) (_ cty.Value, er
 	vals := planned.AsValueMap()
 	vals["id"], vals["address"], vals["port"], vals["user"] = cty.StringVal(id), cty.StringVal("127.0.0.1"), cty.NumberIntVal(int64(port)), cty.StringVal("root")
 	vals["private_key_file"], vals["known_hosts_file"] = cty.StringVal(keyFile), cty.StringVal(hostsFile)
+	vals["host_key"] = cty.StringVal(f[0] + " " + f[1])
 	return cty.ObjectVal(vals), nil
 }
 

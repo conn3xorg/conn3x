@@ -19,7 +19,9 @@ import (
 // destroys the circuit's steps, then the container (#799).
 func TestConn3xTestStartsItsOwnHost(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
-	run(t, "podman", "build", "-q", "-t", "localhost/conn3x-e2e-rocky10", filepath.Join(filepath.Dir(here), "..", "images", "rocky10"))
+	for _, img := range []string{"rocky10", "debian13"} {
+		run(t, "podman", "build", "-q", "-t", "localhost/conn3x-e2e-"+img, filepath.Join(filepath.Dir(here), "..", "images", img))
+	}
 	before := testContainers(t)
 
 	w := &workdir{t: t, dir: t.TempDir()}
@@ -27,9 +29,12 @@ func TestConn3xTestStartsItsOwnHost(t *testing.T) {
 		"main.tf": `variable "port" { type = number }
 variable "key" { type = string }
 variable "known_hosts" { type = string }
+variable "web2" { type = any }
 
 circuit "web" {
-  hosts = { web1 = "127.0.0.1" }
+  # web2 is another container: a host object brings its own port, key
+  # and host key.
+  hosts = { web1 = "127.0.0.1", web2 = var.web2 }
 
   ssh {
     port             = var.port
@@ -40,7 +45,7 @@ circuit "web" {
 
   step "sshd" {
     service {
-      name    = "sshd"
+      name    = each.key == "web1" ? "sshd" : "ssh" # Debian calls it ssh
       state   = "started"
       enabled = true
     }
@@ -61,6 +66,19 @@ resource "conn3x_test_container" "web1" {
   image = var.image
 }
 
+resource "conn3x_test_container" "web2" {
+  image = "localhost/conn3x-e2e-debian13"
+}
+
+output "web2" {
+  value = {
+    address          = conn3x_test_container.web2.address
+    port             = conn3x_test_container.web2.port
+    private_key_file = conn3x_test_container.web2.private_key_file
+    host_key         = conn3x_test_container.web2.host_key
+  }
+}
+
 output "port" { value = conn3x_test_container.web1.port }
 output "key" { value = conn3x_test_container.web1.private_key_file }
 output "known_hosts" { value = conn3x_test_container.web1.known_hosts_file }
@@ -79,6 +97,7 @@ run "converge" {
     port        = run.host.port
     key         = run.host.key
     known_hosts = run.host.known_hosts
+    web2        = run.host.web2
   }
   idempotent = true
 }
