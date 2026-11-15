@@ -466,6 +466,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"acl":                aclModule,
 	"selinux":            selinuxModule,
 	"alternatives":       alternativesModule,
+	"debconf":            debconfModule,
 	"apt_repository":     aptRepositoryModule,
 	"yum_repository":     yumRepositoryModule,
 	"locale_gen":         localeGenModule,
@@ -1368,6 +1369,33 @@ func aclModule(in *input) ([]step, string) {
 		attrs = append(attrs, s("state", "absent"))
 	}
 	return one("acl", attrs)
+}
+
+// debconfModule presets one answer. A password is never copied: the step
+// gets a TODO to set value_wo from an ephemeral variable.
+func debconfModule(in *input) ([]step, string) {
+	if !in.has("question") && !in.has("setting") && !in.has("selection") {
+		return nil, "only names a package, which lists its answers, and debconf sets one"
+	}
+	if in.has("unseen") && truthy(in.str("unseen")) {
+		return nil, "sets unseen, and debconf marks every answer it sets as seen"
+	}
+	vt := in.str("vtype")
+	if vt == "seen" {
+		return nil, "has vtype seen, which only flags the question, and debconf sets answers"
+	}
+	attrs := []attr{s("name", in.str("name", "pkg")), s("question", in.str("question", "setting", "selection")), s("vtype", vt)}
+	var notes []string
+	switch vt {
+	case "password":
+		in.ignore("value")
+		notes = append(notes, "TODO(convert): Set value_wo from an ephemeral variable. The task's password isn't copied here.")
+	case "boolean":
+		attrs = append(attrs, s("value", strconv.FormatBool(truthy(in.str("value")))))
+	default:
+		attrs = append(attrs, s("value", in.str("value")))
+	}
+	return one("debconf", attrs, notes...)
 }
 
 // selinuxModule sets the mode; disabling takes more than the config file.

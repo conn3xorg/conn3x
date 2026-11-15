@@ -1,0 +1,33 @@
+variable "db_password" {
+  type      = string
+  ephemeral = true
+}
+
+circuit "preseed" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "mailer" {
+    debconf {
+      name     = "postfix"
+      question = "postfix/main_mailer_type"
+      vtype    = "select"
+      value    = "{{.Mailer}}"
+    }
+  }
+
+  step "db_password" {
+    debconf {
+      name     = "app"
+      question = "app/db_password"
+      vtype    = "password"
+      value_wo = var.db_password
+    }
+  }
+}
