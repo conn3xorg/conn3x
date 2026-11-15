@@ -14,6 +14,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/junos"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/setcfg"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
@@ -62,20 +63,23 @@ func validateJunosSSH(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func junosConfigFrom(v cty.Value) junos.Config {
-	return junos.Config{Prefix: stringOr(v.GetAttr("prefix"), ""), Lines: stringList(v.GetAttr("lines")), Match: stringOr(v.GetAttr("match"), junos.MatchLines)}
+	return junos.Config{Prefix: stringOr(v.GetAttr("prefix"), ""), Lines: stringList(v.GetAttr("lines")), Match: stringOr(v.GetAttr("match"), junos.MatchLines),
+		Paths: stringList(v.GetAttr("lines_wo_prefixes"))}
 }
 
 var junosConfigKind = cliKind{
 	p:        junosPlatform,
 	name:     "config",
 	keys:     []string{"prefix"},
-	settings: []string{"lines", "match"},
+	settings: []string{"lines", "match", "lines_hmac", "lines_wo_prefixes"},
 	config:   func(v cty.Value) cliWant { return junosConfigFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return junosConfigFrom(v).RemoveCommands(running) },
 }
 
+var planJunosConfig, applyJunosConfig = cliLinesWO(junosConfigKind, linesWO{kind: "junos_config", block: "prefix", start: setcfg.SecretPath}, junosConfigFrom)
+
 func junosConfigSchema() providers.Schema {
-	return providers.Schema{Block: &configschema.Block{
+	return setLinesWO(providers.Schema{Block: &configschema.Block{
 		Description: junosExperimental + "Statements of a Juniper Junos device's configuration, as set lines. Only the lines named here are owned; with match = \"block\" the statements under prefix must be exactly these.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
@@ -88,7 +92,7 @@ func junosConfigSchema() providers.Schema {
 			"circuit":   eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
-	}}
+	}}, `"set system login user ops authentication encrypted-password \"$6$...\""`)
 }
 
 func validateJunosConfig(cfg cty.Value) tfdiags.Diagnostics {
@@ -97,10 +101,7 @@ func validateJunosConfig(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	if err := junosConfigFrom(cfg).Validate(); err != nil {
-		diags = diags.Append(attrError("lines", err.Error()))
-	}
-	return diags
+	return diags.Append(validateSetLinesWO(cfg, junosConfigFrom(cfg), nil))
 }
 
 var junosHostnameKind = cliKind{

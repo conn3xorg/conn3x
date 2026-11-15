@@ -68,7 +68,27 @@ step "ntp" {
 }
 ```
 
+A local account's hashed password goes in `lines_wo`, which state never keeps:
+
+```hcl
+step "ops_password" {
+  junos_config {
+    lines_wo = ["set system login user ops authentication encrypted-password use-an-ephemeral-variable-here"]
+  }
+}
+```
+
 <!-- reference -->
+
+## Secrets in lines_wo
+
+`lines_wo` is write-only, so a secret statement never lands in state or in the plan. State keeps two things instead: `lines_hmac`, an HMAC of the statements keyed outside state, and `lines_wo_prefixes`, each statement's path without its last word, such as `set system login user ops authentication encrypted-password`.
+
+The device prints most secrets hashed or encrypted, so Conn3x can't compare them with yours. A refresh checks something smaller: that each path holds a value. If you change a secret, the HMAC changes and the plan shows an update; the apply deletes each path and sets your statements again. If you delete the statement by hand, the step shows as out of sync. But a secret changed by hand on the device still looks in sync, because the device can't show which secret it holds.
+
+The secret has to be the statement's last word, after a keyword that ends in `password`, `secret` or `key`, or is `ascii-text` or `hexadecimal`. Two kinds of statement are refused. A plain-text password is refused because the device stores it hashed under another name, so it would never show as there. An SNMP community is refused because its name is its secret, so a path can't tell one community from another; use an SNMPv3 user instead. Each statement in `lines_wo` needs its own path, and no statement in `lines` can set one. In block mode, the paths count as wanted, so nothing under `prefix` that holds them is deleted.
+
+Planning `lines_wo` needs the HMAC key, `CONN3X_HMAC_KEY` or `~/.config/conn3x/hmac.key`. Pass secrets through a variable file or `TF_VAR_`, not `-var`, since OpenTofu logs its command line. Rotation hasn't been tried on a real device yet, only against the test suite's fake one.
 
 ## Notes
 
@@ -83,5 +103,5 @@ step "ntp" {
 - A line Junos prints differently, such as one without the quotes `display set` adds, never matches, and the step shows as changed on every plan. Copy lines from `show configuration | display set`.
 - Every line must be a `set` statement. Anything else could leave configuration mode, commit early or run another command. So `delete`, `exit`, `commit`, `run`, a `|` outside quotes, newlines and control characters are all refused. So is `plain-text-password`, which prompts for the password, and a script can't answer a prompt; set `encrypted-password` with a hash instead.
 - A deactivated statement doesn't count as there, so a step that owns one shows as changed until it's activated.
-- Don't put secrets in `lines`: they'd be stored in state. In logs and errors, Conn3x hides what follows `encrypted-password`, `authentication-key`, `secret`, `community`, `pre-shared-key` and `key`.
+- Don't put secrets in `lines`: state keeps them as written, so a plan warns about a statement that ends in one. Use `lines_wo`. In logs and errors, Conn3x hides what follows `encrypted-password`, `authentication-key`, `secret`, `community`, `pre-shared-key` and `key`.
 - Commits on Junos persist, so there's no separate save step.

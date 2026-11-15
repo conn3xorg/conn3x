@@ -64,21 +64,25 @@ func vyosWarnReboot(config string) string {
 }
 
 func vyosConfigFrom(v cty.Value) setcfg.Config {
-	return vyos.Config(stringOr(v.GetAttr("prefix"), ""), stringList(v.GetAttr("lines")), stringOr(v.GetAttr("match"), setcfg.MatchLines))
+	c := vyos.Config(stringOr(v.GetAttr("prefix"), ""), stringList(v.GetAttr("lines")), stringOr(v.GetAttr("match"), setcfg.MatchLines))
+	c.Paths = stringList(v.GetAttr("lines_wo_prefixes"))
+	return c
 }
 
 var vyosConfigKind = cliKind{
 	p:        vyosPlatform,
 	name:     "config",
 	keys:     []string{"prefix"},
-	settings: []string{"lines", "match"},
+	settings: []string{"lines", "match", "lines_hmac", "lines_wo_prefixes"},
 	config:   func(v cty.Value) cliWant { return vyosConfigFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return vyosConfigFrom(v).RemoveCommands(running) },
 	warn:     func(_ cty.Value, config string) string { return vyosWarnReboot(config) },
 }
 
+var planVyOSConfig, applyVyOSConfig = cliLinesWO(vyosConfigKind, linesWO{kind: "vyos_config", block: "prefix", start: setcfg.SecretPath, norm: vyos.Normalize}, vyosConfigFrom)
+
 func vyosConfigSchema() providers.Schema {
-	return providers.Schema{Block: &configschema.Block{
+	return setLinesWO(providers.Schema{Block: &configschema.Block{
 		Description: junosExperimental + "Statements of a VyOS router's configuration, as set lines. Only the lines named here are owned; with match = \"block\" the statements under prefix must be exactly these.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":        {Type: cty.String, Computed: true},
@@ -91,7 +95,7 @@ func vyosConfigSchema() providers.Schema {
 			"circuit":   eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
-	}}
+	}}, `"set protocols bgp 65000 neighbor 192.0.2.1 password 'MyPassword'"`)
 }
 
 func validateVyOSConfig(cfg cty.Value) tfdiags.Diagnostics {
@@ -100,10 +104,7 @@ func validateVyOSConfig(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	if err := vyosConfigFrom(cfg).Validate(); err != nil {
-		diags = diags.Append(attrError("lines", err.Error()))
-	}
-	return diags
+	return diags.Append(validateSetLinesWO(cfg, vyosConfigFrom(cfg), vyos.Normalize))
 }
 
 var vyosHostnameKind = cliKind{

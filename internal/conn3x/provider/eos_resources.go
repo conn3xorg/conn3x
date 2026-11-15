@@ -515,106 +515,28 @@ func validateEOSConfig(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
-// eosConfigID ties lines_hmac to the switch and the block.
-func eosConfigID(v cty.Value) string {
-	return passwordID("eos_config", stringOr(v.GetAttr("ssh").GetAttr("host"), ""), strings.Join(stringList(v.GetAttr("parents")), "\n"))
-}
+var eosLinesWO = linesWO{kind: "eos_config", block: "parents", start: eos.SecretPrefix}
 
-func eosLinesHMAC(key []byte, v cty.Value, lines []string) string {
-	return passwordHMAC(key, eosConfigID(v), strings.Join(lines, "\n"))
-}
-
-// planEOSConfig records an HMAC of lines_wo, and how each line starts, in
-// place of the lines.
 func planEOSConfig(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	if req.ProposedNewState.IsNull() {
-		return eosConfigKind.plan(req)
-	}
-	var resp providers.PlanResourceChangeResponse
-	vals := req.ProposedNewState.AsValueMap()
-	vals["lines_wo"] = cty.NullVal(cty.List(cty.String))
-	vals["lines_hmac"], vals["lines_wo_prefixes"] = cty.NullVal(cty.String), cty.NullVal(cty.List(cty.String))
-	var warn error
-	if wo := req.Config.GetAttr("lines_wo"); !wo.IsNull() {
-		vals["lines_hmac"], vals["lines_wo_prefixes"] = cty.UnknownVal(cty.String), cty.UnknownVal(cty.List(cty.String))
-		key, err := hmacKey(true)
-		if err == nil && !req.PriorState.IsNull() {
-			if stored := req.PriorState.GetAttr("lines_hmac"); known(stored) {
-				err = checkHMACKey(stored.AsString(), key)
-			}
-		}
-		if err != nil {
-			resp.Diagnostics = resp.Diagnostics.Append(attrError("lines_wo", err.Error()))
-			return resp
-		}
-		warn = hmacKeyPermissionWarning()
-		next := cty.ObjectVal(vals)
-		if wo.IsWhollyKnown() && known(next.GetAttr("ssh").GetAttr("host")) && next.GetAttr("parents").IsWhollyKnown() {
-			lines := stringList(wo)
-			var prefixes []cty.Value
-			for _, l := range lines {
-				p, _ := eos.SecretPrefix(l) // validate refused lines without one
-				prefixes = append(prefixes, cty.StringVal(p))
-			}
-			vals["lines_hmac"], vals["lines_wo_prefixes"] = cty.StringVal(eosLinesHMAC(key, next, lines)), cty.ListVal(prefixes)
-		}
-	}
-	req.ProposedNewState = cty.ObjectVal(vals)
-	resp = eosConfigKind.plan(req)
-	if warn != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.SimpleWarning(warn.Error()))
-	}
-	return resp
+	return eosLinesWO.plan(req, eosConfigKind.plan)
 }
 
-// applyEOSConfig gives the commands the lines_wo lines, which only the
-// config holds. They're all sent again when lines_hmac changed, since the
-// switch can't show which secret it holds.
 func applyEOSConfig(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
-	k := eosConfigKind
-	var mac string
-	var prefixes cty.Value
-	if !req.PlannedState.IsNull() && !req.PlannedState.GetAttr("lines_hmac").IsNull() {
+	wo, err := eosLinesWO.prepare(req)
+	if err != nil {
 		var resp providers.ApplyResourceChangeResponse
-		var lines []string
-		if !req.Config.IsNull() {
-			lines = stringList(req.Config.GetAttr("lines_wo"))
-		}
-		if len(lines) == 0 {
-			resp.Diagnostics = resp.Diagnostics.Append(errors.New("eos_config: lines_wo didn't reach the apply; it's write-only, so set it in the step's config"))
-			return resp
-		}
-		key, err := hmacKey(true)
-		if err != nil {
-			resp.Diagnostics = resp.Diagnostics.Append(attrError("lines_wo", err.Error()))
-			return resp
-		}
-		mac = eosLinesHMAC(key, req.PlannedState, lines)
-		var ps []cty.Value
-		var prefix []string
-		for _, l := range lines {
-			p, _ := eos.SecretPrefix(l)
-			ps, prefix = append(ps, cty.StringVal(p)), append(prefix, p)
-		}
-		prefixes = cty.ListVal(ps)
-		resend := req.PriorState.IsNull() || stringOr(req.PriorState.GetAttr("lines_hmac"), "") != mac
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("lines_wo", err.Error()))
+		return resp
+	}
+	k := eosConfigKind
+	if wo.lines != nil {
 		k.config = func(v cty.Value) eosWant {
 			c := eosConfigFrom(v)
-			c.Secrets, c.Prefixes, c.Resend = lines, prefix, resend
+			c.Secrets, c.Prefixes, c.Resend = wo.lines, wo.starts, wo.resend
 			return c
 		}
 	}
-	resp := k.apply(ctx, req)
-	if !resp.NewState.IsNull() {
-		vals := resp.NewState.AsValueMap()
-		vals["lines_wo"] = cty.NullVal(cty.List(cty.String))
-		if mac != "" {
-			// Unknown in a plan that didn't know the lines.
-			vals["lines_hmac"], vals["lines_wo_prefixes"] = cty.StringVal(mac), prefixes
-		}
-		resp.NewState = cty.ObjectVal(vals)
-	}
-	return resp
+	return wo.finish(k.apply(ctx, req))
 }
 
 var eosHostnameKind = eosKind{

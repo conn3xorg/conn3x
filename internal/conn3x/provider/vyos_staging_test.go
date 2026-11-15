@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -141,5 +142,86 @@ func TestVyOSStepsShareOneCommit(t *testing.T) {
 	}
 	if slices.Contains(f.running, "set system host-name r1") {
 		t.Error("the old host name is still there")
+	}
+}
+
+// lines_wo on VyOS: the secret goes to the router, never to state, and a
+// refresh goes by the statement's path.
+func TestVyOSConfigLinesWO(t *testing.T) {
+	t.Setenv(hmacKeyEnv, strings.Repeat("k", 32))
+	s := sshtest.New(t)
+	f := &fakeVyOS{running: []string{"set system config-management commit-confirm action reload"}}
+	s.SetExec(f.run)
+	ssh := eosStep("conn3x_vyos_commit", nil, map[string]cty.Value{
+		"host": cty.StringVal(s.Host), "port": cty.NumberIntVal(int64(s.Port)), "user": cty.StringVal("vyos"),
+		"private_key_file": cty.StringVal(s.KeyFile(t)), "known_hosts_file": cty.StringVal(s.KnownHosts(t)),
+		"confirm_after": cty.StringVal("10ms"),
+	}).GetAttr("ssh")
+	t.Cleanup(func() { _ = FinishEOS() })
+	const path = "set protocols bgp 65000 neighbor 192.0.2.1 password"
+	set := func(prior cty.Value, secret string) cty.Value {
+		t.Helper()
+		cfg := onSwitch(eosStep("conn3x_vyos_config", map[string]cty.Value{
+			"lines_wo":  cty.ListVal([]cty.Value{cty.StringVal(path + " '" + secret + "'")}),
+			"on_remove": cty.StringVal(onRemoveDelete),
+		}, nil), ssh)
+		if prior == cty.NilVal {
+			prior = cty.NullVal(cfg.Type())
+		}
+		plan := planVyOSConfig(providers.PlanResourceChangeRequest{PriorState: prior, Config: cfg, ProposedNewState: cfg})
+		if err := plan.Diagnostics.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if p := plan.PlannedState.GetAttr("lines_wo_prefixes"); !p.Equals(cty.ListVal([]cty.Value{cty.StringVal(path)})).True() {
+			t.Fatalf("lines_wo_prefixes %#v", p)
+		}
+		resp := applyVyOSConfig(ctx, providers.ApplyResourceChangeRequest{PriorState: prior, PlannedState: plan.PlannedState, Config: cfg})
+		if err := resp.Diagnostics.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(fmt.Sprintf("%#v", resp.NewState), secret) {
+			t.Fatalf("state holds the secret: %#v", resp.NewState)
+		}
+		return resp.NewState
+	}
+	inSync := func(state cty.Value) bool {
+		t.Helper()
+		resp := vyosConfigKind.read(ctx, providers.ReadResourceRequest{PriorState: state})
+		if err := resp.Diagnostics.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return resp.NewState.GetAttr("in_sync").True()
+	}
+	has := func(secret string) bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return slices.ContainsFunc(f.running, func(l string) bool { return strings.HasPrefix(l, path+" ") && strings.Contains(l, secret) })
+	}
+
+	state := set(cty.NilVal, "First1")
+	if !has("First1") || !inSync(state) {
+		t.Fatalf("not applied: %q", f.running)
+	}
+	state = set(state, "Second2")
+	if has("First1") || !has("Second2") {
+		t.Fatalf("not replaced: %q", f.running)
+	}
+	f.mu.Lock()
+	f.running = slices.DeleteFunc(f.running, func(l string) bool { return strings.HasPrefix(l, path+" ") })
+	f.mu.Unlock()
+	if inSync(state) {
+		t.Error("in sync with the password deleted by hand")
+	}
+	state = set(state, "Second2")
+	if !has("Second2") {
+		t.Fatalf("not sent again: %q", f.running)
+	}
+	if err := destroy(func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+		return applyVyOSConfig(ctx, req)
+	}, state); err != nil {
+		t.Fatal(err)
+	}
+	if has("") {
+		t.Errorf("removal left the password: %q", f.running)
 	}
 }
