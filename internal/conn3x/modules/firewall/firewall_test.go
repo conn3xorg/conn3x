@@ -167,3 +167,28 @@ func TestNFTable(t *testing.T) {
 		}
 	}
 }
+
+// A body that closes the table's own brace would run what follows outside
+// it, such as flushing another table, though no line starts with a word
+// nftOutside refuses.
+func TestNFTableStaysInsideItsTable(t *testing.T) {
+	for _, content := range []string{
+		"chain c {\n}\n}\nflush table inet victim\nadd table inet y {\n",
+		"chain c { } } ; add rule inet filter input drop ; add table inet y {",
+		"chain c {\n",
+		"chain c { comment \"open\n",
+	} {
+		if err := (NFTable{Family: "inet", Name: "mine", Content: content}).Validate(); err == nil {
+			t.Errorf("accepted %q", content)
+		}
+	}
+	for _, content := range []string{
+		"chain input {\n  type filter hook input priority 0; policy drop;\n  tcp dport 22 accept # not } a brace\n}\n",
+		"chain c {\n  tcp dport 80 accept comment \"web }\"\n}\n",
+		"set ok { type ipv4_addr; elements = { 192.0.2.1, 192.0.2.2 } }\nchain c { ip saddr @ok accept }\n",
+	} {
+		if err := (NFTable{Family: "inet", Name: "mine", Content: content}).Validate(); err != nil {
+			t.Errorf("refused %q: %v", content, err)
+		}
+	}
+}

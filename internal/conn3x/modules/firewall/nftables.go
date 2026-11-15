@@ -49,7 +49,38 @@ func (t NFTable) Validate() error {
 	if m := nftOutside.FindString(t.Content); m != "" {
 		return fmt.Errorf("content holds %q, which reaches outside this table; give it the table's chains, sets and rules only", strings.TrimSpace(m))
 	}
+	if !nftInside(t.Content) {
+		return errors.New("content's braces don't balance: a } that closes more than it opened ends the table early, and what follows would run outside it")
+	}
 	return nil
+}
+
+// nftInside reports whether content stays inside its table: no } closes
+// more than content opened, and every { is closed by the end. Any command
+// outside the table, such as flush table or add rule, needs the table's
+// own brace closed first, so this covers what nftOutside can't list.
+// Braces in # comments and quoted strings don't count.
+func nftInside(content string) bool {
+	depth, quoted := 0, false
+	for i := 0; i < len(content); i++ {
+		switch c := content[i]; {
+		case quoted:
+			quoted = c != '"'
+		case c == '"':
+			quoted = true
+		case c == '#':
+			for i < len(content) && content[i] != '\n' {
+				i++
+			}
+		case c == '{':
+			depth++
+		case c == '}':
+			if depth--; depth < 0 {
+				return false
+			}
+		}
+	}
+	return depth == 0 && !quoted
 }
 
 func (t NFTable) base() string { return nftDir + "/" + t.Family + "-" + t.Name }
