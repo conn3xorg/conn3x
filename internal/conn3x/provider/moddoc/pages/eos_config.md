@@ -73,7 +73,7 @@ Lines that hold a secret go in `lines_wo`, which state never keeps:
 step "aaa" {
   eos_config {
     lines    = ["tacacs-server host 10.0.0.5"]
-    lines_wo = ["tacacs-server key ${var.tacacs_key}"]
+    lines_wo = ["tacacs-server key use-an-ephemeral-variable-here"]
   }
 }
 ```
