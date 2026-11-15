@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -634,11 +635,106 @@ func TestWindowsShellRefused(t *testing.T) {
 	}
 }
 
-// An RSA host key is only ever asked to sign with SHA-2.
+// An RSA host key is only ever asked to sign with SHA-2, unless the host
+// opts in to the legacy algorithms.
 func TestRSAHostKeysNeverSignWithSHA1(t *testing.T) {
-	for _, a := range algorithmsFor(gossh.KeyAlgoRSA) {
+	for _, a := range algorithmsFor(gossh.KeyAlgoRSA, false) {
 		if a == gossh.KeyAlgoRSA {
 			t.Fatalf("%q, the SHA-1 signature, is offered for RSA host keys", a)
+		}
+	}
+	if got := algorithmsFor(gossh.KeyAlgoRSA, true); got[len(got)-1] != gossh.KeyAlgoRSA || got[0] != gossh.KeyAlgoRSASHA512 {
+		t.Errorf("legacy: %v, want SHA-2 first and ssh-rsa last", got)
+	}
+}
+
+// sha1Server is an sshd that speaks only what classic IOS 15 does: an
+// ssh-rsa host key signature, SHA-1 key exchange and hmac-sha1. It takes
+// any key and closes after the handshake.
+func sha1Server(t *testing.T) (addr string, host gossh.PublicKey) {
+	t.Helper()
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, _ := gossh.NewSignerFromKey(rsaKey)
+	sha1Signer, err := gossh.NewSignerWithAlgorithms(signer.(gossh.AlgorithmSigner), []string{gossh.KeyAlgoRSA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &gossh.ServerConfig{
+		Config:            gossh.Config{KeyExchanges: []string{gossh.InsecureKeyExchangeDH14SHA1}, MACs: []string{gossh.HMACSHA1}},
+		PublicKeyCallback: func(gossh.ConnMetadata, gossh.PublicKey) (*gossh.Permissions, error) { return nil, nil },
+	}
+	cfg.AddHostKey(sha1Signer)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				if sc, chans, reqs, err := gossh.NewServerConn(c, cfg); err == nil {
+					go gossh.DiscardRequests(reqs)
+					for ch := range chans {
+						_ = ch.Reject(gossh.Prohibited, "handshake only")
+					}
+					sc.Close()
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String(), signer.PublicKey()
+}
+
+// A host that speaks only SHA-1 is refused unless it opts in, and then
+// only that host gets the SHA-1 algorithms (#864).
+func TestLegacyAlgorithmsReachClassicIOS(t *testing.T) {
+	addr, hostKey := sha1Server(t)
+	host, portText, _ := net.SplitHostPort(addr)
+	port, _ := strconv.Atoi(portText)
+	keys := sshtest.NewKeys(t)
+	cfg := Config{Host: host, Port: port, User: "admin", PrivateKey: keys.ClientKey, HostKey: string(gossh.MarshalAuthorizedKey(hostKey)), Timeout: 5 * time.Second}
+	if _, err := Dial(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "no common algorithm") {
+		t.Fatalf("a SHA-1-only host without the opt-in: err = %v, want no common algorithm", err)
+	}
+	cfg.LegacyAlgorithms = true
+	c, err := Dial(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("with legacy_algorithms: %v", err)
+	}
+	c.Close()
+	// Through known_hosts too, not only a pinned key.
+	cfg.HostKey = ""
+	cfg.KnownHostsFile = filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(cfg.KnownHostsFile, []byte(sshtest.KnownHostsLine(addr, hostKey)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Dial(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("with legacy_algorithms and known_hosts: %v", err)
+	}
+	c.Close()
+}
+
+// A pinned RSA host_key never asks for the SHA-1 signature either: it used
+// to offer the key's type, which for RSA is ssh-rsa.
+func TestPinnedRSAKeyOffersSHA2(t *testing.T) {
+	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	pub, _ := gossh.NewPublicKey(&rsaKey.PublicKey)
+	_, algorithms, err := hostKeyCheck(Config{HostKey: string(gossh.MarshalAuthorizedKey(pub))}, "127.0.0.1:22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range algorithms {
+		if a == gossh.KeyAlgoRSA {
+			t.Fatalf("pinned RSA key offers %v", algorithms)
 		}
 	}
 }

@@ -48,6 +48,11 @@ type Config struct {
 	// is checked against KnownHostsFile and uses the same key unless it has
 	// its own.
 	Jumps []Jump
+	// LegacyAlgorithms also offers the target, never a jump host, the SHA-1
+	// algorithms an old device may need: ssh-rsa host key signatures,
+	// diffie-hellman-group14-sha1 and group-exchange-sha1 key exchange, and
+	// hmac-sha1. Modern ones still come first. Classic IOS 15 needs it.
+	LegacyAlgorithms bool
 }
 
 // Jump is a host to connect through on the way to the target.
@@ -353,13 +358,21 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		}
 		deadline, _ := ctx.Deadline()
 		_ = raw.SetDeadline(deadline)
-		conn, chans, reqs, err := gossh.NewClientConn(raw, addr, &gossh.ClientConfig{
+		clientCfg := &gossh.ClientConfig{
 			User:              hop.User,
 			Auth:              []gossh.AuthMethod{hopAuth},
 			HostKeyCallback:   hostKeyCallback,
 			HostKeyAlgorithms: algorithms,
 			Timeout:           cfg.Timeout,
-		})
+		}
+		if hop.LegacyAlgorithms {
+			clientCfg.Config = legacyConfig()
+			if len(clientCfg.HostKeyAlgorithms) == 0 {
+				// Nothing recorded yet: the defaults, plus ssh-rsa.
+				clientCfg.HostKeyAlgorithms = append(slices.Clone(gossh.SupportedAlgorithms().HostKeys), gossh.KeyAlgoRSA)
+			}
+		}
+		conn, chans, reqs, err := gossh.NewClientConn(raw, addr, clientCfg)
 		if err != nil {
 			raw.Close()
 			closeAll()
@@ -389,7 +402,7 @@ func hostKeyCheck(cfg Config, addr string) (gossh.HostKeyCallback, []string, err
 				return fmt.Errorf("%w: %s presented a %s key that does not match the pinned host_key", ErrHostKey, addr, key.Type())
 			}
 			return nil
-		}, []string{pinned.Type()}, nil
+		}, algorithmsFor(pinned.Type(), cfg.LegacyAlgorithms), nil
 	}
 
 	file, check, err := knownHosts(cfg, addr)
@@ -399,7 +412,7 @@ func hostKeyCheck(cfg Config, addr string) (gossh.HostKeyCallback, []string, err
 
 	var algorithms []string
 	for _, k := range recorded(check, addr) {
-		algorithms = append(algorithms, algorithmsFor(k.Type())...)
+		algorithms = append(algorithms, algorithmsFor(k.Type(), cfg.LegacyAlgorithms)...)
 	}
 
 	return func(hostname string, remote net.Addr, key gossh.PublicKey) error {
@@ -472,12 +485,25 @@ func recorded(check gossh.HostKeyCallback, addr string) []gossh.PublicKey {
 // algorithmsFor lists the signature algorithms a host key type can use. An
 // RSA key signs with SHA-2 only: "ssh-rsa" is the SHA-1 signature, which
 // OpenSSH has refused by default since 8.8 and every sshd since 7.2 can
-// do without.
-func algorithmsFor(keyType string) []string {
+// do without. legacy adds it, last.
+func algorithmsFor(keyType string, legacy bool) []string {
 	if keyType == gossh.KeyAlgoRSA {
+		if legacy {
+			return []string{gossh.KeyAlgoRSASHA512, gossh.KeyAlgoRSASHA256, gossh.KeyAlgoRSA}
+		}
 		return []string{gossh.KeyAlgoRSASHA512, gossh.KeyAlgoRSASHA256}
 	}
 	return []string{keyType}
+}
+
+// legacyConfig is the algorithms LegacyAlgorithms adds to the defaults,
+// after them, so a host that speaks both still gets the modern ones.
+func legacyConfig() gossh.Config {
+	def := gossh.SupportedAlgorithms()
+	return gossh.Config{
+		KeyExchanges: append(slices.Clone(def.KeyExchanges), gossh.InsecureKeyExchangeDH14SHA1, gossh.InsecureKeyExchangeDHGEXSHA1),
+		MACs:         append(slices.Clone(def.MACs), gossh.HMACSHA1),
+	}
 }
 
 // probeKey never matches anything; checking it reveals which keys are known.

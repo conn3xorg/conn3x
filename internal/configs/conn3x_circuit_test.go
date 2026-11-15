@@ -1002,7 +1002,7 @@ circuit "app" {
 		t.Fatal(diags.Error())
 	}
 	_, d := mod.ManagedResources["conn3x_file.app__one"].ForEach.Value(nil)
-	if !d.HasErrors() || !strings.Contains(d.Error(), `"become"`) || !strings.Contains(d.Error(), "address, user, port, private_key_file, host_key and jump_hosts") {
+	if !d.HasErrors() || !strings.Contains(d.Error(), `"become"`) || !strings.Contains(d.Error(), "address, user, port, private_key_file, host_key, jump_hosts and legacy_algorithms") {
 		t.Fatalf("want an error naming become and the accepted fields, got %v", d)
 	}
 	if d[0].Subject == nil || d[0].Subject.Start.Line != 3 {

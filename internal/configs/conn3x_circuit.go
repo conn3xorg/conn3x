@@ -609,7 +609,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 // host's address, each.value.
 // hostOverrides are the ssh settings a host object in hosts may set for
 // itself, over the circuit's ssh block.
-var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "jump_hosts"}
+var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "jump_hosts", "legacy_algorithms"}
 
 // sshOnly are the ssh settings a host object can't set. Naming one in a host
 // object is an error, because it would otherwise do nothing; any other field

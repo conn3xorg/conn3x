@@ -62,10 +62,11 @@ func connectionBlock() *configschema.NestedBlock {
 					Optional:    true,
 					Description: "An OpenSSH config file, such as ~/.ssh/config, to read HostName, User, Port, IdentityFile, ProxyJump and UserKnownHostsFile from, with host as the Host alias. Each ProxyJump hop is looked up the same way. Anything set in this block wins. Nothing is read unless this is set.",
 				},
-				"private_key_file": {Type: cty.String, Optional: true, Description: "Path to a private key. Defaults to the SSH agent."},
-				"host_key":         {Type: cty.String, Optional: true, Description: "Pinned host public key, in authorized_keys format."},
-				"known_hosts_file": {Type: cty.String, Optional: true, Description: "known_hosts file to verify the host against. Defaults to ~/.ssh/known_hosts."},
-				"become":           {Type: cty.Bool, Optional: true, Description: "Run commands as root through sudo."},
+				"private_key_file":  {Type: cty.String, Optional: true, Description: "Path to a private key. Defaults to the SSH agent."},
+				"host_key":          {Type: cty.String, Optional: true, Description: "Pinned host public key, in authorized_keys format."},
+				"known_hosts_file":  {Type: cty.String, Optional: true, Description: "known_hosts file to verify the host against. Defaults to ~/.ssh/known_hosts."},
+				"legacy_algorithms": {Type: cty.Bool, Optional: true, Description: "true also offers this host, never a jump host, the SHA-1 algorithms an old device may need: ssh-rsa host key signatures, SHA-1 Diffie-Hellman key exchange and hmac-sha1, after the modern ones. Classic Cisco IOS 15 needs it. SHA-1 is weaker: set it only for the devices that can't do better, and upgrade them or reach them through a jump host when you can. Defaults to false."},
+				"become":            {Type: cty.Bool, Optional: true, Description: "Run commands as root through sudo."},
 				"agent": {
 					Type:        cty.Bool,
 					Optional:    true,
@@ -406,7 +407,7 @@ func poolKey(cfg ssh.Config, become bool, password []byte, useAgent, require boo
 		cfg.Host, strconv.Itoa(cfg.Port), cfg.User, string(cfg.PrivateKey),
 		cfg.HostKey, cfg.KnownHostsFile, strconv.FormatBool(become), string(password),
 		fmt.Sprint(cfg.Jumps), // the same host through another bastion is another connection
-		strconv.FormatBool(useAgent), strconv.FormatBool(require),
+		strconv.FormatBool(useAgent), strconv.FormatBool(require), strconv.FormatBool(cfg.LegacyAlgorithms),
 	}, "\x00")
 }
 
@@ -457,6 +458,9 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 		User:           stringOr(conn.GetAttr("user"), ""),
 		HostKey:        stringOr(conn.GetAttr("host_key"), ""),
 		KnownHostsFile: expandHome(stringOr(conn.GetAttr("known_hosts_file"), "")),
+	}
+	if l := optional(conn, "legacy_algorithms"); known(l) && l.True() {
+		cfg.LegacyAlgorithms = true
 	}
 	if port := conn.GetAttr("port"); !port.IsNull() {
 		p, acc := port.AsBigFloat().Int64()
