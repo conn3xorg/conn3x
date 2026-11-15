@@ -53,7 +53,14 @@ tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x 
 
 Since v0.14.0 each release also has a `.deb` and an `.rpm` for Linux on amd64 and arm64, listed in the same signed `checksums.txt`.
 
-On Windows, the zip holds `conn3x.exe`. Put it somewhere on your `PATH`:
+On Windows, with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add conn3x https://github.com/conn3xorg/scoop-bucket
+scoop install conn3x/conn3x
+```
+
+Or take the zip, which holds `conn3x.exe`, and put it somewhere on your `PATH`:
 
 ```powershell
 $v = "0.19.0"

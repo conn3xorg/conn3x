@@ -143,6 +143,48 @@ homebrew_casks:
         install_steps: |
           run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/conn3x"]
 
+scoops:
+  - name: conn3x
+    repository:
+      owner: conn3xorg
+      name: scoop-bucket
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://conn3x.org
+    description: One plan for your cloud and the servers it creates.
+    license: MPL-2.0
+    skip_upload: auto
+
+# Opens a pull request on microsoft/winget-pkgs from James's fork; the
+# package's moderators merge it.
+winget:
+  - name: conn3x
+    package_identifier: Conn3x.Conn3x
+    package_name: Conn3x
+    publisher: Conn3x
+    publisher_url: https://conn3x.org
+    publisher_support_url: https://github.com/conn3xorg/conn3x/issues
+    author: The Conn3x Authors
+    homepage: https://conn3x.org
+    short_description: One plan for your cloud and the servers it creates.
+    description: Conn3x creates cloud infrastructure and configures the servers on it in one plan and one apply. It is built on OpenTofu, so Terraform and OpenTofu providers work unchanged, and it adds steps for packages, files, users, services and Windows settings, run over SSH.
+    license: MPL-2.0
+    license_url: https://github.com/conn3xorg/conn3x/blob/main/LICENSE
+    copyright: Copyright (c) The Conn3x Authors
+    release_notes_url: "https://github.com/conn3xorg/conn3x/releases/tag/{{ .Tag }}"
+    tags: [configuration-management, iac, infrastructure-as-code, opentofu, terraform, windows-server]
+    skip_upload: auto
+    repository:
+      owner: jamesconwaydev
+      name: winget-pkgs
+      branch: "Conn3x.Conn3x-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
 changelog:
   sort: asc
   use: github
