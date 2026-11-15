@@ -57,10 +57,15 @@ func connectionBlock() *configschema.NestedBlock {
 					Optional:    true,
 					Description: "Hosts to connect through first, in order, like ssh -J: [user@]host[:port]. Each is checked against known_hosts and uses the same key.",
 				},
+				"proxy_command": {
+					Type:        cty.List(cty.String),
+					Optional:    true,
+					Description: "A command whose stdin and stdout carry the SSH connection, like OpenSSH's ProxyCommand, as a list of arguments: %h is the host, %p the port, %r the user and %% a percent sign. It runs directly, not through a shell, on the machine running Conn3x. For AWS Session Manager, [\"aws\", \"ssm\", \"start-session\", \"--target\", \"%h\", \"--document-name\", \"AWS-StartSSHSession\", \"--parameters\", \"portNumber=%p\"]. Can't be combined with jump_hosts.",
+				},
 				"ssh_config_file": {
 					Type:        cty.String,
 					Optional:    true,
-					Description: "An OpenSSH config file, such as ~/.ssh/config, to read HostName, User, Port, IdentityFile, ProxyJump and UserKnownHostsFile from, with host as the Host alias. Each ProxyJump hop is looked up the same way. Anything set in this block wins. Nothing is read unless this is set.",
+					Description: "An OpenSSH config file, such as ~/.ssh/config, to read HostName, User, Port, IdentityFile, ProxyJump, ProxyCommand and UserKnownHostsFile from, with host as the Host alias. Each ProxyJump hop is looked up the same way. Anything set in this block wins. Nothing is read unless this is set.",
 				},
 				"private_key_file":  {Type: cty.String, Optional: true, Description: "Path to a private key. Defaults to the SSH agent."},
 				"host_key":          {Type: cty.String, Optional: true, Description: "Pinned host public key, in authorized_keys format."},
@@ -407,6 +412,7 @@ func poolKey(cfg ssh.Config, become bool, password []byte, useAgent, require boo
 		cfg.Host, strconv.Itoa(cfg.Port), cfg.User, string(cfg.PrivateKey),
 		cfg.HostKey, cfg.KnownHostsFile, strconv.FormatBool(become), string(password),
 		fmt.Sprint(cfg.Jumps), // the same host through another bastion is another connection
+		strings.Join(cfg.ProxyCommand, "\x00"),
 		strconv.FormatBool(useAgent), strconv.FormatBool(require), strconv.FormatBool(cfg.LegacyAlgorithms),
 	}, "\x00")
 }
@@ -478,6 +484,18 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 		}
 	}
 
+	if p := optional(conn, "proxy_command"); known(p) {
+		for _, a := range p.AsValueSlice() {
+			cfg.ProxyCommand = append(cfg.ProxyCommand, a.AsString())
+		}
+		if len(cfg.ProxyCommand) == 0 || cfg.ProxyCommand[0] == "" {
+			return ssh.Config{}, errors.New("proxy_command must name a command")
+		}
+		if explicitJumps {
+			return ssh.Config{}, errors.New("proxy_command and jump_hosts can't both be set: each is a way to reach the host; use one")
+		}
+	}
+
 	// An OpenSSH config only fills in what the block leaves out.
 	if file := stringOr(optional(conn, "ssh_config_file"), ""); file != "" {
 		f, err := os.Open(expandHome(file))
@@ -510,7 +528,17 @@ func sshConfig(conn cty.Value) (ssh.Config, error) {
 				cfg.KnownHostsFile = expandHome(kh[0])
 			}
 		}
-		if pj := get("ProxyJump"); !explicitJumps && pj != "" && pj != "none" {
+		// OpenSSH uses whichever of ProxyJump and ProxyCommand comes first;
+		// a file that sets both for one host is refused instead of guessed.
+		if pc := get("ProxyCommand"); cfg.ProxyCommand == nil && !explicitJumps && pc != "" && pc != "none" {
+			if pj := get("ProxyJump"); pj != "" && pj != "none" {
+				return ssh.Config{}, fmt.Errorf("ssh_config_file sets both ProxyCommand and ProxyJump for %s; keep one", cfg.Host)
+			}
+			if cfg.ProxyCommand, err = ssh.SplitProxyCommand(pc); err != nil {
+				return ssh.Config{}, fmt.Errorf("ssh_config_file: %w", err)
+			}
+		}
+		if pj := get("ProxyJump"); !explicitJumps && cfg.ProxyCommand == nil && pj != "" && pj != "none" {
 			if cfg.Jumps, err = proxyJumps(parsed, pj, 0); err != nil {
 				return ssh.Config{}, err
 			}

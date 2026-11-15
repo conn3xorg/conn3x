@@ -53,6 +53,10 @@ type Config struct {
 	// diffie-hellman-group14-sha1 and group-exchange-sha1 key exchange, and
 	// hmac-sha1. Modern ones still come first. Classic IOS 15 needs it.
 	LegacyAlgorithms bool
+	// ProxyCommand, when set, carries the connection over a command's
+	// stdin and stdout instead of a TCP socket, as OpenSSH's ProxyCommand,
+	// with %h, %p and %r expanded. It can't be combined with Jumps.
+	ProxyCommand []string
 }
 
 // Jump is a host to connect through on the way to the target.
@@ -298,6 +302,9 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 15 * time.Second
 	}
+	if len(cfg.ProxyCommand) > 0 && len(cfg.Jumps) > 0 {
+		return nil, errors.New("proxy_command and jump hosts can't be combined: each is a way to reach the host; use one")
+	}
 	login := &loginRecord{}
 	auth, agentConn, err := authMethod(cfg, login)
 	if err != nil {
@@ -347,9 +354,17 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 			}
 		}
 		var raw net.Conn
-		if len(via) == 0 {
+		var proxy *proxyConn
+		switch {
+		case len(hop.ProxyCommand) > 0:
+			var args []string
+			if args, err = ExpandProxyCommand(hop.ProxyCommand, hop.Host, hop.Port, hop.User); err == nil {
+				proxy, err = dialProxy(args)
+				raw = proxy
+			}
+		case len(via) == 0:
 			raw, err = (&net.Dialer{}).DialContext(ctx, "tcp", addr)
-		} else {
+		default:
 			raw, err = via[len(via)-1].DialContext(ctx, "tcp", addr)
 		}
 		if err != nil {
@@ -375,6 +390,9 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		conn, chans, reqs, err := gossh.NewClientConn(raw, addr, clientCfg)
 		if err != nil {
 			raw.Close()
+			if proxy != nil && proxy.Stderr() != "" {
+				err = fmt.Errorf("%w; proxy_command said: %s", err, proxy.Stderr())
+			}
 			closeAll()
 			return nil, fmt.Errorf("ssh %s: %w", addr, err)
 		}

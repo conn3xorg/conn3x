@@ -176,3 +176,46 @@ func TestProxyJumpResolvesAliases(t *testing.T) {
 		t.Fatal("accepted a ProxyJump loop")
 	}
 }
+
+// proxy_command comes from the ssh block, or from ProxyCommand in an
+// ssh_config_file, never through a shell, and never with jump hosts.
+func TestProxyCommandSetting(t *testing.T) {
+	list := func(s ...string) cty.Value {
+		vals := make([]cty.Value, len(s))
+		for i, v := range s {
+			vals[i] = cty.StringVal(v)
+		}
+		return cty.ListVal(vals)
+	}
+	cfg, err := sshConfig(sshBlock(map[string]cty.Value{"host": cty.StringVal("i-0abc"), "user": cty.StringVal("ec2-user"),
+		"proxy_command": list("aws", "ssm", "start-session", "--target", "%h")}))
+	if err != nil || !reflect.DeepEqual(cfg.ProxyCommand, []string{"aws", "ssm", "start-session", "--target", "%h"}) {
+		t.Fatalf("block: %+v, %v", cfg.ProxyCommand, err)
+	}
+	if _, err := sshConfig(sshBlock(map[string]cty.Value{"host": cty.StringVal("h"), "user": cty.StringVal("u"),
+		"proxy_command": list("nc", "%h", "%p"), "jump_hosts": list("bastion")})); err == nil || !strings.Contains(err.Error(), "can't both be set") {
+		t.Fatalf("with jump_hosts: %v", err)
+	}
+
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "config")
+	write := func(lines ...string) {
+		t.Helper()
+		if err := os.WriteFile(conf, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("Host i-*", "  User ec2-user", "  ProxyCommand aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'")
+	cfg, err = sshConfig(sshBlock(map[string]cty.Value{"host": cty.StringVal("i-0abc"), "ssh_config_file": cty.StringVal(conf)}))
+	if err != nil || len(cfg.ProxyCommand) != 9 || cfg.ProxyCommand[8] != "portNumber=%p" || len(cfg.Jumps) != 0 {
+		t.Fatalf("from the file: %q, %+v, %v", cfg.ProxyCommand, cfg.Jumps, err)
+	}
+	write("Host i-*", "  User ec2-user", "  ProxyCommand nc %h %p | tee log")
+	if _, err := sshConfig(sshBlock(map[string]cty.Value{"host": cty.StringVal("i-0abc"), "ssh_config_file": cty.StringVal(conf)})); err == nil || !strings.Contains(err.Error(), "needs a shell") {
+		t.Fatalf("a shell line: %v", err)
+	}
+	write("Host i-*", "  User ec2-user", "  ProxyCommand nc %h %p", "  ProxyJump bastion")
+	if _, err := sshConfig(sshBlock(map[string]cty.Value{"host": cty.StringVal("i-0abc"), "ssh_config_file": cty.StringVal(conf)})); err == nil || !strings.Contains(err.Error(), "keep one") {
+		t.Fatalf("both in the file: %v", err)
+	}
+}
