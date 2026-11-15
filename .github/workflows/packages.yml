@@ -26,11 +26,16 @@ jobs:
         id: latest
         env:
           GH_TOKEN: ${{ github.token }}
+          FIRST_SIGNED: v0.20.0
         run: |
           latest=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts --limit 1 --json tagName -q '.[0].tagName')
           have=$(curl -fsS https://conn3xorg.github.io/packages/version 2>/dev/null || true)
           echo "latest=$latest have=$have"
-          if [ "$latest" = "$have" ] && [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+          # Packages are signed from v0.20.0 on; the repo file has
+          # gpgcheck=1, so nothing older goes in.
+          if [ "$(printf '%s\n' "$FIRST_SIGNED" "$latest" | sort -V | head -1)" != "$FIRST_SIGNED" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [ "$latest" = "$have" ] && [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
@@ -55,7 +60,11 @@ jobs:
           printf '%s\n' "$PACKAGES_GPG_KEY" | gpg --batch --import
           GPG_KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
           export GPG_KEY_ID
-          mapfile -t tags < <(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts --limit 2 --json tagName -q '.[].tagName')
+          mapfile -t all < <(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts --limit 2 --json tagName -q '.[].tagName')
+          tags=()
+          for t in "${all[@]}"; do
+            if [ "$(printf '%s\n' v0.20.0 "$t" | sort -V | head -1)" = v0.20.0 ]; then tags+=("$t"); fi
+          done
           site="$RUNNER_TEMP/site"
           scripts/publish-packages.sh "$site" "${tags[@]}"
           printf '%s' "${tags[0]}" > "$site/version"
