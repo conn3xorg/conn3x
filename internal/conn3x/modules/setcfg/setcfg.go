@@ -69,7 +69,10 @@ var secretKeyword = regexp.MustCompile(`(?i)^([\w-]*(password|secret|passphrase|
 // password 'x'". An error when the last word isn't a secret's value.
 // Errors never quote the line.
 func SecretPath(line string) (string, error) {
-	words := splitWords(line)
+	words, closed := secretWords(line)
+	if !closed {
+		return "", errors.New("a line in lines_wo has an unclosed quote")
+	}
 	if len(words) < 3 || words[0] != "set" || !secretKeyword.MatchString(words[len(words)-2]) {
 		return "", errors.New("a line in lines_wo must end with a secret after its keyword, such as password, secret or key; put other lines in lines")
 	}
@@ -79,7 +82,42 @@ func SecretPath(line string) (string, error) {
 	case slices.Contains(words, "community"):
 		return "", errors.New("lines_wo can't hold an SNMP community: its name is its secret, so a path can't tell one community from another; use an SNMPv3 user")
 	}
-	return strings.Join(words[:len(words)-1], " "), nil
+	path := strings.Join(words[:len(words)-1], " ")
+	// No set path holds a quote; one here means the secret was split, and
+	// part of it would land in state.
+	if strings.ContainsAny(path, `'"`) {
+		return "", errors.New("a line in lines_wo couldn't be split into a path and its secret; quote the secret as one value, in double or single quotes")
+	}
+	return path, nil
+}
+
+// secretWords splits a statement at spaces outside quotes, single or
+// double, as VyOS takes both. splitWords, which deletes use, keeps to
+// double quotes, since Junos reads an apostrophe as part of a word.
+func secretWords(s string) (_ []string, closed bool) {
+	var words []string
+	quote, start := byte(0), 0
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case quote == '"' && c == '\\':
+			i++
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == ' ':
+			if i > start {
+				words = append(words, s[start:i])
+			}
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		words = append(words, s[start:])
+	}
+	return words, quote == 0
 }
 
 // secretLine reports whether have is a line one of the paths owns.

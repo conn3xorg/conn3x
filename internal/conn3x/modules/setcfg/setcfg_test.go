@@ -67,6 +67,9 @@ func TestConfigSecrets(t *testing.T) {
 		`set protocols ospf area 0 interface ge-0/0/0 authentication md5 1 key "$9$abc"`: "set protocols ospf area 0 interface ge-0/0/0 authentication md5 1 key",
 		`set security ike policy p pre-shared-key ascii-text "two words"`:                "set security ike policy p pre-shared-key ascii-text",
 		"set vpn ipsec authentication psk peer1 secret 's3cret'":                         "set vpn ipsec authentication psk peer1 secret",
+		"set protocols bgp 65000 neighbor 192.0.2.1 password 'two words'":                "set protocols bgp 65000 neighbor 192.0.2.1 password",
+		"set protocols bgp 65000 neighbor 192.0.2.1 password 'my secret pw'":             "set protocols bgp 65000 neighbor 192.0.2.1 password",
+		`set security ike policy P pre-shared-key ascii-text "my secret phrase"`:         "set security ike policy P pre-shared-key ascii-text",
 	} {
 		if got, err := SecretPath(line); err != nil || got != want {
 			t.Errorf("SecretPath(%q) = %q, %v; want %q", line, got, err, want)
@@ -77,6 +80,7 @@ func TestConfigSecrets(t *testing.T) {
 		"set system login user bob authentication plaintext-password 'x'",
 		"set service snmp community s3cret authorization ro",
 		"set service snmp community key",
+		"set protocols bgp neighbor 192.0.2.1 password 'unclosed secret",
 	} {
 		if _, err := SecretPath(bad); err == nil {
 			t.Errorf("SecretPath(%q) took it", bad)
