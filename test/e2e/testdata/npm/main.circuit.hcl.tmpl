@@ -1,0 +1,36 @@
+circuit "node" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "cli" {
+    npm {
+      name   = "semver"
+      global = true
+{{if .Semver}}      version = "{{.Semver}}"
+{{else}}      state   = "absent"
+{{end}}    }
+  }
+
+  step "dep" {
+    npm {
+      name = "left-pad"
+      path = "/opt/app"
+{{if .LeftPad}}      version = "{{.LeftPad}}"
+{{else}}      state   = "absent"
+{{end}}    }
+  }
+
+  step "newest" {
+    npm {
+      name  = "is-number"
+      state = "latest"
+      path  = "/opt/app"
+    }
+  }
+}

@@ -961,6 +961,53 @@ func TestConvertsPip(t *testing.T) {
 	}
 }
 
+func TestConvertsNpm(t *testing.T) {
+	res := convertString(t, `- hosts: all
+  become: true
+  tasks:
+    - community.general.npm: {name: pm2, global: true}
+    - npm: {name: left-pad, version: "1.3.0", path: /opt/app}
+    - npm: {name: "@angular/cli", state: latest, global: yes, path: /tmp}
+    - npm: {name: old, state: absent, path: /opt/app}
+`)
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	for _, want := range []string{"npm {", `name = "pm2"`, "global = true", `path = "/opt/app"`, `version = "1.3.0"`, `name = "@angular/cli"`, `state = "latest"`, `state = "absent"`} {
+		if !strings.Contains(strings.Join(strings.Fields(string(res.HCL)), " "), want) {
+			t.Errorf("output lacks %q:\n%s", want, res.HCL)
+		}
+	}
+	if strings.Contains(string(res.HCL), "/tmp") {
+		t.Errorf("a global install kept its path:\n%s", res.HCL)
+	}
+}
+
+func TestRefusesNpmItCantProve(t *testing.T) {
+	for _, c := range []struct{ task, want string }{
+		{"npm: {path: /opt/app}", "every package"},
+		{"npm: {name: pm2}", "set path"},
+		{"npm: {name: pm2, path: app}", "clean absolute path"},
+		{"npm: {name: pm2@5, global: true}", "plain name"},
+		{`npm: {name: pm2, version: "^5", global: true}`, "exact version"},
+		{"npm: {name: pm2, version: 5.4, global: true}", "may read as"},
+		{`npm: {name: pm2, version: "5.4.2", state: latest, global: true}`, "only applies"},
+		{"npm: {name: pm2, state: installed, global: true}", "no Conn3x equivalent"},
+		{"npm: {name: pm2, global: true, registry: http://x}", "registry"},
+		{"npm: {name: pm2, global: true, executable: /opt/node/bin/npm}", "executable"},
+		{"npm: {name: pm2, path: /opt/app, production: true}", "production"},
+		{"npm: {name: pm2, path: /opt/app, ignore_scripts: true}", "ignore_scripts"},
+		{"npm: {name: pm2, path: /opt/app, ci: true}", "ci"},
+		{"npm: name=pm2 global=true", "key=value"},
+		{"npm: {name: '{{ item }}', global: true}\n      loop: [a]", "loops"},
+	} {
+		res := convertString(t, "- hosts: all\n  become: true\n  tasks:\n    - "+c.task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, c.want) {
+			t.Errorf("%s: converted %d, review %+v, want %q", c.task, res.Converted, res.Review, c.want)
+		}
+	}
+}
+
 func TestRefusesPipItCantProve(t *testing.T) {
 	for _, c := range []struct{ task, want string }{
 		{"pip: {name: six}", "outside a virtualenv"},

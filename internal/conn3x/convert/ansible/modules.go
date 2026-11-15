@@ -419,6 +419,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"yum":                packageModule,
 	"apt":                packageModule,
 	"pip":                pipModule,
+	"npm":                npmModule,
 	"service":            serviceModule,
 	"systemd":            serviceModule,
 	"systemd_service":    serviceModule,

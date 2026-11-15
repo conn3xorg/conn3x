@@ -88,6 +88,7 @@ var circuitModules = map[string]string{
 	"package":              "conn3x_package",
 	"package_hold":         "conn3x_package_hold",
 	"pip":                  "conn3x_pip",
+	"npm":                  "conn3x_npm",
 	"service":              "conn3x_service",
 	"user":                 "conn3x_user",
 	"group":                "conn3x_group",

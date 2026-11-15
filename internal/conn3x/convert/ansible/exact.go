@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/npm"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pip"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
 )
@@ -522,4 +523,51 @@ func pipModule(in *input) ([]step, string) {
 		steps[0].notes = []string{"A missing venv is built with python3 -m venv, not the virtualenv tool, which Ansible fails without. The packages are the same; the venv's own seed packages can differ."}
 	}
 	return steps, ""
+}
+
+// npmModule converts what's plainly one named package, global or in a named
+// project directory. The rest of community.general.npm goes to review: a
+// task without a name installs whatever the project's package.json says,
+// and executable, registry and the install flags change where packages come
+// from or what runs.
+func npmModule(in *input) ([]step, string) {
+	if why := exactTask(in); why != "" {
+		return nil, why
+	}
+	if !in.has("name") {
+		return nil, "installs every package in the project's package.json; an npm step keeps one package, so give each one a step"
+	}
+	for _, k := range []string{"executable", "registry", "production", "ignore_scripts", "unsafe_perm", "ci", "no_optional", "no_bin_links", "force"} {
+		if in.has(k) {
+			return nil, fmt.Sprintf("sets %s, which an npm step doesn't have", k)
+		}
+	}
+	global := in.bool("global", false)
+	if global {
+		in.ignore("path") // a global install lands in the same place from any directory
+	}
+	d := npm.Desired{Name: in.text("name"), Global: global, Version: in.text("version")}
+	if !global {
+		d.Path = in.text("path")
+	}
+	d.State = npm.State(in.state("present", "present", "latest", "absent"))
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if err := d.Validate(); err != nil {
+		return nil, "can't be an npm step: " + err.Error()
+	}
+	attrs := []attr{s("name", d.Name)}
+	if global {
+		attrs = append(attrs, attr{key: "global", val: cty.True})
+	} else {
+		attrs = append(attrs, s("path", d.Path))
+	}
+	if d.Version != "" {
+		attrs = append(attrs, s("version", d.Version))
+	}
+	if d.State != npm.Present {
+		attrs = append(attrs, s("state", string(d.State)))
+	}
+	return one("npm", attrs)
 }
