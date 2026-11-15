@@ -113,8 +113,11 @@ run "converge" {
 		}
 	}
 	w.mustConn3x("init")
-	out := w.mustConn3x("test", "-no-color")
-	for _, want := range []string{`run "host"... pass`, `run "converge"... pass`, "2 passed, 0 failed"} {
+	// -verbose prints the state each run left: proof the containers were
+	// made and the circuit reached both.
+	out := w.mustConn3x("test", "-no-color", "-verbose")
+	for _, want := range []string{`run "host"... pass`, `run "converge"... pass`, "2 passed, 0 failed",
+		"conn3x_test_container.web1", "conn3x_test_container.web2", `conn3x_file.web__motd["web2"]`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
