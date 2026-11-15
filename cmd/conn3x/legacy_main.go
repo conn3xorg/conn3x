@@ -110,6 +110,7 @@ func legacyCommandMain(
 		rv.Error(err.Error())
 		return 1
 	}
+	args = withDefaultParallelism(cliRunner.Subcommand(), args)
 
 	// We shortcut "--version" and "-v" to just show the version
 	for _, arg := range args {

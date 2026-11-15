@@ -82,6 +82,7 @@ func commandMain(
 		rv.Error(err.Error())
 		return 1
 	}
+	args = withDefaultParallelism(subcommand, args)
 	args = append([]string{os.Args[0]}, args...)
 
 	// In practice, this is only ever called once, though we could wrap it in a sync.Once if we want to be safer.

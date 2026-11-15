@@ -353,6 +353,13 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 				return nil, fmt.Errorf("ssh %s: %w", addr, err)
 			}
 		}
+		release := func() {}
+		if i < len(cfg.Jumps) {
+			if release, err = startupSlot(ctx, addr); err != nil {
+				closeAll()
+				return nil, fmt.Errorf("ssh %s: %w", addr, err)
+			}
+		}
 		var raw net.Conn
 		var proxy *proxyConn
 		switch {
@@ -368,6 +375,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 			raw, err = via[len(via)-1].DialContext(ctx, "tcp", addr)
 		}
 		if err != nil {
+			release()
 			closeAll()
 			return nil, fmt.Errorf("ssh %s: %w", addr, err)
 		}
@@ -388,6 +396,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 			}
 		}
 		conn, chans, reqs, err := gossh.NewClientConn(raw, addr, clientCfg)
+		release()
 		if err != nil {
 			raw.Close()
 			if proxy != nil && proxy.Stderr() != "" {
@@ -404,6 +413,27 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	// The target authenticates last, so what signed last is its login key.
 	c.loginKey = login.get()
 	return c, nil
+}
+
+// maxJumpStartups is how many logins Conn3x has in progress through one
+// jump host at once. sshd's MaxStartups refuses unauthenticated connections
+// past 10 by default, and every host behind a bastion opens its own
+// connection to it, so a fleet at any -parallelism would trip it.
+const maxJumpStartups = 8
+
+var jumpStartups sync.Map // address: chan struct{} of maxJumpStartups slots
+
+// startupSlot waits for a free login slot on the jump host at addr. release
+// gives it back once the login there is done.
+func startupSlot(ctx context.Context, addr string) (release func(), err error) {
+	v, _ := jumpStartups.LoadOrStore(addr, make(chan struct{}, maxJumpStartups))
+	slots := v.(chan struct{})
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // hostKeyCheck returns the verification callback and, for known_hosts, the

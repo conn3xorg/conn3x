@@ -37,6 +37,8 @@ var helpBrand = strings.NewReplacer(
 	" tofu ", " conn3x ",
 	" tofu\n", " conn3x\n",
 	"\ttofu ", "\tconn3x ",
+	// Only -parallelism says this; Conn3x defaults it to 50.
+	"Defaults to 10.", "Defaults to 50.",
 )
 
 type brandedCommand struct{ cli.Command }

@@ -886,3 +886,41 @@ func TestDialRemote(t *testing.T) {
 		t.Errorf("a closed port: %v", err)
 	}
 }
+
+// A jump host never has more than maxJumpStartups logins in progress; the
+// next waits for one to finish, or gives up with its context.
+func TestJumpStartupSlots(t *testing.T) {
+	addr := "bastion.test:22"
+	var held []func()
+	for range maxJumpStartups {
+		release, err := startupSlot(context.Background(), addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, release)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := startupSlot(ctx, addr); err == nil {
+		t.Fatal("a login past the limit didn't wait")
+	}
+	if release, err := startupSlot(context.Background(), "other.test:22"); err != nil {
+		t.Fatalf("another jump host shares the limit: %v", err)
+	} else {
+		release()
+	}
+	got := make(chan error, 1)
+	go func() {
+		_, err := startupSlot(context.Background(), addr)
+		got <- err
+	}()
+	held[0]()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a released slot wasn't handed on")
+	}
+}
