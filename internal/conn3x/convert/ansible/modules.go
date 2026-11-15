@@ -469,6 +469,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"alternatives":       alternativesModule,
 	"debconf":            debconfModule,
 	"snap":               snapModule,
+	"flatpak":            flatpakModule,
 	"apt_repository":     aptRepositoryModule,
 	"yum_repository":     yumRepositoryModule,
 	"locale_gen":         localeGenModule,
@@ -1464,6 +1465,38 @@ func snapModule(in *input) ([]step, string) {
 		steps = append(steps, step{module: "snap", attrs: attrs, suffix: n})
 	}
 	return steps, ""
+}
+
+// flatpakModule installs each name from its remote; refs and .flatpakref
+// URLs have no step yet.
+func flatpakModule(in *input) ([]step, string) {
+	if why := exactTask(in); why != "" {
+		return nil, why
+	}
+	st := in.state("present", "present", "latest", "absent")
+	if e := in.str("executable"); in.has("executable") && e != "flatpak" {
+		return nil, fmt.Sprintf("runs %q; a flatpak step runs the host's flatpak", e)
+	}
+	if in.bool("no_dependencies", false) {
+		return nil, "sets no_dependencies, which a flatpak step doesn't have"
+	}
+	names := in.list("name")
+	if len(names) == 0 {
+		return nil, "names no app"
+	}
+	var steps []step
+	for _, n := range names {
+		if strings.ContainsAny(n, "/:") {
+			return nil, fmt.Sprintf("names %q, a ref or URL; a flatpak step takes an application ID such as org.gnome.Calculator", n)
+		}
+		attrs := in.optional([]attr{s("name", n)}, "remote", "remote")
+		attrs = in.optional(attrs, "method", "method")
+		if st != "present" {
+			attrs = append(attrs, s("state", st))
+		}
+		steps = append(steps, step{module: "flatpak", attrs: attrs, suffix: n})
+	}
+	return steps, in.problem
 }
 
 func sudoersModule(in *input) ([]step, string) {

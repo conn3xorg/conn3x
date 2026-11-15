@@ -69,6 +69,7 @@ var circuitModules = map[string]string{
 	"swap":                 "conn3x_swap",
 	"alternatives":         "conn3x_alternatives",
 	"snap":                 "conn3x_snap",
+	"flatpak":              "conn3x_flatpak",
 	"filesystem":           "conn3x_filesystem",
 	"lvm_volume_group":     "conn3x_lvm_volume_group",
 	"lvm_logical_volume":   "conn3x_lvm_logical_volume",
