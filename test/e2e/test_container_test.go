@@ -17,12 +17,23 @@ import (
 // conn3x test makes its own host: a setup run starts a conn3x_test_container,
 // the next run applies a circuit to it twice, and the end of the file
 // destroys the circuit's steps, then the container (#799).
-func TestConn3xTestStartsItsOwnHost(t *testing.T) {
+func TestConn3xTestStartsItsOwnHost(t *testing.T) { testOwnHost(t, "podman") }
+
+// The same under Docker, where systemd needs the host's cgroup namespace.
+func TestConn3xTestStartsItsOwnHostDocker(t *testing.T) {
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker isn't available here")
+	}
+	testOwnHost(t, "docker")
+}
+
+func testOwnHost(t *testing.T, rt string) {
 	_, here, _, _ := runtime.Caller(0)
 	for _, img := range []string{"rocky10", "debian13"} {
-		run(t, "podman", "build", "-q", "-t", "localhost/conn3x-e2e-"+img, filepath.Join(filepath.Dir(here), "..", "images", img))
+		dir := filepath.Join(filepath.Dir(here), "..", "images", img)
+		run(t, rt, "build", "-q", "-t", "localhost/conn3x-e2e-"+img, "-f", filepath.Join(dir, "Containerfile"), dir)
 	}
-	before := testContainers(t)
+	before := testContainers(t, rt)
 
 	w := &workdir{t: t, dir: t.TempDir()}
 	files := map[string]string{
@@ -62,12 +73,16 @@ circuit "web" {
 `,
 		"tests/setup/main.tf": `variable "image" { type = string }
 
+variable "runtime" { type = string }
+
 resource "conn3x_test_container" "web1" {
-  image = var.image
+  image   = var.image
+  runtime = var.runtime
 }
 
 resource "conn3x_test_container" "web2" {
-  image = "localhost/conn3x-e2e-debian13"
+  image   = "localhost/conn3x-e2e-debian13"
+  runtime = var.runtime
 }
 
 output "web2" {
@@ -88,7 +103,8 @@ output "known_hosts" { value = conn3x_test_container.web1.known_hosts_file }
     source = "./tests/setup"
   }
   variables {
-    image = "localhost/conn3x-e2e-rocky10"
+    image   = "localhost/conn3x-e2e-rocky10"
+    runtime = "` + rt + `"
   }
 }
 
@@ -122,14 +138,14 @@ run "converge" {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
 	}
-	if after := testContainers(t); after != before {
+	if after := testContainers(t, rt); after != before {
 		t.Errorf("%d test containers before and %d after; the end of the file should remove its own", before, after)
 	}
 }
 
-func testContainers(t *testing.T) int {
+func testContainers(t *testing.T, rt string) int {
 	t.Helper()
-	out, err := exec.Command("podman", "ps", "-aq", "--filter", "label=io.conn3x.test-container=true").Output()
+	out, err := exec.Command(rt, "ps", "-aq", "--filter", "label=io.conn3x.test-container=true").Output()
 	if err != nil {
 		t.Fatal(err)
 	}

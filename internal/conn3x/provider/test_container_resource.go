@@ -35,10 +35,11 @@ import (
 
 func testContainerSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Experimental. A throwaway host for conn3x test: a Podman container on the machine running Conn3x that boots systemd and sshd, such as ghcr.io/conn3xorg/test-rocky10. Conn3x makes it a key, and destroying the resource removes the container. Never for anything you want to keep.",
+		Description: "Experimental. A throwaway host for conn3x test: a Podman or Docker container on the machine running Conn3x that boots systemd and sshd, such as ghcr.io/conn3xorg/test-rocky10. Conn3x makes it a key, and destroying the resource removes the container. Never for anything you want to keep.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":               {Type: cty.String, Computed: true, Description: "The container's ID."},
 			"image":            {Type: cty.String, Required: true, Description: "An image that boots systemd and runs sshd, with an empty /root/.ssh, such as ghcr.io/conn3xorg/test-rocky10, test-debian13 or test-ubuntu2404."},
+			"runtime":          {Type: cty.String, Optional: true, Computed: true, Description: "\"podman\" or \"docker\". Defaults to podman when it's on the PATH, and docker otherwise. Under Docker the container shares the host's cgroup namespace, which systemd needs."},
 			"address":          {Type: cty.String, Computed: true, Description: "Where the container's sshd listens: 127.0.0.1."},
 			"port":             {Type: cty.Number, Computed: true, Description: "The port on 127.0.0.1 that reaches the container's sshd."},
 			"user":             {Type: cty.String, Computed: true, Description: "The user to log in as: root."},
@@ -57,6 +58,9 @@ func validateTestContainer(cfg cty.Value) tfdiags.Diagnostics {
 	if img := cfg.GetAttr("image"); known(img) && (strings.TrimSpace(img.AsString()) == "" || strings.HasPrefix(img.AsString(), "-")) {
 		diags = diags.Append(attrError("image", "image must name an image, such as ghcr.io/conn3xorg/test-rocky10"))
 	}
+	if rt := cfg.GetAttr("runtime"); known(rt) && rt.AsString() != "podman" && rt.AsString() != "docker" {
+		diags = diags.Append(attrError("runtime", "runtime must be \"podman\" or \"docker\""))
+	}
 	return diags
 }
 
@@ -72,7 +76,9 @@ func planTestContainer(req providers.PlanResourceChangeRequest) providers.PlanRe
 		resp.PlannedState = req.ProposedNewState
 		return resp
 	}
-	if !req.PriorState.IsNull() && req.PriorState.GetAttr("image").RawEquals(req.ProposedNewState.GetAttr("image")) {
+	rt := req.ProposedNewState.GetAttr("runtime")
+	if !req.PriorState.IsNull() && req.PriorState.GetAttr("image").RawEquals(req.ProposedNewState.GetAttr("image")) &&
+		(rt.IsNull() || rt.RawEquals(req.PriorState.GetAttr("runtime"))) {
 		resp.PlannedState = req.PriorState
 		return resp
 	}
@@ -80,25 +86,53 @@ func planTestContainer(req providers.PlanResourceChangeRequest) providers.PlanRe
 	for _, a := range testContainerComputed {
 		vals[a] = cty.UnknownVal(vals[a].Type())
 	}
+	if rt.IsNull() {
+		vals["runtime"] = cty.UnknownVal(cty.String)
+	}
 	if !req.PriorState.IsNull() {
-		resp.RequiresReplace = []cty.Path{cty.GetAttrPath("image")}
+		resp.RequiresReplace = []cty.Path{cty.GetAttrPath("image"), cty.GetAttrPath("runtime")}
 	}
 	resp.PlannedState = cty.ObjectVal(vals)
 	return resp
 }
 
-// podman runs podman with args and returns what it printed.
-var podman = func(ctx context.Context, args ...string) (string, error) {
-	if _, err := exec.LookPath("podman"); err != nil {
-		return "", errors.New("conn3x_test_container needs Podman on the machine running Conn3x, and podman isn't on the PATH")
+// containerCLI runs podman or docker with args and returns what it printed.
+var containerCLI = func(ctx context.Context, runtime string, args ...string) (string, error) {
+	if _, err := exec.LookPath(runtime); err != nil {
+		return "", fmt.Errorf("conn3x_test_container needs %s on the machine running Conn3x, and it isn't on the PATH", runtime)
 	}
 	var out, errOut bytes.Buffer
-	cmd := exec.CommandContext(ctx, "podman", args...)
+	cmd := exec.CommandContext(ctx, runtime, args...)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
-		return out.String(), fmt.Errorf("podman %s: %w: %s", args[0], err, strings.TrimSpace(errOut.String()))
+		return out.String(), fmt.Errorf("%s %s: %w: %s", runtime, args[0], err, strings.TrimSpace(errOut.String()))
 	}
 	return out.String(), nil
+}
+
+// defaultRuntime is podman when it's installed, and docker otherwise.
+func defaultRuntime() (string, error) {
+	for _, rt := range []string{"podman", "docker"} {
+		if _, err := exec.LookPath(rt); err == nil {
+			return rt, nil
+		}
+	}
+	return "", errors.New("conn3x_test_container needs Podman or Docker on the machine running Conn3x, and neither is on the PATH")
+}
+
+// runArgs start a container that boots systemd. Podman knows how; Docker
+// needs the host's cgroup namespace, the cgroup tree writable and /run as
+// tmpfs. Root also gets the capabilities a real host's root has to read
+// /etc/shadow and write audit records, which PAM needs to let other users
+// log in, as test/e2e does.
+func runArgs(runtime, image string) []string {
+	args := []string{"run", "-d", "--rm", "--label", testContainerLabel, "--cap-add", "DAC_OVERRIDE", "--cap-add", "AUDIT_WRITE", "-p", "127.0.0.1::22"}
+	if runtime == "docker" {
+		args = append(args, "--cgroupns=host", "-v", "/sys/fs/cgroup:/sys/fs/cgroup:rw", "--tmpfs", "/run", "--tmpfs", "/run/lock")
+	} else {
+		args = append(args, "--systemd=always")
+	}
+	return append(args, image)
 }
 
 func readTestContainer(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -107,7 +141,7 @@ func readTestContainer(ctx context.Context, req providers.ReadResourceRequest) p
 		return resp
 	}
 	// Gone, as when someone removed it by hand: the next plan makes another.
-	if _, err := podman(ctx, "container", "exists", req.PriorState.GetAttr("id").AsString()); err != nil {
+	if _, err := containerCLI(ctx, req.PriorState.GetAttr("runtime").AsString(), "container", "inspect", req.PriorState.GetAttr("id").AsString()); err != nil {
 		resp.NewState = cty.NullVal(req.PriorState.Type())
 	}
 	return resp
@@ -117,7 +151,7 @@ func applyTestContainer(ctx context.Context, req providers.ApplyResourceChangeRe
 	var resp providers.ApplyResourceChangeResponse
 	if req.PlannedState.IsNull() {
 		id := req.PriorState.GetAttr("id").AsString()
-		if _, err := podman(ctx, "rm", "-f", id); err != nil {
+		if _, err := containerCLI(ctx, req.PriorState.GetAttr("runtime").AsString(), "rm", "-f", id); err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(err)
 			return resp
 		}
@@ -136,6 +170,13 @@ func applyTestContainer(ctx context.Context, req providers.ApplyResourceChangeRe
 
 func startTestContainer(ctx context.Context, planned cty.Value) (_ cty.Value, err error) {
 	image := planned.GetAttr("image").AsString()
+	runtime := stringOr(planned.GetAttr("runtime"), "")
+	if runtime == "" {
+		if runtime, err = defaultRuntime(); err != nil {
+			return cty.NilVal, err
+		}
+	}
+	cli := func(ctx context.Context, args ...string) (string, error) { return containerCLI(ctx, runtime, args...) }
 	dir, err := os.MkdirTemp("", "conn3x-test-container-")
 	if err != nil {
 		return cty.NilVal, err
@@ -157,10 +198,7 @@ func startTestContainer(ctx context.Context, planned cty.Value) (_ cty.Value, er
 		return cty.NilVal, err
 	}
 
-	// Podman's default capabilities differ between versions. A real host's
-	// root can read /etc/shadow and write audit records, and PAM needs both
-	// to let other users log in, as test/e2e does.
-	out, err := podman(ctx, "run", "-d", "--rm", "--label", testContainerLabel, "--systemd=always", "--cap-add", "DAC_OVERRIDE,AUDIT_WRITE", "-p", "127.0.0.1::22", image)
+	out, err := cli(ctx, runArgs(runtime, image)...)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return cty.NilVal, err
@@ -168,30 +206,30 @@ func startTestContainer(ctx context.Context, planned cty.Value) (_ cty.Value, er
 	id := strings.TrimSpace(out)
 	defer func() {
 		if err != nil {
-			_, _ = podman(context.Background(), "rm", "-f", id)
+			_, _ = cli(context.Background(), "rm", "-f", id)
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	out, err = podman(ctx, "port", id, "22/tcp")
+	out, err = cli(ctx, "port", id, "22/tcp")
 	if err != nil {
 		return cty.NilVal, err
 	}
 	_, portText, err := net.SplitHostPort(strings.TrimSpace(strings.SplitN(out, "\n", 2)[0]))
 	if err != nil {
-		return cty.NilVal, fmt.Errorf("podman port printed %q, not an address and port", strings.TrimSpace(out))
+		return cty.NilVal, fmt.Errorf("%s port printed %q, not an address and port", runtime, strings.TrimSpace(out))
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil {
-		return cty.NilVal, fmt.Errorf("podman port printed the port %q", portText)
+		return cty.NilVal, fmt.Errorf("%s port printed the port %q", runtime, portText)
 	}
 	// Services that start late can restart sshd under the first login.
 	// Degraded is fine for a test host, so the exit status doesn't matter.
-	_, _ = podman(ctx, "exec", id, "timeout", "60", "systemctl", "is-system-running", "--wait")
-	if _, err := podman(ctx, "exec", id, "sh", "-c", "umask 077 && mkdir -p /root/.ssh && printf '%s\\n' \"$1\" > /root/.ssh/authorized_keys", "sh",
+	_, _ = cli(ctx, "exec", id, "timeout", "60", "systemctl", "is-system-running", "--wait")
+	if _, err := cli(ctx, "exec", id, "sh", "-c", "umask 077 && mkdir -p /root/.ssh && printf '%s\\n' \"$1\" > /root/.ssh/authorized_keys", "sh",
 		strings.TrimSpace(string(gossh.MarshalAuthorizedKey(sshPub)))); err != nil {
 		return cty.NilVal, err
 	}
-	hostKey, err := podman(ctx, "exec", id, "cat", "/etc/ssh/ssh_host_ed25519_key.pub")
+	hostKey, err := cli(ctx, "exec", id, "cat", "/etc/ssh/ssh_host_ed25519_key.pub")
 	if err != nil {
 		return cty.NilVal, fmt.Errorf("the image has no ed25519 host key at /etc/ssh/ssh_host_ed25519_key.pub, so Conn3x can't pin it: %w", err)
 	}
@@ -209,6 +247,7 @@ func startTestContainer(ctx context.Context, planned cty.Value) (_ cty.Value, er
 	vals["id"], vals["address"], vals["port"], vals["user"] = cty.StringVal(id), cty.StringVal("127.0.0.1"), cty.NumberIntVal(int64(port)), cty.StringVal("root")
 	vals["private_key_file"], vals["known_hosts_file"] = cty.StringVal(keyFile), cty.StringVal(hostsFile)
 	vals["host_key"] = cty.StringVal(f[0] + " " + f[1])
+	vals["runtime"] = cty.StringVal(runtime)
 	return cty.ObjectVal(vals), nil
 }
 
