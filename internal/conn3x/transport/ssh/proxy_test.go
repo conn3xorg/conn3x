@@ -8,13 +8,16 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh/sshtest"
 )
@@ -52,6 +55,16 @@ func TestProxyCommand(t *testing.T) {
 	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("run over the proxy: %+v, %v", res, err)
 	}
+
+	// A known_hosts file works too: the connection reports the target's
+	// address, which knownhosts has to split as host:port.
+	cfg.HostKey = ""
+	cfg.KnownHostsFile = filepath.Join(t.TempDir(), "known_hosts")
+	line := knownhosts.Line([]string{knownhosts.Normalize(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))}, s.HostKey)
+	if err := os.WriteFile(cfg.KnownHostsFile, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dial(t, cfg).Close()
 
 	// The proxy's own complaint reaches the error.
 	t.Setenv("CONN3X_PROXY_TO", "127.0.0.1:1")
@@ -97,7 +110,7 @@ func TestProxyCloseKillsItsChildren(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses sh")
 	}
-	p, err := dialProxy([]string{"sh", "-c", "sleep 30 & cat"})
+	p, err := dialProxy([]string{"sh", "-c", "sleep 30 & cat"}, "web1:22")
 	if err != nil {
 		t.Fatal(err)
 	}

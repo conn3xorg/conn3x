@@ -359,7 +359,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		case len(hop.ProxyCommand) > 0:
 			var args []string
 			if args, err = ExpandProxyCommand(hop.ProxyCommand, hop.Host, hop.Port, hop.User); err == nil {
-				proxy, err = dialProxy(args)
+				proxy, err = dialProxy(args, addr)
 				raw = proxy
 			}
 		case len(via) == 0:

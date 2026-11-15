@@ -109,15 +109,17 @@ type proxyConn struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	stderr *bytes.Buffer
+	addr   proxyAddr
 
 	mu    sync.Mutex
 	timer *time.Timer
 	once  sync.Once
 }
 
-// dialProxy starts args, which must already be expanded. It isn't tied to
-// a context: the connection outlives the dial, and Close ends it.
-func dialProxy(args []string) (*proxyConn, error) {
+// dialProxy starts args, which must already be expanded, to reach addr,
+// the target's host:port. It isn't tied to a context: the connection
+// outlives the dial, and Close ends it.
+func dialProxy(args []string, addr string) (*proxyConn, error) {
 	cmd := exec.Command(args[0], args[1:]...)
 	ownGroup(cmd)
 	// A child holding stderr open can't make Wait hang once the proxy is
@@ -136,7 +138,7 @@ func dialProxy(args []string) (*proxyConn, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting proxy_command %s: %w", args[0], err)
 	}
-	return &proxyConn{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr}, nil
+	return &proxyConn{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, addr: proxyAddr(addr)}, nil
 }
 
 func (p *proxyConn) Read(b []byte) (int, error)  { return p.stdout.Read(b) }
@@ -159,13 +161,16 @@ func (p *proxyConn) Stderr() string {
 	return strings.TrimSpace(p.stderr.String())
 }
 
-type proxyAddr struct{}
+// proxyAddr is the target's host:port, as OpenSSH reports it for a
+// ProxyCommand; knownhosts splits the remote address even when it's
+// given the hostname.
+type proxyAddr string
 
-func (proxyAddr) Network() string { return "proxy" }
-func (proxyAddr) String() string  { return "proxy_command" }
+func (proxyAddr) Network() string  { return "proxy" }
+func (a proxyAddr) String() string { return string(a) }
 
-func (p *proxyConn) LocalAddr() net.Addr  { return proxyAddr{} }
-func (p *proxyConn) RemoteAddr() net.Addr { return proxyAddr{} }
+func (p *proxyConn) LocalAddr() net.Addr  { return proxyAddr("proxy_command") }
+func (p *proxyConn) RemoteAddr() net.Addr { return p.addr }
 
 // SetDeadline closes the connection when t passes, which is what the
 // handshake's deadline needs; the zero time clears it. Pipes have no
