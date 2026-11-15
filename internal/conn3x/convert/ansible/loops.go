@@ -115,3 +115,49 @@ func quoted(s string) string {
 	q := string(hclwrite.TokensForValue(cty.StringVal(s)).Bytes())
 	return q[1 : len(q)-1]
 }
+
+// sameForItem reports whether steps built with item as a mark are, with
+// value in its place, the steps the module built for value itself.
+func sameForItem(marked, got []step, value string) bool {
+	put := func(v cty.Value) cty.Value {
+		out, err := cty.Transform(v, func(_ cty.Path, v cty.Value) (cty.Value, error) {
+			if v.IsKnown() && !v.IsNull() && v.Type() == cty.String {
+				return cty.StringVal(strings.ReplaceAll(v.AsString(), itemMark, value)), nil
+			}
+			return v, nil
+		})
+		if err != nil {
+			return cty.NilVal
+		}
+		return out
+	}
+	same := func(a, b []attr) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i].key != b[i].key || a[i].raw != b[i].raw || a[i].val.IsNull() != b[i].val.IsNull() {
+				return false
+			}
+			if !a[i].val.IsNull() && !put(a[i].val).RawEquals(b[i].val) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(marked) != len(got) {
+		return false
+	}
+	for i := range marked {
+		m, g := marked[i], got[i]
+		if m.module != g.module || !same(m.attrs, g.attrs) || len(m.blocks) != len(g.blocks) {
+			return false
+		}
+		for j := range m.blocks {
+			if m.blocks[j].name != g.blocks[j].name || !same(m.blocks[j].attrs, g.blocks[j].attrs) {
+				return false
+			}
+		}
+	}
+	return true
+}

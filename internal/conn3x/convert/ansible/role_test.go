@@ -725,3 +725,41 @@ func TestListDefaultItemIsHeldLikeADefault(t *testing.T) {
 		t.Errorf("no comma check on pkgs:\n%s", vars)
 	}
 }
+
+// Each written item of a loop must give the step the loop gives it: a
+// package name Ansible splits at a comma, or a value the module refuses,
+// keeps the task for review.
+func TestLiteralLoopItemsAreChecked(t *testing.T) {
+	res := convertString(t, `- hosts: all
+  tasks:
+    - name: Fine
+      package: {name: "{{ item }}"}
+      loop: [git, jq]
+    - name: Comma
+      package: {name: "{{ item }}"}
+      loop: [git, "a,b"]
+    - name: Bad state
+      service: {name: nginx, state: "{{ item }}"}
+      loop: [started, bogus]
+`)
+	if res.Converted != 1 || len(res.Review) != 2 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	if !strings.Contains(res.Review[0].Reason, `loops over "a,b", which Ansible reads differently`) || !strings.Contains(res.Review[1].Reason, `loops over "bogus", and for that item:`) {
+		t.Errorf("review %+v", res.Review)
+	}
+}
+
+// Ansible fills in a package name's variables before it splits the name at
+// commas, so a play var holding two names installs two packages.
+func TestPackageNamesSplitAfterVars(t *testing.T) {
+	res := convertString(t, `- hosts: all
+  vars: {pkgs: "git,jq"}
+  tasks:
+    - package: {name: "{{ pkgs }}"}
+`)
+	hcl := string(res.HCL)
+	if !strings.Contains(hcl, `name = "git"`) || !strings.Contains(hcl, `name = "jq"`) {
+		t.Errorf("converted %d, review %+v\n%s", res.Converted, res.Review, hcl)
+	}
+}

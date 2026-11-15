@@ -895,6 +895,28 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if reason == "" && items != nil {
 			reason = loopSteps(in.itemUsed)
 		}
+		// Written items can be checked: each must give the step the loop
+		// gives it, as the module would build it for that value alone.
+		for _, it := range items {
+			if reason != "" || listVar != "" {
+				break
+			}
+			fv := maps.Clone(vars)
+			fv["item"] = it
+			one := c.input(mod, args, fv, nil)
+			one.factsLater, one.wait = in.factsLater, in.wait
+			one.jsonEdits, one.jsonWhy = in.jsonEdits, in.jsonWhy
+			got, why := m(one)
+			if why == "" {
+				why = one.problem
+			}
+			switch {
+			case why != "":
+				reason = fmt.Sprintf("loops over %q, and for that item: %s", it, why)
+			case !sameForItem(steps, got, it):
+				reason = fmt.Sprintf("loops over %q, which Ansible reads differently from the other items, such as a package name it splits at a comma; write the task once per item", it)
+			}
+		}
 		if reason == "" {
 			reason = resolveMarks(steps)
 		}

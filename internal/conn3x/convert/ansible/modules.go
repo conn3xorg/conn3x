@@ -140,9 +140,10 @@ func (in *input) list(key string) []string {
 	in.used[key] = true
 	var out []string
 	if n.Kind == yaml.ScalarNode {
-		for _, s := range strings.Split(n.Value, ",") {
+		// Ansible fills in variables first, then splits at commas.
+		for _, s := range strings.Split(in.render(key, n.Value), ",") {
 			if s = strings.TrimSpace(s); s != "" {
-				out = append(out, in.render(key, s))
+				out = append(out, s)
 			}
 		}
 		return out
