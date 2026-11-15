@@ -220,10 +220,13 @@ func TestRemoveCommands(t *testing.T) {
 func TestConfigSecrets(t *testing.T) {
 	cfg := "tacacs-server key 7 0207165218120E\nsnmp-server community public ro\nsnmp-server community other ro\nrouter bgp 65000\n   neighbor 10.0.0.1 password 7 abc==\n   neighbor 10.0.0.1 remote-as 65001\n"
 	for line, want := range map[string]string{
-		"tacacs-server key MyKey":              "tacacs-server key",
-		"snmp-server community MyCommunity ro": "snmp-server community",
-		"neighbor 10.0.0.1 password MyPass":    "neighbor 10.0.0.1 password",
-		"username bob secret 0 MyPass":         "username bob secret",
+		"tacacs-server key MyKey":                           "tacacs-server key",
+		"snmp-server community MyCommunity ro":              "snmp-server community",
+		"neighbor 10.0.0.1 password MyPass":                 "neighbor 10.0.0.1 password",
+		"username bob secret 0 MyPass":                      "username bob secret",
+		"ntp authentication-key 2 sha1 MyKey":               "ntp authentication-key 2",
+		"tacacs-server key 7 0207165218120E":                "tacacs-server key",
+		"snmp-server user ops grp v3 auth sha A priv aes B": "snmp-server user ops grp v3 auth",
 	} {
 		if got, err := SecretPrefix(line); err != nil || got != want {
 			t.Errorf("SecretPrefix(%q) = %q, %v; want %q", line, got, err, want)
@@ -257,23 +260,36 @@ func TestConfigSecrets(t *testing.T) {
 
 	// Missing: out of sync, and sent without Resend.
 	top := Config{Secrets: []string{"tacacs-server key MyKey", "ntp authentication-key 1 sha1 MyKey"},
-		Prefixes: []string{"tacacs-server key", "ntp authentication-key"}, Match: MatchLines}
+		Prefixes: []string{"tacacs-server key", "ntp authentication-key 1"}, Match: MatchLines}
 	if top.InSync(cfg) {
 		t.Error("in sync without the ntp key")
 	}
 	if cmds := top.Commands(cfg); !slices.Equal(cmds, []string{"ntp authentication-key 1 sha1 MyKey"}) {
 		t.Errorf("missing secret: %v", cmds)
 	}
-	// One prefix owns every line that starts that way.
-	snmp := Config{Secrets: []string{"snmp-server community MyCommunity ro"}, Prefixes: []string{"snmp-server community"}, Match: MatchLines, Resend: true}
-	if cmds := snmp.Commands(cfg); !slices.Equal(cmds, []string{"no snmp-server community public ro", "no snmp-server community other ro", "snmp-server community MyCommunity ro"}) {
-		t.Errorf("snmp: %v", cmds)
+	// Two NTP keys are two lines: rotating one leaves the other.
+	ntp := "ntp authentication-key 1 sha1 7 Aaa==\nntp authentication-key 2 sha1 7 Bbb==\n"
+	two := Config{Secrets: []string{"ntp authentication-key 1 sha1 One", "ntp authentication-key 2 sha1 Two"},
+		Prefixes: []string{"ntp authentication-key 1", "ntp authentication-key 2"}, Match: MatchLines}
+	if err := two.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !two.InSync(ntp) {
+		t.Error("two ntp keys out of sync")
+	}
+	one := Config{Secrets: []string{"ntp authentication-key 2 sha1 New"}, Prefixes: []string{"ntp authentication-key 2"}, Match: MatchLines, Resend: true}
+	if cmds := one.Commands(ntp); !slices.Equal(cmds, []string{"no ntp authentication-key 2 sha1 7 Bbb==", "ntp authentication-key 2 sha1 New"}) {
+		t.Errorf("rotating key 2: %v", cmds)
+	}
+	if one.InSync("ntp authentication-key 1 sha1 7 Aaa==\n") {
+		t.Error("key 1 counts as key 2")
 	}
 
 	for _, bad := range []Config{
 		{Secrets: []string{"hostname leaf1"}},
 		{Secrets: []string{"tacacs-server key A", "tacacs-server key B"}},
-		{Secrets: []string{"snmp-server community x ro"}, Lines: []string{"snmp-server community public ro"}},
+		{Secrets: []string{"snmp-server community x ro"}},
+		{Secrets: []string{"tacacs-server key x"}, Lines: []string{"tacacs-server key 7 0207"}},
 		{Secrets: []string{"configure terminal key x"}},
 	} {
 		err := bad.Validate()

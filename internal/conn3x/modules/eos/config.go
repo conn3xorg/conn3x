@@ -106,15 +106,32 @@ type Config struct {
 }
 
 // SecretPrefix is line up to its secret, such as "tacacs-server key" for
-// "tacacs-server key 7 0207165218120E". An error when line holds none.
+// "tacacs-server key 7 0207165218120E". A number before an algorithm and
+// the secret is the line's own id, as in "ntp authentication-key 2 sha1
+// <secret>", so the prefix runs through it: an encryption type such as
+// the 7 above is followed by the secret alone. An error when line holds
+// no secret.
 func SecretPrefix(line string) (string, error) {
 	for _, m := range secretWord.FindAllStringSubmatchIndex(line, -1) {
-		if !strings.EqualFold(line[m[4]:m[5]], "ssh-key") {
-			return strings.TrimSpace(line[:m[6]]), nil
+		if strings.EqualFold(line[m[4]:m[5]], "ssh-key") {
+			continue
 		}
+		prefix := strings.TrimSpace(line[:m[6]])
+		if rest := strings.Fields(line[m[6]:]); len(rest) >= 3 && isDigits(rest[0]) {
+			prefix += " " + rest[0]
+		}
+		return prefix, nil
 	}
-	return "", fmt.Errorf("line %q holds no secret Conn3x knows, such as a key, secret, password or snmp-server community; put it in lines instead", line)
+	return "", errors.New("the line holds no secret Conn3x knows, such as a key, secret or password")
 }
+
+func isDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// snmpCommunity matches an SNMP community line, whose secret is also its
+// name: no prefix can tell one community from another.
+var snmpCommunity = regexp.MustCompile(`(?i)^snmp-server\s+community\s`)
 
 // secretLine reports whether have is one of the lines the prefixes own.
 func (c Config) secretLine(have string) bool {
@@ -164,9 +181,12 @@ func (c Config) Validate() error {
 		if err := checkLine(l); err != nil {
 			return errors.New("a line in lines_wo is not a single CLI line as show running-config prints it, or would leave the config session")
 		}
+		if snmpCommunity.MatchString(l) {
+			return errors.New("lines_wo can't hold an snmp-server community line: the community is both its name and its secret, and the switch can't show which one is this step's, so a change or removal would take out communities others set. Use an SNMPv3 user instead, as in \"snmp-server user <name> <group> v3 auth sha <secret> priv aes <secret>\"")
+		}
 		p, err := SecretPrefix(l)
 		if err != nil {
-			return errors.New("a line in lines_wo holds no secret Conn3x knows, such as a key, secret, password or snmp-server community; put it in lines instead")
+			return errors.New("a line in lines_wo holds no secret Conn3x knows, such as a key, secret or password; put it in lines instead")
 		}
 		if seen[p] {
 			return fmt.Errorf("two lines in lines_wo start %q, and the switch can't show which secret each holds; give each its own start", p)

@@ -86,9 +86,11 @@ step "aaa" {
 
 The switch prints most secrets hashed or encrypted, so Conn3x can't compare them with yours. A refresh checks something smaller: that a line starting with each prefix is there. If you change a secret, the HMAC changes and the plan shows an update. The apply then removes the lines each prefix owns and sends yours again. If you remove the line by hand, the step shows as out of sync. But a secret changed by hand on the switch still looks in sync, because the switch can't show which secret it holds.
 
-A prefix owns every line under the parent that starts with it. `snmp-server community MyCommunity ro` owns every community at that level, so a change replaces the others too. Each line in `lines_wo` needs its own prefix, and no line in `lines` can start with one.
+A prefix owns every line under the parent that starts with it. A number before an algorithm counts as part of the line's name, so `ntp authentication-key 2 sha1 MyKey` has the prefix `ntp authentication-key 2`, and keys 1 and 2 are separate lines. An encryption type such as the `7` in `tacacs-server key 7 <hash>` doesn't count. Each line in `lines_wo` needs its own prefix, and no line in `lines` can start with one.
 
-A line in `lines_wo` must hold a secret Conn3x knows, a key, secret, password or `snmp-server community`; other lines belong in `lines`. Planning `lines_wo` needs the HMAC key, `CONN3X_HMAC_KEY` or `~/.config/conn3x/hmac.key`. Pass the secret through a variable file or `TF_VAR_`, not `-var`, since OpenTofu logs its command line.
+`snmp-server community` lines are refused. The community is both its name and its secret, so the switch can't show which community is this step's, and changing or removing it would take out communities other people set. Use an SNMPv3 user instead: `snmp-server user ops monitoring v3 auth sha <secret> priv aes <secret>`.
+
+A line in `lines_wo` must hold a secret Conn3x knows, a key, secret or password; other lines belong in `lines`. Planning `lines_wo` needs the HMAC key, `CONN3X_HMAC_KEY` or `~/.config/conn3x/hmac.key`. Pass the secret through a variable file or `TF_VAR_`, not `-var`, since OpenTofu logs its command line.
 
 ## Notes
 
