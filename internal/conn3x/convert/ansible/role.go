@@ -5,6 +5,7 @@ package ansible
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -51,6 +52,13 @@ type role struct {
 	// which become variables.
 	lists    map[string][]string
 	listUsed map[string]bool
+	// maps are the defaults that are lists of maps of plain values. An
+	// empty list in lists can be read either way. mapFields are the fields
+	// loops read from each, nil where a bare read makes one required and
+	// the default otherwise; mapKeys are the fields that key a loop.
+	maps      map[string][]map[string]string
+	mapFields map[string]map[string]*string
+	mapKeys   map[string][]string
 }
 
 type roleDefault struct {
@@ -86,7 +94,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -124,6 +132,12 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		where := fmt.Sprintf("Default %q (%s line %d)", k, defaultsFile, kv[0].Line)
 		if items, ok := plainList(kv[1]); ok && !has(vars, k) && len(r.varFiles[k]) == 0 && !reserved[k] && identifier.MatchString(k) {
 			r.lists[k] = items
+			listOrder = append(listOrder, k)
+			listWhere[k] = where
+			continue
+		}
+		if items, ok := mapList(kv[1]); ok && !has(vars, k) && len(r.varFiles[k]) == 0 && !reserved[k] && identifier.MatchString(k) {
+			r.maps[k] = items
 			listOrder = append(listOrder, k)
 			listWhere[k] = where
 			continue
@@ -210,6 +224,10 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 
 	for _, k := range listOrder {
 		vb.AppendNewline()
+		if r.mapFields[k] != nil {
+			r.mapVariable(vb, k, defaultsFile)
+			continue
+		}
 		if !r.listUsed[k] {
 			comment(vb, listWhere[k]+" is a list, which the converter carries over as a variable only for a loop over it. Tasks that use it are marked TODO(convert).")
 			continue
@@ -392,6 +410,136 @@ func (c *converter) note(body *hclwrite.Body, what, file string, line int, reaso
 		where = fmt.Sprintf("%s line %d", file, line)
 	}
 	comment(body, fmt.Sprintf("TODO(convert): %s (%s) %s.", what, where, reason))
+}
+
+// loopKey is the field a loop over maps is keyed by: name if the task
+// needs it, else the first field it needs. Empty when it needs none.
+func loopKey(fields map[string]*string) string {
+	var need []string
+	for f, d := range fields {
+		if d == nil {
+			need = append(need, f)
+		}
+	}
+	if slices.Contains(need, "name") {
+		return "name"
+	}
+	slices.Sort(need)
+	if len(need) == 0 {
+		return ""
+	}
+	return need[0]
+}
+
+// checkLoop says why a loop over the default k, reading fields from its
+// items, can't convert: k read both as plain values and as maps, a field
+// read with two defaults, an item without a field the loop needs, or no
+// field to key the loop by.
+func (r *role) checkLoop(k string, fields map[string]*string) string {
+	if len(fields) == 0 {
+		if r.mapFields[k] != nil {
+			return fmt.Sprintf("loops over %q as plain values, where another task reads fields from its items", k)
+		}
+		return ""
+	}
+	if r.listUsed[k] {
+		return fmt.Sprintf("reads fields from the items of %q, where another task loops over them as plain values", k)
+	}
+	if loopKey(fields) == "" {
+		return fmt.Sprintf("reads only fields with a default from the items of %q, so there's no field every item has to tell the steps apart by", k)
+	}
+	for f, d := range fields {
+		if old, seen := r.mapFields[k][f]; seen && old != nil && d != nil && *old != *d {
+			return fmt.Sprintf("reads item.%s with the default %q, where another task gives it %q", f, *d, *old)
+		}
+		if d != nil {
+			continue
+		}
+		for i, it := range r.maps[k] {
+			if _, ok := it[f]; !ok {
+				return fmt.Sprintf("reads item.%s, which item %d of %q doesn't have, so Ansible would stop there", f, i+1, k)
+			}
+		}
+	}
+	return ""
+}
+
+// useMapLoop records the fields a converted loop over k reads, which make
+// up its variable's type, and returns the field it's keyed by.
+func (r *role) useMapLoop(k string, fields map[string]*string) string {
+	if r.mapFields[k] == nil {
+		r.mapFields[k] = map[string]*string{}
+	}
+	for f, d := range fields {
+		if old, seen := r.mapFields[k][f]; !seen || old != nil && d == nil {
+			r.mapFields[k][f] = d // a bare read anywhere makes the field required
+		}
+	}
+	key := loopKey(fields)
+	if !slices.Contains(r.mapKeys[k], key) {
+		r.mapKeys[k] = append(r.mapKeys[k], key)
+	}
+	return key
+}
+
+// mapList reads a default that's a list of maps whose values are plain,
+// as plainValue reads each.
+func mapList(n *yaml.Node) ([]map[string]string, bool) {
+	if n == nil || n.Kind != yaml.SequenceNode || len(n.Content) == 0 {
+		return nil, false
+	}
+	var items []map[string]string
+	for _, e := range n.Content {
+		if e.Kind != yaml.MappingNode {
+			return nil, false
+		}
+		item := map[string]string{}
+		for _, kv := range pairs(e) {
+			v, _, why := plainValue(kv[1])
+			if why != "" || !identifier.MatchString(kv[0].Value) {
+				return nil, false
+			}
+			item[kv[0].Value] = v
+		}
+		items = append(items, item)
+	}
+	return items, true
+}
+
+// mapVariable writes the variable for a list of maps a loop reads: an
+// object per item with the fields the loops read, and a check that each
+// field a loop is keyed by is different in every item.
+func (r *role) mapVariable(vb *hclwrite.Body, k, defaultsFile string) {
+	fields := slices.Sorted(maps.Keys(r.mapFields[k]))
+	var typ []string
+	for _, f := range fields {
+		if d := r.mapFields[k][f]; d != nil {
+			typ = append(typ, fmt.Sprintf("%s = optional(string, \"%s\")", f, quoted(*d)))
+		} else {
+			typ = append(typ, f+" = string")
+		}
+	}
+	b := vb.AppendNewBlock("variable", []string{k}).Body()
+	b.SetAttributeRaw("type", rawTokens("list(object({ "+strings.Join(typ, ", ")+" }))"))
+	if len(r.maps[k]) == 0 {
+		b.SetAttributeRaw("default", rawTokens("[]"))
+	} else {
+		items := make([]cty.Value, len(r.maps[k]))
+		for i, it := range r.maps[k] {
+			obj := map[string]cty.Value{}
+			for f, v := range it {
+				obj[f] = cty.StringVal(v)
+			}
+			items[i] = cty.ObjectVal(obj)
+		}
+		b.SetAttributeValue("default", cty.TupleVal(items))
+	}
+	b.SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+". Each item is one pass of the loop that uses it."))
+	for _, key := range r.mapKeys[k] {
+		v := b.AppendNewBlock("validation", nil).Body()
+		v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf("length(distinct([for i in var.%s : i.%s])) == length(var.%s)", k, key, k)))
+		v.SetAttributeValue("error_message", cty.StringVal(fmt.Sprintf("Each item of %s needs its own %s: a step runs once per %s.", k, key, key)))
+	}
 }
 
 // plainList reads a default that's a list of plain values, as plainValue

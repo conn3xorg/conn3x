@@ -753,7 +753,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	listVar := ""
 	for k := range t {
 		if (k == "loop" || k == "with_items") && c.role != nil {
-			if m := bareRef.FindStringSubmatch(scalar(t[k])); m != nil && c.role.lists[m[1]] != nil {
+			if m := bareRef.FindStringSubmatch(scalar(t[k])); m != nil && (c.role.lists[m[1]] != nil || c.role.maps[m[1]] != nil) {
 				listVar = m[1]
 				continue
 			}
@@ -774,6 +774,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	var items []string
 	if listVar != "" {
 		items = c.role.lists[listVar]
+		if items == nil {
+			items = []string{} // a list of maps: only its fields are read
+		}
 	} else if l := firstNode(t["loop"], t["with_items"]); l != nil {
 		var why string
 		if items, why = literalLoop(l); why != "" {
@@ -927,6 +930,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			if extra := in.unused(); len(extra) > 0 {
 				reason = "sets " + strings.Join(extra, ", ") + ", which the converter can't translate yet"
 			}
+		}
+		if reason == "" && listVar != "" {
+			reason = c.role.checkLoop(listVar, in.itemFields)
 		}
 		return in, steps, reason
 	}
@@ -1115,7 +1121,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if delegate != "" {
 			sb.SetAttributeValue("on", cty.StringVal(delegate))
 		}
-		if listVar != "" {
+		if listVar != "" && len(in.itemFields) > 0 {
+			key := c.role.useMapLoop(listVar, in.itemFields)
+			sb.SetAttributeRaw("for_each", rawTokens(fmt.Sprintf("{ for i in var.%s : i.%s => i }", listVar, key)))
+		} else if listVar != "" {
 			sb.SetAttributeRaw("for_each", rawTokens("var."+listVar))
 			c.role.listUsed[listVar] = true
 		} else if items != nil {

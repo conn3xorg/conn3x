@@ -86,6 +86,10 @@ type input struct {
 	// itemVar names the role default a loop runs over, whose items the
 	// caller sets, so item is held to what a default is held to.
 	itemVar string
+	// itemFields are the fields read from items that are maps, as
+	// item.name: nil for a bare read, which needs the field, or the
+	// default a | default('x') gives it.
+	itemFields map[string]*string
 }
 
 // verbatim lists, by module, the arguments Conn3x uses exactly as Ansible
@@ -187,11 +191,48 @@ func (in *input) unused() []string {
 
 var jinja = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 
+// itemField matches {{ item.name }}, or with | default('text').
+var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\(\s*(?:'([^'\\]*)'|"([^"\\]*)")\s*\)\s*)?\}\}`)
+
 func (in *input) render(key, s string) string {
+	if in.loop && in.itemVar != "" {
+		s = itemField.ReplaceAllStringFunc(s, func(m string) string {
+			sub := itemField.FindStringSubmatch(m)
+			in.itemUsed = true
+			switch {
+			case len(in.role.lists[in.itemVar]) > 0:
+				in.fail(fmt.Sprintf("%s reads item.%s, but %q is a list of plain values", key, sub[1], in.itemVar))
+			case !slices.Contains(verbatim[in.mod], key) || packageModules[in.mod]:
+				in.fail(fmt.Sprintf("%s uses item.%s from the role default %q, and the converter keeps a default as a variable only where Conn3x uses its value exactly as Ansible does, whatever it is set to; here it would have to check each item first", key, sub[1], in.itemVar))
+			default:
+				var d *string
+				if strings.Contains(m, "default(") {
+					d = &sub[2]
+					if sub[3] != "" {
+						d = &sub[3]
+					}
+				}
+				if old, seen := in.itemFields[sub[1]]; seen && (old == nil) != (d == nil) || seen && old != nil && d != nil && *old != *d {
+					in.fail(fmt.Sprintf("%s reads item.%s with a different default from elsewhere in the task", key, sub[1]))
+					return m
+				}
+				if in.itemFields == nil {
+					in.itemFields = map[string]*string{}
+				}
+				in.itemFields[sub[1]] = d
+				return refMark("item.value." + sub[1])
+			}
+			return m
+		})
+	}
 	out := jinja.ReplaceAllStringFunc(s, func(m string) string {
 		name := jinja.FindStringSubmatch(m)[1]
 		if name == "item" && in.loop {
 			in.itemUsed = true
+			if in.role != nil && in.role.maps[in.itemVar] != nil {
+				in.fail(fmt.Sprintf("%s uses each whole item of %q, which are maps; read a field, such as item.name", key, in.itemVar))
+				return m
+			}
 			if in.itemVar != "" && !slices.Contains(verbatim[in.mod], key) {
 				in.fail(fmt.Sprintf("%s uses item from the role default %q, and the converter keeps a default as a variable only where Conn3x uses its value exactly as Ansible does, whatever it is set to; here it would have to check each item first", key, in.itemVar))
 				return m

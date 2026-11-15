@@ -763,3 +763,60 @@ func TestPackageNamesSplitAfterVars(t *testing.T) {
 		t.Errorf("converted %d, review %+v\n%s", res.Converted, res.Review, hcl)
 	}
 }
+
+// A loop over a role default that's a list of maps becomes for_each keyed
+// by a field every item needs, with a list(object) variable whose fields
+// are the ones the loops read.
+func TestRoleLoopOverMaps(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"defaults/main.yml": "admins:\n  - {name: alice, shell: /bin/zsh}\n  - {name: bob}\nextra_users: []\nnameless: [{shell: /bin/sh}]\n",
+		"tasks/main.yml": `- name: Admins
+  user:
+    name: "{{ item.name }}"
+    shell: "{{ item.shell | default('/bin/bash') }}"
+  with_items: "{{ admins }}"
+- name: Extra
+  user: {name: "{{ item.login }}"}
+  loop: "{{ extra_users }}"
+- name: Whole item
+  user: {name: "{{ item }}"}
+  loop: "{{ admins }}"
+- name: Not verbatim
+  file: {path: "/home/{{ item.name }}", state: directory}
+  loop: "{{ admins }}"
+- name: Missing field
+  user: {name: "{{ item.name }}"}
+  loop: "{{ nameless }}"
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := func(b []byte) string { return strings.Join(strings.Fields(string(b)), " ") }
+	main, vars := flat(res.Files["main.circuit.hcl"]), flat(res.Files["variables.tf"])
+	for _, want := range []string{
+		"for_each = { for i in var.admins : i.name => i }", "name = item.value.name", "shell = item.value.shell",
+		"for_each = { for i in var.extra_users : i.login => i }",
+	} {
+		if !strings.Contains(main, want) {
+			t.Errorf("main.circuit.hcl has no %q:\n%s", want, main)
+		}
+	}
+	for _, want := range []string{
+		`type = list(object({ name = string, shell = optional(string, "/bin/bash") }))`,
+		`type = list(object({ login = string }))`,
+		`length(distinct([for i in var.admins : i.name])) == length(var.admins)`,
+	} {
+		if !strings.Contains(vars, want) {
+			t.Errorf("variables.tf has no %q:\n%s", want, vars)
+		}
+	}
+	var got []string
+	for _, r := range res.Review {
+		got = append(got, r.Task)
+	}
+	if res.Converted != 2 || strings.Join(got, ",") != "Whole item,Not verbatim,Missing field" {
+		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
+	}
+}
