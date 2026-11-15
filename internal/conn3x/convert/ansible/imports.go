@@ -158,7 +158,8 @@ func (c *converter) inlineWhen(n *yaml.Node, args map[string]*yaml.Node, file st
 }
 
 // switchesOnly reports whether every condition in w turns on a role
-// default that's true or false.
+// default that's true or false, or tests the host's family: what no step
+// can change between an include and its tasks.
 func (c *converter) switchesOnly(w *yaml.Node) bool {
 	if c.role == nil {
 		return false
@@ -168,7 +169,8 @@ func (c *converter) switchesOnly(w *yaml.Node) bool {
 		conds = w.Content
 	}
 	for _, cnd := range conds {
-		if c.role.boolWhen(cnd) == "" {
+		// A family no host here has keeps the include whole, as one note.
+		if allowed, _, family := familyWhen(cnd); c.role.boolWhen(cnd) == "" && (!family || len(allowed) == 0) {
 			return false
 		}
 	}

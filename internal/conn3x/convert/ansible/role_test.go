@@ -537,6 +537,10 @@ func TestWhenOnImportsAndIncludes(t *testing.T) {
   when: port == 22
 - import_tasks: fail2ban.yml
   when: port == 22
+- include_tasks: fail2ban.yml
+  when:
+    - not ban_enabled
+    - ansible_facts.os_family == 'Debian'
 `,
 	})
 	res, err := ConvertRole(dir)
@@ -544,17 +548,52 @@ func TestWhenOnImportsAndIncludes(t *testing.T) {
 		t.Fatal(err)
 	}
 	main := string(res.Files["main.circuit.hcl"])
-	for _, want := range []string{"when = var.ban_enabled", "when = !var.ban_enabled"} {
+	for _, want := range []string{"when = var.ban_enabled", "when = !var.ban_enabled", `when = local.os_family[each.key] == "debian" && !var.ban_enabled`} {
 		if !strings.Contains(main, want) {
 			t.Errorf("no %q:\n%s", want, main)
 		}
 	}
-	if res.Converted != 2 || len(res.Review) != 2 {
+	if res.Converted != 3 || len(res.Review) != 2 {
 		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
 	}
 	// The include's when isn't a switch, so it stays whole; the import's
 	// goes on its task, which then can't convert that when.
 	if !strings.Contains(res.Review[0].Reason, "include_tasks") || res.Review[1].File != "tasks/fail2ban.yml" || !strings.Contains(res.Review[1].Reason, "uses when") {
 		t.Errorf("review %+v", res.Review)
+	}
+}
+
+// A when list ANDs its conditions: role switches and family tests convert
+// together, and anything else in the list keeps the task for review.
+func TestWhenListOfSwitchesAndFamily(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"defaults/main.yml": "ban_enabled: true\nrepo_add: false\n",
+		"tasks/main.yml": `- name: Both
+  package: {name: fail2ban}
+  when:
+    - ban_enabled | bool
+    - ansible_facts.os_family == 'Debian'
+- name: Two switches
+  package: {name: jq}
+  when: [ban_enabled, not repo_add]
+- name: And something else
+  package: {name: git}
+  when:
+    - ban_enabled | bool
+    - result.rc != 0
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{`when = local.os_family[each.key] == "debian" && var.ban_enabled`, `when = var.ban_enabled && !var.repo_add`} {
+		if !strings.Contains(main, want) {
+			t.Errorf("no %q:\n%s", want, main)
+		}
+	}
+	if res.Converted != 2 || len(res.Review) != 1 || res.Review[0].Task != "And something else" {
+		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }

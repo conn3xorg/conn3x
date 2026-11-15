@@ -775,9 +775,29 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	}
 	// A when that only tests the family becomes the step's when, and the
 	// task converts for the families it allows.
+	// A list of conditions, which Ansible ANDs, splits into the ones that
+	// switch a role default and the rest, which must all test the family.
+	famWhen := t["when"]
+	var switches []string
+	if w := t["when"]; w != nil && c.role != nil && w.Kind == yaml.SequenceNode {
+		var rest []*yaml.Node
+		for _, e := range w.Content {
+			if b := c.role.boolWhen(e); b != "" {
+				switches = append(switches, b)
+			} else {
+				rest = append(rest, e)
+			}
+		}
+		if len(switches) > 0 {
+			famWhen = nil
+			if len(rest) > 0 {
+				famWhen = &yaml.Node{Kind: yaml.SequenceNode, Content: rest}
+			}
+		}
+	}
 	fams := osFamilies
 	familyCond := false
-	if w := t["when"]; w != nil && c.role != nil {
+	if w := famWhen; w != nil && c.role != nil {
 		allowed, why, ok := familyWhen(w)
 		if why != "" {
 			c.issue(body, name, node, why)
@@ -794,7 +814,11 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	// A when that switches a role default on or off, as role_feature | bool,
 	// becomes the step's when over the variable.
 	var boolCond string
-	if w := t["when"]; w != nil && c.role != nil && !familyCond {
+	if len(switches) > 0 {
+		if famWhen == nil || familyCond {
+			boolCond = strings.Join(switches, " && ")
+		}
+	} else if w := t["when"]; w != nil && c.role != nil && !familyCond {
 		boolCond = c.role.boolWhen(w)
 	}
 	wait := uriRetry(t)
@@ -1067,12 +1091,16 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			}
 			sb.SetAttributeValue("for_each", cty.TupleVal(vals))
 		}
+		var conds []string
 		if familyCond && len(fams) < len(osFamilies) {
-			sb.SetAttributeRaw("when", rawTokens(fmt.Sprintf("local.os_family[each.key] == %q", fams[0].conn3x)))
+			conds = append(conds, fmt.Sprintf("local.os_family[each.key] == %q", fams[0].conn3x))
 			c.role.familyUsed = true
 		}
 		if boolCond != "" {
-			sb.SetAttributeRaw("when", rawTokens(boolCond))
+			conds = append(conds, boolCond)
+		}
+		if len(conds) > 0 {
+			sb.SetAttributeRaw("when", rawTokens(strings.Join(conds, " && ")))
 		}
 		mb := sb.AppendNewBlock(s.module, nil).Body()
 		for _, a := range s.attrs {
