@@ -86,6 +86,8 @@ step "aaa" {
 
 The switch prints most secrets hashed or encrypted, so Conn3x can't compare them with yours. A refresh checks something smaller: that a line starting with each prefix is there. If you change a secret, the HMAC changes and the plan shows an update. The apply then removes the lines each prefix owns and sends yours again. If you remove the line by hand, the step shows as out of sync. But a secret changed by hand on the switch still looks in sync, because the switch can't show which secret it holds.
 
+Rotation hasn't been tried on a real switch yet, only against the test suite's fake one. A change removes the switch's own line as `show running-config` prints it, such as `no tacacs-server key 7 <hash>`, then sends yours. If your switch refuses that, please say so on [#859](https://github.com/conn3xorg/conn3x/issues/859).
+
 A prefix owns every line under the parent that starts with it. A number before an algorithm counts as part of the line's name, so `ntp authentication-key 2 sha1 MyKey` has the prefix `ntp authentication-key 2`, and keys 1 and 2 are separate lines. An encryption type such as the `7` in `tacacs-server key 7 <hash>` doesn't count. Each line in `lines_wo` needs its own prefix, and no line in `lines` can start with one.
 
 `snmp-server community` lines are refused. The community is both its name and its secret, so the switch can't show which community is this step's, and changing or removing it would take out communities other people set. Use an SNMPv3 user instead: `snmp-server user ops monitoring v3 auth sha <secret> priv aes <secret>`.
