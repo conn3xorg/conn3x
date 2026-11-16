@@ -25,7 +25,7 @@ Decisions happen in public, in issues, Discussions and pull requests.
 | Final decisions | James Conway ([@jamesconwaydev](https://github.com/jamesconwaydev)) | In public, in issues, Discussions and pull requests |
 | Security response | James Conway | Reports through [private vulnerability reporting](https://github.com/conn3xorg/conn3x/security/advisories/new) or security@conn3x.org, as [SECURITY.md](SECURITY.md) describes |
 | Releases | James Conway | The release workflow builds, signs (Sigstore, keyless) and attests every release from `main` |
-| Second review of the code that logs in to hosts, runs as root or builds releases | Foothills Digital ([@foothillsdigital](https://github.com/foothillsdigital)) | Required by [CODEOWNERS](.github/CODEOWNERS) for those paths |
+| Second review | Foothills Digital ([@foothillsdigital](https://github.com/foothillsdigital)) | Asked on every pull request by the second-review workflow; required by [CODEOWNERS](.github/CODEOWNERS) for the code that logs in to hosts, runs as root or builds releases |
 
 ## If one of us can't continue
 
@@ -44,9 +44,12 @@ need the domain moved.
 ## Maintainers
 
 Anyone who contributes steadily and reviews other people's work can be
-invited to become a maintainer. Once there are at least two maintainers:
+invited to become a maintainer. With two or more maintainers:
 
-- pull requests need an approving review from a maintainer other than the author
+- every pull request asks a maintainer other than the author for a review.
+  It's required for the code that logs in to hosts, runs as root or builds
+  releases ([CODEOWNERS](.github/CODEOWNERS)); elsewhere a change can merge
+  once CI passes, and we aim to have most of them reviewed
 - decisions are made by consensus, falling back to a majority vote of maintainers
 
 The current list is in [MAINTAINERS.md](MAINTAINERS.md).

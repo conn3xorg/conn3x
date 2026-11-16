@@ -1,0 +1,29 @@
+name: Second review
+
+# Asks the other maintainer to review every pull request, so most changes
+# get a second pair of eyes. It asks, it doesn't require: CODEOWNERS makes a
+# second review required only for the code that logs in to hosts, runs as
+# root or builds releases (GOVERNANCE.md).
+#
+# pull_request_target, so it can ask on pull requests from forks too. It
+# never checks out or runs anything from the pull request.
+on:
+  pull_request_target:
+    types: [opened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  request:
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.login != 'foothillsdigital'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Ask Foothills Digital to review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --add-reviewer foothillsdigital

@@ -8,6 +8,7 @@ same list unless their own CODEOWNERS says otherwise.
 | Name | GitHub ID | Company/Organization |
 |---|---|---|
 | James Conway | [jamesconwaydev](https://github.com/jamesconwaydev) | Independent |
+| Foothills Digital | [foothillsdigital](https://github.com/foothillsdigital) | Foothills Digital |
 
 Want to be on this list? Contribute steadily and review other people's
 work. GOVERNANCE.md has the rest.
