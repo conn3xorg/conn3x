@@ -14,8 +14,10 @@ import (
 // again for a new image tag, started after it's stopped, and removed.
 func TestContainerStep(t *testing.T) {
 	box := startHostWith(t, "rocky10", "--privileged")
-	// Podman inside a container keeps its images with the vfs driver.
-	box.exec("", "sh", "-c", "mkdir -p /etc/containers /srv/c3 && printf '[storage]\\ndriver = \"vfs\"\\n' > /etc/containers/storage.conf")
+	// Podman inside a container keeps its images with the vfs driver. Podman 6
+	// reads a vendor drop-in that picks overlay after storage.conf, so the
+	// setting goes in a drop-in too; Podman 5 reads only storage.conf.
+	box.exec("", "sh", "-c", "mkdir -p /etc/containers/storage.conf.d /srv/c3 && printf '[storage]\\ndriver = \"vfs\"\\n' | tee /etc/containers/storage.conf > /etc/containers/storage.conf.d/99-vfs.conf")
 	knownFile := shareKey(t, box)
 	w := newWorkdir(t, "container")
 	w.writeAs("main.circuit.hcl", chainVars{PortA: box.port, Key: box.keyFile, KnownHosts: knownFile})
