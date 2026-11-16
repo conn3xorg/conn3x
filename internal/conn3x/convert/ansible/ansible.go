@@ -549,16 +549,59 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 		c.issue(cb, hname, h, "is a handler that doesn't restart or reload a service; Conn3x handlers do only that")
 		return nil, ""
 	}
-	in := c.input(mod, args, vars, nil)
-	in.ignore("state")
 	act := s("action", action)
 	if stateVar != "" {
 		act = attr{key: "action", raw: fmt.Sprintf(`var.%s == "reloaded" ? "reload" : "restart"`, stateVar)}
 	}
-	svc := []step{{attrs: []attr{s("name", in.str("name")), act}}}
-	reason := in.problem
-	if reason == "" {
-		reason = resolveMarks(svc)
+	convert := func(vars map[string]string) ([]step, string) {
+		in := c.input(mod, args, vars, nil)
+		in.ignore("state")
+		svc := []step{{attrs: []attr{s("name", in.str("name")), act}}}
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		return svc, resolveMarks(svc)
+	}
+	var svc []step
+	var reason string
+	if names := c.familyNames(args, vars); len(names) == 0 {
+		svc, reason = convert(vars)
+	} else {
+		// A service named per family in vars/, as apache2 or httpd: convert
+		// once per family and look the name up by the host's family, as a
+		// task does. A handler runs on each host, so each.key is the host.
+		byFamily := map[string][]step{}
+		for _, f := range osFamilies {
+			fv := map[string]string{}
+			for k, v := range vars {
+				fv[k] = v
+			}
+			for _, n := range names {
+				v, ok := c.role.familyVars[f.conn3x][n]
+				_, unusable := c.role.familyWhy[f.conn3x][n]
+				_, isDefault := c.role.defaultOf[n]
+				if !ok || unusable || isDefault {
+					reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set as plain text, and a handler needs it for every family", n, f.ansible)
+					break
+				}
+				fv[n] = v
+			}
+			if reason != "" {
+				break
+			}
+			fsvc, freason := convert(fv)
+			if freason != "" {
+				reason = freason + " (with the values for " + f.ansible + " hosts)"
+				break
+			}
+			byFamily[f.conn3x] = fsvc
+		}
+		if reason == "" {
+			svc, reason = mergeFamilies(byFamily, osFamilies)
+		}
+		if reason == "" {
+			c.role.familyUsed = true
+		}
 	}
 	if reason != "" {
 		// These start with the argument, such as "name uses a Jinja

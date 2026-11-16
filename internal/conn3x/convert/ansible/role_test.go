@@ -1069,3 +1069,24 @@ func TestRoleHandlerStateFromDefault(t *testing.T) {
 		t.Errorf("odd:\n%s\n%s", hcl, vars)
 	}
 }
+
+// A handler's service named per family in vars/ is looked up by each
+// host's family, as a task's value is. One a family doesn't set stays.
+func TestRoleHandlerNamePerFamily(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml":    "- name: Vars\n  include_vars: \"{{ ansible_os_family }}.yml\"\n- name: Conf\n  copy: {dest: /etc/web.conf, content: x}\n  notify: [restart web, restart other]\n",
+		"handlers/main.yml": "- name: restart web\n  service: {name: \"{{ web_service }}\", state: restarted}\n- name: restart other\n  service: {name: \"{{ other_service }}\", state: restarted}\n",
+		"vars/Debian.yml":   "web_service: apache2\nother_service: x\n",
+		"vars/RedHat.yml":   "web_service: httpd\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	if want := `name   = { debian = "apache2", redhat = "httpd" }[local.os_family[each.key]]`; !strings.Contains(hcl, want) || !strings.Contains(hcl, `data "conn3x_host" "facts"`) {
+		t.Errorf("missing %s or the facts in\n%s", want, hcl)
+	}
+	if len(res.Review) < 1 || !strings.Contains(res.Review[0].Reason, `refers to "other_service", which vars/RedHat.yml doesn't set as plain text`) {
+		t.Errorf("review %+v", res.Review)
+	}
+}
