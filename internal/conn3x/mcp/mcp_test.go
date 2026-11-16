@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -79,6 +80,51 @@ func TestProtocol(t *testing.T) {
 	}
 	if got["null"]["error"].(map[string]any)["code"].(float64) != parseError {
 		t.Errorf("not json = %v", got["null"])
+	}
+}
+
+// A tool's result and its failure both come back as content; only a
+// request the server can't make sense of is a protocol error.
+func TestToolsCall(t *testing.T) {
+	s := &Server{Name: "conn3x", Version: "test", Tools: []Tool{
+		{Name: "echo", Run: func(_ context.Context, args json.RawMessage) (any, error) {
+			var m map[string]any
+			return m, json.Unmarshal(args, &m)
+		}},
+		{Name: "fail", Run: func(context.Context, json.RawMessage) (any, error) { return nil, errors.New("no circuit here") }},
+		{Name: "odd", Run: func(context.Context, json.RawMessage) (any, error) { return []any{make(chan int)}, nil }},
+	}}
+	var out bytes.Buffer
+	in := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"dir":"web"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fail"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"odd"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{}}`,
+		``,
+		`{"jsonrpc":"1.0","id":6,"method":"ping"}`,
+		`{"jsonrpc":"2.0","method":""}`,
+	}, "\n") + "\n"
+	if err := s.Serve(context.Background(), strings.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`{"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"dir\": \"web\"\n}","type":"text"}],"isError":false,"structuredContent":{"dir":"web"}}}`,
+		// No arguments are an empty object.
+		`{"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{}","type":"text"}],"isError":false,"structuredContent":{}}}`,
+		`{"jsonrpc":"2.0","id":3,"result":{"content":[{"text":"{\n  \"error\": \"no circuit here\"\n}","type":"text"}],"isError":true,"structuredContent":{"error":"no circuit here"}}}`,
+		`{"jsonrpc":"2.0","id":4,"result":{"content":[{"text":"json: unsupported type: chan int","type":"text"}],"isError":true}}`,
+		`{"jsonrpc":"2.0","id":5,"error":{"code":-32602,"message":"tools/call needs a tool name"}}`,
+		`{"jsonrpc":"2.0","id":6,"error":{"code":-32600,"message":"not a JSON-RPC 2.0 request"}}`,
+	}
+	if got := strings.Split(strings.TrimSpace(out.String()), "\n"); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.Serve(ctx, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n"), &out); !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled serve = %v", err)
 	}
 }
 
