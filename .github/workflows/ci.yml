@@ -298,12 +298,19 @@ jobs:
           RESULT: ${{ needs.e2e-hosts.result }}
         run: '[ "$RESULT" = success ] || { echo "e2e: $RESULT" >&2; exit 1; }'
 
+  # The Windows host tests, built with -cover, for the coverage job.
+  windows-cover:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/windows.yml
+    with:
+      cover: true
+
   # One statement-coverage number for Conn3x's own packages, counting the
-  # unit tests and every e2e shard's runs of the -cover build. Nightly and
-  # on request only; it reports and doesn't gate.
+  # unit tests, every e2e shard's runs of the -cover build and the Windows
+  # host tests. Nightly and on request only; it reports and doesn't gate.
   coverage:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    needs: e2e-hosts
+    needs: [e2e-hosts, windows-cover]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -314,7 +321,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: covdata-e2e-*
+          pattern: covdata-*
           path: ${{ runner.temp }}/covdata/e2e
       - name: Unit tests with coverage
         run: |
@@ -333,7 +340,7 @@ jobs:
         run: |
           d=$RUNNER_TEMP/covdata
           shards=$(find "$d/e2e" -mindepth 1 -maxdepth 1 -type d | wc -l)
-          [ "$shards" -eq 6 ] || { echo "found $shards e2e shards' coverage, want 6" >&2; exit 1; }
+          [ "$shards" -eq 8 ] || { echo "found $shards runs' coverage, want 8: 6 e2e shards and 2 Windows" >&2; exit 1; }
           mkdir -p "$d/merged"
           go tool covdata merge -i="$({ echo "$d/unit"; find "$d/e2e" -mindepth 1 -maxdepth 1 -type d; } | paste -sd, -)" -o="$d/merged"
           go tool covdata textfmt -i="$d/merged" -o=coverage.out
@@ -343,7 +350,7 @@ jobs:
           {
             echo "## Statement coverage: $total"
             echo
-            echo "Unit tests plus the e2e runs, both agent modes, of \`./internal/conn3x/...\`, \`./cmd/conn3x/...\` and \`./cmd/conn3x-agent/...\`."
+            echo "Unit tests, the e2e runs in both agent modes, and the Windows host tests on Server 2022 and 2025, over \`./internal/conn3x/...\`, \`./cmd/conn3x/...\` and \`./cmd/conn3x-agent/...\`."
             echo
             echo "| Package | Statements covered |"
             echo "| --- | --- |"

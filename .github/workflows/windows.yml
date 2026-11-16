@@ -28,12 +28,19 @@ on:
       - internal/configs/conn3x_circuit.go
       - test/windows/**
       - .github/workflows/windows.yml
+  # CI's nightly coverage run calls this with cover set, so the Windows
+  # steps count toward the total too.
+  workflow_call:
+    inputs:
+      cover:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-${{ github.ref }}-${{ inputs.cover && 'cover' || 'test' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -81,17 +88,41 @@ jobs:
           Add-Content $env:GITHUB_ENV "CONN3X_WIN_HOST_KEY=$((Get-Content "$d\ssh_host_ed25519_key.pub" -Raw).Trim())"
       - name: Build the binary the plan and apply test drives
         shell: pwsh
+        env:
+          COVER: ${{ inputs.cover }}
         run: |
-          go build -o "$env:RUNNER_TEMP\conn3x.exe" ./cmd/conn3x
+          $flags = @()
+          if ($env:COVER -eq 'true') {
+            # Every run of the binary, and the test itself, writes its
+            # counters here for CI's coverage job.
+            $flags = '-cover', '-coverpkg=./internal/conn3x/...,./cmd/conn3x/...'
+            New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\covdata" | Out-Null
+            Add-Content $env:GITHUB_ENV "GOCOVERDIR=$env:RUNNER_TEMP\covdata"
+          }
+          go build @flags -o "$env:RUNNER_TEMP\conn3x.exe" ./cmd/conn3x
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Add-Content $env:GITHUB_ENV "CONN3X_WIN_BIN=$env:RUNNER_TEMP\conn3x.exe"
       - name: Test against the runner
         shell: pwsh
+        env:
+          COVER: ${{ inputs.cover }}
         run: |
-          go test -tags windowshost -count=1 -timeout 45m -v ./test/windows/ 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\windows-test.log"
+          $flags = @()
+          $cargs = @()
+          if ($env:COVER -eq 'true') {
+            $flags = '-cover', '-coverpkg=./internal/conn3x/...,./cmd/conn3x/...'
+            $cargs = '-args', "-test.gocoverdir=$env:GOCOVERDIR"
+          }
+          go test -tags windowshost -count=1 -timeout 45m -v @flags ./test/windows/ @cargs 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\windows-test.log"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # A missing variable would only skip it, and a skip looks like a pass.
           if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\windows-test.log" -SimpleMatch -Quiet -- '--- PASS: TestPlanAndApply')) {
             Write-Error 'TestPlanAndApply did not run'
             exit 1
           }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.cover
+        with:
+          name: covdata-windows-${{ matrix.os }}
+          path: ${{ runner.temp }}/covdata
+          retention-days: 3
