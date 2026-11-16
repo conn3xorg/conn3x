@@ -103,8 +103,9 @@ func nameTemplate(e string) ([]namePart, bool) {
 }
 
 // fill is the name a template gives a host of distribution d, release v,
-// in family fam. A Debian or Red Hat family release's minor version isn't
-// in os-release, so Ansible's distribution_version there is a pattern.
+// in family fam. osVersions lists only major releases for Debian and the
+// Red Hat family, whose distribution_version has a minor version too, so
+// there it's a pattern: the converter can't list every minor release.
 func fill(segs []namePart, fam, d, v string) (name string, pattern bool) {
 	var b strings.Builder
 	for _, s := range segs {
@@ -213,7 +214,7 @@ func (c *converter) firstFile(templates [][]namePart, fam, d, v string) (string,
 		name, pattern := fill(segs, fam, d, v)
 		if pattern {
 			if matches, _ := filepath.Glob(c.path("vars/" + name)); len(matches) > 0 {
-				return "", false // whether it loads depends on a minor version the converter doesn't know
+				return "", false // whether it loads depends on a minor release the converter doesn't list
 			}
 			continue
 		}

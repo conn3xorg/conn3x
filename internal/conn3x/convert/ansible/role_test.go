@@ -1245,8 +1245,8 @@ func TestRoleFirstFoundVars(t *testing.T) {
 		t.Fatalf("version-dependent: converted %d, review %+v", res.Converted, res.Review)
 	}
 
-	// A file per minor release can't be told apart: os-release has no minor
-	// version on Rocky Linux, so this stays for review.
+	// A file per minor release stays for review: the converter would need
+	// the values for every minor release, and doesn't list them.
 	res, err = ConvertRole(writeRole(t, map[string]string{
 		"tasks/main.yml": `- include_vars: "{{ item }}"
   with_first_found:
