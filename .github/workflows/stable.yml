@@ -6,7 +6,10 @@ name: Stable channel
 # version to promote a security fix the day it ships.
 on:
   schedule:
+    # Tuesday's run is a backup for a Monday run GitHub dropped (it missed
+    # on 16 Nov), and does nothing when Monday's succeeded.
     - cron: "40 9 * * 1"
+    - cron: "40 9 * * 2"
   workflow_dispatch:
     inputs:
       version:
@@ -28,6 +31,7 @@ jobs:
     environment: release
     timeout-minutes: 10
     permissions:
+      actions: read # Tuesday's check for Monday's run
       contents: read
       packages: write
     steps:
@@ -39,7 +43,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Monday's run already moved it
+        id: done
+        if: github.event.schedule == '40 9 * * 2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          since=$(date -u -d '30 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          n=$(gh run list -R "$GITHUB_REPOSITORY" -w stable.yml -s success --created ">$since" --json databaseId --jq length)
+          echo "skip=$([ "$n" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - name: Move stable
+        if: steps.done.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

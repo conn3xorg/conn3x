@@ -4,7 +4,11 @@ name: release-tokens
 # tap or winget token shows up before release day.
 on:
   schedule:
+    # Tuesday too: GitHub sometimes drops a scheduled run, and a weekly
+    # check that's dropped says nothing for a week. Running twice is
+    # harmless.
     - cron: "17 6 * * 1"
+    - cron: "17 6 * * 2"
   workflow_dispatch:
 
 permissions:
