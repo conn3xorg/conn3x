@@ -74,6 +74,11 @@ type input struct {
 	// commaFree lists role defaults used as package names: Ansible splits a
 	// name at commas into several packages, so the variable can't hold one.
 	commaFree []string
+	// pathRules are what each role default used in a path must hold to, so
+	// the path is absolute as Ansible's would be: "abs" when it starts the
+	// path, "noslash" when it ends a copy or template's dest, where Ansible
+	// reads a trailing / as a directory to write into.
+	pathRules map[string][]string
 	// out holds files a role's task adds to the circuit, kept only if the
 	// task converts.
 	out map[string][]byte
@@ -112,6 +117,55 @@ var verbatim = map[string][]string{
 	"systemd_service": {"name"},
 	"user":            {"name", "shell"},
 	"group":           {"name"},
+}
+
+// pathArgs lists, by module, the arguments that are a path on the host.
+// A role default can go in one when the path is absolute whatever the
+// caller sets, which a validation on the variable makes sure of.
+var pathArgs = map[string][]string{
+	"copy":        {"dest"},
+	"template":    {"dest"},
+	"file":        {"path", "dest", "name"},
+	"lineinfile":  {"path", "dest", "name"},
+	"blockinfile": {"path", "dest", "name"},
+}
+
+// pathRef checks a role default name at match i of refs in a path argument
+// s, and records what the variable must hold to. "" when it can go there,
+// or why not.
+func (in *input) pathRef(s string, refs [][]int, i int, name string, values []string) string {
+	var rules []string
+	// The text before it, with the variables already known filled in, such
+	// as a family's server root.
+	prefix := jinja.ReplaceAllStringFunc(s[:refs[i][0]], func(m string) string {
+		if v, ok := in.vars[jinja.FindStringSubmatch(m)[1]]; ok {
+			return v
+		}
+		return m
+	})
+	if refs[i][0] == 0 {
+		rules = append(rules, "abs")
+	} else if !strings.HasPrefix(prefix, "/") {
+		return "isn't an absolute path"
+	}
+	if refs[i][1] == len(s) && (in.mod == "copy" || in.mod == "template") {
+		rules = append(rules, "noslash")
+	}
+	for _, v := range values {
+		if !pathOK(v, rules) {
+			return fmt.Sprintf("would be %q with the role's own value of %q, which Conn3x and Ansible read differently", s, name)
+		}
+	}
+	if in.pathRules == nil {
+		in.pathRules = map[string][]string{}
+	}
+	in.pathRules[name] = append(in.pathRules[name], rules...)
+	return ""
+}
+
+// pathOK reports whether v holds to rules.
+func pathOK(v string, rules []string) bool {
+	return !(slices.Contains(rules, "abs") && !strings.HasPrefix(v, "/") || slices.Contains(rules, "noslash") && strings.HasSuffix(v, "/"))
 }
 
 var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true}
@@ -225,8 +279,19 @@ func (in *input) render(key, s string) string {
 			return m
 		})
 	}
+	refs, ref := jinja.FindAllStringIndex(s, -1), -1
+	inPath := in.role != nil && slices.Contains(pathArgs[in.mod], key)
 	out := jinja.ReplaceAllStringFunc(s, func(m string) string {
+		ref++
 		name := jinja.FindStringSubmatch(m)[1]
+		if name == "item" && in.loop && inPath && in.itemVar != "" && in.role.maps[in.itemVar] == nil {
+			in.itemUsed = true
+			if why := in.pathRef(s, refs, ref, in.itemVar, in.role.lists[in.itemVar]); why != "" {
+				in.fail(fmt.Sprintf("%s uses item from the role default %q and %s", key, in.itemVar, why))
+				return m
+			}
+			return itemMark
+		}
 		if name == "item" && in.loop {
 			in.itemUsed = true
 			if in.role != nil && in.role.maps[in.itemVar] != nil {
@@ -244,6 +309,13 @@ func (in *input) render(key, s string) string {
 		}
 		if v, ok := in.vars[name]; ok {
 			return v
+		}
+		if d := in.role.defaultOrNil(name); d != nil && inPath && !d.boolean {
+			if why := in.pathRef(s, refs, ref, name, []string{d.value}); why != "" {
+				in.fail(fmt.Sprintf("%s refers to the role default %q and %s", key, name, why))
+				return m
+			}
+			return refMark("var." + name)
 		}
 		if in.role != nil && in.role.defaults[name] != nil {
 			if !slices.Contains(verbatim[in.mod], key) {

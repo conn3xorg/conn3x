@@ -63,6 +63,10 @@ variable "mixed_conf_dir" {
   type        = string
   default     = "/etc/mixed"
   description = "From the role's defaults/main.yml."
+  validation {
+    condition     = startswith(var.mixed_conf_dir, "/")
+    error_message = "mixed_conf_dir goes in a path, so it must be an absolute path, starting with /."
+  }
 }
 
 # Default "mixed_ports" (defaults/main.yml line 5) is a list, which the converter carries over as a variable only for a loop over it. Tasks that use it are marked TODO(convert).

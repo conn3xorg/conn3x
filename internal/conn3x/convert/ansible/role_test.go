@@ -82,7 +82,6 @@ func TestConvertRoleRefuses(t *testing.T) {
 		"uses include_role",
 		"sets become, which in a circuit the ssh block decides",
 		`mode refers to the role default "mixed_mode"`,
-		`path refers to the role default "mixed_conf_dir"`,
 		"uses Jinja statements",
 		"is outside the role's files/",
 	} {
@@ -94,8 +93,9 @@ func TestConvertRoleRefuses(t *testing.T) {
 			t.Errorf("no review item says %q: %+v", want, res.Review)
 		}
 	}
-	// The import behind a family when converts, as each task given it.
-	if res.Converted != 1 || len(res.Review) != 11 {
+	// The import behind a family when converts, as each task given it, and
+	// so does the path from a default.
+	if res.Converted != 2 || len(res.Review) != 10 {
 		t.Errorf("converted %d, review %d", res.Converted, len(res.Review))
 	}
 }
@@ -718,11 +718,66 @@ func TestListDefaultItemIsHeldLikeADefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Converted != 1 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, `path uses item from the role default "dirs"`) {
+	if res.Converted != 2 || len(res.Review) != 0 {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
-	if vars := string(res.Files["variables.tf"]); !strings.Contains(vars, `alltrue([for p in var.pkgs : !strcontains(p, ",")])`) {
-		t.Errorf("no comma check on pkgs:\n%s", vars)
+	vars := string(res.Files["variables.tf"])
+	for _, want := range []string{
+		`alltrue([for p in var.pkgs : !strcontains(p, ",")])`,
+		`alltrue([for p in var.dirs : startswith(p, "/")])`,
+	} {
+		if !strings.Contains(vars, want) {
+			t.Errorf("missing %s in\n%s", want, vars)
+		}
+	}
+}
+
+// A role default or a loop item can go in a path when the path is
+// absolute whatever the caller sets: a validation makes a default that
+// starts the path start with /, and one that ends it not end in /.
+func TestRoleDefaultsInPaths(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "conf_dir: /etc/app\nmods: [rewrite, ssl]\nrel: etc/app\nslashed: /etc/app/\n",
+		"tasks/main.yml": `- name: Conf
+  copy: {dest: "{{ conf_dir }}/app.conf", content: x}
+- name: Mods
+  file: {path: "/etc/app/mods/{{ item }}.load", state: absent}
+  with_items: "{{ mods }}"
+- name: Relative
+  copy: {dest: "{{ rel }}/x", content: x}
+- name: Trailing
+  copy: {dest: "/srv/{{ slashed }}", content: x}
+- name: Not absolute
+  file: {path: "srv/{{ conf_dir }}", state: directory}
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Converted != 2 || len(res.Review) != 3 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	for i, want := range []string{
+		`dest refers to the role default "rel" and would be "{{ rel }}/x" with the role's own value of "rel"`,
+		`dest refers to the role default "slashed" and would be`,
+		`path refers to the role default "conf_dir" and isn't an absolute path`,
+	} {
+		if !strings.Contains(res.Review[i].Reason, want) {
+			t.Errorf("review %d: %s", i, res.Review[i].Reason)
+		}
+	}
+	hcl, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
+	for _, want := range []string{
+		`path    = "${var.conf_dir}/app.conf"`,
+		`"/etc/app/mods/${item.value}.load"`,
+		`condition     = startswith(var.conf_dir, "/")`,
+	} {
+		if !strings.Contains(hcl+vars, want) {
+			t.Errorf("missing %s in\n%s\n%s", want, hcl, vars)
+		}
+	}
+	if strings.Contains(vars, `endswith(var.conf_dir`) || strings.Contains(vars, `for p in var.mods : startswith`) || strings.Contains(vars, `for p in var.mods : !endswith`) {
+		t.Errorf("a rule the path doesn't need:\n%s", vars)
 	}
 }
 

@@ -27,8 +27,9 @@ import (
 
 type role struct {
 	defaults  map[string]*roleDefault
-	files     map[string][]byte // files for the circuit directory besides the HCL
-	commaFree map[string]bool   // defaults used as package names
+	files     map[string][]byte   // files for the circuit directory besides the HCL
+	commaFree map[string]bool     // defaults used as package names
+	pathRules map[string][]string // what defaults used in paths must hold to; see input.pathRules
 	// varFiles are the files under vars/ other than main that set each
 	// variable, such as vars/Debian.yml: what an include_vars loads.
 	varFiles map[string][]string
@@ -71,6 +72,14 @@ type roleDefault struct {
 	boolean bool // yes, no, true, false, on or off, as YAML 1.1 reads them
 }
 
+// defaultOrNil is the role default called name, or nil, also on a nil role.
+func (r *role) defaultOrNil(name string) *roleDefault {
+	if r == nil {
+		return nil
+	}
+	return r.defaults[name]
+}
+
 // reserved are variable names the circuit already uses or HCL won't take.
 var reserved = map[string]bool{
 	"hosts": true, "ssh_user": true, "ssh_port": true, "ssh_private_key_file": true,
@@ -98,7 +107,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -225,6 +234,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`!strcontains(var.%s, ",")`, k)))
 			v.SetAttributeValue("error_message", cty.StringVal(k+" names one package, so it can't have a comma; Ansible would read one as a list."))
 		}
+		pathValidations(b.Body(), k, r.pathRules[k], false)
 		vb.AppendNewline()
 		vb.AppendBlock(b)
 	}
@@ -256,6 +266,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`alltrue([for p in var.%s : !strcontains(p, ",")])`, k)))
 			v.SetAttributeValue("error_message", cty.StringVal("Each item of "+k+" names one package, so it can't have a comma; Ansible would read one as a list."))
 		}
+		pathValidations(b, k, r.pathRules[k], true)
 	}
 
 	var looped []string
@@ -834,4 +845,26 @@ func yamlBool(n *yaml.Node) (bool, bool) {
 		return false, true
 	}
 	return false, false
+}
+
+// pathValidations adds the validations a default used in a path needs,
+// each item of it when list.
+func pathValidations(b *hclwrite.Body, k string, rules []string, list bool) {
+	for _, rule := range []string{"abs", "noslash"} {
+		if !slices.Contains(rules, rule) {
+			continue
+		}
+		cond, msg := `startswith(%s, "/")`, "an absolute path, starting with /"
+		if rule == "noslash" {
+			cond, msg = `!endswith(%s, "/")`, "a path that doesn't end in /, which Ansible reads as a directory to write into"
+		}
+		v := b.AppendNewBlock("validation", nil).Body()
+		if list {
+			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf("alltrue([for p in var.%s : "+cond+"])", k, "p")))
+			v.SetAttributeValue("error_message", cty.StringVal("Each item of "+k+" goes in a path, so it must be "+msg+"."))
+		} else {
+			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(cond, "var."+k)))
+			v.SetAttributeValue("error_message", cty.StringVal(k+" goes in a path, so it must be "+msg+"."))
+		}
+	}
 }

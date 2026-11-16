@@ -52,11 +52,11 @@ circuit "mixed" {
   #       content: "hi\n"
   #       mode: "{{ mixed_mode }}"
 
-  # TODO(convert): Task "Path from a default" (tasks/main.yml line 29) path refers to the role default "mixed_conf_dir", and the converter keeps a default as a variable only where Conn3x uses its value exactly as Ansible does, whatever it is set to; here it would have to check the value first.
-  #   - name: Path from a default
-  #     file:
-  #       path: "{{ mixed_conf_dir }}"
-  #       state: directory
+  step "path_from_a_default" {
+    directory {
+      path = var.mixed_conf_dir
+    }
+  }
 
   # TODO(convert): Task "Templated config" (tasks/main.yml line 34) renders a template that uses Jinja statements or comments, {% %} or {# #}; rewrite it in templatefile syntax (${var}, %{ if }) and use a template step.
   #   - name: Templated config
