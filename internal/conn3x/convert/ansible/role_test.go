@@ -999,3 +999,47 @@ func TestRoleDistributionWhen(t *testing.T) {
 		}
 	}
 }
+
+// A when built with and, or, not and parentheses from conditions the
+// converter reads converts too, and so does a list or text default's
+// length. A family test inside one reads local.os_family.
+func TestRoleWhenCombinations(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "flag: false\nmode: a\nusers: []\nname_x: ''\n",
+		"tasks/main.yml": `- name: Or
+  copy: {dest: /etc/a, content: x}
+  when: flag or mode == 'b'
+- name: Not and parens
+  copy: {dest: /etc/b, content: x}
+  when: not (flag | bool) and (ansible_facts.os_family == 'Debian' or mode != 'a')
+- name: Length
+  copy: {dest: /etc/c, content: x}
+  when: users | length > 0
+- name: Text length
+  copy: {dest: /etc/d, content: x}
+  when: name_x | length == 0
+- name: Unknown part
+  copy: {dest: /etc/e, content: x}
+  when: flag or nope is defined
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Converted != 4 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Task, "Unknown part") {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	hcl, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
+	for _, want := range []string{
+		`when = (var.flag) || (var.mode == "b")`,
+		`when = (!(var.flag)) && ((local.os_family[each.key] == "debian") || (var.mode != "a"))`,
+		`when = length(var.users) > 0`,
+		`when = length(var.name_x) == 0`,
+		`data "conn3x_host" "facts"`,
+		`variable "users"`,
+	} {
+		if !strings.Contains(hcl+vars, want) {
+			t.Errorf("missing %s in\n%s\n%s", want, hcl, vars)
+		}
+	}
+}

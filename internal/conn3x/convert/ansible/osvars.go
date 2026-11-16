@@ -327,9 +327,9 @@ func distributionWhen(n *yaml.Node) string {
 }
 
 // whenReadsFacts reports whether a role task's when reads facts a step
-// can't: any condition in it that isn't a family or package test, which
-// convert, and mentions one.
-func whenReadsFacts(w *yaml.Node) bool {
+// can't: any condition in it that mentions one and isn't a family test or
+// something whenExpr converts.
+func (r *role) whenReadsFacts(w *yaml.Node) bool {
 	if w == nil {
 		return false
 	}
@@ -338,7 +338,7 @@ func whenReadsFacts(w *yaml.Node) bool {
 		conds = w.Content
 	}
 	for _, c := range conds {
-		if _, _, family := familyWhen(c); !family && packagesWhen(c) == "" && distributionWhen(c) == "" && readsFacts(c) {
+		if _, _, family := familyWhen(c); !family && r.whenExpr(c) == "" && readsFacts(c) {
 			return true
 		}
 	}
