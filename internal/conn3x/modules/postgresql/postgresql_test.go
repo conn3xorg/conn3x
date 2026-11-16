@@ -5,6 +5,7 @@ package postgresql
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -139,5 +140,94 @@ func TestRunExplainsFailures(t *testing.T) {
 		if _, err := ReadRole(context.Background(), s, "app"); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: got %v", tc.stderr, err)
 		}
+	}
+}
+
+// A database is made, given to its owner, and checked after each change.
+func TestApplyDatabase(t *testing.T) {
+	owner, enc, exists := "postgres", "UTF8", false
+	stuck := false // ALTER DATABASE takes no effect
+	s := &server{reply: func(sql string) (string, string, int) {
+		switch {
+		case strings.Contains(sql, "FROM pg_database"):
+			if !exists {
+				return "", "", 0
+			}
+			return `{"owner" : "` + owner + `", "encoding" : "` + enc + `"}` + "\n", "", 0
+		case strings.Contains(sql, "CREATE DATABASE"):
+			exists, owner = true, "app"
+		case strings.Contains(sql, "ALTER DATABASE") && !stuck:
+			owner = "web"
+		}
+		return "", "", 0
+	}}
+	ctx := context.Background()
+	if err := ApplyDatabase(ctx, s, Database{Name: "app", Owner: "app", Encoding: "UTF8"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.sent[1], `CREATE DATABASE "app" OWNER "app" ENCODING 'UTF8' TEMPLATE template0;`) {
+		t.Errorf("sent:\n%s", s.sent[1])
+	}
+	if err := ApplyDatabase(ctx, s, Database{Name: "app", Owner: "web"}); err != nil || !strings.Contains(s.sent[len(s.sent)-2], `ALTER DATABASE "app" OWNER TO "web";`) {
+		t.Fatalf("new owner: %v", err)
+	}
+	stuck = true
+	if err := ApplyDatabase(ctx, s, Database{Name: "app", Owner: "ops"}); err == nil || !strings.Contains(err.Error(), "isn't as set after the change: owner web") {
+		t.Errorf("owner unchanged: %v", err)
+	}
+	if sent := len(s.sent); ApplyDatabase(ctx, s, Database{Name: ""}) == nil || len(s.sent) != sent {
+		t.Error("a database with no name reached the server")
+	}
+
+	for _, name := range []string{"postgres", "template0", "template1", ""} {
+		if DropDatabase(ctx, s, name) == nil {
+			t.Errorf("dropped %s", name)
+		}
+	}
+	if err := DropDatabase(ctx, s, "app"); err != nil || !strings.Contains(s.sent[len(s.sent)-1], `DROP DATABASE IF EXISTS "app";`) {
+		t.Errorf("drop: %v", err)
+	}
+	broken := &server{reply: func(string) (string, string, int) { return "not json\n", "", 0 }}
+	if _, err := ReadDatabase(ctx, broken, "app"); err == nil || !strings.Contains(err.Error(), "reading database app") {
+		t.Errorf("garbled: %v", err)
+	}
+	if _, err := ReadRole(ctx, broken, "app"); err == nil || !strings.Contains(err.Error(), "reading role app") {
+		t.Errorf("garbled role: %v", err)
+	}
+}
+
+func TestApplyRoleAltersAndDrops(t *testing.T) {
+	login := false
+	s := &server{reply: func(sql string) (string, string, int) {
+		if strings.Contains(sql, "FROM pg_roles") {
+			return fmt.Sprintf(`{"login" : %t, "BYPASSRLS" : false, "CREATEDB" : false, "CREATEROLE" : false, "REPLICATION" : false, "SUPERUSER" : false}`+"\n", login), "", 0
+		}
+		return "", "", 0
+	}}
+	ctx := context.Background()
+	err := ApplyRole(ctx, s, Role{Name: "app", Login: true}, nil)
+	if err == nil || !strings.Contains(err.Error(), "isn't as set after the change") || !strings.Contains(s.sent[1], `ALTER ROLE "app" WITH LOGIN;`) {
+		t.Errorf("unchanged: %v, sent %q", err, s.sent)
+	}
+	login = true
+	if err := ApplyRole(ctx, s, Role{Name: "app", Login: true}, nil); err != nil {
+		t.Error(err)
+	}
+	pw := "naïve"
+	if err := ApplyRole(ctx, s, Role{Name: "app"}, &pw); err == nil || !strings.Contains(err.Error(), "printable ASCII") {
+		t.Errorf("non-ASCII password: %v", err)
+	}
+	if DropRole(ctx, s, "postgres") == nil || DropRole(ctx, s, "") == nil {
+		t.Error("dropped postgres or a role with no name")
+	}
+	if err := DropRole(ctx, s, "app"); err != nil || !strings.Contains(s.sent[len(s.sent)-1], `DROP ROLE IF EXISTS "app";`) {
+		t.Errorf("drop: %v", err)
+	}
+	down := &server{reply: func(string) (string, string, int) { return "", "psql: error: connection refused", 2 }}
+	if err := ApplyRole(ctx, down, Role{Name: "app"}, nil); err == nil {
+		t.Error("ApplyRole with the server down")
+	}
+	if err := ApplyDatabase(ctx, down, Database{Name: "app"}); err == nil {
+		t.Error("ApplyDatabase with the server down")
 	}
 }

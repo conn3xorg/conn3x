@@ -38,6 +38,20 @@ func TestConvertRoleWritesANewDirectory(t *testing.T) {
 			t.Errorf("%v: exited %d: %s", args, code, errOut.String())
 		}
 	}
+	// A role that isn't one, and an -out that can't be made, are errors.
+	notRole := t.TempDir()
+	errOut.Reset()
+	if code := runConvertRole(notRole, filepath.Join(t.TempDir(), "c"), "", "", &errOut); code != 1 || !strings.HasPrefix(errOut.String(), "Error: ") {
+		t.Errorf("not a role: exited %d: %s", code, errOut.String())
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	if code := runConvertRole(role, filepath.Join(file, "c"), "", "", &errOut); code != 1 || !strings.HasPrefix(errOut.String(), "Error: ") {
+		t.Errorf("-out under a file: exited %d: %s", code, errOut.String())
+	}
 }
 
 // A note on a converted step, such as the crontab entry Ansible left, is

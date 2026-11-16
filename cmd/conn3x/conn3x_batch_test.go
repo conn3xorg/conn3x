@@ -4,11 +4,17 @@
 package main
 
 import (
+	"bytes"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/configs"
+	"github.com/opentofu/opentofu/internal/plans"
 )
 
 func TestBatchPlanHosts(t *testing.T) {
@@ -154,5 +160,75 @@ func TestNaturalCompare(t *testing.T) {
 	slices.SortFunc(got, naturalCompare)
 	if strings.Join(got, ",") != "db1,web,web1,web2,web02x,web10" {
 		t.Errorf("got %v", got)
+	}
+}
+
+// fakeBatchApply is an apply that exits 42, so a test can tell it ran,
+// wrapped as conn3x wraps apply for batches and rescues.
+func fakeBatchApply(edit func(*command.Command), args ...string) command.Command {
+	var plan string
+	cmd := command.Command{Name: "apply", CommandLine: arguments.CommandLine{View: &arguments.View{}, Operation: &arguments.Operation{}}}
+	cmd.CommandLine.PositionalArg(&plan, "PLAN", true)
+	cmd.Run = func(command.Meta) int { return 42 }
+	if edit != nil {
+		edit(&cmd)
+	}
+	withBatch(&cmd)
+	cmd.CommandLine.ParseLegacy(args)
+	return cmd
+}
+
+// What a batched apply can't do is refused before anything is planned, and
+// an apply with nothing to batch runs as it would.
+func TestBatchRefusals(t *testing.T) {
+	var errOut bytes.Buffer
+	old := stderr
+	stderr = &errOut
+	t.Cleanup(func() { stderr = old })
+	circuit := func(attrs, blocks string) string {
+		return "circuit \"web\" {\n  hosts = { web1 = \"203.0.113.11\" }\n" + attrs + "\n  step \"motd\" {\n    command {\n      command = \"true\"\n    }\n  }\n" + blocks + "\n}\n"
+	}
+	batched := circuit("  strategy = \"per_host\"\n  batch_size = 1", "")
+	rescued := circuit("", "  rescue \"undo\" {\n    watches = [step.motd]\n    command {\n      command = \"undo\"\n    }\n  }")
+	json := func(c *command.Command) { c.CommandLine.View.ViewType = arguments.ViewJSON }
+	destroy := func(c *command.Command) { c.CommandLine.Operation.PlanMode = plans.DestroyMode }
+	target := func(c *command.Command) {
+		c.CommandLine.Operation.Targets = []addrs.Targetable{addrs.RootModuleInstance}
+	}
+	for name, tc := range map[string]struct {
+		src  string
+		edit func(*command.Command)
+		args []string
+		code int
+		want string
+	}{
+		"nothing batched":                 {circuit("", ""), nil, nil, 42, ""},
+		"-batch-size, nothing batched":    {circuit("", ""), nil, []string{"-batch-size=2"}, 1, "need a circuit with batch_size"},
+		"a configuration that won't load": {"circuit \"web\" {", nil, nil, 42, ""},
+		"a bad -batch-size":               {batched, nil, []string{"-batch-size=x"}, 1, "-batch-size:"},
+		"a bad -max-failures":             {batched, nil, []string{"-max-failures=x"}, 1, "-max-failures:"},
+		"a saved plan, split":             {batched, nil, []string{"-batch-size=2", "tfplan"}, 1, "a saved plan applies whole"},
+		"a saved plan, whole":             {batched, nil, []string{"tfplan"}, 42, ""},
+		"a destroy":                       {batched, destroy, nil, 1, "a destroy doesn't run in batches"},
+		"-target":                         {batched, target, nil, 1, "a batched apply picks its own hosts"},
+		"-json":                           {batched, json, nil, 1, "a batched apply has no -json output yet"},
+		"rescues, -json":                  {rescued, json, nil, 1, "an apply with rescues has no -json output yet"},
+		"rescues, destroyed":              {rescued, destroy, nil, 42, ""},
+		"rescues, a saved plan":           {rescued, nil, []string{"tfplan"}, 42, "no rescue runs if a step fails"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			if err := os.WriteFile("main.circuit.hcl", []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			errOut.Reset()
+			cmd := fakeBatchApply(tc.edit, tc.args...)
+			if code := cmd.Run(command.Meta{}); code != tc.code || !strings.Contains(errOut.String(), tc.want) {
+				t.Errorf("exit %d, %q; want %d, %q", code, errOut.String(), tc.code, tc.want)
+			}
+		})
+	}
+	if err := batchRefuses([]string{"apply", "--json-into=x.json"}, nil, nil, nil, "a batched apply"); err == nil || !strings.Contains(err.Error(), "can't take -json-into yet") {
+		t.Errorf("-json-into: %v", err)
 	}
 }

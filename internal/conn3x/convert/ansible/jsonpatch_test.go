@@ -6,6 +6,8 @@ package ansible
 import (
 	"strings"
 	"testing"
+
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
 
 func TestConvertJSONPatchChain(t *testing.T) {
@@ -65,5 +67,50 @@ func TestConvertJSONPatchChain(t *testing.T) {
 	other := strings.Replace(chain(" | community.general.json_patch('add', '/port', 1)"), "dest: /etc/app.json", "dest: /etc/other.json", 1)
 	if res := convertString(t, other); res.Converted != 0 || strings.Contains(string(res.HCL), "json_value") {
 		t.Errorf("converted a chain onto another file: %d\n%s", res.Converted, res.HCL)
+	}
+}
+
+// The literals json_patch's arguments are read from: what's read, and what
+// a person is asked to set instead.
+func TestJinjaLiterals(t *testing.T) {
+	for in, want := range map[string]string{
+		"[], {})":                  `[] {}`,
+		"[1, 'a',], {'k': [2,],})": `[1,"a"] {"k":[2]}`,
+		"{'a': 1, 'a': 2}, False)": `{"a":2} false`,
+		"null, 1.5e3, 'x')":        `null 1500 "x"`,
+	} {
+		vals, why := (&jinjaLit{s: in}).args()
+		if why != "" {
+			t.Errorf("%s: %s", in, why)
+			continue
+		}
+		var got []string
+		for _, v := range vals {
+			b, err := ctyjson.Marshal(v, v.Type())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, string(b))
+		}
+		if strings.Join(got, " ") != want {
+			t.Errorf("%s = %s, want %s", in, strings.Join(got, " "), want)
+		}
+	}
+	for in, want := range map[string]string{
+		"":              "can't read",
+		"'open)":        "unclosed string",
+		`'a\nb')`:       "backslash escape",
+		"[1 2])":        "a list the converter can't read",
+		"{'a': 1 'b'})": "a dictionary the converter can't read",
+		"{'a' 1})":      "a dictionary the converter can't read",
+		"{1: 2})":       "isn't a string",
+		"[x])":          `the value "x"`,
+		"{'a': x})":     `the value "x"`,
+		"{x: 1})":       `the value "x"`,
+		"1 2)":          "arguments the converter can't read",
+	} {
+		if _, why := (&jinjaLit{s: in}).args(); !strings.Contains(why, want) {
+			t.Errorf("%q: %q, want %q", in, why, want)
+		}
 	}
 }

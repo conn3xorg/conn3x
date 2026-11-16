@@ -1182,3 +1182,40 @@ func TestRoleFirstFoundVars(t *testing.T) {
 		t.Fatalf("version-dependent: converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// The files and skip form of with_first_found: a family with no file loads
+// nothing when skip is set, so a task using its values is left for review,
+// and without skip the loop is. Anything that changes where it looks, or a
+// family whose distributions load different files, stays for review.
+func TestRoleFirstFoundFilesAndSkip(t *testing.T) {
+	convert := func(loop string, files ...string) Result {
+		t.Helper()
+		role := map[string]string{"tasks/main.yml": "- include_vars: \"{{ item }}\"\n  with_first_found:" + loop + "\n- package: {name: \"{{ web_pkg }}\"}\n"}
+		for _, f := range files {
+			role["vars/"+f] = "web_pkg: apache2\n"
+		}
+		res, err := ConvertRole(writeRole(t, role))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res := convert("\n    files: ['{{ ansible_os_family }}.yml']\n    skip: true", "Debian.yml")
+	if res.Converted != 1 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "Ansible would stop on RedHat hosts") {
+		t.Errorf("skip: converted %d, review %+v", res.Converted, res.Review)
+	}
+	if res := convert("\n    files: ['{{ ansible_os_family }}.yml']", "Debian.yml"); res.Converted != 0 || len(res.Review) != 2 {
+		t.Errorf("no skip: converted %d, review %+v", res.Converted, res.Review)
+	}
+	for name, loop := range map[string]string{
+		"paths":            "\n    - files: [Debian.yml]\n      paths: [/etc]",
+		"a nested list":    "\n    - files: [[Debian.yml]]",
+		"a list in a list": "\n    - [Debian.yml]",
+		"per distribution": "\n    - '{{ ansible_distribution }}.yml'\n    - Debian.yml",
+		"a brace":          "\n    - '{{ ansible_os_family }}}.yml'",
+	} {
+		if res := convert(loop, "Debian.yml", "Ubuntu.yml", "RedHat.yml"); res.Converted != 0 || len(res.Review) != 2 {
+			t.Errorf("%s: converted %d, review %+v", name, res.Converted, res.Review)
+		}
+	}
+}

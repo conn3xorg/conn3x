@@ -265,3 +265,103 @@ func TestPerCommand(t *testing.T) {
 		t.Errorf("%d dials, %d closes; want 2 each", dials, closed)
 	}
 }
+
+// brokenIOS is a fakeIOS whose shell, or whose show command, fails.
+type brokenIOS struct {
+	*fakeIOS
+	shell func(script string) (string, error) // nil: the fake's
+	show  map[string]string                   // overrides, exit 0
+}
+
+func (b brokenIOS) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	if out, ok := b.show[cmd]; ok {
+		return ssh.Result{Stdout: []byte(out)}, nil
+	}
+	return b.fakeIOS.RunRaw(ctx, cmd, stdin)
+}
+
+func (b brokenIOS) RunShell(ctx context.Context, stdin []byte) (ssh.Result, error) {
+	if b.shell == nil {
+		return b.fakeIOS.RunShell(ctx, stdin)
+	}
+	out, err := b.shell(string(stdin))
+	return ssh.Result{Stdout: []byte(out)}, err
+}
+
+// Each way an apply can fail says whether anything is live.
+func TestApplyFailures(t *testing.T) {
+	ctx := context.Background()
+	cmds := []string{"interface Loopback1", " description uplink"}
+	fresh := func() *fakeIOS { return &fakeIOS{show: map[string]string{"show running-config": showRun}} }
+	base, _ := RunningConfig(ctx, fresh())
+	if diff, err := Apply(ctx, fresh(), reconnectTo(fresh()), base, nil, time.Millisecond); diff != "" || err != nil {
+		t.Errorf("nothing to do: %q, %v", diff, err)
+	}
+	refused := "% Invalid input detected at '^' marker.\n"
+	started := "Rollback Confirmed Change: Backing up current running config to unix:arch-0\n"
+	lost := errors.New("connection reset")
+	for name, c := range map[string]struct {
+		d       Device
+		again   Device
+		notLive bool
+		want    string
+	}{
+		"rollback timer refused": {brokenIOS{fakeIOS: fresh(), show: map[string]string{"show archive config rollback timer": refused}}, nil, true, "refused \"show archive config rollback timer\""},
+		"running-config refused": {brokenIOS{fakeIOS: fresh(), show: map[string]string{"show running-config": refused}}, nil, true, "the device refused \"show running-config\""},
+		"not IOS":                {brokenIOS{fakeIOS: fresh(), show: map[string]string{"show running-config": "hostname r2\n"}}, nil, true, "is this Cisco IOS?"},
+		"session lost": {brokenIOS{fakeIOS: fresh(), shell: func(string) (string, error) { return "", lost }}, nil, false,
+			"session ended before IOS said"},
+		"no revert timer": {brokenIOS{fakeIOS: fresh(), shell: func(string) (string, error) { return "a\nb\nc\nd\ne\nf\n", nil }}, nil, true,
+			"didn't start the revert timer: b | c | d | e | f"},
+		"revert not done": {brokenIOS{fakeIOS: fresh(), shell: func(s string) (string, error) {
+			if strings.Contains(s, "revert now") {
+				return "", lost
+			}
+			return started + refused, nil
+		}}, nil, false, "reverting at once didn't say it was done (connection reset)"},
+		"confirm refused": {fresh(), brokenIOS{fakeIOS: fresh(), shell: func(string) (string, error) { return refused, nil }}, false,
+			"the confirm wasn't taken"},
+		"confirm lost": {fresh(), brokenIOS{fakeIOS: fresh(), shell: func(string) (string, error) { return "", lost }}, false,
+			"couldn't confirm it over a new connection, so the device rolls the change back on its own: connection reset"},
+	} {
+		reconnect := func(context.Context) (Device, error) { return c.again, nil }
+		if c.again == nil {
+			reconnect = func(context.Context) (Device, error) { return fresh(), nil }
+		}
+		_, err := Apply(ctx, c.d, reconnect, base, cmds, time.Millisecond)
+		if err == nil || errors.As(err, new(NotLiveError)) != c.notLive || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+
+	f := fresh()
+	if _, err := Apply(ctx, f, func(context.Context) (Device, error) { return nil, lost }, base, cmds, time.Millisecond); err == nil || !strings.Contains(err.Error(), "couldn't confirm") || !f.pending {
+		t.Errorf("no new login: %v, pending %v", err, f.pending)
+	}
+	short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if _, err := Apply(short, fresh(), reconnectTo(fresh()), base, cmds, time.Hour); err == nil || !strings.Contains(err.Error(), "stopped before confirming") {
+		t.Errorf("canceled: %v", err)
+	}
+}
+
+func TestPerCommandDialFailsAndConfirmAfter(t *testing.T) {
+	d := PerCommand(func(context.Context) (Device, error) { return nil, errors.New("no route to host") })
+	if _, err := Show(context.Background(), d, "show version"); err == nil || !strings.Contains(err.Error(), "no route to host") {
+		t.Errorf("RunRaw: %v", err)
+	}
+	if _, err := d.RunShell(context.Background(), script("show version")); err == nil {
+		t.Error("RunShell dialled nothing and still answered")
+	}
+	if err := Check(context.Background(), d, nil); !errors.As(err, new(NotLiveError)) {
+		t.Errorf("Check: %v", err)
+	}
+	if _, err := Pending(context.Background(), d); err == nil {
+		t.Error("Pending dialled nothing and still answered")
+	}
+	for d, ok := range map[time.Duration]bool{time.Second: false, 30 * time.Second: true, 4 * time.Minute: false} {
+		if (CheckConfirmAfter(d) == nil) != ok {
+			t.Errorf("CheckConfirmAfter(%s)", d)
+		}
+	}
+}

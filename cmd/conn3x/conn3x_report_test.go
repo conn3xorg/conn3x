@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/command/arguments"
 	runreport "github.com/opentofu/opentofu/internal/conn3x/report"
 )
 
@@ -101,5 +104,71 @@ func TestWithoutReport(t *testing.T) {
 	got := withoutReport([]string{"drift", "-no-color", "-report=a.json", "-report", "b.json", "--report=c.json", "-var=x=1"})
 	if len(got) != 3 || got[0] != "drift" || got[1] != "-no-color" || got[2] != "-var=x=1" {
 		t.Fatalf("withoutReport = %q", got)
+	}
+}
+
+// fakeApply is an apply command whose run writes one created step to
+// -json-into, as conn3x apply -json-into does, and exits code.
+func fakeApply(code int, args ...string) command.Command {
+	cmd := command.Command{Name: "apply", CommandLine: arguments.CommandLine{View: &arguments.View{}}}
+	view := cmd.CommandLine.View
+	cmd.Run = func(command.Meta) int {
+		if view.JSONInto != nil {
+			_, _ = view.JSONInto.WriteString(`{"type":"apply_complete","hook":{"resource":{"addr":"module.web.conn3x_file.motd[\"a\"]","resource_type":"conn3x_file"},"action":"create","elapsed_seconds":1}}` + "\n")
+		}
+		return code
+	}
+	withReport(&cmd)
+	cmd.CommandLine.ParseLegacy(args)
+	return cmd
+}
+
+func TestReportFlag(t *testing.T) {
+	var errOut bytes.Buffer
+	old := stderr
+	stderr = &errOut
+	t.Cleanup(func() { stderr = old })
+	dir := t.TempDir()
+	path := filepath.Join(dir, "run.json")
+	unwritable := filepath.Join(dir, "missing", "run.json")
+
+	if cmd := fakeApply(0); cmd.Run(command.Meta{}) != 0 {
+		t.Fatal("an apply without -report failed")
+	}
+	cmd := fakeApply(0, "-report="+path)
+	if code := cmd.Run(command.Meta{}); code != 0 {
+		t.Fatalf("exit %d, %q", code, errOut.String())
+	}
+	if got, err := os.ReadFile(path); err != nil || !strings.Contains(string(got), `"success": true`) {
+		t.Fatalf("report (%v):\n%s", err, got)
+	}
+
+	for name, tc := range map[string]struct {
+		cmd  command.Command
+		json bool
+		code int
+		want string
+	}{
+		"with -json":                {fakeApply(0, "-report="+path), true, 1, "-report doesn't go with -json"},
+		"a good apply, no report":   {fakeApply(0, "-report="+unwritable), false, 1, "the apply succeeded, but its report wasn't written"},
+		"a failed apply, no report": {fakeApply(2, "-report="+unwritable), false, 2, "Error: writing the report"},
+	} {
+		errOut.Reset()
+		if tc.json {
+			tc.cmd.CommandLine.View.ViewType = arguments.ViewJSON
+		}
+		if code := tc.cmd.Run(command.Meta{}); code != tc.code || !strings.Contains(errOut.String(), tc.want) {
+			t.Errorf("%s: exit %d, %q", name, code, errOut.String())
+		}
+	}
+
+	// A line too long to read leaves the report incomplete, which warns
+	// and keeps the apply's exit code.
+	saved := runreport.MaxLine
+	runreport.MaxLine = 16
+	defer func() { runreport.MaxLine = saved }()
+	errOut.Reset()
+	if code := fakeApply(0, "-report="+path).Run(command.Meta{}); code != 0 || !strings.Contains(errOut.String(), "Warning: the report at "+path+" is incomplete") {
+		t.Errorf("long line: exit %d, %q", code, errOut.String())
 	}
 }

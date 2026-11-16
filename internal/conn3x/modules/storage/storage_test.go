@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -252,6 +253,149 @@ func TestPartition(t *testing.T) {
 	} {
 		if bad.Validate() == nil {
 			t.Errorf("accepted %+v", bad)
+		}
+	}
+}
+
+// fakeParted answers parted as one 10 GiB disk would: its label, its
+// partitions and their flags, changed by the commands ApplyPartition runs.
+type fakeParted struct {
+	table string
+	parts map[int][2]int64 // start and end, in bytes, end inclusive
+	flags map[int][]string
+	keep  bool   // mkpart makes nothing, as when parted fails quietly
+	fail  string // a command holding this exits 1, printing nothing
+	ran   []string
+}
+
+const disk = 10 << 30
+
+func (h *fakeParted) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error) {
+	cmd = unwrap(cmd)
+	h.ran = append(h.ran, cmd)
+	if h.fail != "" && strings.Contains(cmd, h.fail) {
+		return ssh.Result{ExitCode: 1}, nil
+	}
+	if strings.Contains(cmd, "unit B print") {
+		table := h.table
+		if table == "" {
+			table = "unknown"
+		}
+		out := fmt.Sprintf("BYT;\n/dev/vdb:%dB:virtblk:512:512:%s:Virtio Block Device:;\n", disk, table)
+		for n, p := range h.parts {
+			out += fmt.Sprintf("%d:%dB:%dB:%dB::primary:%s;\n", n, p[0], p[1], p[1]-p[0]+1, strings.Join(h.flags[n], ", "))
+		}
+		return ssh.Result{Stdout: []byte(out + "--\n")}, nil
+	}
+	_, args, ok := strings.Cut(cmd, "parted -s ")
+	_, args, _ = strings.Cut(args, " -- ")
+	if !ok {
+		return ssh.Result{}, nil
+	}
+	args, _, _ = strings.Cut(args, "'") // the first copy of the script GuardRoot wraps
+	f := strings.Fields(args)
+	end := func(s string) int64 { return Partition{End: s}.wantEnd(disk) - 1 }
+	for i := 0; i < len(f); i++ {
+		switch f[i] {
+		case "mklabel":
+			h.table, i = f[i+1], i+1
+		case "mkpart":
+			if !h.keep {
+				h.parts[len(h.parts)+1] = [2]int64{sizeBytes(f[i+2]), end(f[i+3])}
+			}
+			i += 3
+		case "resizepart":
+			n, _ := strconv.Atoi(f[i+1])
+			h.parts[n] = [2]int64{h.parts[n][0], end(f[i+2])}
+			i += 2
+		case "set":
+			n, _ := strconv.Atoi(f[i+1])
+			h.flags[n] = slices.DeleteFunc(h.flags[n], func(s string) bool { return s == f[i+2] })
+			if f[i+3] == "on" {
+				h.flags[n] = append(h.flags[n], f[i+2])
+			}
+			i += 3
+		}
+	}
+	return ssh.Result{}, nil
+}
+
+func (h *fakeParted) ranAny(s string) bool { return (&fakeDisk{ran: h.ran}).ranAny(s) }
+
+func newParted(table string, parts map[int][2]int64) *fakeParted {
+	if parts == nil {
+		parts = map[int][2]int64{}
+	}
+	return &fakeParted{table: table, parts: parts, flags: map[int][]string{}}
+}
+
+func TestPartitionApply(t *testing.T) {
+	p := Partition{Device: "/dev/vdb", Number: 1, Start: "1MiB", End: "5GiB", Label: "gpt", Flags: []string{"lvm"}}
+	h := newParted("", nil)
+	if err := ApplyPartition(ctx, h, p); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ranAny("parted -s -a optimal '/dev/vdb' -- mklabel gpt mkpart primary 1MiB 5GiB") || !h.ranAny("set 1 lvm on") || !h.ranAny("partprobe '/dev/vdb'") {
+		t.Errorf("blank disk: ran %q", h.ran)
+	}
+	a, err := ReadPartition(ctx, h, p)
+	if err != nil || !p.InSync(a) {
+		t.Fatalf("after the apply: %+v, %v", a, err)
+	}
+
+	// Applied again, it changes nothing.
+	h.ran = nil
+	if err := ApplyPartition(ctx, h, p); err != nil || h.ranAny("mkpart") || h.ranAny("-- set ") {
+		t.Errorf("in sync: %v, ran %q", err, h.ran)
+	}
+
+	// A flag left out of flags comes off; nil flags leave them alone.
+	off := p
+	off.Flags = []string{"boot"}
+	if err := ApplyPartition(ctx, h, off); err != nil || !h.ranAny("set 1 boot on set 1 lvm off") {
+		t.Errorf("flags: %v, ran %q", err, h.ran)
+	}
+	h.ran, off.Flags = nil, nil
+	if err := ApplyPartition(ctx, h, off); err != nil || h.ranAny("-- set ") {
+		t.Errorf("nil flags: %v, ran %q", err, h.ran)
+	}
+
+	// Growing takes resize.
+	grow := p
+	grow.End, grow.Flags = "100%", nil
+	if err := ApplyPartition(ctx, h, grow); err == nil || !strings.Contains(err.Error(), "set resize = true to grow it") {
+		t.Errorf("grow without resize: %v", err)
+	}
+	grow.Resize = true
+	if err := ApplyPartition(ctx, h, grow); err != nil || !h.ranAny("resizepart 1 100%") {
+		t.Errorf("grow: %v, ran %q", err, h.ran)
+	}
+}
+
+func TestPartitionRefusals(t *testing.T) {
+	p := Partition{Device: "/dev/vdb", Number: 1, Start: "1MiB", End: "5GiB", Label: "gpt"}
+	at := func(start, end int64) map[int][2]int64 { return map[int][2]int64{1: {start, end}} }
+	with := func(h *fakeParted, keep bool, fail string) *fakeParted {
+		h.keep, h.fail = keep, fail
+		return h
+	}
+	for name, c := range map[string]struct {
+		h    *fakeParted
+		p    Partition
+		want string
+	}{
+		"another label":  {newParted("msdos", nil), p, "won't relabel a disk"},
+		"out of order":   {newParted("gpt", nil), Partition{Device: "/dev/vdb", Number: 2, Start: "1MiB", End: "5GiB", Label: "gpt"}, "make the partitions in order"},
+		"moved":          {newParted("gpt", at(2<<30, 5<<30-1)), p, "won't move a partition"},
+		"shrunk":         {newParted("gpt", at(1<<20, 8<<30-1)), p, "won't shrink a partition"},
+		"made nothing":   {with(newParted("gpt", nil), true, ""), p, "parted didn't make partition 1"},
+		"parted failed":  {with(newParted("gpt", nil), false, "mkpart"), p, "exit status 1, with nothing printed"},
+		"flags failed":   {with(newParted("gpt", at(1<<20, 5<<30-1)), false, "-- set "), Partition{Device: "/dev/vdb", Number: 1, Start: "1MiB", End: "5GiB", Label: "gpt", Flags: []string{"esp"}}, "exit status 1"},
+		"unreadable":     {with(newParted("", nil), false, "unit B print"), p, "exit status 1"},
+		"invalid number": {newParted("gpt", nil), Partition{Device: "/dev/vdb", Number: 0, Start: "1MiB", End: "5GiB", Label: "gpt"}, "number must be from 1 to 128"},
+	} {
+		if err := ApplyPartition(ctx, c.h, c.p); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
 		}
 	}
 }

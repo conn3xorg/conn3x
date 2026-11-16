@@ -28,6 +28,7 @@ type fakeVyOS struct {
 	commits  int
 	confirms int
 	saves    int
+	version  string // what show version says, when netVyOS answers it
 }
 
 func (f *fakeVyOS) run(cmd string, stdin []byte) (string, int) {

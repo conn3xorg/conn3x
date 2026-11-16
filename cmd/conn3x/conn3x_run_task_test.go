@@ -98,6 +98,10 @@ func TestLoadTask(t *testing.T) {
 		"task \"a\" {\n  step \"x\" {\n    eos_vlan {\n      vlan_id = 1\n    }\n  }\n}\n": "only runs in a circuit",
 		"task \"a\" {\n" + cmd("x") + cmd("x") + "}\n":                                     "two steps named x",
 		"task \"a\" {\n" + cmd("x") + "}\ntask \"b\" {\n" + cmd("x") + "}\n":               "one task block",
+		"task \"a\" {\n":     "Unclosed configuration block",
+		"colour = \"red\"\n": "Unsupported argument",
+		"task \"a\" {\n  colour = \"red\"\n" + cmd("x") + "}\n":                         "Unsupported argument",
+		"task \"a\" {\n  param \"p\" {\n    default = nope.x\n  }\n" + cmd("x") + "}\n": "Variables not allowed",
 	} {
 		if _, err := loadTask(write(body)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v, want %q", body, err, want)

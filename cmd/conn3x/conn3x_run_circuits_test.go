@@ -75,11 +75,22 @@ circuit "db" {
 	}
 
 	for name, src := range map[string]string{
-		"var":      `circuit "x" { hosts = var.hosts }`,
-		"jump":     "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    jump_hosts = [\"b\"]\n  }\n}\n",
-		"no addr":  `circuit "x" { hosts = { a = { user = "u" } } }`,
-		"ssh func": "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = lower(\"OPS\")\n  }\n}\n",
-		"two ways": "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = \"one\"\n  }\n}\ncircuit \"y\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = \"two\"\n  }\n}\n",
+		"var":              `circuit "x" { hosts = var.hosts }`,
+		"jump":             "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    jump_hosts = [\"b\"]\n  }\n}\n",
+		"no addr":          `circuit "x" { hosts = { a = { user = "u" } } }`,
+		"ssh func":         "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = lower(\"OPS\")\n  }\n}\n",
+		"two ways":         "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = \"one\"\n  }\n}\ncircuit \"y\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = \"two\"\n  }\n}\n",
+		"two addresses":    "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n}\ncircuit \"y\" {\n  hosts = { a = \"192.0.2.2\" }\n}\n",
+		"two proxies":      "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    proxy_command = [\"a\"]\n  }\n}\ncircuit \"y\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    proxy_command = [\"b\"]\n  }\n}\n",
+		"no hosts":         `circuit "x" {}`,
+		"hosts a list":     `circuit "x" { hosts = ["192.0.2.1"] }`,
+		"host null":        `circuit "x" { hosts = { a = null } }`,
+		"host a list":      `circuit "x" { hosts = { a = ["192.0.2.1"] } }`,
+		"host user null":   `circuit "x" { hosts = { a = { address = "192.0.2.1", user = null } } }`,
+		"ssh block inside": "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    agent {}\n  }\n}\n",
+		"ssh user a list":  "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    user = [\"u\"]\n  }\n}\n",
+		"proxy func":       "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    proxy_command = split(\" \", \"aws ssm\")\n  }\n}\n",
+		"proxy with null":  "circuit \"x\" {\n  hosts = { a = \"192.0.2.1\" }\n  ssh {\n    proxy_command = [\"aws\", null]\n  }\n}\n",
 	} {
 		d := t.TempDir()
 		if err := os.WriteFile(filepath.Join(d, "c.circuit.hcl"), []byte(src), 0o644); err != nil {
@@ -91,6 +102,16 @@ circuit "db" {
 	}
 	if _, err := circuitInventory(t.TempDir()); err == nil || !strings.Contains(err.Error(), "no circuit") {
 		t.Errorf("empty dir: %v", err)
+	}
+	broken := t.TempDir()
+	if err := os.WriteFile(filepath.Join(broken, "main.tf"), []byte(`circuit "x" {`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := circuitInventory(broken); err == nil || !strings.Contains(err.Error(), "Unclosed configuration block") {
+		t.Errorf("a file that doesn't parse: %v", err)
+	}
+	if err := circuitsDirExists(filepath.Join(broken, "missing")); err == nil {
+		t.Error("-circuits accepted a directory that isn't there")
 	}
 }
 

@@ -203,6 +203,28 @@ func TestFileReadUnknownOwnerFallsBack(t *testing.T) {
 	}
 }
 
+// A directory exists and isn't a regular file, as test -f says; a path the
+// agent can't look at is left to the shell.
+func TestFileReadDirectoryAndUnreachable(t *testing.T) {
+	dir := t.TempDir()
+	c := client(t)
+	got, err := c.ReadFile(context.Background(), dir)
+	if err != nil || !got.Exists || got.Regular {
+		t.Fatalf("directory: %+v, %v", got, err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads through a directory with no permissions")
+	}
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if _, err := c.ReadFile(context.Background(), filepath.Join(locked, "f")); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("ReadFile = %v, want unsupported", err)
+	}
+}
+
 func TestReadUnitWithoutDBusIsUnsupported(t *testing.T) {
 	if _, err := os.Stat("/run/systemd/private"); err == nil && os.Geteuid() == 0 {
 		t.Skip("as root, go-systemd falls back to systemd's private socket")

@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -106,10 +107,43 @@ func TestGenerateRefusesBeforeReadingTheHost(t *testing.T) {
 		"content isn't read":           {host: "h", module: "file", args: []string{"content=x"}},
 		`"path" isn't NAME=VALUE`:      {host: "h", module: "file", args: []string{"path"}},
 		"doesn't read Windows hosts":   {host: "h", module: "windows_service", args: []string{"name=Spooler"}},
+		"name a module":                {host: "h"},
+		"enabled:":                     {host: "h", module: "service", args: []string{"name=x", "enabled=maybe"}},
 	} {
 		var out, errOut bytes.Buffer
 		if code := runGenerateStep(context.Background(), o, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), want) {
 			t.Errorf("%+v: exit %d, %q, want %q", o, code, errOut.String(), want)
 		}
+	}
+}
+
+func TestGenerateStepsRefusesBeforeReadingTheHost(t *testing.T) {
+	for want, tc := range map[string]struct {
+		o           generateOptions
+		kind, match string
+	}{
+		"-host is required":   {generateOptions{}, "packages", ""},
+		`"gems" isn't a kind`: {generateOptions{host: "h"}, "gems", ""},
+	} {
+		var out, errOut bytes.Buffer
+		if code := runGenerateSteps(context.Background(), tc.o, tc.kind, tc.match, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), want) {
+			t.Errorf("%+v: exit %d, %q, want %q", tc, code, errOut.String(), want)
+		}
+	}
+}
+
+// A host that can't be read is an error naming it, with every ssh flag
+// passed on; here the known_hosts file it'd be checked against is missing.
+func TestGenerateHostErrors(t *testing.T) {
+	known := filepath.Join(t.TempDir(), "known_hosts")
+	o := generateOptions{host: "127.0.0.1", user: "u", port: 1, keyFile: known + ".key", knownHosts: known, become: true}
+	var out, errOut bytes.Buffer
+	if code := runGenerateSteps(context.Background(), o, "packages", "", &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "listing packages on 127.0.0.1:") {
+		t.Errorf("steps: exit %d, %q", code, errOut.String())
+	}
+	errOut.Reset()
+	o.module, o.args = "file", []string{"path=/etc/motd"}
+	if code := runGenerateStep(context.Background(), o, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "known_hosts") || out.Len() != 0 {
+		t.Errorf("step: exit %d, %q", code, errOut.String())
 	}
 }

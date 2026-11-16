@@ -4,9 +4,13 @@
 package postgresql
 
 import (
+	"context"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
 func TestGrantsValidate(t *testing.T) {
@@ -97,5 +101,115 @@ func TestIntersectUnion(t *testing.T) {
 	all, any := intersectUnion([][]string{{"SELECT", "INSERT"}, {"SELECT"}, {"SELECT", "UPDATE"}})
 	if !slices.Equal(all, []string{"SELECT"}) || !slices.Equal(any, []string{"INSERT", "SELECT", "UPDATE"}) {
 		t.Errorf("all %q any %q", all, any)
+	}
+}
+
+// cluster answers psql on any database: the role's privileges on database
+// app, on its schema public, which app owns, and on mine, which the role
+// owns. Unless stuck, a transaction's grants and revokes take effect.
+type cluster struct {
+	db, schema, tables []string
+	stuck              bool
+	fail               string // SQL holding this exits 1
+	sent               []string
+}
+
+func (c *cluster) Run(_ context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	sql := string(stdin)
+	c.sent = append(c.sent, cmd+"\n"+sql)
+	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+	switch {
+	case c.fail != "" && strings.Contains(sql, c.fail):
+		return ssh.Result{ExitCode: 1, Stderr: []byte("ERROR:  permission denied")}, nil
+	case strings.Contains(sql, "FROM pg_database"):
+		return ssh.Result{Stdout: []byte(`{"app": {"owned": false, "privs": ` + js(c.db) + `}}` + "\n")}, nil
+	case strings.Contains(sql, "FROM pg_namespace") && strings.HasSuffix(cmd, "-d 'app'"):
+		return ssh.Result{Stdout: []byte(`{"public": {"owner": "app", "owned": false, "schema": ` + js(c.schema) + `, "tables": [` + js(c.tables) + `], "defaults": {"app": ` + js(c.tables) + `}}, ` +
+			`"mine": {"owner": "web", "owned": true, "schema": [], "tables": null, "defaults": {}}}` + "\n")}, nil
+	case strings.HasPrefix(sql, "\\set VERBOSITY terse\nSET standard_conforming_strings = on;\nBEGIN;") && !c.stuck:
+		apply := func(on string, have []string) []string {
+			for _, line := range strings.Split(sql, "\n") {
+				verb, rest, _ := strings.Cut(line, " ")
+				ps, obj, ok := strings.Cut(rest, " ON ")
+				if !ok || !strings.HasPrefix(obj, on) || verb != "GRANT" && verb != "REVOKE" {
+					continue
+				}
+				for _, p := range strings.Split(ps, ", ") {
+					have = slices.DeleteFunc(have, func(h string) bool { return h == p || p == "ALL" })
+					if verb == "GRANT" {
+						have = append(have, p)
+					}
+				}
+			}
+			return have
+		}
+		if strings.HasSuffix(cmd, "-d postgres") {
+			c.db = apply("DATABASE", c.db)
+		} else {
+			c.schema, c.tables = apply("SCHEMA", c.schema), apply("ALL TABLES", c.tables)
+		}
+	}
+	return ssh.Result{}, nil
+}
+
+func TestApplyGrants(t *testing.T) {
+	ctx := context.Background()
+	g := Grants{Databases: map[string][]string{"app": {"CONNECT"}}, Schemas: map[string]SchemaGrant{"app.public": {Schema: []string{"USAGE"}, Tables: []string{"SELECT"}}}}
+	c := &cluster{db: []string{"CONNECT", "CREATE"}, schema: []string{}, tables: []string{"INSERT"}}
+	got, err := ApplyGrants(ctx, c, "web", g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Schemas["app.public"].CreatedBy != "app" {
+		t.Errorf("CreatedBy = %q, want the schema's owner", got.Schemas["app.public"].CreatedBy)
+	}
+	all := strings.Join(c.sent, "\n---\n")
+	for _, want := range []string{
+		`REVOKE CREATE ON DATABASE "app" FROM "web";`,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "app" IN SCHEMA "public" GRANT SELECT ON TABLES TO "web";`,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("never sent %q", want)
+		}
+	}
+	if strings.Contains(all, `SCHEMA "mine"`) {
+		t.Error("revoked on a schema the role owns")
+	}
+
+	c = &cluster{db: []string{"CREATE"}, stuck: true}
+	if _, err := ApplyGrants(ctx, c, "web", Grants{Databases: map[string][]string{"app": {"CONNECT"}}}); err == nil || !strings.Contains(err.Error(), "aren't as listed after the change") {
+		t.Errorf("stuck: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		c    *cluster
+		g    Grants
+		want string
+	}{
+		"no schema":     {&cluster{}, Grants{Schemas: map[string]SchemaGrant{"app.sales": {}}}, "schema app.sales doesn't exist"},
+		"no database":   {&cluster{}, Grants{Schemas: map[string]SchemaGrant{"shop.sales": {}}}, "database shop doesn't exist"},
+		"owned schema":  {&cluster{}, Grants{Schemas: map[string]SchemaGrant{"app.mine": {}}}, "owns schema app.mine"},
+		"read fails":    {&cluster{fail: "pg_database"}, g, "psql: ERROR:  permission denied"},
+		"schemas fail":  {&cluster{fail: "pg_namespace"}, g, "permission denied"},
+		"grant fails":   {&cluster{fail: "BEGIN;\nGRANT"}, Grants{Databases: map[string][]string{"app": {"CONNECT"}}}, "permission denied"},
+		"schema grants": {&cluster{fail: "REVOKE ALL ON SCHEMA"}, g, "permission denied"},
+		"invalid":       {&cluster{}, Grants{Databases: map[string][]string{"": {"CONNECT"}}}, "database name is empty"},
+	} {
+		if _, err := ApplyGrants(ctx, tc.c, "web", tc.g); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+	garbled := &server{reply: func(string) (string, string, int) { return "not json\n", "", 0 }}
+	if _, err := ReadGrants(ctx, garbled, "web", nil); err == nil || !strings.Contains(err.Error(), "reading database privileges") {
+		t.Errorf("garbled: %v", err)
+	}
+	long := strings.Repeat("x", 64)
+	for _, bad := range []Grants{
+		{Schemas: map[string]SchemaGrant{long + ".public": {}}},
+		{Schemas: map[string]SchemaGrant{"app." + long: {}}},
+		{Schemas: map[string]SchemaGrant{"app.public": {CreatedBy: long}}},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%+v passed", bad)
+		}
 	}
 }

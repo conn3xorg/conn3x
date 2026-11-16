@@ -44,4 +44,14 @@ func TestLintExitCodesAndJSON(t *testing.T) {
 	if code := runLint([]string{clean}, true, &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != "[]" {
 		t.Fatalf("exit %d, out %q", code, out.String())
 	}
+	// No directory is the current one.
+	t.Chdir(clean)
+	out.Reset()
+	if code := runLint(nil, true, &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != "[]" {
+		t.Fatalf("no dir: exit %d, out %q", code, out.String())
+	}
+	// A directory that isn't there is an error.
+	if code := runLint([]string{filepath.Join(clean, "missing")}, false, &out, &errOut); code != 1 || !strings.HasPrefix(errOut.String(), "Error: ") {
+		t.Fatalf("missing dir: exit %d, err %q", code, errOut.String())
+	}
 }

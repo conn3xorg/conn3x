@@ -28,7 +28,8 @@ type fakeJunos struct {
 	pending  bool
 	commits  int // commit confirmed
 	confirms int
-	scripts  int // shell sessions
+	scripts  int               // shell sessions
+	show     map[string]string // answers to other commands
 }
 
 func newFakeJunos(t *testing.T, running ...string) (*fakeJunos, cty.Value) {
@@ -53,6 +54,9 @@ func (f *fakeJunos) run(cmd string, stdin []byte) (string, int) {
 	defer f.mu.Unlock()
 	if strings.HasPrefix(cmd, "show configuration | display set") {
 		return strings.Join(f.running, "\n") + "\n", 0
+	}
+	if out, ok := f.show[cmd]; ok {
+		return out, 0
 	}
 	if cmd != "" {
 		return "error: syntax error, expecting <command>: " + cmd + "\n", 0

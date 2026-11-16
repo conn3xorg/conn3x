@@ -319,3 +319,127 @@ func TestUser(t *testing.T) {
 		t.Errorf("label %q", got)
 	}
 }
+
+// The interface's settings go on removal; the interface and addresses the
+// step didn't own stay.
+func TestInterfaceRemoveAndEnable(t *testing.T) {
+	config := "set interfaces ethernet eth1 address 192.0.2.20/24\nset interfaces ethernet eth1 address 198.51.100.1/24\nset interfaces ethernet eth1 description uplink\nset interfaces ethernet eth1 disable\nset interfaces ethernet eth1 mtu 9000\n"
+	desc, off, on := "uplink", false, true
+	i := Interface{Name: "eth1", Description: &desc, Addresses: []string{"192.0.2.20/24"}, Enabled: &off, MTU: 9000}
+	if all := (Interface{Name: "eth1", Description: &desc, Addresses: []string{"192.0.2.20/24", "198.51.100.1/24"}, Enabled: &off, MTU: 9000}); !all.InSync(config) {
+		t.Errorf("in sync, but %q", all.Commands(config))
+	}
+	if got := i.RemoveCommands(config); !slices.Equal(got, []string{
+		"delete interfaces ethernet eth1 description",
+		"delete interfaces ethernet eth1 mtu",
+		"delete interfaces ethernet eth1 disable",
+		"delete interfaces ethernet eth1 address 192.0.2.20/24",
+	}) {
+		t.Errorf("remove %q", got)
+	}
+	if got := (Interface{Name: "eth1", Enabled: &on}).Commands(config); !slices.Equal(got, []string{"delete interfaces ethernet eth1 disable"}) {
+		t.Errorf("enable %q", got)
+	}
+	if got := (Interface{Name: "eth2", Enabled: &off}).Commands(config); !slices.Equal(got, []string{"set interfaces ethernet eth2 disable"}) {
+		t.Errorf("disable %q", got)
+	}
+	if got := (Interface{Name: "eth1", Addresses: []string{"dhcp"}}).Commands(config); !slices.Equal(got, []string{
+		"delete interfaces ethernet eth1 address 192.0.2.20/24",
+		"delete interfaces ethernet eth1 address 198.51.100.1/24",
+		"set interfaces ethernet eth1 address dhcp",
+	}) {
+		t.Errorf("dhcp %q", got)
+	}
+	empty, quoted := "", `say "hi"`
+	for _, bad := range []Interface{{Name: "eth0", Description: &empty}, {Name: "eth0", Description: &quoted}} {
+		if bad.Validate() == nil {
+			t.Errorf("%+v passed", bad)
+		}
+	}
+	if err := (Interface{Name: "lo", Addresses: []string{"dhcp", "dhcpv6"}}).Validate(); err != nil {
+		t.Error(err)
+	}
+	if ValidateHostname("r1.lab") == nil || ValidateHostname("r-1") != nil {
+		t.Error("ValidateHostname")
+	}
+}
+
+// commitAs answers the commit-confirm script with out, or err, and leaves
+// everything else to the fake router.
+type commitAs struct {
+	fakeRouter
+	out string
+	err error
+}
+
+func (c commitAs) RunRaw(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	if strings.Contains(string(stdin), "commit-confirm") {
+		return ssh.Result{Stdout: []byte(c.out)}, c.err
+	}
+	return c.fakeRouter.RunRaw(ctx, cmd, stdin)
+}
+
+// Each way a commit can go wrong says whether anything is live.
+func TestApplyFailures(t *testing.T) {
+	cmds := []string{"set system host-name r2"}
+	d, _ := newRouter()
+	base, _ := RunningConfig(context.Background(), d)
+	if diff, err := Apply(context.Background(), d, reconnectTo(d), base, nil, time.Millisecond); diff != "" || err != nil {
+		t.Errorf("nothing to do: %q, %v", diff, err)
+	}
+	if _, err := Apply(context.Background(), d, reconnectTo(d), base+"set system domain-name lab\n", cmds, time.Millisecond); !errors.As(err, new(NotLiveError)) || !strings.Contains(err.Error(), "configuration changed") {
+		t.Errorf("changed by hand: %v", err)
+	}
+	down := d
+	down.down = true
+	if _, err := Apply(context.Background(), down, reconnectTo(d), base, cmds, time.Millisecond); !errors.As(err, new(NotLiveError)) || !strings.Contains(err.Error(), "connection lost") {
+		t.Errorf("router down: %v", err)
+	}
+
+	started := "[ commit ]\nInitialized commit-confirm; 5 minutes to confirm before reload\n"
+	for name, c := range map[string]struct {
+		router  commitAs
+		notLive bool
+		want    string
+	}{
+		"session lost":   {commitAs{d, "", errors.New("EOF")}, false, "session ended before VyOS said"},
+		"refused":        {commitAs{d, "  Commit failed\n", nil}, true, "refused the change: Commit failed"},
+		"didn't start":   {commitAs{d, "a\nb\nc\nd\ne\nf\n", nil}, true, "didn't start: c | d | e | f"},
+		"part refused":   {commitAs{d, started + "  Set failed\n", nil}, false, "refused part of it (Set failed)"},
+		"confirm unseen": {commitAs{d, started, nil}, false, "the confirm wasn't taken"},
+	} {
+		_, err := Apply(context.Background(), c.router, reconnectTo(d), base, cmds, time.Millisecond)
+		if err == nil || errors.As(err, new(NotLiveError)) != c.notLive || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := Apply(ctx, d, reconnectTo(d), base, cmds, time.Hour); err == nil || !strings.Contains(err.Error(), "stopped before confirming") {
+		t.Errorf("canceled: %v", err)
+	}
+}
+
+func TestShowRefusalsAndConfirmAfter(t *testing.T) {
+	d, _ := newRouter()
+	if _, err := Show(context.Background(), d, "show nonsense"); err == nil || !strings.Contains(err.Error(), "Invalid command") {
+		t.Errorf("Show: %v", err)
+	}
+	d.down = true
+	if _, err := ReadFacts(context.Background(), d); err == nil {
+		t.Error("ReadFacts on a lost connection")
+	}
+	for d, ok := range map[time.Duration]bool{time.Second: false, 30 * time.Second: true, 4 * time.Minute: false} {
+		if (CheckConfirmAfter(d) == nil) != ok {
+			t.Errorf("CheckConfirmAfter(%s)", d)
+		}
+	}
+	u := User{Name: "alice"}
+	if got := u.RemoveCommands("set system login user alice full-name x\n"); !slices.Equal(got, []string{"delete system login user alice"}) {
+		t.Errorf("remove %q", got)
+	}
+	if got := u.RemoveCommands("set system login user bob full-name x\n"); got != nil {
+		t.Errorf("remove a missing account: %q", got)
+	}
+}

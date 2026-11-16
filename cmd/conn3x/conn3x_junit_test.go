@@ -4,8 +4,14 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/opentofu/opentofu/internal/command"
+	"github.com/opentofu/opentofu/internal/command/arguments"
 )
 
 // A test's JSON stream as conn3x test -json writes it: each run's result,
@@ -37,5 +43,66 @@ func TestJUnitFromStream(t *testing.T) {
 	b := s.Suites[1].Cases
 	if b[0].Skipped == nil || b[1].Error == nil || b[1].Error.Message != "run broken errored" {
 		t.Errorf("suite b: %+v", b)
+	}
+}
+
+// fakeTest is a test command whose run writes junitStream to -json-into,
+// as conn3x test does, and exits code.
+func fakeTest(code int) command.Command {
+	cmd := command.Command{Name: "test", CommandLine: arguments.CommandLine{View: &arguments.View{}}}
+	view := cmd.CommandLine.View
+	cmd.Run = func(command.Meta) int {
+		if view.JSONInto != nil {
+			_, _ = view.JSONInto.WriteString(junitStream)
+		}
+		return code
+	}
+	withJUnit(&cmd)
+	return cmd
+}
+
+func TestJUnitFlag(t *testing.T) {
+	var errOut bytes.Buffer
+	old := stderr
+	stderr = &errOut
+	t.Cleanup(func() { stderr = old })
+	dir := t.TempDir()
+
+	// Without the flag, the test runs as it would.
+	cmd := fakeTest(0)
+	if code := cmd.Run(command.Meta{}); code != 0 {
+		t.Fatalf("no flag: exit %d", code)
+	}
+
+	// With it, the XML is written and the test's exit code kept.
+	path := filepath.Join(dir, "results.xml")
+	cmd = fakeTest(1)
+	cmd.CommandLine.ParseLegacy([]string{"-junit-xml=" + path})
+	if code := cmd.Run(command.Meta{}); code != 1 {
+		t.Fatalf("exit %d, %q", code, errOut.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(got), `<testsuites tests="4" failures="1" errors="1" skipped="1">`) {
+		t.Fatalf("results.xml (%v):\n%s", err, got)
+	}
+
+	// The caller's own -json-into file is the stream the XML is built from.
+	into, err := os.Create(filepath.Join(dir, "stream.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer into.Close()
+	cmd = fakeTest(0)
+	cmd.CommandLine.View.JSONInto = into
+	cmd.CommandLine.ParseLegacy([]string{"-junit-xml=" + path})
+	if code := cmd.Run(command.Meta{}); code != 0 {
+		t.Fatalf("-json-into: exit %d, %q", code, errOut.String())
+	}
+
+	// A test that passed but whose XML can't be written exits 1.
+	cmd = fakeTest(0)
+	cmd.CommandLine.ParseLegacy([]string{"-junit-xml=" + filepath.Join(dir, "missing", "results.xml")})
+	if code := cmd.Run(command.Meta{}); code != 1 || !strings.Contains(errOut.String(), "Error: writing ") {
+		t.Fatalf("unwritable: exit %d, %q", code, errOut.String())
 	}
 }

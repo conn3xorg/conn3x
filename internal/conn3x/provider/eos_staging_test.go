@@ -32,6 +32,7 @@ type fakeEOS struct {
 	refuse   string             // a script line containing this is refused
 	commits  int                // commit timers started
 	saves    int
+	show     map[string]string // answers to other show commands
 }
 
 type block struct {
@@ -99,7 +100,7 @@ func apply(cfg []block, lines []string) []block {
 				cfg[at] = block{head: l}
 			}
 			cur = -1
-		case strings.HasPrefix(l, "vlan "), strings.HasPrefix(l, "hostname "):
+		case strings.HasPrefix(l, "vlan "), strings.HasPrefix(l, "hostname "), strings.HasPrefix(l, "interface "):
 			cur = slices.IndexFunc(cfg, func(b block) bool {
 				return b.head == l || (strings.HasPrefix(l, "hostname ") && strings.HasPrefix(b.head, "hostname "))
 			})
@@ -186,6 +187,8 @@ func (f *fakeEOS) run(cmd string, stdin []byte) (string, int) {
 	case cmd == "copy running-config startup-config":
 		f.saves++
 		return "Copy completed successfully.\n", 0
+	case f.show[cmd] != "":
+		return f.show[cmd], 0
 	}
 	return "% Invalid input (fake EOS doesn't know " + cmd + ")\n", 1
 }
