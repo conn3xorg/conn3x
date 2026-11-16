@@ -252,6 +252,7 @@ var jinja = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\(\s*(?:'([^'\\]*)'|"([^"\\]*)")\s*\)\s*)?\}\}`)
 
 func (in *input) render(key, s string) string {
+	s = in.role.expandFacts(s)
 	if in.loop && in.itemVar != "" {
 		s = itemField.ReplaceAllStringFunc(s, func(m string) string {
 			sub := itemField.FindStringSubmatch(m)

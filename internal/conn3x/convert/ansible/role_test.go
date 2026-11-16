@@ -1090,3 +1090,51 @@ func TestRoleHandlerNamePerFamily(t *testing.T) {
 		t.Errorf("review %+v", res.Review)
 	}
 }
+
+// A set_fact of plain text with role defaults in it is written out where
+// it's used, so the default is held to the rules there; one set twice, or
+// under a when, stays for review.
+func TestRolePlainFacts(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "app_dir: /opt/app\nflag: true\n",
+		"tasks/main.yml": `- name: Script path
+  set_fact:
+    app_script: "{{ app_dir }}/run.sh"
+    app_conf: "{{ app_dir }}/app.conf"
+- name: Twice
+  set_fact:
+    twice: a
+- name: Twice again
+  set_fact:
+    twice: b
+- name: Conditional
+  set_fact:
+    maybe: "{{ app_dir }}/x"
+  when: flag | bool
+- name: Script
+  copy: {dest: "{{ app_script }}", content: x}
+- name: Twice used
+  copy: {dest: /etc/t, content: "{{ twice }}"}
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
+	for _, want := range []string{
+		`names app_script and app_conf: the steps below write its text where they use it`,
+		`path    = "${var.app_dir}/run.sh"`,
+		`condition     = startswith(var.app_dir, "/")`,
+	} {
+		if !strings.Contains(hcl+vars, want) {
+			t.Errorf("missing %s in\n%s\n%s", want, hcl, vars)
+		}
+	}
+	reasons := ""
+	for _, r := range res.Review {
+		reasons += r.Task + ": " + r.Reason + "\n"
+	}
+	if !strings.Contains(reasons, "Twice used: content refers to \"twice\"") || !strings.Contains(reasons, "Conditional:") {
+		t.Errorf("review:\n%s", reasons)
+	}
+}

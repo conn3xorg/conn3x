@@ -49,8 +49,11 @@ type role struct {
 	// per-family one, and defaultOf maps each such variable to that one;
 	// defaultUsed are those a step reads, which become variables.
 	defaultTasks map[*yaml.Node]string
-	defaultOf    map[string]string
-	defaultUsed  map[string]bool
+	// facts are the set_fact values render writes in place of their names;
+	// see plainFacts.
+	facts       map[string]string
+	defaultOf   map[string]string
+	defaultUsed map[string]bool
 	// shadowed are defaults a file under vars/ also sets.
 	shadowed map[string]bool
 	// lists are the defaults that are lists of plain values, kept apart
@@ -210,6 +213,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	c.file = tasksFile
 	r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
 	r.defaultTasks, r.defaultOf = c.familyDefaults(seq(tasks), vars)
+	r.facts = c.plainFacts()
 	r.defaultUsed = map[string]bool{}
 	c.steps(cb, at(seq(tasks), c.file), seq(handlers), handlersFile, false, vars)
 	if r.familyUsed {

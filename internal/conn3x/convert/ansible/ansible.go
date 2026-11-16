@@ -818,6 +818,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.res.Converted++
 		return
 	}
+	if xs, ok := c.role.factTask(node); ok {
+		body.AppendNewline()
+		comment(body, fmt.Sprintf("Task %q (%s line %d) names %s: the steps below write its text where they use it.", name, c.file, node.Line, joinAnd(xs)))
+		c.res.Converted++
+		return
+	}
 	if c.role != nil && node == c.role.familyInclude {
 		body.AppendNewline()
 		comment(body, fmt.Sprintf("Task %q (%s line %d) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.", name, c.file, node.Line))
