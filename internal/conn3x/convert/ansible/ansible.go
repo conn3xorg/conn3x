@@ -824,7 +824,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.res.Converted++
 		return
 	}
-	if c.role != nil && node == c.role.familyInclude {
+	if c.role.isFamilyInclude(node, c.file) {
 		body.AppendNewline()
 		comment(body, fmt.Sprintf("Task %q (%s line %d) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.", name, c.file, node.Line))
 		c.res.Converted++

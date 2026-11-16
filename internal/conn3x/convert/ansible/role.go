@@ -40,9 +40,12 @@ type role struct {
 	// familyVars what Debian's and Red Hat's files set; familyUsed is set
 	// once a step looks one up.
 	familyInclude *yaml.Node
-	familyVars    map[string]map[string]string
-	familyWhy     map[string]map[string]string // why a value can't be used, such as a list
-	familyUsed    bool
+	// familyIncludeAt is where familyInclude is, file:line, for an include
+	// in an imported file, which is read again for each pass.
+	familyIncludeAt string
+	familyVars      map[string]map[string]string
+	familyWhy       map[string]map[string]string // why a value can't be used, such as a list
+	familyUsed      bool
 	// packagesUsed is set once a step's when tests an installed package.
 	packagesUsed bool
 	// defaultTasks are the set_fact tasks that default a variable to a
@@ -212,6 +215,19 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	}
 	c.file = tasksFile
 	r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
+	if r.familyInclude == nil {
+		// The include may be in a file main.yml imports, such as
+		// include-vars.yml.
+		var nodes []*yaml.Node
+		files := map[*yaml.Node]string{}
+		for _, t := range c.flatten(seq(tasks), tasksFile, []string{tasksFile}) {
+			nodes = append(nodes, t.node)
+			files[t.node] = t.file
+		}
+		if r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(nodes); r.familyInclude != nil {
+			r.familyIncludeAt = fmt.Sprintf("%s:%d", files[r.familyInclude], r.familyInclude.Line)
+		}
+	}
 	r.defaultTasks, r.defaultOf = c.familyDefaults(seq(tasks), vars)
 	r.facts = c.plainFacts()
 	r.defaultUsed = map[string]bool{}
@@ -884,4 +900,13 @@ func pathValidations(b *hclwrite.Body, k string, rules []string, list bool) {
 			v.SetAttributeValue("error_message", cty.StringVal(k+" goes in a path, so it must be "+msg+"."))
 		}
 	}
+}
+
+// isFamilyInclude reports whether node, in file, is the role's include of its
+// per-family variables.
+func (r *role) isFamilyInclude(node *yaml.Node, file string) bool {
+	if r == nil || r.familyInclude == nil {
+		return false
+	}
+	return node == r.familyInclude || r.familyIncludeAt == fmt.Sprintf("%s:%d", file, node.Line)
 }

@@ -55,7 +55,7 @@ func (c *converter) readOnly(t taskAt) bool {
 	if t.reason != "" {
 		return false
 	}
-	if _, ok := c.role.defaultTask(t.node); ok || t.node == c.role.familyInclude {
+	if _, ok := c.role.defaultTask(t.node); ok || c.role.isFamilyInclude(t.node, t.file) {
 		return true
 	}
 	m := mapping(t.node)

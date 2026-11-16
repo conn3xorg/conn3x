@@ -53,36 +53,71 @@ func (c *converter) familyVars(tasks []*yaml.Node) (*yaml.Node, map[string]map[s
 		if t["name"] != nil {
 			extra--
 		}
+		ff := t["with_first_found"]
+		if ff != nil {
+			extra--
+		}
 		if !ok || extra != 0 {
 			continue
 		}
 		if arg.Kind == yaml.MappingNode && len(arg.Content) == 2 && arg.Content[0].Value == "file" {
 			arg = arg.Content[1]
 		}
-		m := osFamilyInclude.FindStringSubmatch(scalar(arg))
-		if arg.Kind != yaml.ScalarNode || m == nil {
+		if arg.Kind != yaml.ScalarNode {
 			continue
 		}
-		vals, whys := map[string]map[string]string{}, map[string]map[string]string{}
-		for _, f := range osFamilies {
-			path := c.path("vars/" + f.ansible + "." + m[1])
-			src, err := os.ReadFile(path)
-			var doc yaml.Node
-			if err != nil || !exactlyNamed(path) || parse(src, &doc) != nil || len(doc.Content) == 0 {
-				return nil, nil, nil
+		var files map[string]string
+		if ff != nil {
+			if bareRef.FindStringSubmatch(arg.Value) == nil || bareRef.FindStringSubmatch(arg.Value)[1] != "item" {
+				continue
 			}
-			vals[f.conn3x], whys[f.conn3x] = map[string]string{}, map[string]string{}
-			for _, kv := range pairs(doc.Content[0]) {
-				if v, _, why := plainValue(kv[1]); why == "" {
-					vals[f.conn3x][kv[0].Value] = v
-				} else {
-					whys[f.conn3x][kv[0].Value] = why
-				}
+			if files, ok = c.firstFound(ff); !ok {
+				continue
 			}
+		} else {
+			m := osFamilyInclude.FindStringSubmatch(arg.Value)
+			if m == nil {
+				continue
+			}
+			files = map[string]string{}
+			for _, f := range osFamilies {
+				files[f.conn3x] = "vars/" + f.ansible + "." + m[1]
+			}
+		}
+		vals, whys, ok := c.loadFamilyFiles(files)
+		if !ok {
+			return nil, nil, nil
 		}
 		return n, vals, whys
 	}
 	return nil, nil, nil
+}
+
+// loadFamilyFiles reads each family's variables file, by family. A family
+// with no file has no values. false when a file can't be read.
+func (c *converter) loadFamilyFiles(files map[string]string) (map[string]map[string]string, map[string]map[string]string, bool) {
+	vals, whys := map[string]map[string]string{}, map[string]map[string]string{}
+	for _, f := range osFamilies {
+		vals[f.conn3x], whys[f.conn3x] = map[string]string{}, map[string]string{}
+		rel, ok := files[f.conn3x]
+		if !ok {
+			continue
+		}
+		path := c.path(rel)
+		src, err := os.ReadFile(path)
+		var doc yaml.Node
+		if err != nil || !exactlyNamed(path) || parse(src, &doc) != nil || len(doc.Content) == 0 {
+			return nil, nil, false
+		}
+		for _, kv := range pairs(doc.Content[0]) {
+			if v, _, why := plainValue(kv[1]); why == "" {
+				vals[f.conn3x][kv[0].Value] = v
+			} else {
+				whys[f.conn3x][kv[0].Value] = why
+			}
+		}
+	}
+	return vals, whys, true
 }
 
 // familyNames lists the per-family variables a task's arguments mention.

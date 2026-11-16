@@ -1138,3 +1138,47 @@ func TestRolePlainFacts(t *testing.T) {
 		t.Errorf("review:\n%s", reasons)
 	}
 }
+
+// An include_vars with_first_found over per-OS files gives each family the
+// file all its distributions would load, and it can sit in an imported file.
+// A list where the pick depends on the version stays for review.
+func TestRoleFirstFoundVars(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml": "- import_tasks: vars.yml\n- name: Web\n  package: {name: \"{{ web_pkg }}\"}\n",
+		"tasks/vars.yml": `- name: Load vars
+  include_vars: "{{ item }}"
+  with_first_found:
+    - "{{ ansible_facts.distribution }}.yml"
+    - "{{ ansible_facts.os_family }}.yml"
+    - default.yml
+`,
+		"vars/Debian.yml":  "web_pkg: apache2\n",
+		"vars/RedHat.yml":  "web_pkg: httpd\n",
+		"vars/default.yml": "web_pkg: other\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	if res.Converted != 2 || len(res.Review) != 0 || !strings.Contains(hcl, `{ debian = "apache2", redhat = "httpd" }[local.os_family[each.key]]`) {
+		t.Fatalf("converted %d, review %+v\n%s", res.Converted, res.Review, hcl)
+	}
+
+	// Ubuntu-16.04.yml means what Ubuntu loads depends on its version.
+	res, err = ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml": `- include_vars: "{{ item }}"
+  with_first_found:
+    - "{{ ansible_facts.distribution }}-{{ ansible_facts.distribution_version }}.yml"
+    - default.yml
+- package: {name: "{{ web_pkg }}"}
+`,
+		"vars/Ubuntu-16.04.yml": "web_pkg: apache2\n",
+		"vars/default.yml":      "web_pkg: other\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Converted != 0 || len(res.Review) != 2 {
+		t.Fatalf("version-dependent: converted %d, review %+v", res.Converted, res.Review)
+	}
+}
