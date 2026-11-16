@@ -1211,7 +1211,42 @@ func TestRoleFirstFoundVars(t *testing.T) {
 		t.Fatalf("converted %d, review %+v\n%s", res.Converted, res.Review, hcl)
 	}
 
-	// Ubuntu-16.04.yml means what Ubuntu loads depends on its version.
+	// Ubuntu-24.04.yml means what Ubuntu loads depends on its version, so
+	// the value is looked up by the file each host loads, worked out at plan.
+	// Ubuntu-16.04.yml is older than any release the converter reads.
+	res, err = ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml": `- include_vars: "{{ item }}"
+  with_first_found:
+    - "{{ ansible_facts.distribution + '-' + ansible_facts.distribution_version }}.yml"
+    - "{{ ansible_facts.os_family }}-{{ ansible_facts.distribution_major_version }}.yml"
+    - default.yml
+- package: {name: "{{ web_pkg }}"}
+`,
+		"vars/Ubuntu-24.04.yml": "web_pkg: apache2\n",
+		"vars/Ubuntu-16.04.yml": "web_pkg: old\n",
+		"vars/RedHat-9.yml":     "web_pkg: httpd\n",
+		"vars/default.yml":      "web_pkg: other\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl = string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		`name = { "debian/Ubuntu-24.04.yml" = "apache2", "debian/default.yml" = "other", "redhat/RedHat-9.yml" = "httpd", "redhat/default.yml" = "other" }[local.vars_file[each.key]]`,
+		`"${local.os_distribution[name]}-${local.os_version[name]}.yml",`,
+		`"${local.os_family_name[name]}-${split(".", data.conn3x_host.facts[name].os_version)[0]}.yml",`,
+		`] : f if contains(["RedHat-9.yml", "Ubuntu-16.04.yml", "Ubuntu-24.04.yml", "default.yml"], f)][0]}" }`,
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("version-dependent: missing %s in\n%s", want, hcl)
+		}
+	}
+	if res.Converted != 2 || len(res.Review) != 0 {
+		t.Fatalf("version-dependent: converted %d, review %+v", res.Converted, res.Review)
+	}
+
+	// A file per minor release can't be told apart: os-release has no minor
+	// version on Rocky Linux, so this stays for review.
 	res, err = ConvertRole(writeRole(t, map[string]string{
 		"tasks/main.yml": `- include_vars: "{{ item }}"
   with_first_found:
@@ -1219,14 +1254,14 @@ func TestRoleFirstFoundVars(t *testing.T) {
     - default.yml
 - package: {name: "{{ web_pkg }}"}
 `,
-		"vars/Ubuntu-16.04.yml": "web_pkg: apache2\n",
-		"vars/default.yml":      "web_pkg: other\n",
+		"vars/Rocky-9.4.yml": "web_pkg: httpd\n",
+		"vars/default.yml":   "web_pkg: other\n",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Converted != 0 || len(res.Review) != 2 {
-		t.Fatalf("version-dependent: converted %d, review %+v", res.Converted, res.Review)
+		t.Fatalf("minor version: converted %d, review %+v", res.Converted, res.Review)
 	}
 }
 
@@ -1258,7 +1293,6 @@ func TestRoleFirstFoundFilesAndSkip(t *testing.T) {
 		"paths":            "\n    - files: [Debian.yml]\n      paths: [/etc]",
 		"a nested list":    "\n    - files: [[Debian.yml]]",
 		"a list in a list": "\n    - [Debian.yml]",
-		"per distribution": "\n    - '{{ ansible_distribution }}.yml'\n    - Debian.yml",
 		"a brace":          "\n    - '{{ ansible_os_family }}}.yml'",
 	} {
 		if res := convert(loop, "Debian.yml", "Ubuntu.yml", "RedHat.yml"); res.Converted != 0 || len(res.Review) != 2 {

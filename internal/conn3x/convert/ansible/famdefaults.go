@@ -68,8 +68,8 @@ func (c *converter) familyDefaults(tasks []*yaml.Node, vars map[string]string) (
 			continue
 		}
 		set := true
-		for _, f := range osFamilies {
-			_, ok := r.familyVars[f.conn3x][m[1]]
+		for _, f := range c.axisFor(osFamilies) {
+			_, ok := r.familyVars[f.id()][m[1]]
 			set = set && ok
 		}
 		if !set {
@@ -122,13 +122,13 @@ func mentions(n *yaml.Node, name string) bool {
 // withCaller wraps each attribute that carries a caller-set variable in the
 // caller run: the caller's value when set, else the family's.
 func withCaller(merged []step, callerByFamily map[string][]step, alias map[string]string, fams []osFamily) ([]step, string) {
-	first := callerByFamily[fams[0].conn3x]
+	first := callerByFamily[fams[0].id()]
 	if len(first) != len(merged) {
 		return nil, "converts to different steps when the caller sets a value, which the converter can't write as one step yet"
 	}
 	for i := range merged {
 		for _, f := range fams[1:] {
-			if len(callerByFamily[f.conn3x]) != len(first) || len(callerByFamily[f.conn3x][i].attrs) != len(first[i].attrs) {
+			if len(callerByFamily[f.id()]) != len(first) || len(callerByFamily[f.id()][i].attrs) != len(first[i].attrs) {
 				return nil, "converts to different steps when the caller sets a value, which the converter can't write as one step yet"
 			}
 		}
@@ -149,7 +149,7 @@ func withCaller(merged []step, callerByFamily map[string][]step, alias map[strin
 				return nil, a.key + " combines several values the caller can set, which the converter can't write yet"
 			}
 			for _, f := range fams[1:] {
-				if o := callerByFamily[f.conn3x][i].attrs[j]; o.raw != a.raw {
+				if o := callerByFamily[f.id()][i].attrs[j]; o.raw != a.raw {
 					return nil, a.key + " mixes a value the caller can set with ones that differ by family, which the converter can't write yet"
 				}
 			}

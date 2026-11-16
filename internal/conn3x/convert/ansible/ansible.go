@@ -581,17 +581,17 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 		// once per family and look the name up by the host's family, as a
 		// task does. A handler runs on each host, so each.key is the host.
 		byFamily := map[string][]step{}
-		for _, f := range osFamilies {
+		for _, f := range c.axisFor(osFamilies) {
 			fv := map[string]string{}
 			for k, v := range vars {
 				fv[k] = v
 			}
 			for _, n := range names {
-				v, ok := c.role.familyVars[f.conn3x][n]
-				_, unusable := c.role.familyWhy[f.conn3x][n]
+				v, ok := c.role.familyVars[f.id()][n]
+				_, unusable := c.role.familyWhy[f.id()][n]
 				_, isDefault := c.role.defaultOf[n]
 				if !ok || unusable || isDefault {
-					reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set as plain text, and a handler needs it for every family", n, f.ansible)
+					reason = fmt.Sprintf("refers to %q, which %s doesn't set as plain text, and a handler needs it for every family", n, f.where())
 					break
 				}
 				fv[n] = v
@@ -601,13 +601,13 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 			}
 			fsvc, freason := convert(fv)
 			if freason != "" {
-				reason = freason + " (with the values for " + f.ansible + " hosts)"
+				reason = freason + " (with the values for " + f.hosts() + ")"
 				break
 			}
-			byFamily[f.conn3x] = fsvc
+			byFamily[f.id()] = fsvc
 		}
 		if reason == "" {
-			svc, reason = mergeFamilies(byFamily, osFamilies)
+			svc, reason = mergeFamilies(byFamily, c.axisFor(osFamilies), c.axisExpr())
 		}
 		if reason == "" {
 			c.role.familyUsed = true
@@ -1087,7 +1087,8 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	} else {
 		// Convert once per family with its values, then join the steps.
 		byFamily := map[string][]step{}
-		for _, f := range fams {
+		axis := c.axisFor(fams)
+		for _, f := range axis {
 			fv := map[string]string{}
 			for k, v := range vars {
 				fv[k] = v
@@ -1097,15 +1098,15 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				if y, isDefault := c.role.defaultOf[n]; isDefault {
 					src = y
 				}
-				v, ok := c.role.familyVars[f.conn3x][src]
-				if why, unusable := c.role.familyWhy[f.conn3x][src]; unusable {
-					reason = fmt.Sprintf("refers to %q, which vars/%s.yml sets to %s, which the converter can't use yet", n, f.ansible, why)
+				v, ok := c.role.familyVars[f.id()][src]
+				if why, unusable := c.role.familyWhy[f.id()][src]; unusable {
+					reason = fmt.Sprintf("refers to %q, which %s sets to %s, which the converter can't use yet", n, f.where(), why)
 					break
 				}
 				if !ok {
-					reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set, so Ansible would stop on %s hosts", n, f.ansible, f.ansible)
+					reason = fmt.Sprintf("refers to %q, which %s doesn't set, so Ansible would stop on %s", n, f.where(), f.hosts())
 					if c.role.shadowed[n] {
-						reason = fmt.Sprintf("refers to %q, which vars/%s.yml doesn't set, so %s hosts get the role default, which the converter can't mix with values per family yet", n, f.ansible, f.ansible)
+						reason = fmt.Sprintf("refers to %q, which %s doesn't set, so %s get the role default, which the converter can't mix with values per family yet", n, f.where(), f.hosts())
 					}
 					break
 				}
@@ -1116,7 +1117,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			}
 			fin, fsteps, freason := run(fv)
 			if freason != "" {
-				reason = freason + " (with the values for " + f.ansible + " hosts)"
+				reason = freason + " (with the values for " + f.hosts() + ")"
 				break
 			}
 			if in == nil {
@@ -1129,10 +1130,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 					in.out[p] = b
 				}
 			}
-			byFamily[f.conn3x] = fsteps
+			byFamily[f.id()] = fsteps
 		}
 		if reason == "" {
-			steps, reason = mergeFamilies(byFamily, fams)
+			steps, reason = mergeFamilies(byFamily, axis, c.axisExpr())
 		}
 		// A variable the caller can set: convert again with var.X in its
 		// place, and use that where it's set.
@@ -1147,7 +1148,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		if reason == "" && len(callers) > 0 {
 			callerByFamily := map[string][]step{}
-			for _, f := range fams {
+			for _, f := range axis {
 				fv := map[string]string{}
 				for k, v := range vars {
 					fv[k] = v
@@ -1156,7 +1157,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 					if _, isDefault := c.role.defaultOf[n]; isDefault {
 						fv[n] = refMark("var." + n)
 					} else {
-						fv[n] = c.role.familyVars[f.conn3x][n]
+						fv[n] = c.role.familyVars[f.id()][n]
 					}
 				}
 				_, csteps, creason := run(fv)
@@ -1164,10 +1165,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 					reason = creason + " (with a value the caller sets)"
 					break
 				}
-				callerByFamily[f.conn3x] = csteps
+				callerByFamily[f.id()] = csteps
 			}
 			if reason == "" {
-				steps, reason = withCaller(steps, callerByFamily, c.role.defaultOf, fams)
+				steps, reason = withCaller(steps, callerByFamily, c.role.defaultOf, axis)
 			}
 			if reason == "" {
 				for _, n := range callers {

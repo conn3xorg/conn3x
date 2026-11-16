@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
@@ -30,19 +31,74 @@ import (
 // so a path is proved to be a path on both.
 
 // osFamilies are the families conn3x_host reports, by Ansible's name.
-type osFamily struct{ ansible, conn3x string }
+// Values per OS are looked up by an axis of these: the families, or, for a
+// role with vars files per release, one entry for each file, with key set
+// (see axisOf). file is the vars file the entry's values come from.
+type osFamily struct{ ansible, conn3x, key, file string }
 
-var osFamilies = []osFamily{{"Debian", "debian"}, {"RedHat", "redhat"}}
+// id is what the entry's values are found by: its key, or its family.
+func (f osFamily) id() string {
+	if f.key != "" {
+		return f.key
+	}
+	return f.conn3x
+}
+
+// hosts names the entry's hosts for messages: Debian hosts, or the hosts
+// that load a file.
+func (f osFamily) hosts() string {
+	if f.key != "" {
+		return "the hosts that load " + f.file
+	}
+	return f.ansible + " hosts"
+}
+
+// axisFor is the role's axis entries for the hosts in fams: fams itself,
+// unless values come from vars files per release.
+func (c *converter) axisFor(fams []osFamily) []osFamily {
+	if c.role == nil || c.role.axis == nil {
+		return fams
+	}
+	var out []osFamily
+	for _, a := range c.role.axis {
+		for _, f := range fams {
+			if a.conn3x == f.conn3x {
+				out = append(out, a)
+			}
+		}
+	}
+	return out
+}
+
+// axisExpr is the lookup a value per axis entry is written with.
+func (c *converter) axisExpr() string {
+	if c.role != nil && c.role.varsTemplates != nil {
+		return "local.vars_file[each.key]"
+	}
+	return "local.os_family[each.key]"
+}
+
+// where names the entry's file for messages: vars/Debian.yml, say.
+func (f osFamily) where() string {
+	if f.file != "" {
+		return f.file
+	}
+	return "vars/" + f.ansible + ".yml"
+}
+
+var osFamilies = []osFamily{{ansible: "Debian", conn3x: "debian"}, {ansible: "RedHat", conn3x: "redhat"}}
 
 // osFamilyInclude matches include_vars of the host's family's file.
 var osFamilyInclude = regexp.MustCompile(`^\{\{\s*ansible_(?:facts\.os_family|facts\[["']os_family["']\]|os_family)\s*\}\}\.(ya?ml)$`)
 
-// familyVars finds a role's include_vars of vars/<family>.yml among its
-// tasks and reads Debian's and Red Hat's files. It returns the task, the
-// values by family and name, and for a value it can't use, such as a list,
-// why; or a nil task when there's no such include or a file is missing, and
-// the include then goes to review as before.
-func (c *converter) familyVars(tasks []*yaml.Node) (*yaml.Node, map[string]map[string]string, map[string]map[string]string) {
+// familyVars finds a role's include_vars of vars/<family>.yml, or of the
+// first of several files that exists, among its tasks, and reads the files
+// a Debian or Red Hat family host would load. It returns the task, the axis
+// values are looked up by, the with_first_found templates when that axis is
+// per file, the values by axis entry and name, and for a value it can't
+// use, such as a list, why; or a nil task when there's no such include or a
+// file is missing, and the include then goes to review as before.
+func (c *converter) familyVars(tasks []*yaml.Node) (*yaml.Node, []osFamily, [][]namePart, map[string]map[string]string, map[string]map[string]string) {
 	for _, n := range tasks {
 		t := mapping(n)
 		arg, ok := t["include_vars"]
@@ -66,44 +122,52 @@ func (c *converter) familyVars(tasks []*yaml.Node) (*yaml.Node, map[string]map[s
 		if arg.Kind != yaml.ScalarNode {
 			continue
 		}
-		var files map[string]string
+		var axis []osFamily
+		var templates [][]namePart
 		if ff != nil {
 			if bareRef.FindStringSubmatch(arg.Value) == nil || bareRef.FindStringSubmatch(arg.Value)[1] != "item" {
 				continue
 			}
-			if files, ok = c.firstFound(ff); !ok {
+			files, segs, ok := c.firstFound(ff)
+			if !ok {
 				continue
+			}
+			var versioned bool
+			if axis, versioned = axisOf(files); versioned {
+				templates = segs
 			}
 		} else {
 			m := osFamilyInclude.FindStringSubmatch(arg.Value)
 			if m == nil {
 				continue
 			}
-			files = map[string]string{}
 			for _, f := range osFamilies {
-				files[f.conn3x] = "vars/" + f.ansible + "." + m[1]
+				f.file = "vars/" + f.ansible + "." + m[1]
+				axis = append(axis, f)
 			}
 		}
-		vals, whys, ok := c.loadFamilyFiles(files)
+		vals, whys, ok := c.loadFamilyFiles(axis)
 		if !ok {
-			return nil, nil, nil
+			return nil, nil, nil, nil, nil
 		}
-		return n, vals, whys
+		return n, axis, templates, vals, whys
 	}
-	return nil, nil, nil
+	return nil, nil, nil, nil, nil
 }
 
-// loadFamilyFiles reads each family's variables file, by family. A family
-// with no file has no values. false when a file can't be read.
-func (c *converter) loadFamilyFiles(files map[string]string) (map[string]map[string]string, map[string]map[string]string, bool) {
+// loadFamilyFiles reads each axis entry's variables file, by entry. A
+// family with no file has no values. false when a file can't be read.
+func (c *converter) loadFamilyFiles(axis []osFamily) (map[string]map[string]string, map[string]map[string]string, bool) {
 	vals, whys := map[string]map[string]string{}, map[string]map[string]string{}
 	for _, f := range osFamilies {
 		vals[f.conn3x], whys[f.conn3x] = map[string]string{}, map[string]string{}
-		rel, ok := files[f.conn3x]
-		if !ok {
-			continue
+	}
+	for _, f := range axis {
+		vals[f.id()], whys[f.id()] = map[string]string{}, map[string]string{}
+		if f.file == "" {
+			continue // these hosts load no file
 		}
-		path := c.path(rel)
+		path := c.path(f.file)
 		src, err := os.ReadFile(path)
 		var doc yaml.Node
 		if err != nil || !exactlyNamed(path) || parse(src, &doc) != nil || len(doc.Content) == 0 {
@@ -111,9 +175,9 @@ func (c *converter) loadFamilyFiles(files map[string]string) (map[string]map[str
 		}
 		for _, kv := range pairs(doc.Content[0]) {
 			if v, _, why := plainValue(kv[1]); why == "" {
-				vals[f.conn3x][kv[0].Value] = v
+				vals[f.id()][kv[0].Value] = v
 			} else {
-				whys[f.conn3x][kv[0].Value] = why
+				whys[f.id()][kv[0].Value] = why
 			}
 		}
 	}
@@ -141,9 +205,9 @@ func (c *converter) familyNames(args map[string]*yaml.Node, vars map[string]stri
 					seen[name] = true
 					continue
 				}
-				for _, f := range osFamilies {
-					_, ok := c.role.familyVars[f.conn3x][name]
-					_, unusable := c.role.familyWhy[f.conn3x][name]
+				for _, f := range c.axisFor(osFamilies) {
+					_, ok := c.role.familyVars[f.id()][name]
+					_, unusable := c.role.familyWhy[f.id()][name]
 					if ok || unusable {
 						seen[name] = true
 					}
@@ -165,14 +229,15 @@ func (c *converter) familyNames(args map[string]*yaml.Node, vars map[string]stri
 	return names
 }
 
-// mergeFamilies joins one task's steps converted for each of fams into
-// steps whose differing string values are looked up by the host's family.
-// It returns a reason when they differ in anything else.
-func mergeFamilies(byFamily map[string][]step, fams []osFamily) ([]step, string) {
-	first := byFamily[fams[0].conn3x]
+// mergeFamilies joins one task's steps converted for each of fams, axis
+// entries, into steps whose differing string values are looked up with
+// expr, by the host's family or the vars file it loads. It returns a
+// reason when they differ in anything else.
+func mergeFamilies(byFamily map[string][]step, fams []osFamily, expr string) ([]step, string) {
+	first := byFamily[fams[0].id()]
 	differs := "converts to different steps on Debian and Red Hat hosts, which the converter can't write as one step yet"
 	for _, f := range fams[1:] {
-		if len(byFamily[f.conn3x]) != len(first) {
+		if len(byFamily[f.id()]) != len(first) {
 			return nil, differs
 		}
 	}
@@ -181,7 +246,7 @@ func mergeFamilies(byFamily map[string][]step, fams []osFamily) ([]step, string)
 		out[i] = s
 		out[i].attrs = append([]attr(nil), s.attrs...)
 		for _, f := range fams[1:] {
-			o := byFamily[f.conn3x][i]
+			o := byFamily[f.id()][i]
 			// suffix only tells several steps of one task apart.
 			if o.module != s.module || (o.suffix != s.suffix && len(first) > 1) || len(o.attrs) != len(s.attrs) ||
 				fmt.Sprint(o.notes) != fmt.Sprint(s.notes) || fmt.Sprintf("%#v", o.blocks) != fmt.Sprintf("%#v", s.blocks) {
@@ -192,11 +257,11 @@ func mergeFamilies(byFamily map[string][]step, fams []osFamily) ([]step, string)
 			vals := map[string]cty.Value{}
 			same := true
 			for _, f := range fams {
-				o := byFamily[f.conn3x][i].attrs[j]
+				o := byFamily[f.id()][i].attrs[j]
 				if o.key != a.key || o.raw != a.raw {
 					return nil, differs
 				}
-				vals[f.conn3x] = o.val
+				vals[f.id()] = o.val
 				same = same && o.val.RawEquals(a.val)
 			}
 			if same {
@@ -207,9 +272,13 @@ func mergeFamilies(byFamily map[string][]step, fams []osFamily) ([]step, string)
 			}
 			var parts []string
 			for _, f := range fams {
-				parts = append(parts, f.conn3x+" = "+string(hclwrite.TokensForValue(vals[f.conn3x]).Bytes()))
+				k := f.id()
+				if !hclsyntax.ValidIdentifier(k) {
+					k = fmt.Sprintf("%q", k)
+				}
+				parts = append(parts, k+" = "+string(hclwrite.TokensForValue(vals[f.id()]).Bytes()))
 			}
-			out[i].attrs[j] = attr{key: a.key, raw: "{ " + strings.Join(parts, ", ") + " }[local.os_family[each.key]]"}
+			out[i].attrs[j] = attr{key: a.key, raw: "{ " + strings.Join(parts, ", ") + " }[" + expr + "]"}
 		}
 	}
 	return out, ""

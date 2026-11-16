@@ -45,7 +45,12 @@ type role struct {
 	familyIncludeAt string
 	familyVars      map[string]map[string]string
 	familyWhy       map[string]map[string]string // why a value can't be used, such as a list
-	familyUsed      bool
+	// axis is what familyVars are keyed by: the families, or one entry for
+	// each vars file per release, and varsTemplates then the
+	// with_first_found list that picks a host's file (see versionBlocks).
+	axis          []osFamily
+	varsTemplates [][]namePart
+	familyUsed    bool
 	// packagesUsed is set once a step's when tests an installed package.
 	packagesUsed bool
 	// defaultTasks are the set_fact tasks that default a variable to a
@@ -214,7 +219,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		ssh.SetAttributeRaw(a, rawTokens("var.ssh_"+a))
 	}
 	c.file = tasksFile
-	r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
+	r.familyInclude, r.axis, r.varsTemplates, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
 	if r.familyInclude == nil {
 		// The include may be in a file main.yml imports, such as
 		// include-vars.yml.
@@ -224,7 +229,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			nodes = append(nodes, t.node)
 			files[t.node] = t.file
 		}
-		if r.familyInclude, r.familyVars, r.familyWhy = c.familyVars(nodes); r.familyInclude != nil {
+		if r.familyInclude, r.axis, r.varsTemplates, r.familyVars, r.familyWhy = c.familyVars(nodes); r.familyInclude != nil {
 			r.familyIncludeAt = fmt.Sprintf("%s:%d", files[r.familyInclude], r.familyInclude.Line)
 		}
 	}
@@ -234,6 +239,9 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	c.steps(cb, at(seq(tasks), c.file), seq(handlers), handlersFile, false, vars)
 	if r.familyUsed {
 		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
+		if r.varsTemplates != nil {
+			body.AppendUnstructuredTokens(rawTokens(c.versionBlocks(r.varsTemplates)))
+		}
 	}
 	for _, b := range r.probeBlocks {
 		body.AppendUnstructuredTokens(rawTokens(b))
@@ -342,10 +350,24 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	files["README.md"] = readme(base, name, len(c.res.Review), order, r.defaults)
 	if len(used) > 0 {
 		var b strings.Builder
-		b.WriteString("\nThese take each host's OS family's value from the role's `vars/` unless you set them:\n\n| Name | Debian and Ubuntu | Red Hat family |\n| --- | --- | --- |\n")
+		axis := c.axisFor(osFamilies)
+		if r.varsTemplates == nil {
+			b.WriteString("\nThese take each host's OS family's value from the role's `vars/` unless you set them:\n\n| Name | Debian and Ubuntu | Red Hat family |\n")
+		} else {
+			b.WriteString("\nThese take the value from the `vars/` file each host loads unless you set them:\n\n| Name |")
+			for _, f := range axis {
+				fmt.Fprintf(&b, " `%s` |", f.file)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("| --- |" + strings.Repeat(" --- |", len(axis)) + "\n")
 		for _, x := range used {
 			y := r.defaultOf[x]
-			fmt.Fprintf(&b, "| `%s` | `%s` | `%s` |\n", x, r.familyVars["debian"][y], r.familyVars["redhat"][y])
+			fmt.Fprintf(&b, "| `%s` |", x)
+			for _, f := range axis {
+				fmt.Fprintf(&b, " `%s` |", r.familyVars[f.id()][y])
+			}
+			b.WriteString("\n")
 		}
 		files["README.md"] = append(files["README.md"], b.String()...)
 	}
