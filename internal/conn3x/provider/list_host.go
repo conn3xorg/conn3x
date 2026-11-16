@@ -59,7 +59,7 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 	}
 	switch kind {
 	case "windows_features", "windows_services", "windows_users", "windows_groups":
-		names, err = windows.Inventory(ctx, h.client, strings.TrimPrefix(kind, "windows_"))
+		names, err = windows.Inventory(ctx, h.raw(), strings.TrimPrefix(kind, "windows_"))
 		if err != nil {
 			return nil, nil, err
 		}

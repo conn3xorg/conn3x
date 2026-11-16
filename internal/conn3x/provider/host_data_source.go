@@ -61,7 +61,7 @@ func readHostData(ctx context.Context, req providers.ReadDataSourceRequest) prov
 		return resp
 	}
 	allow := req.Config.GetAttr("allow_windows")
-	f, win, err := gatherFacts(ctx, h, h.client, known(allow) && allow.True())
+	f, win, err := gatherFacts(ctx, h, h.raw(), known(allow) && allow.True())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp

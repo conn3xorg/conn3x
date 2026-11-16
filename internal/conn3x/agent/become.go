@@ -30,7 +30,7 @@ const stderrWait = 2 * time.Second
 // password; the process is closed at once instead of letting sudo try
 // again. Once the agent says hello, its stdin carries frames and nothing
 // else.
-func startBecome(ctx context.Context, c *ssh.Client, script string, b *ssh.Become) (*Client, error) {
+func startBecome(ctx context.Context, c Host, script string, b *ssh.Become) (*Client, error) {
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err

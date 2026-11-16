@@ -74,7 +74,7 @@ func (p *cliPlatform) device(h *hostConn, conn cty.Value) cliDevice {
 		dial := p.reconnect(conn)
 		return ios.PerCommand(oneLoginAtATime(h.host, func(ctx context.Context) (ios.Device, error) { return dial(ctx) }))
 	}
-	return h.client
+	return h.raw()
 }
 
 // freshLogins holds a one-token semaphore per host: a device that takes a

@@ -23,6 +23,7 @@ import (
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/agent"
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
+	"github.com/opentofu/opentofu/internal/conn3x/transport"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/conn3x/version"
 	"github.com/opentofu/opentofu/internal/providers"
@@ -101,7 +102,7 @@ func connectionBlock() *configschema.NestedBlock {
 // block asks for become. Connections are pooled: every resource that names
 // the same host and login in one run shares a single SSH connection.
 type hostConn struct {
-	client   *ssh.Client
+	client   transport.Conn
 	runner   modules.Runner
 	useAgent bool
 	require  bool        // CONN3X_AGENT=require: an apply fails rather than use the shell
@@ -132,14 +133,52 @@ func (h *hostConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Resul
 // errNoAgent sends a native read to the shell: no agent is attached.
 var errNoAgent = fmt.Errorf("no conn3x agent: %w", errors.ErrUnsupported)
 
+// DialRemote opens a TCP connection from the host, for wait_for's url.
+func (h *hostConn) DialRemote(ctx context.Context, addr string) (net.Conn, error) {
+	d, ok := h.client.(transport.Dialer)
+	if !ok {
+		return nil, h.needsSSH("opening a connection from the host")
+	}
+	return d.DialRemote(ctx, addr)
+}
+
+// shellConn is a connection that also runs a raw command line, which
+// Windows PowerShell and the network device CLIs need.
+type shellConn interface {
+	transport.Conn
+	transport.Shell
+}
+
+// raw is the connection as a shellConn. Over a transport without one, its
+// RunRaw and RunShell fail and say why.
+func (h *hostConn) raw() shellConn {
+	if s, ok := h.client.(shellConn); ok {
+		return s
+	}
+	return noShell{h.client, h.needsSSH("a Windows or network device step")}
+}
+
+// needsSSH says a feature isn't there over the transport this host uses.
+func (h *hostConn) needsSSH(what string) error {
+	return fmt.Errorf("%s: %s needs an SSH connection, and this host isn't reached over SSH: %w", h.host, what, errors.ErrUnsupported)
+}
+
+type noShell struct {
+	transport.Conn
+	err error
+}
+
+func (n noShell) RunRaw(context.Context, string, []byte) (ssh.Result, error) {
+	return ssh.Result{}, n.err
+}
+
+func (n noShell) RunShell(context.Context, []byte) (ssh.Result, error) {
+	return ssh.Result{}, n.err
+}
+
 // ReadFile reads a file through the agent when one is attached. Without
 // one, or where the agent can't match the shell, file.Read runs its shell
 // command instead.
-// DialRemote opens a TCP connection from the host, for wait_for's url.
-func (h *hostConn) DialRemote(ctx context.Context, addr string) (net.Conn, error) {
-	return h.client.DialRemote(ctx, addr)
-}
-
 func (h *hostConn) ReadFile(ctx context.Context, path string) (modules.FileStat, error) {
 	h.mu.Lock()
 	a := h.agent
@@ -184,10 +223,14 @@ func (h *hostConn) attach(ctx context.Context, upload bool) error {
 	var a *agent.Client
 	var err error
 	start := time.Now()
-	if h.become != nil {
-		a, err = h.attachRoot(ctx, upload)
-	} else {
-		a, err = agent.Attach(ctx, h.client, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload})
+	c, ok := h.client.(agent.Host)
+	switch {
+	case !ok:
+		err = fmt.Errorf("%w: %w", agent.ErrUnavailable, h.needsSSH("the conn3x agent"))
+	case h.become != nil:
+		a, err = h.attachRoot(ctx, c, upload)
+	default:
+		a, err = agent.Attach(ctx, c, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload})
 	}
 	switch {
 	case err == nil:
@@ -222,7 +265,7 @@ type rootAgent struct {
 // login user, or starts one. Logins as other users never share it: sudo can
 // give each user its own rules (NOEXEC, an SELinux role, logging), and a
 // command run as root must carry the rules and the name of whoever ran it.
-func (h *hostConn) attachRoot(ctx context.Context, upload bool) (*agent.Client, error) {
+func (h *hostConn) attachRoot(ctx context.Context, c agent.Host, upload bool) (*agent.Client, error) {
 	rootAgents.Lock()
 	r := rootAgents.m[h.rootKey]
 	if r == nil {
@@ -236,7 +279,7 @@ func (h *hostConn) attachRoot(ctx context.Context, upload bool) (*agent.Client, 
 	if r.a != nil && r.a.Err() == nil {
 		return r.a, nil
 	}
-	a, err := agent.Attach(ctx, h.client, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload, Become: h.become})
+	a, err := agent.Attach(ctx, c, agent.Options{Upload: upload, Version: version.Version, Payload: agentPayload, Become: h.become})
 	if err == nil {
 		r.a = a
 	}

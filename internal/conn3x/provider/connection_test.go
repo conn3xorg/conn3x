@@ -4,6 +4,8 @@
 package provider
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/opentofu/opentofu/internal/conn3x/agent"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
@@ -217,5 +220,38 @@ func TestProxyCommandSetting(t *testing.T) {
 	write("Host i-*", "  User ec2-user", "  ProxyCommand nc %h %p", "  ProxyJump bastion")
 	if _, err := sshConfig(sshBlock(map[string]cty.Value{"host": cty.StringVal("i-0abc"), "ssh_config_file": cty.StringVal(conf)})); err == nil || !strings.Contains(err.Error(), "keep one") {
 		t.Fatalf("both in the file: %v", err)
+	}
+}
+
+// runOnly is a transport with nothing but Conn, such as a container exec.
+type runOnly struct{}
+
+func (runOnly) Run(context.Context, string, []byte) (ssh.Result, error) { return ssh.Result{}, nil }
+func (runOnly) Alive() bool                                             { return true }
+func (runOnly) Addr() string                                            { return "box" }
+func (runOnly) Close() error                                            { return nil }
+
+func TestHostConnWithoutSSHSaysWhatsMissing(t *testing.T) {
+	h := &hostConn{client: runOnly{}, runner: runOnly{}, useAgent: true, host: "box"}
+	ctx := context.Background()
+	if _, err := h.raw().RunRaw(ctx, "Get-Item", nil); !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), "needs an SSH connection") {
+		t.Errorf("RunRaw: %v", err)
+	}
+	if _, err := h.raw().RunShell(ctx, nil); !errors.Is(err, errors.ErrUnsupported) {
+		t.Errorf("RunShell: %v", err)
+	}
+	if _, err := h.DialRemote(ctx, "127.0.0.1:5432"); !errors.Is(err, errors.ErrUnsupported) {
+		t.Errorf("DialRemote: %v", err)
+	}
+	// No agent: commands stay on the shell, unless the agent is required.
+	if err := h.attach(ctx, true); err != nil || h.agent != nil {
+		t.Errorf("attach: %v, agent %v", err, h.agent)
+	}
+	h = &hostConn{client: runOnly{}, runner: runOnly{}, useAgent: true, require: true, host: "box"}
+	if err := h.attach(ctx, true); !errors.Is(err, agent.ErrUnavailable) {
+		t.Errorf("attach with require: %v", err)
+	}
+	if _, err := h.Run(ctx, "true", nil); err != nil {
+		t.Errorf("Run: %v", err)
 	}
 }

@@ -73,7 +73,7 @@ func readWinDNSClient(ctx context.Context, req providers.ReadResourceRequest) pr
 		return resp
 	}
 	d := winDNSClientFrom(req.PriorState)
-	a, err := windows.ReadDNSClient(ctx, h.client, d)
+	a, err := windows.ReadDNSClient(ctx, h.raw(), d)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -100,15 +100,15 @@ func applyWinDNSClient(ctx context.Context, req providers.ApplyResourceChangeReq
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadDNSClient(ctx, h.client, d)
+	a, err := windows.ReadDNSClient(ctx, h.raw(), d)
 	if err != nil {
 		return fail(err)
 	}
 	if !d.Matches(a) {
-		if err := windows.ApplyDNSClient(ctx, h.client, d); err != nil {
+		if err := windows.ApplyDNSClient(ctx, h.raw(), d); err != nil {
 			return fail(err)
 		}
-		if a, err = windows.ReadDNSClient(ctx, h.client, d); err != nil {
+		if a, err = windows.ReadDNSClient(ctx, h.raw(), d); err != nil {
 			return fail(err)
 		}
 		if !d.Matches(a) {
@@ -263,7 +263,7 @@ func readWinForest(ctx context.Context, req providers.ReadResourceRequest) provi
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -296,7 +296,7 @@ func applyWinForest(ctx context.Context, req providers.ApplyResourceChangeReques
 	}
 	// Promotion adds the DNS role, and Windows servicing takes one change at a time.
 	defer lockHost(h, "windows_feature")()
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	if err != nil {
 		return fail(err)
 	}
@@ -306,7 +306,7 @@ func applyWinForest(ctx context.Context, req providers.ApplyResourceChangeReques
 		return fail(err)
 	}
 	if promote {
-		facts, err := windows.Gather(ctx, h.client)
+		facts, err := windows.Gather(ctx, h.raw())
 		if err != nil {
 			return fail(err)
 		}
@@ -317,10 +317,10 @@ func applyWinForest(ctx context.Context, req providers.ApplyResourceChangeReques
 		if !known(pw) {
 			return fail(fmt.Errorf("safe_mode_password_wo is needed to make forest %s", f.DomainName))
 		}
-		if restart, err = windows.ApplyForest(ctx, h.client, f, pw.AsString(), timeout); err != nil {
+		if restart, err = windows.ApplyForest(ctx, h.raw(), f, pw.AsString(), timeout); err != nil {
 			return fail(fmt.Errorf("making forest %s: %w", f.DomainName, err))
 		}
-		if a, err = windows.ReadForest(ctx, h.client); err != nil {
+		if a, err = windows.ReadForest(ctx, h.raw()); err != nil {
 			return fail(err)
 		}
 		if !f.Matches(a) {
@@ -420,7 +420,7 @@ func readWinADStep(ctx context.Context, req providers.ReadResourceRequest, match
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -469,7 +469,7 @@ func applyWinMembership(ctx context.Context, req providers.ApplyResourceChangeRe
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	if err != nil {
 		return fail(err)
 	}
@@ -485,10 +485,10 @@ func applyWinMembership(ctx context.Context, req providers.ApplyResourceChangeRe
 		if !known(pw) {
 			return fail(fmt.Errorf("password_wo is needed to join %s", m.Domain))
 		}
-		if restart, err = windows.ApplyMembership(ctx, h.client, m, pw.AsString(), timeout); err != nil {
+		if restart, err = windows.ApplyMembership(ctx, h.raw(), m, pw.AsString(), timeout); err != nil {
 			return fail(fmt.Errorf("joining %s: %w", m.Domain, err))
 		}
-		if a, err = windows.ReadForest(ctx, h.client); err != nil {
+		if a, err = windows.ReadForest(ctx, h.raw()); err != nil {
 			return fail(err)
 		}
 		if !m.Matches(a) {
@@ -617,7 +617,7 @@ func applyWinDC(ctx context.Context, req providers.ApplyResourceChangeRequest) p
 	}
 	// Promotion adds the DNS role, and Windows servicing takes one change at a time.
 	defer lockHost(h, "windows_feature")()
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	if err != nil {
 		return fail(err)
 	}
@@ -627,7 +627,7 @@ func applyWinDC(ctx context.Context, req providers.ApplyResourceChangeRequest) p
 		return fail(err)
 	}
 	if promote {
-		facts, err := windows.Gather(ctx, h.client)
+		facts, err := windows.Gather(ctx, h.raw())
 		if err != nil {
 			return fail(err)
 		}
@@ -638,10 +638,10 @@ func applyWinDC(ctx context.Context, req providers.ApplyResourceChangeRequest) p
 		if !known(pw) || !known(dsrm) {
 			return fail(fmt.Errorf("password_wo and safe_mode_password_wo are needed to promote this host in %s", d.DomainName))
 		}
-		if restart, err = windows.ApplyDomainController(ctx, h.client, d, pw.AsString(), dsrm.AsString(), timeout); err != nil {
+		if restart, err = windows.ApplyDomainController(ctx, h.raw(), d, pw.AsString(), dsrm.AsString(), timeout); err != nil {
 			return fail(fmt.Errorf("promoting in %s: %w", d.DomainName, err))
 		}
-		if a, err = windows.ReadForest(ctx, h.client); err != nil {
+		if a, err = windows.ReadForest(ctx, h.raw()); err != nil {
 			return fail(err)
 		}
 		if !d.Matches(a) {
@@ -773,7 +773,7 @@ func applyWinChildDomain(ctx context.Context, req providers.ApplyResourceChangeR
 	}
 	// Promotion adds the DNS role, and Windows servicing takes one change at a time.
 	defer lockHost(h, "windows_feature")()
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	if err != nil {
 		return fail(err)
 	}
@@ -783,7 +783,7 @@ func applyWinChildDomain(ctx context.Context, req providers.ApplyResourceChangeR
 		return fail(err)
 	}
 	if promote {
-		facts, err := windows.Gather(ctx, h.client)
+		facts, err := windows.Gather(ctx, h.raw())
 		if err != nil {
 			return fail(err)
 		}
@@ -794,10 +794,10 @@ func applyWinChildDomain(ctx context.Context, req providers.ApplyResourceChangeR
 		if !known(pw) || !known(dsrm) {
 			return fail(fmt.Errorf("password_wo and safe_mode_password_wo are needed to make domain %s", c.DomainName))
 		}
-		if restart, err = windows.ApplyChildDomain(ctx, h.client, c, pw.AsString(), dsrm.AsString(), timeout); err != nil {
+		if restart, err = windows.ApplyChildDomain(ctx, h.raw(), c, pw.AsString(), dsrm.AsString(), timeout); err != nil {
 			return fail(fmt.Errorf("making domain %s under %s: %w", c.DomainName, c.Parent(), err))
 		}
-		if a, err = windows.ReadForest(ctx, h.client); err != nil {
+		if a, err = windows.ReadForest(ctx, h.raw()); err != nil {
 			return fail(err)
 		}
 		if !c.Matches(a) {

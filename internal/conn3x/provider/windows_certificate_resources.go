@@ -83,7 +83,7 @@ func readWinCert(ctx context.Context, req providers.ReadResourceRequest) provide
 		return resp
 	}
 	c := winCertFrom(req.PriorState)
-	a, err := windows.ReadCertificate(ctx, h.client, c, stringOr(req.PriorState.GetAttr("thumbprint"), ""))
+	a, err := windows.ReadCertificate(ctx, h.raw(), c, stringOr(req.PriorState.GetAttr("thumbprint"), ""))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -123,7 +123,7 @@ func applyWinCert(ctx context.Context, req providers.ApplyResourceChangeRequest)
 			return resp
 		}
 	}
-	thumb, sum, err := windows.ApplyCertificate(ctx, h.client, c, prior)
+	thumb, sum, err := windows.ApplyCertificate(ctx, h.raw(), c, prior)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_certificate: %w", err))
 		return resp

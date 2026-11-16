@@ -221,7 +221,7 @@ func readJunosDevice(ctx context.Context, req providers.ReadDataSourceRequest) p
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	f, err := junos.ReadFacts(ctx, h.client)
+	f, err := junos.ReadFacts(ctx, h.raw())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("conn3x_junos_device: %w", err))
 		return resp

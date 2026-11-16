@@ -92,7 +92,7 @@ func readWinEnv(ctx context.Context, req providers.ReadResourceRequest) provider
 		return resp
 	}
 	e := winEnvFrom(req.PriorState)
-	a, err := windows.ReadEnv(ctx, h.client, e.Name, e.User)
+	a, err := windows.ReadEnv(ctx, h.raw(), e.Name, e.User)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -107,7 +107,7 @@ func applyWinEnv(ctx context.Context, req providers.ApplyResourceChangeRequest) 
 		if remove {
 			e.Absent = true
 		}
-		return windows.ApplyEnv(ctx, h.client, e)
+		return windows.ApplyEnv(ctx, h.raw(), e)
 	})
 }
 
@@ -157,7 +157,7 @@ func readWinPath(ctx context.Context, req providers.ReadResourceRequest) provide
 		return resp
 	}
 	p := winPathFrom(req.PriorState)
-	a, err := windows.ReadEnv(ctx, h.client, "Path", p.User)
+	a, err := windows.ReadEnv(ctx, h.raw(), "Path", p.User)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -172,7 +172,7 @@ func applyWinPath(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		if remove {
 			p.Absent = true
 		}
-		return windows.ApplyPath(ctx, h.client, p)
+		return windows.ApplyPath(ctx, h.raw(), p)
 	})
 }
 

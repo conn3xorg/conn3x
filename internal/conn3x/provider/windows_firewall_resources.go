@@ -93,11 +93,11 @@ func winFirewallLockout(v cty.Value, f windows.FirewallRule) error {
 // winFirewallGuard checks a change, or a delete when f is nil, against the
 // connection Conn3x is on, as the host sees it.
 func winFirewallGuard(ctx context.Context, h *hostConn, conn cty.Value, name string, f *windows.FirewallRule) error {
-	c, err := windows.ReadSSHConn(ctx, h.client, sshPort(conn))
+	c, err := windows.ReadSSHConn(ctx, h.raw(), sshPort(conn))
 	if err != nil {
 		return err
 	}
-	a, err := windows.ReadFirewallRule(ctx, h.client, name)
+	a, err := windows.ReadFirewallRule(ctx, h.raw(), name)
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,7 @@ func readWinFirewallRule(ctx context.Context, req providers.ReadResourceRequest)
 		return resp
 	}
 	f := winFirewallRuleFrom(req.PriorState)
-	a, err := windows.ReadFirewallRule(ctx, h.client, f.Name)
+	a, err := windows.ReadFirewallRule(ctx, h.raw(), f.Name)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -174,7 +174,7 @@ func applyWinFirewallRule(ctx context.Context, req providers.ApplyResourceChange
 		if err := winFirewallGuard(ctx, h, req.PriorState.GetAttr("ssh"), name, nil); err != nil {
 			return fail(fmt.Errorf("rule %s: %w", name, err))
 		}
-		if err := windows.ApplyFirewallRuleRemove(ctx, h.client, name); err != nil {
+		if err := windows.ApplyFirewallRuleRemove(ctx, h.raw(), name); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -190,7 +190,7 @@ func applyWinFirewallRule(ctx context.Context, req providers.ApplyResourceChange
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadFirewallRule(ctx, h.client, f.Name)
+	a, err := windows.ReadFirewallRule(ctx, h.raw(), f.Name)
 	if err != nil {
 		return fail(err)
 	}
@@ -198,10 +198,10 @@ func applyWinFirewallRule(ctx context.Context, req providers.ApplyResourceChange
 		if err := winFirewallGuard(ctx, h, req.PlannedState.GetAttr("ssh"), f.Name, &f); err != nil {
 			return fail(fmt.Errorf("rule %s: %w", f.Name, err))
 		}
-		if err := windows.ApplyFirewallRule(ctx, h.client, f); err != nil {
+		if err := windows.ApplyFirewallRule(ctx, h.raw(), f); err != nil {
 			return fail(fmt.Errorf("rule %s: %w", f.Name, err))
 		}
-		if a, err = windows.ReadFirewallRule(ctx, h.client, f.Name); err != nil {
+		if a, err = windows.ReadFirewallRule(ctx, h.raw(), f.Name); err != nil {
 			return fail(err)
 		}
 		if !f.Matches(a) {
