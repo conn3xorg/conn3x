@@ -227,6 +227,77 @@ locals {
 }
 `
 
+// packagesBlocks is what a circuit with a when on ansible_facts.packages
+// needs: each host's installed packages, read at plan as package_facts did.
+const packagesBlocks = `
+# Each host's installed packages, for the steps whose when tests one, as
+# package_facts did.
+data "conn3x_packages" "facts" {
+  for_each = var.hosts
+
+  ssh {
+    host             = try(each.value.address, each.value)
+    port             = try(each.value.port, var.ssh_port)
+    user             = try(each.value.user, var.ssh_user)
+    host_key         = try(each.value.host_key, null)
+    private_key_file = var.ssh_private_key_file
+    known_hosts_file = var.ssh_known_hosts_file
+    become           = var.ssh_become
+  }
+}
+`
+
+// packagesFact matches Ansible's ways of naming the installed packages.
+const packagesFact = `ansible_facts(?:\.packages|\[["']packages["']\])`
+
+var (
+	packageIn      = regexp.MustCompile(`^["']([A-Za-z0-9][A-Za-z0-9.+_:-]*)["'] (in|not in) ` + packagesFact + `$`)
+	packageDefined = regexp.MustCompile(`^` + packagesFact + `\[["']([A-Za-z0-9][A-Za-z0-9.+_:-]*)["']\] is (defined|not defined)$`)
+)
+
+// packagesWhen reads a when that tests whether one package is installed,
+// as 'nginx' in ansible_facts.packages or ansible_facts.packages['nginx']
+// is defined, as a step's when over the conn3x_packages data source. ""
+// for any other when.
+func packagesWhen(n *yaml.Node) string {
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return ""
+	}
+	cond := strings.Join(strings.Fields(n.Value), " ")
+	name, not := "", false
+	if m := packageIn.FindStringSubmatch(cond); m != nil {
+		name, not = m[1], m[2] == "not in"
+	} else if m := packageDefined.FindStringSubmatch(cond); m != nil {
+		name, not = m[1], m[2] == "not defined"
+	} else {
+		return ""
+	}
+	out := fmt.Sprintf(`contains(keys(data.conn3x_packages.facts[each.key].packages), "%s")`, name)
+	if not {
+		return "!" + out
+	}
+	return out
+}
+
+// whenReadsFacts reports whether a role task's when reads facts a step
+// can't: any condition in it that isn't a family or package test, which
+// convert, and mentions one.
+func whenReadsFacts(w *yaml.Node) bool {
+	if w == nil {
+		return false
+	}
+	conds := []*yaml.Node{w}
+	if w.Kind == yaml.SequenceNode {
+		conds = w.Content
+	}
+	for _, c := range conds {
+		if _, _, family := familyWhen(c); !family && packagesWhen(c) == "" && readsFacts(c) {
+			return true
+		}
+	}
+	return false
+}
+
 // defaultTask reports whether node is a set_fact that defaults a variable
 // to a per-family one, and which variable.
 func (r *role) defaultTask(node *yaml.Node) (string, bool) {

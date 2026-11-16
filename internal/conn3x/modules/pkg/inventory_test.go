@@ -4,7 +4,9 @@
 package pkg
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -71,5 +73,14 @@ func TestParseInventory(t *testing.T) {
 	}
 	if c := rpmCompare("1:1.0-1", "0:9.9-9"); c != 1 {
 		t.Errorf("the epoch didn't decide: %d", c)
+	}
+	// A real host has thousands; every one comes through.
+	var big strings.Builder
+	big.WriteString("x86_64\n")
+	for i := 0; i < 3000; i++ {
+		fmt.Fprintf(&big, "pkg%d\tx86_64\t0:1.%d-1.el10\n", i, i)
+	}
+	if got, err := parseInventory(RPM, big.String()); err != nil || len(got) != 3000 || got["pkg2999"][0] != "0:1.2999-1.el10" {
+		t.Errorf("3000 packages: %d, %v", len(got), err)
 	}
 }

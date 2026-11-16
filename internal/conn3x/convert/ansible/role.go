@@ -39,6 +39,8 @@ type role struct {
 	familyVars    map[string]map[string]string
 	familyWhy     map[string]map[string]string // why a value can't be used, such as a list
 	familyUsed    bool
+	// packagesUsed is set once a step's when tests an installed package.
+	packagesUsed bool
 	// defaultTasks are the set_fact tasks that default a variable to a
 	// per-family one, and defaultOf maps each such variable to that one;
 	// defaultUsed are those a step reads, which become variables.
@@ -203,6 +205,9 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	}
 	for _, b := range r.probeBlocks {
 		body.AppendUnstructuredTokens(rawTokens(b))
+	}
+	if r.packagesUsed {
+		body.AppendUnstructuredTokens(rawTokens(packagesBlocks))
 	}
 
 	for _, k := range order {

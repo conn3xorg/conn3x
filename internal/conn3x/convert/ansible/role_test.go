@@ -853,3 +853,59 @@ func TestRoleYAMLBoolLikeAnsible(t *testing.T) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// A when that tests whether a package is installed becomes the step's when
+// over the conn3x_packages data source, which replaces package_facts, so
+// the dropped task's note doesn't send the step to review.
+func TestRolePackagesWhen(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml": `- name: Facts
+  package_facts:
+- name: Install nginx
+  package: {name: nginx}
+  when: "'nginx' not in ansible_facts.packages"
+- name: Config
+  copy: {dest: /etc/x, content: y}
+  when: ansible_facts.packages['bash'] is defined
+- name: Both
+  copy: {dest: /etc/z, content: y}
+  when:
+    - ansible_os_family == 'Debian'
+    - "'curl' in ansible_facts['packages']"
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		`when = !contains(keys(data.conn3x_packages.facts[each.key].packages), "nginx")`,
+		`when = contains(keys(data.conn3x_packages.facts[each.key].packages), "bash")`,
+		`when = local.os_family[each.key] == "debian" && contains(keys(data.conn3x_packages.facts[each.key].packages), "curl")`,
+		`data "conn3x_packages" "facts"`,
+		"reads the conn3x_packages data source at plan instead",
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %s in\n%s", want, hcl)
+		}
+	}
+	if strings.Contains(hcl, "left for review") {
+		t.Errorf("the note sends a converted when to review:\n%s", hcl)
+	}
+
+	// A template that reads a package's version is still for review, and
+	// the note says so; nothing else reads the data source.
+	res, err = ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml": "- package_facts:\n- copy: {dest: /etc/v, content: \"{{ ansible_facts.packages['bash'][0].version }}\"}\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl = string(res.Files["main.circuit.hcl"])
+	if len(res.Review) != 1 || !strings.Contains(hcl, "left for review") || strings.Contains(hcl, `data "conn3x_packages"`) {
+		t.Errorf("review %+v\n%s", res.Review, hcl)
+	}
+}

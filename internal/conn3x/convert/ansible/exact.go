@@ -424,6 +424,9 @@ func factsModule(name string, args ...string) func(*input) ([]step, string) {
 	return func(in *input) ([]step, string) {
 		in.ignore(args...)
 		note := name + " only gathers facts and changes nothing on hosts, so it's left out."
+		if name == "package_facts" {
+			note += " A role task's when on ansible_facts.packages reads the conn3x_packages data source at plan instead."
+		}
 		if in.factsLater {
 			note += " A later task in this play reads those facts, and it's left for review: a step can't read Ansible's facts, so check what it did with them."
 		}

@@ -410,7 +410,14 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	}
 	for i := len(tasks) - 1; i >= 0; i-- {
 		c.factsAfter[tasks[i].node] = later
-		later = later || readsFacts(tasks[i].node)
+		node := tasks[i].node
+		if c.role != nil {
+			// A role task's when on ansible_facts.packages becomes a step's
+			// when, so it doesn't leave facts unread.
+			later = later || readsFacts(withoutWhen(node)) || whenReadsFacts(mapping(node)["when"])
+		} else {
+			later = later || readsFacts(node)
+		}
 	}
 	used := map[string]int{}
 	c.jsonPairs(tasks)
@@ -810,6 +817,8 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		for _, e := range w.Content {
 			if b := c.role.boolWhen(e); b != "" {
 				switches = append(switches, b)
+			} else if p := packagesWhen(e); p != "" {
+				switches = append(switches, p)
 			} else {
 				rest = append(rest, e)
 			}
@@ -845,7 +854,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			boolCond = strings.Join(switches, " && ")
 		}
 	} else if w := t["when"]; w != nil && c.role != nil && !familyCond {
-		boolCond = c.role.boolWhen(w)
+		if boolCond = c.role.boolWhen(w); boolCond == "" {
+			boolCond = packagesWhen(w)
+		}
 	}
 	wait := uriRetry(t)
 	module, delegate := "", ""
@@ -1156,6 +1167,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		if boolCond != "" {
 			conds = append(conds, boolCond)
+			if strings.Contains(boolCond, "data.conn3x_packages.") {
+				c.role.packagesUsed = true
+			}
 		}
 		if len(conds) > 0 {
 			sb.SetAttributeRaw("when", rawTokens(strings.Join(conds, " && ")))
