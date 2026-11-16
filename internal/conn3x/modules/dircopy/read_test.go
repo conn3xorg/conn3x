@@ -49,6 +49,10 @@ func TestReadParses(t *testing.T) {
 	if got, err := Read(ctx, &canned{res: ssh.Result{Stdout: []byte("missing\n")}}, "/srv/site"); err != nil || len(got) != 0 {
 		t.Errorf("missing: %v, %v", got, err)
 	}
+	// An empty directory lists no records, only the NUL that ends the list.
+	if got, err := Read(ctx, &canned{res: ssh.Result{Stdout: []byte("present\n\x00")}}, "/srv/site"); err != nil || len(got) != 0 {
+		t.Errorf("empty: %v, %v", got, err)
+	}
 	if _, err := Read(ctx, &canned{res: ssh.Result{Stdout: []byte("present\n644 a b f\x00")}}, "/srv/site"); err == nil || err.Error() != "reading /srv/site: unexpected output" {
 		t.Errorf("truncated: %v", err)
 	}

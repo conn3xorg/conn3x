@@ -52,12 +52,12 @@ var brHostSteps = map[string]map[string]cty.Value{
 }
 
 // brReadsDrift are steps whose refresh on a host that fails every command
-// isn't an error: it reports them out of sync, or gone. link and
-// alternatives read a failed command as nothing there, so their removal is
-// a no-op too.
+// isn't an error: it reports them out of sync, or gone. alternatives reads
+// a failed command with no message as nothing registered, since Red Hat's
+// tool says nothing for any error, so its removal is a no-op too.
 var brReadsDrift = map[string]bool{
 	"conn3x_alternatives": true, "conn3x_archive": true, "conn3x_authorized_key": true, "conn3x_hostname": true,
-	"conn3x_link": true, "conn3x_locale": true, "conn3x_timezone": true,
+	"conn3x_locale": true, "conn3x_timezone": true,
 }
 
 // On a host whose every command fails, creating any host step fails, so

@@ -167,6 +167,12 @@ echo missing`, ssh.Quote(p), notLink), modules.Parent(p)), nil)
 	if res.ExitCode == notLink {
 		return LinkState{}, fmt.Errorf("%s exists but is not a symlink", p)
 	}
+	// Any other failure, such as the path guard refusing, is an error: read
+	// as "no link", refresh would drop the link from state and a delete
+	// would do nothing.
+	if res.ExitCode != 0 {
+		return LinkState{}, fmt.Errorf("reading %s: %s", p, strings.TrimSpace(string(res.Stderr)))
+	}
 	lines := strings.SplitN(string(res.Stdout), "\n", 2)
 	if lines[0] != "link" || len(lines) < 2 {
 		return LinkState{}, nil

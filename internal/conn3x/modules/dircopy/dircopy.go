@@ -131,7 +131,12 @@ find . -type f -print0 | xargs -0 -r sha256sum -z --`, ssh.Quote(dest))
 	if string(head) != "present" {
 		return out, nil
 	}
+	// Each record ends in a NUL and one more NUL ends the list, so an empty
+	// directory's list is that NUL alone.
 	meta, sums, ok := bytes.Cut(body, []byte("\x00\x00"))
+	if !ok && len(body) > 0 && body[0] == 0 {
+		meta, sums, ok = nil, body[1:], true
+	}
 	if !ok {
 		return nil, fmt.Errorf("reading %s: unexpected output", dest)
 	}
