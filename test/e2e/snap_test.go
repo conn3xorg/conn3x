@@ -21,7 +21,11 @@ type snapVars struct {
 // in a container it mounts through squashfuse rather than the kernel.
 func TestSnap(t *testing.T) {
 	h := startHostWith(t, "ubuntu2404", "--privileged")
-	h.exec("", "sh", "-c", "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq squashfuse fuse snapd >/dev/null")
+	// Some CI runners refuse snapd's or fuse's install scripts even with
+	// --privileged, which says nothing about the snap step, so skip there.
+	if out, err := exec.Command("podman", "exec", h.container, "bash", "-o", "pipefail", "-c", "{ apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq squashfuse fuse snapd; } 2>&1 | tail -40").CombinedOutput(); err != nil {
+		t.Skipf("snapd doesn't install in this container, so the snap step needs a VM to test: %v\n%s", err, out)
+	}
 	h.exec("", "systemctl", "start", "snapd.socket", "snapd.service")
 	if out, err := exec.Command("podman", "exec", h.container, "timeout", "120", "snap", "wait", "system", "seed.loaded").CombinedOutput(); err != nil {
 		t.Skipf("snapd doesn't run in this container, so the snap step needs a VM to test: %v\n%s", err, out)
