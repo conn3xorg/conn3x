@@ -41,7 +41,10 @@ func TestMain(m *testing.M) {
 	conn3xBin = filepath.Join(dir, "conn3x")
 	_, here, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(here), "..", "..")
-	build := exec.Command("bash", "scripts/build-conn3x.sh", conn3xBin)
+	// CONN3X_E2E_BUILD_FLAGS adds go build flags, such as -cover for the
+	// nightly coverage run.
+	args := append([]string{"scripts/build-conn3x.sh", conn3xBin}, strings.Fields(os.Getenv("CONN3X_E2E_BUILD_FLAGS"))...)
+	build := exec.Command("bash", args...)
 	build.Dir = root
 	build.Stdout, build.Stderr = os.Stdout, os.Stderr
 	if err := build.Run(); err != nil {
