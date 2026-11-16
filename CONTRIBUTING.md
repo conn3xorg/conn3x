@@ -142,7 +142,7 @@ change with a `// CONN3X:` comment that explains why.
 
 ## Code style
 
-Go code follows [Effective Go](https://go.dev/doc/effective_go) and [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments). `gofmt` and `golangci-lint` enforce what they can, and CI runs both. Match the code around your change: its naming, its comments and how much it says.
+Go code follows [Effective Go](https://go.dev/doc/effective_go) and [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments). CI runs `gofmt` and `golangci-lint` and fails on what they find. Match the code around your change: its naming, its comments and how much it says.
 
 ## Commits
 
