@@ -138,7 +138,35 @@ func dialProxy(args []string, addr string) (*proxyConn, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting proxy_command %s: %w", args[0], err)
 	}
-	return &proxyConn{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, addr: proxyAddr(addr)}, nil
+	p := &proxyConn{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, addr: proxyAddr(addr)}
+	liveProxies.Lock()
+	liveProxies.m[p] = struct{}{}
+	liveProxies.Unlock()
+	return p, nil
+}
+
+// liveProxies are the proxy_command processes started and not yet closed,
+// whether or not their SSH handshake has finished, so CloseProxies can end
+// them all as Conn3x exits.
+var liveProxies = struct {
+	sync.Mutex
+	m map[*proxyConn]struct{}
+}{m: map[*proxyConn]struct{}{}}
+
+// CloseProxies ends every proxy_command still running, for when Conn3x is
+// about to exit. A proxy runs in its own process group, so nothing else
+// would stop one whose dial was still in flight: its connection never
+// reached a pool, so nothing closes it.
+func CloseProxies() {
+	liveProxies.Lock()
+	open := make([]*proxyConn, 0, len(liveProxies.m))
+	for p := range liveProxies.m {
+		open = append(open, p)
+	}
+	liveProxies.Unlock()
+	for _, p := range open {
+		_ = p.Close()
+	}
 }
 
 func (p *proxyConn) Read(b []byte) (int, error)  { return p.stdout.Read(b) }
@@ -149,6 +177,9 @@ func (p *proxyConn) Write(b []byte) (int, error) { return p.stdin.Write(b) }
 // closes.
 func (p *proxyConn) Close() error {
 	p.once.Do(func() {
+		liveProxies.Lock()
+		delete(liveProxies.m, p)
+		liveProxies.Unlock()
 		_ = p.stdin.Close()
 		killTree(p.cmd)
 		_ = p.cmd.Wait()

@@ -266,7 +266,13 @@ type pooledConn struct {
 var pool = struct {
 	sync.Mutex
 	conns map[string]*pooledConn
+	// ctx ends when ClosePool runs, so a dial still in flight stops:
+	// DialWait would otherwise retry it and start another proxy_command.
+	ctx    context.Context
+	cancel context.CancelFunc
 }{conns: map[string]*pooledConn{}}
+
+func init() { pool.ctx, pool.cancel = context.WithCancel(context.Background()) }
 
 // ClosePool closes every pooled connection, for when Conn3x is about to
 // exit. A connection through proxy_command then takes the proxy's process
@@ -277,7 +283,10 @@ func ClosePool() {
 	pool.Lock()
 	open := pool.conns
 	pool.conns = map[string]*pooledConn{}
+	cancel := pool.cancel
+	pool.ctx, pool.cancel = context.WithCancel(context.Background())
 	pool.Unlock()
+	cancel() // dials in flight stop, rather than retry
 	for _, e := range open {
 		select {
 		case <-e.ready:
@@ -287,6 +296,9 @@ func ClosePool() {
 		default: // still dialing, so nothing to close yet
 		}
 	}
+	// A dial still in flight has no connection to close yet, but its
+	// proxy_command is already running, in its own process group.
+	ssh.CloseProxies()
 }
 
 // defaultAgent is whether hosts run commands through the agent when
@@ -391,6 +403,7 @@ func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostCo
 	}
 	entry = &pooledConn{ready: make(chan struct{})}
 	pool.conns[key] = entry
+	poolCtx := pool.ctx
 	pool.Unlock()
 
 	wait := defaultConnectWait
@@ -406,7 +419,12 @@ func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostCo
 		}
 	}
 	start := time.Now()
-	client, err := ssh.DialWait(ctx, cfg, wait)
+	// The dial ends with the caller's context or the pool's, whichever
+	// ends first. The client doesn't keep it, so a finished dial is safe.
+	dialCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	defer context.AfterFunc(poolCtx, stop)()
+	client, err := ssh.DialWait(dialCtx, cfg, wait)
 	if err != nil {
 		entry.err = err
 		pool.Lock()

@@ -120,3 +120,31 @@ func TestProxyCloseKillsItsChildren(t *testing.T) {
 		t.Fatalf("Close took %s; it waited for the proxy's child", d)
 	}
 }
+
+// CloseProxies ends a proxy whose connection nothing else holds, as when
+// Conn3x exits with a dial still in flight, and Close takes it off the list.
+func TestCloseProxiesEndsTheOnesStillRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	p, err := dialProxy([]string{"sh", "-c", "cat"}, "web1:22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveProxies.Lock()
+	_, listed := liveProxies.m[p]
+	liveProxies.Unlock()
+	if !listed {
+		t.Fatal("a started proxy isn't listed")
+	}
+	CloseProxies()
+	if p.cmd.ProcessState == nil {
+		t.Fatal("the proxy is still running after CloseProxies")
+	}
+	liveProxies.Lock()
+	n := len(liveProxies.m)
+	liveProxies.Unlock()
+	if n != 0 {
+		t.Errorf("%d proxies still listed", n)
+	}
+}
