@@ -138,7 +138,9 @@ func (r *role) lengthWhen(n *yaml.Node) string {
 	name := m[1]
 	_, isList := r.lists[name]
 	d := r.defaults[name]
-	if !(isList && r.maps[name] == nil || r.mapFields[name] != nil || d != nil && !d.boolean && !d.number) {
+	list := isList && r.maps[name] == nil || r.mapFields[name] != nil
+	text := d != nil && !d.boolean && !d.number
+	if !list && !text {
 		return ""
 	}
 	return fmt.Sprintf("length(var.%s) %s %s", name, m[2], m[3])
