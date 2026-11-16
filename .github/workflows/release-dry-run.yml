@@ -7,6 +7,7 @@ on:
       - release.Containerfile
       - scripts/build-conn3x.sh
       - scripts/build-agent.sh
+      - scripts/sign-tag.sh
       - internal/conn3x/agent/payload/**
       - internal/conn3x/agent/payload.go
       - cmd/conn3x-agent/**
@@ -20,6 +21,9 @@ permissions:
 jobs:
   snapshot:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # the signed tag check below
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,3 +90,13 @@ jobs:
           sha256sum ./conn3x "$RUNNER_TEMP/conn3x-rebuild"
           cmp -s ./conn3x "$RUNNER_TEMP/conn3x-rebuild" \
             || { echo "the release binary differs between builds" >&2; exit 1; }
+      # The release signs its tag with gitsign. Sign one here the same way,
+      # with this workflow's identity, and check it; it's never pushed. A
+      # fork's pull request gets no OIDC token, so it skips this.
+      - name: The release tag can be signed and verified
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/sigstore/gitsign@v0.18.0
+          PATH="$RUNNER_TEMP/bin:$PATH" scripts/sign-tag.sh v0.0.0-dry-run HEAD \
+            "^https://github.com/$GITHUB_REPOSITORY/\.github/workflows/release-dry-run\.yml@refs/pull/"
+          git tag -d v0.0.0-dry-run

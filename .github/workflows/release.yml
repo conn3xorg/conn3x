@@ -59,19 +59,25 @@ jobs:
         run: |
           gh api repos/jamesconwaydev/winget-pkgs/git/blobs -f content=preflight --silent \
             || { echo "WINGET_TOKEN cannot write to jamesconwaydev/winget-pkgs" >&2; exit 1; }
-      - name: Tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$GITHUB_SHA"
-          git fetch --tags origin
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           # A release is built from the checkout and the module proxy only,
           # never from a build cache that an earlier run left behind.
           cache: false
+      # The tag is signed with this workflow's own identity, through
+      # Sigstore, and checked before it's pushed; nothing pushes an
+      # unsigned one.
+      - name: Install gitsign
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/sigstore/gitsign@v0.18.0 && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          scripts/sign-tag.sh "v$VERSION" "$GITHUB_SHA" \
+            "^https://github.com/$GITHUB_REPOSITORY/\.github/workflows/release\.yml@refs/heads/main\$"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "refs/tags/v$VERSION"
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
