@@ -1,0 +1,29 @@
+data "conn3x_host" "box" {
+  read_local_facts = true
+
+  ssh {
+    host             = "127.0.0.1"
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+}
+
+circuit "facts" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tag" {
+    file {
+      path    = "/etc/conn3x-rack"
+      content = "${data.conn3x_host.box.local_facts.rack.row}${data.conn3x_host.box.local_facts.rack.unit} ${data.conn3x_host.box.local_facts.owner.team.name} ${data.conn3x_host.box.local_facts.dyn.zone}\n"
+    }
+  }
+}

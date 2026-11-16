@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
@@ -33,6 +34,14 @@ func hostDataSchema() providers.Schema {
 			"allow_windows": {
 				Type: cty.Bool, Optional: true,
 				Description: "Experimental. Let this read succeed on Windows Server. Without it a Windows host is an error at plan, because a circuit written for Linux would otherwise take it for something it isn't.",
+			},
+			"read_local_facts": {
+				Type: cty.Bool, Optional: true,
+				Description: "Read local_facts too. Off by default, because an executable fact file runs on the host at every plan.",
+			},
+			"local_facts": {
+				Type: cty.DynamicPseudoType, Computed: true,
+				Description: "With read_local_facts, the facts the host keeps about itself, by file name without its extension: each /etc/conn3x/facts.d/*.json, and each /etc/ansible/facts.d/*.fact, read as JSON or INI as Ansible reads it. A name in /etc/conn3x/facts.d wins. An executable file's output is read instead, and it has 10 seconds to finish. Null without read_local_facts, and on Windows.",
 			},
 			"windows": {
 				Type: windowsFactsType, Computed: true,
@@ -63,8 +72,38 @@ func readHostData(ctx context.Context, req providers.ReadDataSourceRequest) prov
 	vals["os_family"], vals["os_id"], vals["os_version"] = cty.StringVal(f.Family), cty.StringVal(f.ID), cty.StringVal(f.Version)
 	vals["arch"], vals["ipv4"] = cty.StringVal(f.Arch), cty.StringVal(f.IPv4)
 	vals["cpus"], vals["memory_mb"] = cty.NumberIntVal(int64(f.CPUs)), cty.NumberIntVal(int64(f.MemoryMB))
+	vals["local_facts"] = cty.NullVal(cty.DynamicPseudoType)
+	if rl := req.Config.GetAttr("read_local_facts"); known(rl) && rl.True() && f.Family != "windows" {
+		lf, err := readLocalFacts(ctx, h)
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(attrError("read_local_facts", err.Error()))
+			return resp
+		}
+		vals["local_facts"] = lf
+	}
 	resp.State = cty.ObjectVal(vals)
 	return resp
+}
+
+// readLocalFacts is a host's local facts as an object, by fact name.
+func readLocalFacts(ctx context.Context, r modules.Runner) (cty.Value, error) {
+	raw, err := facts.Local(ctx, r)
+	if err != nil {
+		return cty.NilVal, err
+	}
+	obj := map[string]cty.Value{}
+	for name, b := range raw {
+		t, err := ctyjson.ImpliedType(b)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("local fact %s: %w", name, err)
+		}
+		v, err := ctyjson.Unmarshal(b, t)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("local fact %s: %w", name, err)
+		}
+		obj[name] = v
+	}
+	return cty.ObjectVal(obj), nil
 }
 
 var windowsFactsType = cty.Object(map[string]cty.Type{
