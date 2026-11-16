@@ -1043,3 +1043,29 @@ func TestRoleWhenCombinations(t *testing.T) {
 		}
 	}
 }
+
+// A handler's state from a role default follows the variable, which a
+// validation keeps to restarted or reloaded, the two a handler does.
+func TestRoleHandlerStateFromDefault(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "app_restart_state: restarted\napp_odd_state: started\n",
+		"tasks/main.yml":    "- copy: {dest: /etc/app.conf, content: x}\n  notify: restart app\n- copy: {dest: /etc/odd.conf, content: x}\n  notify: odd\n",
+		"handlers/main.yml": "- name: restart app\n  service: {name: app, state: \"{{ app_restart_state }}\"}\n- name: odd\n  service: {name: odd, state: \"{{ app_odd_state }}\"}\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
+	for _, want := range []string{
+		`action = var.app_restart_state == "reloaded" ? "reload" : "restart"`,
+		`condition     = contains(["restarted", "reloaded"], var.app_restart_state)`,
+	} {
+		if !strings.Contains(hcl+vars, want) {
+			t.Errorf("missing %s in\n%s\n%s", want, hcl, vars)
+		}
+	}
+	// started isn't something a handler does, so that one stays for review.
+	if !strings.Contains(hcl, `Task "odd" (handlers/main.yml line 3) is a handler that doesn't restart or reload a service`) || strings.Contains(vars, "var.app_odd_state)") {
+		t.Errorf("odd:\n%s\n%s", hcl, vars)
+	}
+}

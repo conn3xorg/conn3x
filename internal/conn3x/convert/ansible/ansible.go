@@ -532,6 +532,14 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 	}
 	mod, args := moduleOf(t)
 	action := map[string]string{"restarted": "restart", "reloaded": "reload"}[scalar(args["state"])]
+	// A state from a role default, restarted or reloaded in the role,
+	// follows the variable, which is checked to stay one of the two.
+	stateVar := ""
+	if m := jinja.FindStringSubmatch(scalar(args["state"])); action == "" && m != nil && m[0] == strings.TrimSpace(scalar(args["state"])) {
+		if d := c.roleDefault(m[1]); d != nil && (d.value == "restarted" || d.value == "reloaded") {
+			stateVar, action = m[1], "var"
+		}
+	}
 	// name=x state=restarted text also carries _raw, which tasks ignore too.
 	n := len(args)
 	if _, raw := args["_raw"]; raw {
@@ -543,7 +551,11 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 	}
 	in := c.input(mod, args, vars, nil)
 	in.ignore("state")
-	svc := []step{{attrs: []attr{s("name", in.str("name")), s("action", action)}}}
+	act := s("action", action)
+	if stateVar != "" {
+		act = attr{key: "action", raw: fmt.Sprintf(`var.%s == "reloaded" ? "reload" : "restart"`, stateVar)}
+	}
+	svc := []step{{attrs: []attr{s("name", in.str("name")), act}}}
 	reason := in.problem
 	if reason == "" {
 		reason = resolveMarks(svc)
@@ -554,7 +566,18 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 		c.issue(cb, hname, h, reason)
 		return nil, ""
 	}
+	if stateVar != "" {
+		c.role.handlerState[stateVar] = true
+	}
 	return svc[0].attrs, hname
+}
+
+// roleDefault is the role default called name, or nil outside a role.
+func (c *converter) roleDefault(name string) *roleDefault {
+	if c.role == nil {
+		return nil
+	}
+	return c.role.defaults[name]
 }
 
 // input is what a module reads a task's arguments through.
