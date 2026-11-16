@@ -133,9 +133,10 @@ jobs:
           fi
       - name: Test Conn3x's own packages with the race detector
         # Nightly only: it triples the time, and a race rarely hides from
-        # a run a day.
+        # a run a day. Twice in one process and shuffled, so a test that
+        # leaves state behind for the next one fails here too.
         if: github.event_name == 'schedule'
-        run: go test -race -count=1 ./internal/conn3x/... ./cmd/conn3x/...
+        run: go test -race -count=2 -shuffle=on ./internal/conn3x/... ./cmd/conn3x/...
       - name: Test as root
         # bash, for pipefail: a failed test mustn't hide behind tee.
         shell: bash
