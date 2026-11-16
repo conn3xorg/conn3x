@@ -30,5 +30,18 @@ linters:
       - ^internal/states/statefile/version\d+_upgrade\.go$
       - ^website/
 formatters:
+  # gofmt is enforced on everything Conn3x writes. The files below came from
+  # OpenTofu unformatted; formatting them here would conflict with every
+  # upstream change to them.
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: false # -s would rewrite 54 OpenTofu files
   exclusions:
     generated: lax
+    paths:
+      - ^internal/builtin/providers/tf/provider\.go$
+      - ^internal/command/jsonprovider/provider(_test)?\.go$
+      - ^internal/configs/test_file_test\.go$
+      - ^internal/provider-simple(-v6)?/provider\.go$

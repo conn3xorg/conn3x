@@ -69,9 +69,9 @@ func TestDecryptRefuses(t *testing.T) {
 	key := ids(t, "test-key.txt")
 	for want, file := range map[string]string{
 		"isn't encrypted, though": strings.Replace(src, "db_password: ENC[", "db_password: x\nold: ENC[", 1),
-		"MAC doesn't match":        strings.Replace(src, "plain_unencrypted: visible", "plain_unencrypted: changed", 1),
-		"doesn't decrypt":          strings.Replace(src, "db_password:", "db_passwords:", 1),
-		"no sops block":            "a: 1\n",
+		"MAC doesn't match":       strings.Replace(src, "plain_unencrypted: visible", "plain_unencrypted: changed", 1),
+		"doesn't decrypt":         strings.Replace(src, "db_password:", "db_passwords:", 1),
+		"no sops block":           "a: 1\n",
 	} {
 		if _, err := Decrypt([]byte(file), key); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("want %q, got %v", want, err)

@@ -28,7 +28,9 @@ func TestSSHKeypair(t *testing.T) {
 			w.mustConn3x("init", "-no-color")
 			w.mustConn3x("apply", "-auto-approve", "-no-color")
 			const key = "/home/deploy/.ssh/id_deploy"
-			pub := func() string { return strings.TrimSpace(h.exec("", "sh", "-c", "ssh-keygen -y -f "+key+" | cut -d' ' -f1,2")) }
+			pub := func() string {
+				return strings.TrimSpace(h.exec("", "sh", "-c", "ssh-keygen -y -f "+key+" | cut -d' ' -f1,2"))
+			}
 			if got := strings.TrimSpace(h.exec("", "stat", "-c", "%a %U", key, key+".pub")); got != "600 deploy\n644 deploy" {
 				t.Fatalf("files are %q", got)
 			}

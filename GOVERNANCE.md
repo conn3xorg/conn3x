@@ -18,6 +18,15 @@ Decisions happen in public, in issues, Discussions and pull requests.
   source project. Nobody can pay for a feature that's held back from
   everyone else.
 
+## Who does what
+
+| Role | Who | How |
+| --- | --- | --- |
+| Final decisions | James Conway ([@jamesconwaydev](https://github.com/jamesconwaydev)) | In public, in issues, Discussions and pull requests |
+| Security response | James Conway | Reports through [private vulnerability reporting](https://github.com/conn3xorg/conn3x/security/advisories/new) or security@conn3x.org, as [SECURITY.md](SECURITY.md) describes |
+| Releases | James Conway | The release workflow builds, signs (Sigstore, keyless) and attests every release from `main` |
+| Second review of the code that logs in to hosts, runs as root or builds releases | Foothills Digital ([@foothillsdigital](https://github.com/foothillsdigital)) | Required by [CODEOWNERS](.github/CODEOWNERS) for those paths |
+
 ## Maintainers
 
 Anyone who contributes steadily and reviews other people's work can be

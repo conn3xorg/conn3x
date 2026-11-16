@@ -257,8 +257,8 @@ func TestStaticRoute(t *testing.T) {
 func TestForShell(t *testing.T) {
 	for in, want := range map[string]string{
 		`set system login user ops authentication encrypted-password "$6$salt$hash"`: `set system login user ops authentication encrypted-password '$6$salt$hash'`,
-		`set interfaces ethernet eth0 description "uplink to core"`:                 `set interfaces ethernet eth0 description 'uplink to core'`,
-		`set system host-name r1`:                                                   `set system host-name r1`,
+		`set interfaces ethernet eth0 description "uplink to core"`:                  `set interfaces ethernet eth0 description 'uplink to core'`,
+		`set system host-name r1`: `set system host-name r1`,
 	} {
 		if got := forShell(in); got != want {
 			t.Errorf("forShell(%q) = %q", in, got)

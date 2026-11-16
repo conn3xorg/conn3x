@@ -140,6 +140,10 @@ Keep changes to upstream files to a minimum, since every one of them has to
 be carried through each sync. If you really need to touch one, mark the
 change with a `// CONN3X:` comment that explains why.
 
+## Code style
+
+Go code follows [Effective Go](https://go.dev/doc/effective_go) and [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments). `gofmt` and `golangci-lint` enforce what they can, and CI runs both. Match the code around your change: its naming, its comments and how much it says.
+
 ## Commits
 
 Every commit needs a [Developer Certificate of Origin](https://developercertificate.org/)
@@ -168,6 +172,18 @@ just what you did.
 - CI has to pass: `lint`, `test`, `build`, and `DCO`.
 - PRs are squash-merged, so the PR title becomes the commit subject.
 - AI tools are welcome. You're responsible for every line, and you need to have run it; [AI_POLICY.md](AI_POLICY.md) has the details.
+
+## Reviewing
+
+A reviewer checks, before approving:
+
+- **It does what it says.** The PR description matches the change, and a bug fix has a test that fails without it.
+- **Tests and docs.** New behaviour is tested, end to end where it touches a host, and the docs change in the same PR.
+- **Security.** Anything that runs on a host, builds a command, handles a secret or writes as root gets a careful read: quoting (`ssh.Quote`), host key checks, nothing secret in logs, plans or state. Changes under the paths in [CODEOWNERS](.github/CODEOWNERS) need the second owner's approval.
+- **Upstream files.** A change to a file that came from OpenTofu goes through a hook or a brand patch, not an edit in place, so the next OpenTofu release still merges.
+- **CI is green**, sign-offs included.
+
+Reviews are kind and specific: say what you'd change and why, and approve when it's right, not when it's perfect.
 
 ## When a pull request goes quiet
 
