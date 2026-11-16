@@ -111,3 +111,51 @@ func TestRoleProbeRefusals(t *testing.T) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// A probe whose command a shell would read, or that fails other than as
+// Ansible's false or true, or sets a keyword a data source can't carry,
+// stays for review and says why.
+func TestRoleProbeStays(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml": `- name: Piped
+  command: php -v | head -n 1
+  changed_when: false
+  register: php_v
+- name: Fails on text
+  command: which php
+  changed_when: false
+  failed_when: "'error' in php.stderr"
+  register: php
+- name: Errors not ignored
+  command: which nginx
+  changed_when: false
+  ignore_errors: false
+  register: nginx
+- name: Becomes
+  command: which apache2
+  changed_when: false
+  become: true
+  register: apache
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(res.Files["main.circuit.hcl"]), "conn3x_command") {
+		t.Errorf("no probe converts:\n%s", res.Files["main.circuit.hcl"])
+	}
+	var got []string
+	for _, r := range res.Review {
+		got = append(got, r.Task+": "+r.Reason)
+	}
+	for i, want := range []string{
+		"Piped: uses characters a shell reads",
+		"Fails on text: uses a failed_when other than false",
+		"Errors not ignored: sets ignore_errors to something other than true",
+		"Becomes: sets become on a probe, which the converter can't carry to a data source yet",
+	} {
+		if i >= len(got) || !strings.Contains(got[i], want) {
+			t.Errorf("review %d: want %q in %q", i, want, got)
+		}
+	}
+}
