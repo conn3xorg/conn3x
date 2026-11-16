@@ -30,6 +30,28 @@ in one plan. [Here's why that matters.](https://conn3x.org/blog/why-conn3x)
   <img alt="conn3x applying a circuit, then planning a fix for a hand-edited file" src=".github/assets/demo.gif" width="100%">
 </p>
 
+## What a plan looks like
+
+Somebody changed nginx's port by hand on `web1`. The next `conn3x plan` reads the file back, shows the line that moved, and queues the reload that goes with it:
+
+```text
+  # conn3x_file.web__config["web1"] will be updated in-place
+  ~ resource "conn3x_file" "web__config" {
+      ~ content    = <<-EOT
+            server {
+          -   listen 8080;
+          +   listen 80;
+              server_name web1;
+              root /var/www/html;
+            }
+        EOT
+        id         = "127.0.0.1:40477:/etc/nginx/conf.d/web.conf"
+
+Plan: 1 to add, 1 to change, 1 to destroy.
+```
+
+That's a real run, trimmed, of a circuit like the [quick start](#quick-start) below. The add and destroy are the `reload` handler: it's replaced so it runs once the file it watches has changed. Nothing touches the server until you run `conn3x apply`.
+
 ## Install
 
 Linux, macOS and Windows, amd64 and arm64. Every release is signed and comes with SBOMs;
