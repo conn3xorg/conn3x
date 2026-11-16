@@ -27,6 +27,20 @@ Decisions happen in public, in issues, Discussions and pull requests.
 | Releases | James Conway | The release workflow builds, signs (Sigstore, keyless) and attests every release from `main` |
 | Second review of the code that logs in to hosts, runs as root or builds releases | Foothills Digital ([@foothillsdigital](https://github.com/foothillsdigital)) | Required by [CODEOWNERS](.github/CODEOWNERS) for those paths |
 
+## If one of us can't continue
+
+Two people own the [conn3xorg](https://github.com/conn3xorg) organization:
+James Conway and Foothills Digital. Either one alone can triage and close
+issues, merge pull requests and run the release workflow. Signing is
+keyless, through Sigstore, so there's no key to hand over.
+
+Some things still hang off James's account: the tokens that publish to
+Homebrew, Scoop, winget and the package repositories, the winget fork, and
+the conn3x.org domain. If James stopped, Foothills Digital would replace
+those tokens with their own, a few minutes' work in the `release`
+environment's settings, and could release within a week. The website would
+need the domain moved.
+
 ## Maintainers
 
 Anyone who contributes steadily and reviews other people's work can be
