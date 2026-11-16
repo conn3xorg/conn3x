@@ -44,12 +44,28 @@ func TestEOSRejectsShellOnlySSHSettings(t *testing.T) {
 	if ok.Diagnostics.HasErrors() {
 		t.Fatal(ok.Diagnostics.Err())
 	}
-	for attr, v := range map[string]cty.Value{"agent": cty.True, "become": cty.True, "become_password_file": cty.StringVal("pw")} {
+	// become is enable on a switch, so a password file needs it.
+	for name, set := range map[string]map[string]cty.Value{
+		"agent":                           {"agent": cty.True},
+		"become_password_file alone":      {"become_password_file": cty.StringVal("pw")},
+		"become_password_file, no become": {"become": cty.False, "become_password_file": cty.StringVal("pw")},
+	} {
 		resp := p.ValidateResourceConfig(context.Background(), providers.ValidateResourceConfigRequest{
-			TypeName: "conn3x_eos_vlan", Config: eosStep("conn3x_eos_vlan", vlan, map[string]cty.Value{attr: v}),
+			TypeName: "conn3x_eos_vlan", Config: eosStep("conn3x_eos_vlan", vlan, set),
 		})
 		if !resp.Diagnostics.HasErrors() || !strings.Contains(resp.Diagnostics.Err().Error(), "EOS") {
-			t.Errorf("%s: %v", attr, resp.Diagnostics.Err())
+			t.Errorf("%s: %v", name, resp.Diagnostics.Err())
+		}
+	}
+	for name, set := range map[string]map[string]cty.Value{
+		"become":                    {"become": cty.True},
+		"become with password file": {"become": cty.True, "become_password_file": cty.StringVal("pw")},
+	} {
+		resp := p.ValidateResourceConfig(context.Background(), providers.ValidateResourceConfigRequest{
+			TypeName: "conn3x_eos_vlan", Config: eosStep("conn3x_eos_vlan", vlan, set),
+		})
+		if resp.Diagnostics.HasErrors() {
+			t.Errorf("%s is enable on a switch: %v", name, resp.Diagnostics.Err())
 		}
 	}
 	off := p.ValidateResourceConfig(context.Background(), providers.ValidateResourceConfigRequest{

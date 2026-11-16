@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,9 +42,7 @@ func validateEOSSSH(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	for attr, why := range map[string]string{
-		"agent":                "The conn3x agent needs a shell, and an EOS login has the switch's CLI instead. Remove agent from this ssh block.",
-		"become":               "EOS has no sudo. Log in as a user with privilege 15 (\"username x privilege 15 role network-admin\") on a switch with \"aaa authorization exec default local\", so the login starts privileged, and remove become from this ssh block.",
-		"become_password_file": "EOS has no sudo, so there is no password to give it. Remove become_password_file from this ssh block.",
+		"agent": "The conn3x agent needs a shell, and an EOS login has the switch's CLI instead. Remove agent from this ssh block.",
 	} {
 		v := conn.GetAttr(attr)
 		if v.IsNull() || !v.IsKnown() || (v.Type() == cty.Bool && v.False()) {
@@ -51,6 +50,11 @@ func validateEOSSSH(cfg cty.Value) tfdiags.Diagnostics {
 		}
 		diags = diags.Append(tfdiags.AttributeValue(tfdiags.Error, "Invalid ssh setting for an EOS switch", why,
 			cty.GetAttrPath("ssh").GetAttr(attr)))
+	}
+	if f, b := conn.GetAttr("become_password_file"), conn.GetAttr("become"); known(f) && !f.IsNull() && (!known(b) || b.IsNull() || b.False()) {
+		diags = diags.Append(tfdiags.AttributeValue(tfdiags.Error, "Invalid ssh setting for an EOS switch",
+			"become_password_file is the enable password, which is only sent with become = true. Set become, or remove become_password_file.",
+			cty.GetAttrPath("ssh").GetAttr("become_password_file")))
 	}
 	if v := optional(conn, "confirm_after"); known(v) {
 		if d, err := time.ParseDuration(v.AsString()); err == nil {
@@ -78,10 +82,43 @@ func validateNotEOS(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
+// eosConn is the pooled connection to a switch, and the Device its EOS
+// commands go through: the login itself, or, with become, enable first.
+type eosConn struct {
+	*hostConn
+	dev eos.Device
+}
+
 // eosDevice returns the pooled connection to a switch. It never attaches the
-// agent, whatever CONN3X_AGENT says.
-func eosDevice(ctx context.Context, conn cty.Value) (*hostConn, error) {
-	return pooled(ctx, conn, 0)
+// agent, whatever CONN3X_AGENT says. With become, the login may start
+// unprivileged: each command goes through enable, with the password from
+// become_password_file.
+func eosDevice(ctx context.Context, conn cty.Value) (*eosConn, error) {
+	h, err := pooled(ctx, conn, 0)
+	if err != nil {
+		return nil, err
+	}
+	dev, err := eosEnable(h.client, conn)
+	if err != nil {
+		return nil, err
+	}
+	return &eosConn{hostConn: h, dev: dev}, nil
+}
+
+// eosEnable wraps d in enable when the ssh block sets become.
+func eosEnable(d eos.Device, conn cty.Value) (eos.Device, error) {
+	if b := conn.GetAttr("become"); !known(b) || b.IsNull() || b.False() {
+		return d, nil
+	}
+	e := eos.Enable{Device: d}
+	if file := stringOr(conn.GetAttr("become_password_file"), ""); file != "" {
+		raw, err := os.ReadFile(expandHome(file))
+		if err != nil {
+			return nil, fmt.Errorf("reading become_password_file: %w", err)
+		}
+		e.Password = []byte(strings.TrimRight(string(raw), "\r\n"))
+	}
+	return e, nil
 }
 
 // confirmAfter is the ssh block's confirm_after, already checked by
@@ -101,7 +138,11 @@ func eosReconnect(conn cty.Value) func(context.Context) (eos.Device, error) {
 		if err != nil {
 			return nil, err
 		}
-		return ssh.Dial(ctx, cfg)
+		c, err := ssh.Dial(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return eosEnable(c, conn)
 	}
 }
 
@@ -144,7 +185,7 @@ func (k eosKind) read(ctx context.Context, req providers.ReadResourceRequest) pr
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	running, err := eos.RunningConfig(ctx, h.client)
+	running, err := eos.RunningConfig(ctx, h.dev)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("eos_%s: %w", k.name, err))
 		return resp
@@ -187,7 +228,7 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	}
 	circuit := eosCircuit(target)
 	st := stagedOn(h)
-	unlock, err := st.turn(ctx, h, circuit, lockHost(h, "eos"))
+	unlock, err := st.turn(ctx, h, circuit, lockHost(h.hostConn, "eos"))
 	defer func() { unlock() }()
 	if err != nil {
 		return fail(err)
@@ -198,9 +239,9 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	defer func() { st.touched = time.Now() }()
 	var base string
 	if st.session != nil {
-		base, err = st.session.Config(ctx, h.client)
+		base, err = st.session.Config(ctx, h.dev)
 	} else {
-		base, err = eos.RunningConfig(ctx, h.client)
+		base, err = eos.RunningConfig(ctx, h.dev)
 	}
 	if err != nil {
 		return fail(st.abort(ctx, h, err))
@@ -219,7 +260,7 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 	switch {
 	case len(cmds) == 0:
 	case removing && st.session == nil && !st.batch[circuit]:
-		diff, err := eos.Apply(ctx, h.client, eosReconnect(conn), base, cmds, confirmAfter(conn))
+		diff, err := eos.Apply(ctx, h.dev, eosReconnect(conn), base, cmds, confirmAfter(conn))
 		if diff != "" {
 			log.Printf("[INFO] conn3x: eos_%s on %s: lines added:\n%s", k.name, h.host, eos.Mask(diff))
 		}
@@ -228,12 +269,12 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 		}
 	default:
 		if st.session == nil {
-			if st.session, err = eos.Open(ctx, h.client, base); err != nil {
+			if st.session, err = eos.Open(ctx, h.dev, base); err != nil {
 				return fail(err)
 			}
 			st.owner = circuit
 		}
-		if err := st.session.Add(ctx, h.client, cmds); err != nil {
+		if err := st.session.Add(ctx, h.dev, cmds); err != nil {
 			return fail(st.abort(ctx, h, err))
 		}
 		if removing {
@@ -248,9 +289,9 @@ func (k eosKind) apply(ctx context.Context, req providers.ApplyResourceChangeReq
 
 // staged is the config session one switch's steps are adding to in this
 // run. The built-in provider runs in-process, so every step and commit of
-// a run sees the same one. Callers hold lockHost(h, "eos").
+// a run sees the same one. Callers hold lockHost(h.hostConn, "eos").
 type staged struct {
-	h        *hostConn
+	h        *eosConn
 	session  *eos.Session     // nil: nothing staged yet
 	failed   map[string]error // by circuit: its session was aborted, and nothing more of it goes in
 	removals [][]string       // removals in the session: their steps are already forgotten
@@ -287,9 +328,9 @@ func eosCircuit(v cty.Value) string {
 }
 
 // turn waits until the switch has no session of another circuit's. The
-// caller holds lockHost(h, "eos") through unlock, which turn gives up
+// caller holds lockHost(h.hostConn, "eos") through unlock, which turn gives up
 // while it waits; it returns the unlock to call in the end.
-func (st *staged) turn(ctx context.Context, h *hostConn, circuit string, unlock func()) (func(), error) {
+func (st *staged) turn(ctx context.Context, h *eosConn, circuit string, unlock func()) (func(), error) {
 	for st.session != nil && st.owner != circuit {
 		if idle := time.Since(st.touched); idle > eosTurnIdle {
 			return unlock, fmt.Errorf("not applied: circuit %q has lines waiting on %s that it has neither committed nor added to for %s, so this circuit's turn on the switch never came. %q may have stopped at an error, or its next step may be waiting on something slow that isn't on the switch. Apply again once it has committed or its error is fixed", st.owner, h.host, eosTurnIdle, st.owner)
@@ -300,7 +341,7 @@ func (st *staged) turn(ctx context.Context, h *hostConn, circuit string, unlock 
 			return func() {}, ctx.Err()
 		case <-time.After(eosTurnPoll):
 		}
-		unlock = lockHost(h, "eos")
+		unlock = lockHost(h.hostConn, "eos")
 	}
 	return unlock, nil
 }
@@ -312,7 +353,7 @@ var stagedSessions = struct {
 	m map[string]*staged // rootKey
 }{m: map[string]*staged{}}
 
-func stagedOn(h *hostConn) *staged {
+func stagedOn(h *eosConn) *staged {
 	stagedSessions.Lock()
 	defer stagedSessions.Unlock()
 	st, ok := stagedSessions.m[h.rootKey]
@@ -327,11 +368,11 @@ func stagedOn(h *hostConn) *staged {
 // marks its circuit failed on the switch for the rest of the run. With
 // nothing staged, it returns err as it is. Removals in it are made live on
 // their own, since their steps are already gone from state.
-func (st *staged) abort(ctx context.Context, h *hostConn, err error) error {
+func (st *staged) abort(ctx context.Context, h *eosConn, err error) error {
 	if st.session == nil {
 		return err
 	}
-	if abortErr := st.session.Abort(ctx, h.client); abortErr != nil {
+	if abortErr := st.session.Abort(ctx, h.dev); abortErr != nil {
 		err = fmt.Errorf("%w; %v", err, abortErr)
 	} else {
 		if st.committed {
@@ -352,7 +393,7 @@ func (st *staged) abort(ctx context.Context, h *hostConn, err error) error {
 // a session of their own: OpenTofu has already forgotten their steps, so
 // the switch must lose those lines too. It returns err, saying what became
 // of them, and whether the switch still has them.
-func (st *staged) salvage(ctx context.Context, h *hostConn, removed [][]string, err error) (_ error, left bool) {
+func (st *staged) salvage(ctx context.Context, h *eosConn, removed [][]string, err error) (_ error, left bool) {
 	if len(removed) == 0 {
 		return err, false
 	}
@@ -369,21 +410,21 @@ func (st *staged) salvage(ctx context.Context, h *hostConn, removed [][]string, 
 		return fmt.Errorf("%w. Removals in that session were dropped as well, and Conn3x has already forgotten them, so once the other run is done, remove these by hand: %s", err, strings.Join(lines, " | ")), true
 	}
 	again := func() error {
-		running, err := eos.RunningConfig(ctx, h.client)
+		running, err := eos.RunningConfig(ctx, h.dev)
 		if err != nil {
 			return err
 		}
-		s, err := eos.Open(ctx, h.client, running)
+		s, err := eos.Open(ctx, h.dev, running)
 		if err != nil {
 			return err
 		}
 		for _, cmds := range removed {
-			if err := s.Add(ctx, h.client, cmds); err != nil {
-				_ = s.Abort(ctx, h.client)
+			if err := s.Add(ctx, h.dev, cmds); err != nil {
+				_ = s.Abort(ctx, h.dev)
 				return err
 			}
 		}
-		_, err = s.Commit(ctx, h.client, eosReconnect(st.conn), confirmAfter(st.conn))
+		_, err = s.Commit(ctx, h.dev, eosReconnect(st.conn), confirmAfter(st.conn))
 		return err
 	}
 	if againErr := again(); againErr != nil {
@@ -404,7 +445,7 @@ func abortStaged() {
 		if st.session != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			log.Printf("[WARN] conn3x: aborting config session %s on %s, which no conn3x_eos_commit made live", st.session.Name, st.h.host)
-			if err := st.session.Abort(ctx, st.h.client); err != nil {
+			if err := st.session.Abort(ctx, st.h.dev); err != nil {
 				log.Printf("[WARN] conn3x: %v", err)
 				stagedLeft = append(stagedLeft, fmt.Errorf("%s: %w", st.h.host, err))
 			} else if len(st.removals) > 0 {
@@ -621,7 +662,7 @@ func readEOSDevice(ctx context.Context, req providers.ReadDataSourceRequest) pro
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	f, err := eos.ReadFacts(ctx, h.client)
+	f, err := eos.ReadFacts(ctx, h.dev)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("conn3x_eos_device: %w", err))
 		return resp
@@ -705,7 +746,7 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer lockHost(h, "eos")()
+	defer lockHost(h.hostConn, "eos")()
 	st := stagedOn(h)
 	circuit := eosCircuit(obj)
 	if destroying {
@@ -724,7 +765,7 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 		return resp // no step of this circuit changed anything on this switch
 	}
 	if dir := stringOr(obj.GetAttr("backup_dir"), ""); dir != "" {
-		before, err := eos.RunningConfig(ctx, h.client)
+		before, err := eos.RunningConfig(ctx, h.dev)
 		if err == nil {
 			err = writeDeviceBackup(dir, h.host, before)
 		}
@@ -735,7 +776,7 @@ func applyEOSCommit(ctx context.Context, req providers.ApplyResourceChangeReques
 	}
 	s, removed := st.session, st.removals
 	st.session, st.removals = nil, nil // committed or rolling back: either way, gone
-	diff, err := s.Commit(ctx, h.client, eosReconnect(conn), confirmAfter(conn))
+	diff, err := s.Commit(ctx, h.dev, eosReconnect(conn), confirmAfter(conn))
 	if diff != "" {
 		log.Printf("[INFO] conn3x: eos commit on %s: lines added:\n%s", h.host, eos.Mask(diff))
 	}
@@ -783,7 +824,7 @@ func applyEOSRemovals(ctx context.Context, req providers.ApplyResourceChangeRequ
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	defer lockHost(h, "eos")()
+	defer lockHost(h.hostConn, "eos")()
 	st := stagedOn(h)
 	circuit := eosCircuit(req.PriorState)
 	delete(st.batch, circuit) // a removal after this, out of order, commits on its own
@@ -796,7 +837,7 @@ func applyEOSRemovals(ctx context.Context, req providers.ApplyResourceChangeRequ
 	}
 	s, removed := st.session, st.removals
 	st.session, st.removals = nil, nil
-	diff, err := s.Commit(ctx, h.client, eosReconnect(conn), confirmAfter(conn))
+	diff, err := s.Commit(ctx, h.dev, eosReconnect(conn), confirmAfter(conn))
 	if diff != "" {
 		log.Printf("[INFO] conn3x: eos removals on %s: lines added:\n%s", h.host, eos.Mask(diff))
 	}

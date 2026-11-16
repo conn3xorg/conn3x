@@ -112,9 +112,8 @@ func (e *commandRefusedError) Error() string { return e.message }
 var echo = regexp.MustCompile(`(?m)^> .*\n?`)
 
 // ErrNotPrivileged is what a command reports when the login lands in
-// unprivileged mode. Conn3x never sends enable: on a switch with an enable
-// password, enable would read the next line of the script as the password.
-var ErrNotPrivileged = errors.New(`this login isn't privileged. Give the user privilege 15 ("username ops privilege 15 role network-admin") and add "aaa authorization exec default local", so an SSH login starts in privileged mode`)
+// unprivileged mode. Conn3x sends enable only through Enable, with become.
+var ErrNotPrivileged = errors.New(`this login isn't privileged. Give the user privilege 15 ("username ops privilege 15 role network-admin") and add "aaa authorization exec default local", so an SSH login starts in privileged mode, or set become = true in the ssh block, with become_password_file when the switch has an enable password`)
 
 // run sends cmd, with stdin, and returns what it printed. EOS exits non-zero
 // when it refuses any line, and that is an error naming its own message.

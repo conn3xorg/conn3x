@@ -1,0 +1,19 @@
+circuit "eos" {
+  hosts = { leaf1 = "{{.Host}}" }
+
+  ssh {
+    port                 = {{.Port}}
+    user                 = "ops"
+    private_key_file     = "{{.KeyFile}}"
+    known_hosts_file     = "{{.KnownHosts}}"
+    become               = true
+    become_password_file = "{{.PasswordFile}}"
+  }
+
+  step "vlan" {
+    eos_vlan {
+      vlan_id = 472
+      name    = "via-enable"
+    }
+  }
+}
