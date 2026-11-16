@@ -71,3 +71,18 @@ jobs:
             cmp -s "internal/conn3x/agent/payload/$f" "$RUNNER_TEMP/agents/$f" \
               || { echo "linux/$arch agent differs between builds" >&2; exit 1; }
           done
+      # The release binary itself, built again from another checkout with an
+      # empty cache, must come out byte for byte the same, so anyone can
+      # check a release against its source.
+      - name: The release binary builds reproducibly
+        run: |
+          v=$(jq -r .version dist/metadata.json)
+          git worktree add --detach "$RUNNER_TEMP/rebuild" HEAD
+          cd "$RUNNER_TEMP/rebuild"
+          GOCACHE="$RUNNER_TEMP/gocache-rebuild" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            bash scripts/build-conn3x.sh "$RUNNER_TEMP/conn3x-rebuild" \
+            -ldflags "-s -w -X github.com/opentofu/opentofu/internal/conn3x/version.Version=$v -X github.com/opentofu/opentofu/version.dev=no"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum ./conn3x "$RUNNER_TEMP/conn3x-rebuild"
+          cmp -s ./conn3x "$RUNNER_TEMP/conn3x-rebuild" \
+            || { echo "the release binary differs between builds" >&2; exit 1; }
