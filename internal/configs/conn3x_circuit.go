@@ -760,18 +760,32 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 	if !ok {
 		return nil, append(diags, nativeSyntaxRequired(h.DefRange))
 	}
-	if len(body.Attributes) != 0 || len(body.Blocks) != 1 || body.Blocks[0].Type != "service" {
+	when, hasWhen := body.Attributes["when"]
+	others := len(body.Attributes)
+	if hasWhen {
+		others--
+	}
+	if others != 0 || len(body.Blocks) != 1 || body.Blocks[0].Type != "service" {
 		rng := h.DefRange
 		return nil, append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "A handler needs exactly one service block",
-			Detail:   "Handlers restart or reload a service: handler \"name\" { service { name = \"nginx\" } }, with an optional action = \"reload\" and serial = true.",
+			Detail:   "Handlers restart or reload a service: handler \"name\" { service { name = \"nginx\" } }, with an optional action = \"reload\" and serial = true, and an optional when beside the service block.",
 			Subject:  &rng,
 		})
 	}
 	svc := body.Blocks[0]
 	if _, contentDiags := svc.Body.Content(handlerServiceSchema); contentDiags.HasErrors() {
 		return nil, append(diags, contentDiags...)
+	}
+	forEach := hosts
+	if hasWhen {
+		// A handler's when picks hosts as a step's does. Where it's false
+		// the handler has no instance, so nothing restarts there.
+		if whenDiags := loopRefs(hclsyntax.Attributes{"when": when}, nil, false); whenDiags.HasErrors() {
+			return nil, append(diags, whenDiags...)
+		}
+		forEach = &whenFilter{instances: hosts, cond: when.Expr}
 	}
 
 	rng := chainRange(h, perHost)
@@ -791,7 +805,7 @@ func lowerHandler(circuit string, h *hcl.Block, hosts hcl.Expression, sshAttrs h
 		Type:      "conn3x_service_action",
 		Name:      circuit + "__" + h.Labels[0],
 		Config:    &hclsyntax.Body{Attributes: attrs, Blocks: hclsyntax.Blocks{sshBlockFor(sshAttrs, sshRange, []string{"value"})}, SrcRange: svc.Body.SrcRange, EndRange: svc.Body.EndRange},
-		ForEach:   hosts,
+		ForEach:   forEach,
 		DeclRange: h.DefRange,
 		TypeRange: svc.TypeRange,
 		Managed:   &ManagedResource{},

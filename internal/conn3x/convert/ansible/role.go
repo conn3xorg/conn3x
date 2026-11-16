@@ -823,6 +823,22 @@ variable "ssh_become" {
 }
 `
 
+// whenUses notes what a converted when reads, so the circuit declares it:
+// the installed packages, the family, or a list default.
+func (r *role) whenUses(cond string) {
+	if strings.Contains(cond, "data.conn3x_packages.") {
+		r.packagesUsed = true
+	}
+	if strings.Contains(cond, "data.conn3x_host.") || strings.Contains(cond, "local.os_family[") {
+		r.familyUsed = true
+	}
+	for _, m := range whenListRe.FindAllStringSubmatch(cond, -1) {
+		if _, ok := r.lists[m[1]]; ok {
+			r.listUsed[m[1]] = true
+		}
+	}
+}
+
 // boolWhen is a role task's when as a step's when, for the shapes a role
 // uses to switch a feature on a default that's true or false: the default
 // itself, through the bool filter, or either negated, as

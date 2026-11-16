@@ -207,7 +207,7 @@ func TestHandlerNameFromAVarAndKeywords(t *testing.T) {
       service: {name: nginx, state: reloaded}
       when: false
 `)
-	if !strings.Contains(string(res.HCL), `name   = "nginx"`) || len(res.Review) != 2 || !strings.Contains(res.Review[0].Reason, "uses when") {
+	if !strings.Contains(string(res.HCL), `name   = "nginx"`) || len(res.Review) != 2 || !strings.Contains(res.Review[0].Reason, "with a when") {
 		t.Fatalf("review %+v\n%s", res.Review, res.HCL)
 	}
 }
@@ -1067,6 +1067,53 @@ func TestRoleHandlerStateFromDefault(t *testing.T) {
 	// started isn't something a handler does, so that one stays for review.
 	if !strings.Contains(hcl, `Task "odd" (handlers/main.yml line 3) is a handler that doesn't restart or reload a service`) || strings.Contains(vars, "var.app_odd_state)") {
 		t.Errorf("odd:\n%s\n%s", hcl, vars)
+	}
+}
+
+// A handler's when converts as a task's does, the geerlingguy.php shape
+// among them; one the converter can't read keeps the handler for review.
+func TestRoleHandlerWhen(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "php_enable_webserver: true\nphp_fpm: false\nphp_mode: a\n",
+		"tasks/main.yml":    "- copy: {dest: /etc/php.ini, content: x}\n  notify: [restart webserver, restart fpm, restart odd]\n",
+		"handlers/main.yml": `- name: restart webserver
+  service: {name: apache2, state: restarted}
+  when: php_enable_webserver
+- name: restart fpm
+  service: {name: php-fpm, state: restarted}
+  when: [php_fpm | bool, "php_mode == 'a' or php_mode == 'b'"]
+- name: restart odd
+  service: {name: odd, state: restarted}
+  when: some_fact is defined
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		"handler \"restart_webserver\" {\n    when = var.php_enable_webserver\n",
+		`when = var.php_fpm && ((var.php_mode == "a") || (var.php_mode == "b"))`,
+		`Task "restart odd" (handlers/main.yml line 7) is a handler with a when the converter can't translate yet`,
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %s in\n%s", want, hcl)
+		}
+	}
+}
+
+// A task's list of whens is ANDed with each condition kept whole, so an or
+// inside one doesn't bind into the next.
+func TestRoleTaskWhenListKeepsOrTogether(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "flag: false\nmode: a\n",
+		"tasks/main.yml":    "- copy: {dest: /etc/x, content: x}\n  when: [\"mode == 'a' or mode == 'b'\", flag | bool]\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hcl := string(res.Files["main.circuit.hcl"]); !strings.Contains(hcl, `when = ((var.mode == "a") || (var.mode == "b")) && var.flag`) {
+		t.Errorf("when:\n%s", hcl)
 	}
 }
 

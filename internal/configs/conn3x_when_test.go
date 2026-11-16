@@ -184,6 +184,51 @@ func TestStepWhenHandlerTrigger(t *testing.T) {
 	}
 }
 
+// A handler's when picks its hosts as a step's does.
+func TestHandlerWhen(t *testing.T) {
+	handler := func(attrs string) string {
+		return `circuit "web" {
+  hosts = {
+    web1 = { address = "203.0.113.10", os = "debian" }
+    web2 = { address = "203.0.113.11", os = "redhat" }
+  }
+  ssh {
+    user = "root"
+  }
+  step "conf" {
+    notify = [handler.restart]
+    file {
+      path    = "/etc/nginx/nginx.conf"
+      content = "x"
+    }
+  }
+  handler "restart" {
+    ` + attrs + `
+    service {
+      name = "nginx"
+    }
+  }
+}`
+	}
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": handler(`when = each.value.os == "debian"`)})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	keys, d := instanceKeys(t, mod.ManagedResources["conn3x_service_action.web__restart"].ForEach, nil)
+	if d.HasErrors() || strings.Join(keys, ",") != "web1" {
+		t.Fatalf("instances = %v, %v; want web1", keys, d)
+	}
+	for attrs, want := range map[string]string{
+		`when = item.key == "a"`:         "item.key and item.value only exist",
+		"when = true\n    serial = true": "A handler needs exactly one service block",
+	} {
+		_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": handler(attrs)})
+		if !diags.HasErrors() || !strings.Contains(diags.Error(), want) {
+			t.Errorf("%s: diags = %v, want %q", attrs, diags, want)
+		}
+	}
+}
+
 // A provider function in hosts, for_each or when must still be found by
 // OpenTofu, which reads the functions an expression calls to know which
 // providers it needs.

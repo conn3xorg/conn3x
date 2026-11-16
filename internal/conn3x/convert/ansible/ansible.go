@@ -377,13 +377,16 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	var handlerBlocks []*hclwrite.Block
 	usedH := map[string]int{}
 	for _, h := range handlerNodes {
-		attrs, hname := c.handler(cb, h, vars)
+		attrs, hname, when := c.handler(cb, h, vars)
 		if attrs == nil {
 			continue
 		}
 		id := unique(slug(hname), usedH)
 		handlers[hname] = id
 		hb := hclwrite.NewBlock("handler", []string{id})
+		if when != "" {
+			hb.Body().SetAttributeRaw("when", rawTokens(when))
+		}
 		sb := hb.Body().AppendNewBlock("service", nil).Body()
 		for _, a := range attrs {
 			if a.raw != "" {
@@ -513,21 +516,28 @@ var handlerKeys = map[string]bool{"name": true, "listen": true, "tags": true, "n
 // handler converts a handler that restarts or reloads a service into its
 // service block's attributes, returned with its Ansible name, or leaves it
 // for review.
-func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]string) ([]attr, string) {
+func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]string) ([]attr, string, string) {
 	t := mapping(h)
 	hname := scalar(t["name"])
 	if c.hidesValues(h) {
 		c.issue(cb, hname, h, noLogReason)
-		return nil, ""
+		return nil, "", ""
 	}
 	if c.playNever || neverTagged(t["tags"]) {
 		c.issue(cb, hname, h, neverReason)
-		return nil, ""
+		return nil, "", ""
+	}
+	var when string
+	if w := t["when"]; w != nil {
+		if when = c.handlerWhen(w); when == "" {
+			c.issue(cb, hname, h, "is a handler with a when the converter can't translate yet")
+			return nil, "", ""
+		}
 	}
 	for _, k := range sortedKeys(t) {
-		if keywords[k] && !handlerKeys[k] {
+		if keywords[k] && !handlerKeys[k] && k != "when" {
 			c.issue(cb, hname, h, "is a handler that uses "+k+", which the converter can't translate yet")
-			return nil, ""
+			return nil, "", ""
 		}
 	}
 	mod, args := moduleOf(t)
@@ -547,7 +557,7 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 	}
 	if (mod != "service" && mod != "systemd" && mod != "systemd_service") || action == "" || n != 2 || scalar(args["name"]) == "" {
 		c.issue(cb, hname, h, "is a handler that doesn't restart or reload a service; Conn3x handlers do only that")
-		return nil, ""
+		return nil, "", ""
 	}
 	act := s("action", action)
 	if stateVar != "" {
@@ -607,12 +617,51 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 		// These start with the argument, such as "name uses a Jinja
 		// expression ...", and read as they do for a task.
 		c.issue(cb, hname, h, reason)
-		return nil, ""
+		return nil, "", ""
 	}
 	if stateVar != "" {
 		c.role.handlerState[stateVar] = true
 	}
-	return svc[0].attrs, hname
+	if when != "" {
+		c.role.whenUses(when)
+	}
+	return svc[0].attrs, hname, when
+}
+
+// handlerWhen is a role handler's when as a Conn3x handler's: one
+// condition, or a list whose every condition whenExpr reads. "" for any
+// other, including a when on the family alone, which only tasks narrow by.
+func (c *converter) handlerWhen(w *yaml.Node) string {
+	if c.role == nil {
+		return ""
+	}
+	if w.Kind != yaml.SequenceNode {
+		return c.role.whenExpr(w)
+	}
+	var conds []string
+	for _, e := range w.Content {
+		b := c.role.whenExpr(e)
+		if b == "" {
+			return ""
+		}
+		conds = append(conds, b)
+	}
+	return andAll(conds)
+}
+
+// andAll joins conditions with &&. One with an || goes in parentheses,
+// or && would bind into it.
+func andAll(conds []string) string {
+	if len(conds) == 1 {
+		return conds[0]
+	}
+	wrapped := make([]string, len(conds))
+	for i, c := range conds {
+		if wrapped[i] = c; strings.Contains(c, "||") {
+			wrapped[i] = "(" + c + ")"
+		}
+	}
+	return strings.Join(wrapped, " && ")
 }
 
 // roleDefault is the role default called name, or nil outside a role.
@@ -921,7 +970,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	var boolCond string
 	if len(switches) > 0 {
 		if famWhen == nil || familyCond {
-			boolCond = strings.Join(switches, " && ")
+			boolCond = andAll(switches)
 		}
 	} else if w := t["when"]; w != nil && c.role != nil && !familyCond {
 		boolCond = c.role.whenExpr(w)
@@ -1238,17 +1287,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		if boolCond != "" {
 			conds = append(conds, boolCond)
-			if strings.Contains(boolCond, "data.conn3x_packages.") {
-				c.role.packagesUsed = true
-			}
-			if strings.Contains(boolCond, "data.conn3x_host.") || strings.Contains(boolCond, "local.os_family[") {
-				c.role.familyUsed = true
-			}
-			for _, m := range whenListRe.FindAllStringSubmatch(boolCond, -1) {
-				if _, ok := c.role.lists[m[1]]; ok {
-					c.role.listUsed[m[1]] = true
-				}
-			}
+			c.role.whenUses(boolCond)
 		}
 		if len(conds) > 0 {
 			sb.SetAttributeRaw("when", rawTokens(strings.Join(conds, " && ")))
