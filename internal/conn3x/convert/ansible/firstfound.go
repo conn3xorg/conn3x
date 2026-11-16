@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -55,7 +54,7 @@ var (
 	jinjaExpr        = regexp.MustCompile(`\{\{\s*(.*?)\s*\}\}`)
 	distributionName = regexp.MustCompile(`^ansible_(?:facts\.distribution|facts\[["']distribution["']\]|distribution)$`)
 	familyName       = regexp.MustCompile(`^` + familyFact + `$`)
-	majorName        = regexp.MustCompile(`^` + majorFact + `$`)
+	majorName        = regexp.MustCompile(`^(?:` + majorFact + `|ansible_(?:facts\.distribution_version|facts\[["']distribution_version["']\]|distribution_version)\.split\(["']\.["']\)\[0\])$`)
 	versionName      = regexp.MustCompile(`^ansible_(?:facts\.distribution_version|facts\[["']distribution_version["']\]|distribution_version)$`)
 	quotedPart       = regexp.MustCompile(`^(?:'([^']*)'|"([^"]*)")$`)
 )
@@ -129,19 +128,9 @@ func fill(segs []namePart, fam, d, v string) (name string, pattern bool) {
 	return strings.TrimPrefix(b.String(), "vars/"), pattern
 }
 
-// axisFile is one vars file a with_first_found list loads, and the family
-// of the hosts that load it. file is "" for hosts that load none, with skip.
-type axisFile struct {
-	fam  osFamily
-	file string // under vars/
-}
-
-// firstFound reads a with_first_found list and returns the files it loads,
-// with each one's family, and the list's templates. A family that loads
-// none, with skip set, is left out. false when the list isn't plain enough
-// to tell, or when a file that would be picked depends on something the
-// converter can't know.
-func (c *converter) firstFound(n *yaml.Node) ([]axisFile, [][]namePart, bool) {
+// firstFoundEntries reads a with_first_found list: its names as templates,
+// and whether skip is set. false when the list isn't plain enough to tell.
+func firstFoundEntries(n *yaml.Node) ([][]namePart, bool, bool) {
 	var entries []string
 	skip := false
 	add := func(n *yaml.Node) bool {
@@ -172,38 +161,21 @@ func (c *converter) firstFound(n *yaml.Node) ([]axisFile, [][]namePart, bool) {
 	if n.Kind == yaml.SequenceNode {
 		for _, e := range n.Content {
 			if !add(e) {
-				return nil, nil, false
+				return nil, false, false
 			}
 		}
 	} else if !add(n) {
-		return nil, nil, false
+		return nil, false, false
 	}
 	var templates [][]namePart
 	for _, e := range entries {
 		segs, ok := nameTemplate(e)
 		if !ok {
-			return nil, nil, false
+			return nil, false, false
 		}
 		templates = append(templates, segs)
 	}
-
-	var out []axisFile
-	for _, f := range osFamilies {
-		seen := map[string]bool{}
-		for _, d := range familyDistributions[f.ansible] {
-			for _, v := range osVersions[d] {
-				file, ok := c.firstFile(templates, f.ansible, d, v)
-				if !ok || file == "" && !skip {
-					return nil, nil, false
-				}
-				if !seen[file] {
-					seen[file] = true
-					out = append(out, axisFile{fam: f, file: file})
-				}
-			}
-		}
-	}
-	return out, templates, true
+	return templates, skip, true
 }
 
 // firstFile is the first template that names an existing file under vars/
@@ -225,37 +197,11 @@ func (c *converter) firstFile(templates [][]namePart, fam, d, v string) (string,
 	return "", true
 }
 
-// axisOf turns the files a with_first_found list loads into the axis values
-// are looked up by: the two families when each family loads one file, as
-// for vars/<family>.yml, or else one entry for each file a family loads.
-func axisOf(files []axisFile) ([]osFamily, bool) {
-	byFam := map[string]int{}
-	for _, f := range files {
-		byFam[f.fam.conn3x]++
-	}
-	versioned := false
-	for _, n := range byFam {
-		versioned = versioned || n > 1
-	}
-	var axis []osFamily
-	for _, f := range files {
-		a := f.fam
-		if f.file != "" {
-			a.file = "vars/" + f.file
-			if versioned {
-				a.key = f.fam.conn3x + "/" + f.file
-			}
-		}
-		axis = append(axis, a)
-	}
-	sort.SliceStable(axis, func(i, j int) bool { return axis[i].id() < axis[j].id() })
-	return axis, versioned
-}
-
-// versionBlocks is what a circuit whose values come from per-release vars
-// files needs on top of familyBlocks: which file each host loads, worked out
-// at plan as Ansible's with_first_found does, from the host's facts.
-func (c *converter) versionBlocks(templates [][]namePart) string {
+// versionBlocks is what a circuit whose values come from more than one
+// vars file per family needs on top of familyBlocks: the files each host
+// loads, worked out at plan from its facts as Ansible's includes would, as
+// the key its values are looked up by.
+func (c *converter) versionBlocks(incs []varsInclude) string {
 	var files []string
 	if entries, err := os.ReadDir(c.path("vars")); err == nil {
 		for _, e := range entries {
@@ -264,30 +210,43 @@ func (c *converter) versionBlocks(templates [][]namePart) string {
 			}
 		}
 	}
-	var cands []string
-	for _, segs := range templates {
-		var b strings.Builder
-		for _, s := range segs {
-			switch s.fact {
-			case "":
-				b.WriteString(strings.NewReplacer(`\`, `\\`, `"`, `\"`, "${", "$${", "%{", "%%{").Replace(s.lit))
-			case "distribution":
-				b.WriteString("${local.os_distribution[name]}")
-			case "major":
-				b.WriteString(`${split(".", data.conn3x_host.facts[name].os_version)[0]}`)
-			case "version":
-				b.WriteString("${local.os_version[name]}")
-			case "family":
-				b.WriteString("${local.os_family_name[name]}")
+	var picks []string
+	for _, inc := range incs {
+		var cands []string
+		for _, segs := range inc.templates {
+			var b strings.Builder
+			for _, s := range segs {
+				switch s.fact {
+				case "":
+					b.WriteString(strings.NewReplacer(`\`, `\\`, `"`, `\"`, "${", "$${", "%{", "%%{").Replace(s.lit))
+				case "distribution":
+					b.WriteString("${local.os_distribution[name]}")
+				case "major":
+					b.WriteString(`${split(".", data.conn3x_host.facts[name].os_version)[0]}`)
+				case "version":
+					b.WriteString("${local.os_version[name]}")
+				case "family":
+					b.WriteString("${local.os_family_name[name]}")
+				}
 			}
+			cands = append(cands, `"`+strings.TrimPrefix(b.String(), "vars/")+`"`)
 		}
-		cands = append(cands, `"`+strings.TrimPrefix(b.String(), "vars/")+`"`)
+		pick := fmt.Sprintf("try([for f in [%s] : f if contains(local.vars_files, f)][0], \"\")", strings.Join(cands, ", "))
+		if len(inc.when) > 0 {
+			var tests []string
+			for _, t := range inc.when {
+				tests = append(tests, t.hcl())
+			}
+			pick = fmt.Sprintf("%s ? %s : \"\"", strings.Join(tests, " && "), pick)
+		}
+		picks = append(picks, pick)
 	}
 	return fmt.Sprintf(`
-# Which of the role's vars files each host loads, the first of these that
-# exists, as the role's with_first_found picks one. A host that loads a file
-# the converter didn't read, such as one for an older release, fails at plan
-# where a step looks its value up.
+# Which of the role's vars files each host loads, worked out from its facts
+# as the role's include_vars tasks pick them. Its values are looked up by
+# that list. A host whose list the converter didn't read values for, such as
+# one on an older release, or one where an include would find no file and
+# stop the play, fails at plan where a step looks a value up.
 locals {
   os_distribution = { for name, h in var.hosts : name => lookup({
     debian = "Debian", ubuntu = "Ubuntu", rhel = "RedHat", rocky = "Rocky", almalinux = "AlmaLinux", fedora = "Fedora",
@@ -299,9 +258,10 @@ locals {
     local.os_distribution[name] == "Debian" && !strcontains(data.conn3x_host.facts[name].os_version, ".")
     ? "${data.conn3x_host.facts[name].os_version}.0" : data.conn3x_host.facts[name].os_version
   ) }
-  vars_file = { for name, h in var.hosts : name => "${local.os_family[name]}/${[for f in [
+  vars_files = [%s]
+  vars_file = { for name, h in var.hosts : name => "${local.os_family[name]}/${join("+", compact([
     %s,
-  ] : f if contains([%s], f)][0]}" }
+  ]))}" }
 }
-`, strings.Join(cands, ",\n    "), strings.Join(files, ", "))
+`, strings.Join(files, ", "), strings.Join(picks, ",\n    "))
 }

@@ -875,7 +875,11 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	}
 	if c.role.isFamilyInclude(node, c.file) {
 		body.AppendNewline()
-		comment(body, fmt.Sprintf("Task %q (%s line %d) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.", name, c.file, node.Line))
+		by := "each host's family"
+		if c.role.versioned {
+			by = "the vars files each host loads, worked out at plan (see local.vars_file)"
+		}
+		comment(body, fmt.Sprintf("Task %q (%s line %d) loads per-OS values from vars/: the steps below that use those values look them up by %s.", name, c.file, node.Line, by))
 		c.res.Converted++
 		return
 	}

@@ -5,7 +5,6 @@ package ansible
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -34,7 +33,11 @@ import (
 // Values per OS are looked up by an axis of these: the families, or, for a
 // role with vars files per release, one entry for each file, with key set
 // (see axisOf). file is the vars file the entry's values come from.
-type osFamily struct{ ansible, conn3x, key, file string }
+type osFamily struct {
+	ansible, conn3x, key string
+	file                 string   // the files it loads, for messages
+	files                []string // under the role, in the order they load
+}
 
 // id is what the entry's values are found by: its key, or its family.
 func (f osFamily) id() string {
@@ -72,7 +75,7 @@ func (c *converter) axisFor(fams []osFamily) []osFamily {
 
 // axisExpr is the lookup a value per axis entry is written with.
 func (c *converter) axisExpr() string {
-	if c.role != nil && c.role.varsTemplates != nil {
+	if c.role != nil && c.role.versioned {
 		return "local.vars_file[each.key]"
 	}
 	return "local.os_family[each.key]"
@@ -87,102 +90,6 @@ func (f osFamily) where() string {
 }
 
 var osFamilies = []osFamily{{ansible: "Debian", conn3x: "debian"}, {ansible: "RedHat", conn3x: "redhat"}}
-
-// osFamilyInclude matches include_vars of the host's family's file.
-var osFamilyInclude = regexp.MustCompile(`^\{\{\s*ansible_(?:facts\.os_family|facts\[["']os_family["']\]|os_family)\s*\}\}\.(ya?ml)$`)
-
-// familyVars finds a role's include_vars of vars/<family>.yml, or of the
-// first of several files that exists, among its tasks, and reads the files
-// a Debian or Red Hat family host would load. It returns the task, the axis
-// values are looked up by, the with_first_found templates when that axis is
-// per file, the values by axis entry and name, and for a value it can't
-// use, such as a list, why; or a nil task when there's no such include or a
-// file is missing, and the include then goes to review as before.
-func (c *converter) familyVars(tasks []*yaml.Node) (*yaml.Node, []osFamily, [][]namePart, map[string]map[string]string, map[string]map[string]string) {
-	for _, n := range tasks {
-		t := mapping(n)
-		arg, ok := t["include_vars"]
-		if !ok {
-			arg, ok = t["ansible.builtin.include_vars"]
-		}
-		extra := len(t) - 1
-		if t["name"] != nil {
-			extra--
-		}
-		ff := t["with_first_found"]
-		if ff != nil {
-			extra--
-		}
-		if !ok || extra != 0 {
-			continue
-		}
-		if arg.Kind == yaml.MappingNode && len(arg.Content) == 2 && arg.Content[0].Value == "file" {
-			arg = arg.Content[1]
-		}
-		if arg.Kind != yaml.ScalarNode {
-			continue
-		}
-		var axis []osFamily
-		var templates [][]namePart
-		if ff != nil {
-			if bareRef.FindStringSubmatch(arg.Value) == nil || bareRef.FindStringSubmatch(arg.Value)[1] != "item" {
-				continue
-			}
-			files, segs, ok := c.firstFound(ff)
-			if !ok {
-				continue
-			}
-			var versioned bool
-			if axis, versioned = axisOf(files); versioned {
-				templates = segs
-			}
-		} else {
-			m := osFamilyInclude.FindStringSubmatch(arg.Value)
-			if m == nil {
-				continue
-			}
-			for _, f := range osFamilies {
-				f.file = "vars/" + f.ansible + "." + m[1]
-				axis = append(axis, f)
-			}
-		}
-		vals, whys, ok := c.loadFamilyFiles(axis)
-		if !ok {
-			return nil, nil, nil, nil, nil
-		}
-		return n, axis, templates, vals, whys
-	}
-	return nil, nil, nil, nil, nil
-}
-
-// loadFamilyFiles reads each axis entry's variables file, by entry. A
-// family with no file has no values. false when a file can't be read.
-func (c *converter) loadFamilyFiles(axis []osFamily) (map[string]map[string]string, map[string]map[string]string, bool) {
-	vals, whys := map[string]map[string]string{}, map[string]map[string]string{}
-	for _, f := range osFamilies {
-		vals[f.conn3x], whys[f.conn3x] = map[string]string{}, map[string]string{}
-	}
-	for _, f := range axis {
-		vals[f.id()], whys[f.id()] = map[string]string{}, map[string]string{}
-		if f.file == "" {
-			continue // these hosts load no file
-		}
-		path := c.path(f.file)
-		src, err := os.ReadFile(path)
-		var doc yaml.Node
-		if err != nil || !exactlyNamed(path) || parse(src, &doc) != nil || len(doc.Content) == 0 {
-			return nil, nil, false
-		}
-		for _, kv := range pairs(doc.Content[0]) {
-			if v, _, why := plainValue(kv[1]); why == "" {
-				vals[f.id()][kv[0].Value] = v
-			} else {
-				whys[f.id()][kv[0].Value] = why
-			}
-		}
-	}
-	return vals, whys, true
-}
 
 // familyNames lists the per-family variables a task's arguments mention.
 func (c *converter) familyNames(args map[string]*yaml.Node, vars map[string]string) []string {

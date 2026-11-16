@@ -1233,9 +1233,8 @@ func TestRoleFirstFoundVars(t *testing.T) {
 	hcl = string(res.Files["main.circuit.hcl"])
 	for _, want := range []string{
 		`name = { "debian/Ubuntu-24.04.yml" = "apache2", "debian/default.yml" = "other", "redhat/RedHat-9.yml" = "httpd", "redhat/default.yml" = "other" }[local.vars_file[each.key]]`,
-		`"${local.os_distribution[name]}-${local.os_version[name]}.yml",`,
-		`"${local.os_family_name[name]}-${split(".", data.conn3x_host.facts[name].os_version)[0]}.yml",`,
-		`] : f if contains(["RedHat-9.yml", "Ubuntu-16.04.yml", "Ubuntu-24.04.yml", "default.yml"], f)][0]}" }`,
+		`vars_files = ["RedHat-9.yml", "Ubuntu-16.04.yml", "Ubuntu-24.04.yml", "default.yml"]`,
+		`try([for f in ["${local.os_distribution[name]}-${local.os_version[name]}.yml", "${local.os_family_name[name]}-${split(".", data.conn3x_host.facts[name].os_version)[0]}.yml", "default.yml"] : f if contains(local.vars_files, f)][0], ""),`,
 	} {
 		if !strings.Contains(hcl, want) {
 			t.Errorf("version-dependent: missing %s in\n%s", want, hcl)
@@ -1298,5 +1297,79 @@ func TestRoleFirstFoundFilesAndSkip(t *testing.T) {
 		if res := convert(loop, "Debian.yml", "Ubuntu.yml", "RedHat.yml"); res.Converted != 0 || len(res.Review) != 2 {
 			t.Errorf("%s: converted %d, review %+v", name, res.Converted, res.Review)
 		}
+	}
+}
+
+// Several include_vars load in order, a later file's keys winning, and an
+// include with a when on the family or distribution loads only there.
+func TestRoleLayeredVars(t *testing.T) {
+	// geerlingguy.php: the family file, then a release file over it.
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml": `- include_vars: "{{ ansible_facts.os_family }}.yml"
+- include_vars: "{{ item }}"
+  with_first_found:
+    - files:
+        - "{{ ansible_facts.distribution }}-{{ ansible_facts.distribution_major_version }}.yml"
+      skip: true
+- package: {name: "{{ pkg }}"}
+- service: {name: "{{ svc }}", state: started}
+`,
+		"vars/Debian.yml":    "pkg: php\nsvc: php-fpm\n",
+		"vars/Debian-13.yml": "pkg: php8.4\n",
+		"vars/RedHat.yml":    "pkg: php\nsvc: php-fpm\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		`name = { "debian/Debian.yml" = "php", "debian/Debian.yml+Debian-13.yml" = "php8.4", "redhat/RedHat.yml" = "php" }[local.vars_file[each.key]]`,
+		// The layer doesn't set svc, so the family file's value holds.
+		`name  = "php-fpm"`,
+		`try([for f in ["${local.os_family_name[name]}.yml"] : f if contains(local.vars_files, f)][0], ""),`,
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("layered: missing %s in\n%s", want, hcl)
+		}
+	}
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Errorf("layered: converted %d, review %+v", res.Converted, res.Review)
+	}
+
+	// geerlingguy.postgresql: one include per family, the version read
+	// through split. No file for Fedora 44 or 45, so those hosts would stop
+	// at the include, and the values are looked up per file.
+	role := map[string]string{
+		"tasks/main.yml": `- include_vars: "{{ ansible_facts.distribution }}-{{ ansible_facts.distribution_version.split('.')[0] }}.yml"
+  when: ansible_facts.os_family == 'Debian'
+- include_vars: "{{ ansible_facts.os_family }}-{{ ansible_facts.distribution_version.split('.')[0] }}.yml"
+  when:
+    - ansible_facts.os_family == 'RedHat'
+    - ansible_facts.distribution != 'Fedora'
+- include_vars: "{{ ansible_facts.distribution }}-{{ ansible_facts.distribution_version.split('.')[0] }}.yml"
+  when: ansible_facts.distribution == 'Fedora'
+- package: {name: "{{ pkg }}"}
+`,
+	}
+	for _, f := range []string{"Debian-11", "Debian-12", "Debian-13", "Ubuntu-20", "Ubuntu-22", "Ubuntu-24", "Ubuntu-26", "RedHat-8", "RedHat-9", "RedHat-10", "Fedora-40", "Fedora-41", "Fedora-42", "Fedora-43"} {
+		role["vars/"+f+".yml"] = "pkg: postgresql-" + strings.ToLower(f) + "\n"
+	}
+	res, err = ConvertRole(writeRole(t, role))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl = string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		`"redhat/RedHat-10.yml" = "postgresql-redhat-10"`,
+		`"redhat/Fedora-43.yml" = "postgresql-fedora-43"`,
+		`contains(["Debian"], local.os_family_name[name]) ? try(`,
+		`contains(["RedHat"], local.os_family_name[name]) && !contains(["Fedora"], local.os_distribution[name]) ? try(`,
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("per family: missing %s in\n%s", want, hcl)
+		}
+	}
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Errorf("per family: converted %d, review %+v", res.Converted, res.Review)
 	}
 }

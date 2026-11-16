@@ -36,21 +36,21 @@ type role struct {
 	// varFiles are the files under vars/ other than main that set each
 	// variable, such as vars/Debian.yml: what an include_vars loads.
 	varFiles map[string][]string
-	// familyInclude is the include_vars of vars/<family>.yml, and
-	// familyVars what Debian's and Red Hat's files set; familyUsed is set
-	// once a step looks one up.
-	familyInclude *yaml.Node
-	// familyIncludeAt is where familyInclude is, file:line, for an include
-	// in an imported file, which is read again for each pass.
-	familyIncludeAt string
+	// familyVars are what the files varsIncludes load set, by axis entry;
+	// familyUsed is set once a step looks one up. familyIncludeAt is where
+	// each include is, file:line, for includes in an imported file, which is
+	// read again for each pass.
+	familyIncludeAt []string
 	familyVars      map[string]map[string]string
 	familyWhy       map[string]map[string]string // why a value can't be used, such as a list
-	// axis is what familyVars are keyed by: the families, or one entry for
-	// each vars file per release, and varsTemplates then the
-	// with_first_found list that picks a host's file (see versionBlocks).
-	axis          []osFamily
-	varsTemplates [][]namePart
-	familyUsed    bool
+	// axis is what familyVars are keyed by: the families, or, when
+	// versioned, one entry for each list of vars files a host can load, and
+	// varsIncludes the include_vars tasks that pick them (see
+	// versionBlocks).
+	axis         []osFamily
+	versioned    bool
+	varsIncludes []varsInclude
+	familyUsed   bool
 	// packagesUsed is set once a step's when tests an installed package.
 	packagesUsed bool
 	// defaultTasks are the set_fact tasks that default a variable to a
@@ -219,8 +219,8 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		ssh.SetAttributeRaw(a, rawTokens("var.ssh_"+a))
 	}
 	c.file = tasksFile
-	r.familyInclude, r.axis, r.varsTemplates, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
-	if r.familyInclude == nil {
+	r.varsIncludes, r.axis, r.versioned, r.familyVars, r.familyWhy = c.familyVars(seq(tasks))
+	if r.varsIncludes == nil {
 		// The include may be in a file main.yml imports, such as
 		// include-vars.yml.
 		var nodes []*yaml.Node
@@ -229,8 +229,10 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			nodes = append(nodes, t.node)
 			files[t.node] = t.file
 		}
-		if r.familyInclude, r.axis, r.varsTemplates, r.familyVars, r.familyWhy = c.familyVars(nodes); r.familyInclude != nil {
-			r.familyIncludeAt = fmt.Sprintf("%s:%d", files[r.familyInclude], r.familyInclude.Line)
+		if r.varsIncludes, r.axis, r.versioned, r.familyVars, r.familyWhy = c.familyVars(nodes); r.varsIncludes != nil {
+			for _, inc := range r.varsIncludes {
+				r.familyIncludeAt = append(r.familyIncludeAt, fmt.Sprintf("%s:%d", files[inc.node], inc.node.Line))
+			}
 		}
 	}
 	r.defaultTasks, r.defaultOf = c.familyDefaults(seq(tasks), vars)
@@ -239,8 +241,8 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	c.steps(cb, at(seq(tasks), c.file), seq(handlers), handlersFile, false, vars)
 	if r.familyUsed {
 		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
-		if r.varsTemplates != nil {
-			body.AppendUnstructuredTokens(rawTokens(c.versionBlocks(r.varsTemplates)))
+		if r.versioned {
+			body.AppendUnstructuredTokens(rawTokens(c.versionBlocks(r.varsIncludes)))
 		}
 	}
 	for _, b := range r.probeBlocks {
@@ -351,7 +353,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	if len(used) > 0 {
 		var b strings.Builder
 		axis := c.axisFor(osFamilies)
-		if r.varsTemplates == nil {
+		if !r.versioned {
 			b.WriteString("\nThese take each host's OS family's value from the role's `vars/` unless you set them:\n\n| Name | Debian and Ubuntu | Red Hat family |\n")
 		} else {
 			b.WriteString("\nThese take the value from the `vars/` file each host loads unless you set them:\n\n| Name |")
@@ -943,8 +945,13 @@ func pathValidations(b *hclwrite.Body, k string, rules []string, list bool) {
 // isFamilyInclude reports whether node, in file, is the role's include of its
 // per-family variables.
 func (r *role) isFamilyInclude(node *yaml.Node, file string) bool {
-	if r == nil || r.familyInclude == nil {
+	if r == nil {
 		return false
 	}
-	return node == r.familyInclude || r.familyIncludeAt == fmt.Sprintf("%s:%d", file, node.Line)
+	for _, inc := range r.varsIncludes {
+		if node == inc.node {
+			return true
+		}
+	}
+	return slices.Contains(r.familyIncludeAt, fmt.Sprintf("%s:%d", file, node.Line))
 }

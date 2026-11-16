@@ -12,7 +12,7 @@ circuit "famwhen" {
     become           = var.ssh_become
   }
 
-  # Task "Include OS-specific variables." (tasks/main.yml line 2) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.
+  # Task "Include OS-specific variables." (tasks/main.yml line 2) loads per-OS values from vars/: the steps below that use those values look them up by each host's family.
 
   # TODO(convert): Set mode if this file isn't meant to be 0644. The task set none, so Ansible left a file that was already there as it was; this step sets 0644.
   step "debian_only" {

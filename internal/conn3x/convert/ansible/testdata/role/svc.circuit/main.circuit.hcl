@@ -12,7 +12,7 @@ circuit "svc" {
     become           = var.ssh_become
   }
 
-  # Task "Include OS-specific variables." (tasks/main.yml line 2) loads vars/<family>.yml: the steps below that use those values look them up by each host's family.
+  # Task "Include OS-specific variables." (tasks/main.yml line 2) loads per-OS values from vars/: the steps below that use those values look them up by each host's family.
 
   # Task "Define svc_user." (tasks/main.yml line 5) defaults svc_user to __svc_user from vars/<family>.yml: it's a variable the caller can set, and the steps below use the family's value when it's null.
 
