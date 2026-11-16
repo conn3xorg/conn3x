@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
@@ -63,7 +64,7 @@ func Read(ctx context.Context, r modules.Runner, s Selection) (value string, exi
 		return "", false, err
 	}
 	if s.Type == "password" {
-		res, err := r.Run(ctx, "DEBIAN_FRONTEND=noninteractive debconf-communicate", []byte("GET "+s.Question+"\n"))
+		res, err := run(ctx, r, "DEBIAN_FRONTEND=noninteractive debconf-communicate", []byte("GET "+s.Question+"\n"))
 		if err != nil {
 			return "", false, err
 		}
@@ -76,7 +77,7 @@ func Read(ctx context.Context, r modules.Runner, s Selection) (value string, exi
 		}
 		return "", false, fmt.Errorf("debconf-communicate: %s", strings.TrimSpace(string(res.Stderr)+string(res.Stdout)))
 	}
-	res, err := r.Run(ctx, "debconf-show "+ssh.Quote(s.Package), nil)
+	res, err := run(ctx, r, "debconf-show "+ssh.Quote(s.Package), nil)
 	if err := check(res, err); err != nil {
 		return "", false, err
 	}
@@ -103,7 +104,7 @@ func Apply(ctx context.Context, r modules.Runner, s Selection) error {
 		return errors.New("debconf presets the questions Debian and Ubuntu packages ask; this host is in the Red Hat family, which has no debconf, so drop the step for it")
 	}
 	line := strings.Join([]string{s.Package, s.Question, s.Type, s.Value}, " ")
-	res, err := r.Run(ctx, "DEBIAN_FRONTEND=noninteractive debconf-set-selections", []byte(line+"\n"))
+	res, err := run(ctx, r, "DEBIAN_FRONTEND=noninteractive debconf-set-selections", []byte(line+"\n"))
 	if err := check(res, err); err != nil {
 		return err
 	}
@@ -118,6 +119,30 @@ func Apply(ctx context.Context, r modules.Runner, s Selection) error {
 		return fmt.Errorf("debconf kept %q for %s after setting it; debconf-set-selections said: %s", got, s.Question, strings.TrimSpace(string(res.Stderr)))
 	}
 	return nil
+}
+
+// lockedMessage is how debconf says another process has its database open,
+// as apt and dpkg do while they configure a package. It doesn't wait.
+const lockedMessage = "is locked by another process"
+
+// lockWait and lockPoll bound how long run waits out that lock, as pkg.Run
+// does apt's.
+var lockWait, lockPoll = 5 * time.Minute, 2 * time.Second
+
+// run runs a debconf command, trying again while its database is locked.
+func run(ctx context.Context, r modules.Runner, cmd string, stdin []byte) (ssh.Result, error) {
+	deadline := time.Now().Add(lockWait)
+	for {
+		res, err := r.Run(ctx, cmd, stdin)
+		if err != nil || res.ExitCode == 0 || !strings.Contains(string(res.Stderr)+string(res.Stdout), lockedMessage) || time.Now().After(deadline) {
+			return res, err
+		}
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-time.After(lockPoll):
+		}
+	}
 }
 
 func check(res ssh.Result, err error) error {

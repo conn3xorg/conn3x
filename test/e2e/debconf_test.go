@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type debconfVars struct{ Port, KeyFile, KnownHosts, Mailer string }
@@ -87,5 +88,27 @@ func TestDebconfRefusesRedHat(t *testing.T) {
 	w.mustConn3x("init", "-no-color")
 	if out, code := w.conn3x("apply", "-auto-approve", "-no-color"); code == 0 || !strings.Contains(out, "Red Hat family, which has no debconf") {
 		t.Fatalf("apply on rocky exited %d:\n%s", code, out)
+	}
+}
+
+// TestDebconfWaitsForTheLock applies while another process holds debconf's
+// database, as apt does while it configures a package. debconf-set-selections
+// fails at once on a locked database, so the step has to wait it out.
+func TestDebconfWaitsForTheLock(t *testing.T) {
+	h := startHost(t, "debian13")
+	w := newWorkdir(t, "debconf")
+	w.writeAs("main.circuit.hcl", debconfVars{h.port, h.keyFile, h.knownHosts, "Internet Site"})
+	w.env = append(w.env, "TF_VAR_db_password=Pr3seed-S3cret")
+	w.mustConn3x("init", "-no-color")
+	// Holds the database for eight seconds, from now.
+	h.exec("", "sh", "-c", `nohup perl -MDebconf::Db -e 'Debconf::Db->load; sleep 8' >/dev/null 2>&1 &`)
+	time.Sleep(time.Second)
+	start := time.Now()
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if took := time.Since(start); took < 3*time.Second {
+		t.Errorf("apply took %s, so it didn't wait for the lock to go", took)
+	}
+	if got := h.exec("", "debconf-show", "postfix"); !strings.Contains(got, "postfix/main_mailer_type: Internet Site") {
+		t.Fatalf("debconf-show postfix:\n%s", got)
 	}
 }

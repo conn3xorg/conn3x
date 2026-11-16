@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
@@ -87,5 +88,40 @@ func TestPasswordReadsThroughDebconfCommunicate(t *testing.T) {
 	h.password = "old-s3cret"
 	if err := Apply(context.Background(), h, s); err == nil || strings.Contains(err.Error(), "old-s3cret") {
 		t.Errorf("apply with a host that kept another password: %v", err)
+	}
+}
+
+// lockedHost answers like a host where apt holds debconf's database for
+// the first few commands.
+type lockedHost struct {
+	debconfHost
+	locked int
+}
+
+func (h *lockedHost) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	if h.locked > 0 && strings.Contains(cmd, "debconf-") {
+		h.locked--
+		h.ran = append(h.ran, cmd)
+		return ssh.Result{ExitCode: 1, Stderr: []byte(`debconf: DbDriver "config": /var/cache/debconf/config.dat is locked by another process: Resource temporarily unavailable` + "\n")}, nil
+	}
+	return h.debconfHost.Run(ctx, cmd, stdin)
+}
+
+// A locked database is waited out, not an error, until lockWait has passed.
+func TestWaitsOutTheDatabaseLock(t *testing.T) {
+	savedWait, savedPoll := lockWait, lockPoll
+	lockWait, lockPoll = time.Second, time.Millisecond
+	defer func() { lockWait, lockPoll = savedWait, savedPoll }()
+
+	h := &lockedHost{debconfHost: debconfHost{shown: "* tzdata/Areas: Europe\n"}, locked: 2}
+	got, ok, err := Read(context.Background(), h, Selection{Package: "tzdata", Question: "tzdata/Areas", Type: "select", Value: "Europe"})
+	if err != nil || !ok || got != "Europe" {
+		t.Fatalf("read after the lock: %q, %v, %v", got, ok, err)
+	}
+
+	lockWait = 10 * time.Millisecond
+	h = &lockedHost{debconfHost: debconfHost{shown: "* tzdata/Areas: Europe\n"}, locked: 1 << 20}
+	if _, _, err := Read(context.Background(), h, Selection{Package: "tzdata", Question: "tzdata/Areas", Type: "select", Value: "Europe"}); err == nil || !strings.Contains(err.Error(), "is locked by another process") {
+		t.Fatalf("a lock that never clears: %v", err)
 	}
 }

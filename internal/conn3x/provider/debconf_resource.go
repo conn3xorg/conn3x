@@ -143,7 +143,12 @@ func applyDebconf(ctx context.Context, req providers.ApplyResourceChangeRequest)
 			if value.IsNull() {
 				return cty.NilVal, errors.New("debconf: value_wo didn't reach the apply; it's write-only, so set it in the step's config")
 			}
-			if err := debconf.Apply(ctx, h, debconfFrom(planned, value.AsString())); err != nil {
+			// apt and dpkg hold debconf's database while they configure a
+			// package, so never overlap a package step on this host.
+			unlock := lockHost(h, "packages")
+			err := debconf.Apply(ctx, h, debconfFrom(planned, value.AsString()))
+			unlock()
+			if err != nil {
 				return cty.NilVal, fmt.Errorf("debconf: %w", err)
 			}
 			return withSync(cty.ObjectVal(vals), true), nil
