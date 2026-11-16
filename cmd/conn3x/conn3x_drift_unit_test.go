@@ -37,3 +37,28 @@ func TestRunPlanReadsTheStream(t *testing.T) {
 		t.Errorf("a long line: exit %d, %v", code, err)
 	}
 }
+
+// Only errors, and hosts the refresh couldn't reach, are drift's errors,
+// once each; a line that isn't JSON, or a mere warning, is passed over.
+func TestReadDriftKeepsOnlyErrors(t *testing.T) {
+	stream := strings.Join([]string{
+		"not json",
+		`{"type":"diagnostic","diagnostic":{"severity":"warning","summary":"Deprecated argument"}}`,
+		`{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Boom"}}`,
+		`{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Boom"}}`,
+		`{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Bad","detail":"line one\nline two"}}`,
+		`{"type":"resource_drift","change":{"resource":{"addr":"aws_s3_bucket.b","resource_type":"aws_s3_bucket"},"action":"delete"}}`,
+		`{"type":"planned_change","change":{"resource":{"addr":"aws_s3_bucket.c"},"action":"create"}}`,
+	}, "\n")
+	r, err := readDrift(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"Error: Boom", "Error: Bad\n  line one\n  line two"}; strings.Join(r.errors, "|") != strings.Join(want, "|") {
+		t.Errorf("errors %q", r.errors)
+	}
+	// A cloud resource that's gone is drift, but nothing a plan changes back.
+	if len(r.cloud) != 1 || !strings.Contains(r.cloud[0], "gone") || len(r.changedCloud) != 0 || len(r.planned) != 0 {
+		t.Errorf("report %+v", r)
+	}
+}
