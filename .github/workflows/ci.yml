@@ -125,6 +125,11 @@ jobs:
             go test -run Conn3x ./internal/tofu/
             go test -run TestTest_Idempotent ./internal/command/
           fi
+      - name: Test Conn3x's own packages with the race detector
+        # Nightly only: it triples the time, and a race rarely hides from
+        # a run a day.
+        if: github.event_name == 'schedule'
+        run: go test -race -count=1 ./internal/conn3x/... ./cmd/conn3x/...
       - name: Test as root
         # bash, for pipefail: a failed test mustn't hide behind tee.
         shell: bash
