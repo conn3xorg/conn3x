@@ -165,7 +165,10 @@ func (in *input) pathRef(s string, refs [][]int, i int, name string, values []st
 
 // pathOK reports whether v holds to rules.
 func pathOK(v string, rules []string) bool {
-	return !(slices.Contains(rules, "abs") && !strings.HasPrefix(v, "/") || slices.Contains(rules, "noslash") && strings.HasSuffix(v, "/"))
+	if slices.Contains(rules, "abs") && !strings.HasPrefix(v, "/") {
+		return false
+	}
+	return !slices.Contains(rules, "noslash") || !strings.HasSuffix(v, "/")
 }
 
 var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true}
