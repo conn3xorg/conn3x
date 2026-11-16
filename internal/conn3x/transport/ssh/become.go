@@ -107,10 +107,13 @@ func (b *Become) runPrompted(ctx context.Context, inner string, stdin []byte) (R
 		over   bool
 	}
 	done := make(chan exit, 1)
+	// Read once, here: the goroutine below can outlive this call when it
+	// returns early, and would race with anything that changes MaxOutput.
+	limit := MaxOutput
 	go func() {
-		// The same limit as exec: past MaxOutput the command is killed.
-		out, _ := io.ReadAll(io.LimitReader(p, int64(MaxOutput)+1))
-		if len(out) > MaxOutput {
+		// The same limit as exec: past it the command is killed.
+		out, _ := io.ReadAll(io.LimitReader(p, int64(limit)+1))
+		if len(out) > limit {
 			_ = p.session.Signal(gossh.SIGKILL)
 			_ = p.session.Close()
 			done <- exit{over: true}

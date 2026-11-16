@@ -751,7 +751,7 @@ func (c *Client) start(ctx context.Context, stdin []byte, what string, begin fun
 		_ = session.Signal(gossh.SIGKILL)
 		session.Close()
 	})
-	stdout, stderr := capped{stop: stop}, capped{stop: stop}
+	stdout, stderr := capped{stop: stop, max: MaxOutput}, capped{stop: stop, max: MaxOutput}
 	session.Stdout = &stdout
 	session.Stderr = &stderr
 	session.Stdin = bytes.NewReader(stdin)
@@ -891,14 +891,17 @@ func (c *Client) overOutput() error {
 }
 
 // capped is a buffer that calls stop, once, when a write would take it
-// past MaxOutput, and keeps nothing more.
+// past max, and keeps nothing more. max is MaxOutput as it was when the
+// command started: the session's copy goroutines write here, and can run
+// after the command's caller has moved on.
 type capped struct {
 	buf  bytes.Buffer
 	stop func()
+	max  int
 }
 
 func (c *capped) Write(p []byte) (int, error) {
-	if c.buf.Len()+len(p) > MaxOutput {
+	if c.buf.Len()+len(p) > c.max {
 		c.stop()
 		return 0, errors.New("output limit reached")
 	}
