@@ -137,3 +137,28 @@ func TestApplyDoesOnlyWhatIsMissing(t *testing.T) {
 		t.Errorf("delete: %v, ran %q", err, h.ran)
 	}
 }
+
+// Only manual mode at Path is in sync: in auto mode a package installed
+// later with a higher priority takes the name over.
+func TestManualModeOnly(t *testing.T) {
+	d, r := parseDisplay(debianDisplay), parseDisplay(rockyDisplay)
+	if !d.Manual || r.Manual {
+		t.Fatalf("mode: debian manual=%v, rocky manual=%v", d.Manual, r.Manual)
+	}
+	for display, manual := range map[string]bool{
+		"c3x - auto mode\n": false, "c3x - manual mode\n": true,
+		"c3x - status is auto.\n": false, "c3x - status is manual.\n": true,
+	} {
+		if got := parseDisplay(display).Manual; got != manual {
+			t.Errorf("%q: manual=%v", display, got)
+		}
+	}
+	a := Alternative{Name: "python", Path: "/usr/bin/python3"}
+	if a.InSync(r) {
+		t.Error("auto mode at path counted as in sync")
+	}
+	r.Manual = true
+	if !a.InSync(r) {
+		t.Error("manual mode at path isn't in sync")
+	}
+}

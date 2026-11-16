@@ -64,15 +64,17 @@ func checkPath(attr, p string) error {
 // Actual is what the host has for a name.
 type Actual struct {
 	Registered bool              // the name is known to the tool
+	Manual     bool              // set by hand, so a higher priority installed later doesn't take it over
 	Current    string            // what the name points to now
 	Link       string            // the generic link, where the tool prints it; the Red Hat family doesn't
 	Priority   map[string]string // each registered path's priority
 }
 
-// InSync reports whether the name points to Path, registered with Priority
-// when one is set.
+// InSync reports whether the name points to Path in manual mode, registered
+// with Priority when one is set. Auto mode pointing at Path doesn't count: a
+// package installed later with a higher priority would take the name over.
 func (a Alternative) InSync(act Actual) bool {
-	return act.Current == a.Path && (a.Priority == "" || act.Priority[a.Path] == a.Priority)
+	return act.Manual && act.Current == a.Path && (a.Priority == "" || act.Priority[a.Path] == a.Priority)
 }
 
 // findTool names the command: update-alternatives on both families, since
@@ -81,6 +83,9 @@ const findTool = `cmd=$(command -v update-alternatives || command -v alternative
 `
 
 var (
+	// "editor - manual mode" on the Debian family, "java - status is
+	// manual." on the Red Hat family.
+	modeLine     = regexp.MustCompile(`(?m)^\S+ - (?:(auto|manual) mode|status is (auto|manual)\.)$`)
 	currentLine  = regexp.MustCompile(`(?m)^\s*link currently points to (\S+)$`)
 	linkLine     = regexp.MustCompile(`(?m)^\s*link \S+ is (\S+)$`)
 	priorityLine = regexp.MustCompile(`(?m)^(/\S+) - priority (-?\d+)$`)
@@ -108,6 +113,9 @@ func Read(ctx context.Context, r modules.Runner, a Alternative) (Actual, error) 
 // shape apart from the mode line and Debian's extra link line.
 func parseDisplay(out string) Actual {
 	act := Actual{Registered: true, Priority: map[string]string{}}
+	if m := modeLine.FindStringSubmatch(out); m != nil {
+		act.Manual = m[1] == "manual" || m[2] == "manual"
+	}
 	if m := currentLine.FindStringSubmatch(out); m != nil {
 		act.Current = m[1]
 	}
@@ -145,7 +153,9 @@ func Apply(ctx context.Context, r modules.Runner, a Alternative) error {
 		}
 		script += fmt.Sprintf(`"$cmd" --install %s %s %s %s`+"\n", ssh.Quote(link), ssh.Quote(a.Name), ssh.Quote(a.Path), prio)
 	}
-	if act.Current != a.Path {
+	// --set also when the name points at Path in auto mode: it's what puts
+	// the name in manual mode, so a later package can't take it over.
+	if !act.Manual || act.Current != a.Path {
 		script += fmt.Sprintf(`"$cmd" --set %s %s`+"\n", ssh.Quote(a.Name), ssh.Quote(a.Path))
 	}
 	return check(r.Run(ctx, script, nil))
