@@ -279,6 +279,53 @@ func packagesWhen(n *yaml.Node) string {
 	return out
 }
 
+// distributionIDs maps Ansible's distribution names to os-release IDs,
+// which conn3x_host reads as os_id and a host object's os spells the same.
+var distributionIDs = map[string]string{
+	"Debian": "debian", "Ubuntu": "ubuntu", "RedHat": "rhel", "Rocky": "rocky", "AlmaLinux": "almalinux",
+	"Fedora": "fedora", "CentOS": "centos", "OracleLinux": "ol", "Amazon": "amzn", "Archlinux": "arch",
+}
+
+// distributionFact and majorFact match Ansible's ways of naming the
+// distribution and its major version.
+const (
+	distributionFact = `ansible_(?:facts\.distribution|facts\[["']distribution["']\]|distribution)`
+	majorFact        = `ansible_(?:facts\.distribution_major_version|facts\[["']distribution_major_version["']\]|distribution_major_version)`
+)
+
+var (
+	distributionCompare = regexp.MustCompile(`^` + distributionFact + `\s*(==|!=)\s*["'](\w+)["']$`)
+	majorCompare        = regexp.MustCompile(`^` + majorFact + `\s*\|\s*int\s*(==|!=|>=|<=|>|<)\s*(\d+)$`)
+)
+
+// hostID and hostMajor are a host's os-release ID, from its host object's
+// os when given, as for a host this plan creates, and its major version.
+const (
+	hostID    = `try(var.hosts[each.key].os, data.conn3x_host.facts[each.key].os_id)`
+	hostMajor = `try(tonumber(split(".", data.conn3x_host.facts[each.key].os_version)[0]), 0)` // | int gives 0 for what it can't read
+)
+
+// distributionWhen reads a when that compares the host's distribution to a
+// name, or its major version as a number, as a step's when over the
+// conn3x_host data source. "" for any other when, or a name it doesn't know.
+func distributionWhen(n *yaml.Node) string {
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return ""
+	}
+	cond := strings.Join(strings.Fields(n.Value), " ")
+	if m := distributionCompare.FindStringSubmatch(cond); m != nil {
+		id, ok := distributionIDs[m[2]]
+		if !ok {
+			return ""
+		}
+		return fmt.Sprintf(`%s %s "%s"`, hostID, m[1], id)
+	}
+	if m := majorCompare.FindStringSubmatch(cond); m != nil {
+		return fmt.Sprintf("%s %s %s", hostMajor, m[1], m[2])
+	}
+	return ""
+}
+
 // whenReadsFacts reports whether a role task's when reads facts a step
 // can't: any condition in it that isn't a family or package test, which
 // convert, and mentions one.
@@ -291,7 +338,7 @@ func whenReadsFacts(w *yaml.Node) bool {
 		conds = w.Content
 	}
 	for _, c := range conds {
-		if _, _, family := familyWhen(c); !family && packagesWhen(c) == "" && readsFacts(c) {
+		if _, _, family := familyWhen(c); !family && packagesWhen(c) == "" && distributionWhen(c) == "" && readsFacts(c) {
 			return true
 		}
 	}

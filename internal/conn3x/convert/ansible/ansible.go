@@ -819,6 +819,8 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				switches = append(switches, b)
 			} else if p := packagesWhen(e); p != "" {
 				switches = append(switches, p)
+			} else if d := distributionWhen(e); d != "" {
+				switches = append(switches, d)
 			} else {
 				rest = append(rest, e)
 			}
@@ -856,6 +858,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	} else if w := t["when"]; w != nil && c.role != nil && !familyCond {
 		if boolCond = c.role.boolWhen(w); boolCond == "" {
 			boolCond = packagesWhen(w)
+		}
+		if boolCond == "" {
+			boolCond = distributionWhen(w)
 		}
 	}
 	wait := uriRetry(t)
@@ -1172,6 +1177,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			conds = append(conds, boolCond)
 			if strings.Contains(boolCond, "data.conn3x_packages.") {
 				c.role.packagesUsed = true
+			}
+			if strings.Contains(boolCond, "data.conn3x_host.") {
+				c.role.familyUsed = true
 			}
 		}
 		if len(conds) > 0 {
