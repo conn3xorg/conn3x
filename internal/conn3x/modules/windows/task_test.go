@@ -222,3 +222,59 @@ func TestTaskSplitData(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyTaskSends(t *testing.T) {
+	tk := baseTask()
+	tk.Triggers = []TaskTrigger{{Type: "daily", At: "2026-01-01T03:00:00", DaysInterval: 3}, {Type: "boot"}}
+	f := &fake{answers: []map[string]any{{"ok": true}}}
+	if err := ApplyTask(context.Background(), f, tk, ""); err != nil {
+		t.Fatal(err)
+	}
+	args := f.sent[0]["args"].(map[string]any)
+	trig := args["triggers"].([]any)
+	if _, has := args["password"]; has || trig[0].(map[string]any)["days"] != float64(3) || trig[1].(map[string]any)["days"] != float64(1) {
+		t.Errorf("sent %v", args)
+	}
+	if err := ApplyTask(context.Background(), &fake{answers: []map[string]any{{"ok": false, "error": "denied"}}}, tk, ""); err == nil || err.Error() != "denied" {
+		t.Errorf("host error: %v", err)
+	}
+	bad := baseTask()
+	bad.Name = "a*"
+	if ApplyTask(context.Background(), &fake{}, bad, "") == nil {
+		t.Error("an invalid task reached the host")
+	}
+}
+
+func TestTaskValidateMore(t *testing.T) {
+	nul := "a\x00b"
+	for name, change := range map[string]func(*Task){
+		"NUL in description":   func(t *Task) { t.Description = &nul },
+		"empty folder in data": func(t *Task) { t.DataPaths = []string{`C:\logs\\job.log`} },
+		"% in arguments":       func(t *Task) { t.Arguments = "%TEMP%" },
+	} {
+		tk := baseTask()
+		change(&tk)
+		if tk.Validate() == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// A trailing backslash is a folder, not an empty name.
+	if !cleanSegments(`C:\logs\`) || cleanSegments(`C:\a\\b`) {
+		t.Error("cleanSegments")
+	}
+	d := "nightly job"
+	tk := baseTask()
+	tk.Description = &d
+	if tk.Matches(ActualTask{Exists: true, Description: "other", Enabled: true, Actions: make([]struct {
+		Execute          string `json:"execute"`
+		Arguments        string `json:"arguments"`
+		WorkingDirectory string `json:"working_directory"`
+	}, 1), Triggers: make([]struct {
+		Kind    string `json:"kind"`
+		Start   string `json:"start"`
+		Days    int    `json:"days"`
+		Enabled bool   `json:"enabled"`
+	}, 2)}) {
+		t.Error("another description matched")
+	}
+}

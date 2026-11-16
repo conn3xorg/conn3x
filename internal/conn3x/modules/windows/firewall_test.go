@@ -288,3 +288,74 @@ func TestSSHConnDropsZone(t *testing.T) {
 		t.Error("deleted the allow for a link-local client")
 	}
 }
+
+func TestFirewallValidateMore(t *testing.T) {
+	for _, p := range []string{"udp", "icmpv4", "icmpv6"} {
+		if err := (FirewallRule{Name: "a", Protocol: p}).WithDefaults().Validate(); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	if err := (FirewallRule{Name: "a", Protocol: "icmpv6", LocalPorts: []string{"1"}}).WithDefaults().Validate(); err == nil || !strings.Contains(err.Error(), `not "icmpv6"`) {
+		t.Errorf("ports on icmpv6: %v", err)
+	}
+	d := "two\nlines"
+	for want, f := range map[string]FirewallRule{
+		"description must not":   {Name: "a", Description: &d},
+		`action "deny"`:          {Name: "a", Action: "deny"},
+		"mask that isn't valid":  {Name: "a", RemoteAddresses: []string{"10.0.0.0/2001:db8::"}},
+		"isn't a number":         {Name: "a", RemoteAddresses: []string{"2001:db8::/x"}},
+		"isn't an IP address, a": {Name: "a", RemoteAddresses: []string{"nope/8"}},
+	} {
+		if err := f.WithDefaults().Validate(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: %v, want %q", f, err, want)
+		}
+	}
+}
+
+func TestFirewallReadAndRemove(t *testing.T) {
+	ctx := context.Background()
+	a, err := ReadFirewallRule(ctx, &fake{answers: []map[string]any{ok(map[string]any{"exists": true, "protocol": "TCP", "local_ports": []string{"22"}})}}, "ssh")
+	if err != nil || !a.Exists || a.Protocol != "TCP" || a.LocalPorts[0] != "22" {
+		t.Errorf("read %+v, %v", a, err)
+	}
+	if _, err := ReadFirewallRule(ctx, &fake{answers: []map[string]any{ok("x")}}, "ssh"); err == nil || err.Error() != "reading firewall rule ssh: the host's answer wasn't valid" {
+		t.Errorf("garbled: %v", err)
+	}
+	if _, err := ReadFirewallRule(ctx, &fake{answers: []map[string]any{{"ok": false, "error": "denied"}}}, "ssh"); err == nil {
+		t.Error("host error ignored")
+	}
+	f := &fake{answers: []map[string]any{ok(nil)}}
+	if err := ApplyFirewallRuleRemove(ctx, f, "ssh"); err != nil || args(f, 0)["name"] != "ssh" {
+		t.Errorf("remove: %v", err)
+	}
+	if err := ApplyFirewallRuleRemove(ctx, f, "a*"); err == nil || err.Error() != "not a rule name" || len(f.sent) != 1 {
+		t.Errorf("wildcard: %v", err)
+	}
+	// A display name, when set, goes as it is.
+	f = &fake{answers: []map[string]any{ok(nil)}}
+	if err := ApplyFirewallRule(ctx, f, FirewallRule{Name: "web", DisplayName: "Web"}); err != nil || args(f, 0)["display_name"] != "Web" || args(f, 0)["protocol"] != "Any" {
+		t.Errorf("display name: %v, sent %v", err, f.sent)
+	}
+	// Descriptions differ, or the same port twice and Any in a list.
+	desc := "web"
+	r := FirewallRule{Name: "x", Description: &desc, Protocol: "tcp", LocalPorts: []string{"80", "80"}, Enabled: true}
+	have := ActualFirewallRule{Exists: true, Description: "web", Direction: "Inbound", Action: "Allow", Enabled: true, Protocol: "TCP", LocalPorts: []string{"80", "Any"}}
+	if !r.Matches(have) {
+		t.Error("a repeated port or Any counted as drift")
+	}
+	have.Description = "other"
+	if r.Matches(have) {
+		t.Error("another description matched")
+	}
+	if got := (SSHConn{Port: 22}).String(); got != "an unknown address to port 22" {
+		t.Errorf("unknown client: %q", got)
+	}
+	// Junk from SSH_CONNECTION leaves the client unknown and the port as given.
+	c, err := ReadSSHConn(ctx, &fake{answers: []map[string]any{ok("not-an-ip 1 2 port")}}, 2222)
+	if err != nil || c.Client.IsValid() || c.Port != 2222 {
+		t.Errorf("junk: %+v, %v", c, err)
+	}
+	if _, err := ReadSSHConn(ctx, &fake{answers: []map[string]any{{"ok": false, "error": "denied"}}}, 22); err == nil {
+		t.Error("host error ignored")
+	}
+}
