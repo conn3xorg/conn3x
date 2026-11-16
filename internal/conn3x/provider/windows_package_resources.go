@@ -106,7 +106,7 @@ func readWinPackage(ctx context.Context, req providers.ReadResourceRequest) prov
 		return resp
 	}
 	p := winPackageFrom(req.PriorState)
-	installed, err := windows.PackageInstalled(ctx, h.client, p.ProductCode)
+	installed, err := windows.PackageInstalled(ctx, h.raw(), p.ProductCode)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -139,16 +139,16 @@ func applyWinPackage(ctx context.Context, req providers.ApplyResourceChangeReque
 	}
 	// Windows Installer runs one installation at a time.
 	defer lockHost(h, "windows_package")()
-	installed, err := windows.PackageInstalled(ctx, h.client, p.ProductCode)
+	installed, err := windows.PackageInstalled(ctx, h.raw(), p.ProductCode)
 	if err != nil {
 		return fail(err)
 	}
 	restart := false
 	if installed == p.Absent {
-		if restart, err = windows.ApplyPackage(ctx, h.client, p, timeout); err != nil {
+		if restart, err = windows.ApplyPackage(ctx, h.raw(), p, timeout); err != nil {
 			return fail(fmt.Errorf("%s: %w", p.ProductCode, err))
 		}
-		if installed, err = windows.PackageInstalled(ctx, h.client, p.ProductCode); err != nil {
+		if installed, err = windows.PackageInstalled(ctx, h.raw(), p.ProductCode); err != nil {
 			return fail(err)
 		}
 		if installed == p.Absent {

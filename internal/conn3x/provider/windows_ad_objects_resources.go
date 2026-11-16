@@ -14,7 +14,6 @@ import (
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/windows"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/windows/ps"
-	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
@@ -53,7 +52,7 @@ func adCheck(cfg cty.Value, attrs []string, check func() (string, error)) tfdiag
 	return diags
 }
 
-func adRead(ctx context.Context, req providers.ReadResourceRequest, matches func(*ssh.Client) (bool, error)) providers.ReadResourceResponse {
+func adRead(ctx context.Context, req providers.ReadResourceRequest, matches func(ps.Runner) (bool, error)) providers.ReadResourceResponse {
 	resp := providers.ReadResourceResponse{NewState: req.PriorState}
 	if req.PriorState.IsNull() {
 		return resp
@@ -63,7 +62,7 @@ func adRead(ctx context.Context, req providers.ReadResourceRequest, matches func
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	ok, err := matches(h.client)
+	ok, err := matches(h.raw())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -73,14 +72,14 @@ func adRead(ctx context.Context, req providers.ReadResourceRequest, matches func
 }
 
 // adRemove runs remove when the step goes with on_remove = "delete".
-func adRemove(ctx context.Context, req providers.ApplyResourceChangeRequest, kind string, remove func(*ssh.Client) error) providers.ApplyResourceChangeResponse {
+func adRemove(ctx context.Context, req providers.ApplyResourceChangeRequest, kind string, remove func(ps.Runner) error) providers.ApplyResourceChangeResponse {
 	resp := providers.ApplyResourceChangeResponse{NewState: req.PlannedState}
 	if req.PriorState.IsNull() || req.PriorState.GetAttr("on_remove").AsString() != onRemoveDelete {
 		return resp
 	}
 	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
 	if err == nil {
-		err = adWrite(ctx, h.client, func() error { return remove(h.client) })
+		err = adWrite(ctx, h.raw(), func() error { return remove(h.raw()) })
 	}
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("%s: %w", kind, err))
@@ -138,7 +137,7 @@ func planWinADOU(req providers.PlanResourceChangeRequest) providers.PlanResource
 
 func readWinADOU(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	o := winADOUFrom(req.PriorState)
-	return adRead(ctx, req, func(c *ssh.Client) (bool, error) {
+	return adRead(ctx, req, func(c ps.Runner) (bool, error) {
 		a, err := windows.ReadOU(ctx, c, o)
 		return o.Matches(a), err
 	})
@@ -146,7 +145,7 @@ func readWinADOU(ctx context.Context, req providers.ReadResourceRequest) provide
 
 func applyWinADOU(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	if req.PlannedState.IsNull() {
-		return adRemove(ctx, req, "windows_ad_ou", func(c *ssh.Client) error { return windows.ApplyOURemove(ctx, c, winADOUFrom(req.PriorState)) })
+		return adRemove(ctx, req, "windows_ad_ou", func(c ps.Runner) error { return windows.ApplyOURemove(ctx, c, winADOUFrom(req.PriorState)) })
 	}
 	var resp providers.ApplyResourceChangeResponse
 	fail := func(err error) providers.ApplyResourceChangeResponse {
@@ -162,19 +161,19 @@ func applyWinADOU(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		return fail(err)
 	}
 	wrote := false
-	err = adWrite(ctx, h.client, func() error {
-		a, err := windows.ReadOU(ctx, h.client, o)
+	err = adWrite(ctx, h.raw(), func() error {
+		a, err := windows.ReadOU(ctx, h.raw(), o)
 		if err != nil || o.Matches(a) {
 			return err
 		}
 		wrote = true
-		return windows.ApplyOU(ctx, h.client, o, a)
+		return windows.ApplyOU(ctx, h.raw(), o, a)
 	})
 	if err != nil {
 		return fail(err)
 	}
 	if wrote {
-		a, err := windows.ReadOU(ctx, h.client, o)
+		a, err := windows.ReadOU(ctx, h.raw(), o)
 		if err != nil {
 			return fail(err)
 		}
@@ -250,7 +249,7 @@ func planWinADGroup(req providers.PlanResourceChangeRequest) providers.PlanResou
 func readWinADGroup(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	g := winADGroupFrom(req.PriorState)
 	pending := []string{}
-	resp := adRead(ctx, req, func(c *ssh.Client) (bool, error) {
+	resp := adRead(ctx, req, func(c ps.Runner) (bool, error) {
 		a, err := windows.ReadADGroup(ctx, c, g)
 		if err == nil && a.Exists {
 			pending = g.PendingChanges(a)
@@ -268,7 +267,7 @@ func readWinADGroup(ctx context.Context, req providers.ReadResourceRequest) prov
 
 func applyWinADGroup(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	if req.PlannedState.IsNull() {
-		return adRemove(ctx, req, "windows_ad_group", func(c *ssh.Client) error {
+		return adRemove(ctx, req, "windows_ad_group", func(c ps.Runner) error {
 			return windows.ApplyADGroupRemove(ctx, c, stringOr(req.PriorState.GetAttr("name"), ""))
 		})
 	}
@@ -286,19 +285,19 @@ func applyWinADGroup(ctx context.Context, req providers.ApplyResourceChangeReque
 		return fail(err)
 	}
 	wrote := false
-	err = adWrite(ctx, h.client, func() error {
-		a, err := windows.ReadADGroup(ctx, h.client, g)
+	err = adWrite(ctx, h.raw(), func() error {
+		a, err := windows.ReadADGroup(ctx, h.raw(), g)
 		if err != nil || g.Matches(a) {
 			return err
 		}
 		wrote = true
-		return windows.ApplyADGroup(ctx, h.client, g, a)
+		return windows.ApplyADGroup(ctx, h.raw(), g, a)
 	})
 	if err != nil {
 		return fail(err)
 	}
 	if wrote {
-		a, err := windows.ReadADGroup(ctx, h.client, g)
+		a, err := windows.ReadADGroup(ctx, h.raw(), g)
 		if err != nil {
 			return fail(err)
 		}
@@ -393,7 +392,7 @@ func planWinADUser(req providers.PlanResourceChangeRequest) providers.PlanResour
 
 func readWinADUser(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	u := winADUserFrom(req.PriorState)
-	return adRead(ctx, req, func(c *ssh.Client) (bool, error) {
+	return adRead(ctx, req, func(c ps.Runner) (bool, error) {
 		a, err := windows.ReadADUser(ctx, c, u)
 		return u.Matches(a), err
 	})
@@ -409,7 +408,7 @@ func applyWinADUser(ctx context.Context, req providers.ApplyResourceChangeReques
 		if why := adLockout(req.PriorState, true); why != "" && !req.PriorState.IsNull() && req.PriorState.GetAttr("on_remove").AsString() == onRemoveDelete {
 			return fail(fmt.Errorf("%s", why))
 		}
-		return adRemove(ctx, req, "windows_ad_user", func(c *ssh.Client) error {
+		return adRemove(ctx, req, "windows_ad_user", func(c ps.Runner) error {
 			return windows.ApplyADUserRemove(ctx, c, stringOr(req.PriorState.GetAttr("name"), ""))
 		})
 	}
@@ -433,8 +432,8 @@ func applyWinADUser(ctx context.Context, req providers.ApplyResourceChangeReques
 		return fail(err)
 	}
 	wrote := false
-	err = adWrite(ctx, h.client, func() error {
-		a, err := windows.ReadADUser(ctx, h.client, u)
+	err = adWrite(ctx, h.raw(), func() error {
+		a, err := windows.ReadADUser(ctx, h.raw(), u)
 		if err != nil {
 			return err
 		}
@@ -448,13 +447,13 @@ func applyWinADUser(ctx context.Context, req providers.ApplyResourceChangeReques
 			return nil
 		}
 		wrote = true
-		return windows.ApplyADUser(ctx, h.client, u, a, pw)
+		return windows.ApplyADUser(ctx, h.raw(), u, a, pw)
 	})
 	if err != nil {
 		return fail(err)
 	}
 	if wrote {
-		a, err := windows.ReadADUser(ctx, h.client, u)
+		a, err := windows.ReadADUser(ctx, h.raw(), u)
 		if err != nil {
 			return fail(err)
 		}

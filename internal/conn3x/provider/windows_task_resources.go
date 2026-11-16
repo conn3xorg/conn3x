@@ -182,7 +182,7 @@ func readWinTask(ctx context.Context, req providers.ReadResourceRequest) provide
 	}
 	t := winTaskFrom(req.PriorState)
 	t.HasPassword = known(req.PriorState.GetAttr("password_hmac"))
-	a, err := windows.ReadTask(ctx, h.client, t)
+	a, err := windows.ReadTask(ctx, h.raw(), t)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -207,7 +207,7 @@ func applyWinTask(ctx context.Context, req providers.ApplyResourceChangeRequest)
 			return fail(err)
 		}
 		t := winTaskFrom(req.PriorState)
-		if err := windows.ApplyTaskRemove(ctx, h.client, t.Path, t.Name); err != nil {
+		if err := windows.ApplyTaskRemove(ctx, h.raw(), t.Path, t.Name); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -245,17 +245,17 @@ func applyWinTask(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadTask(ctx, h.client, t)
+	a, err := windows.ReadTask(ctx, h.raw(), t)
 	if err != nil {
 		return fail(err)
 	}
 	// A new password can't be compared on the host, so it always registers.
 	newPassword := password != "" && (req.PriorState.IsNull() || !req.PriorState.GetAttr("password_hmac").RawEquals(vals["password_hmac"]))
 	if newPassword || !t.Matches(a) {
-		if err := windows.ApplyTask(ctx, h.client, t, password); err != nil {
+		if err := windows.ApplyTask(ctx, h.raw(), t, password); err != nil {
 			return fail(fmt.Errorf("task %s%s: %w", t.Path, t.Name, err))
 		}
-		if a, err = windows.ReadTask(ctx, h.client, t); err != nil {
+		if a, err = windows.ReadTask(ctx, h.raw(), t); err != nil {
 			return fail(err)
 		}
 		if !t.Matches(a) {

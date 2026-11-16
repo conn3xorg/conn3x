@@ -71,7 +71,7 @@ func winHost(ctx context.Context, conn cty.Value) (*hostConn, error) {
 	if checked {
 		return h, nil
 	}
-	ok, err := windows.Elevated(ctx, h.client)
+	ok, err := windows.Elevated(ctx, h.raw())
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func readWinWaitFor(ctx context.Context, req providers.ReadResourceRequest) prov
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	ok, err := w.Ready(ctx, h.client)
+	ok, err := w.Ready(ctx, h.raw())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -191,7 +191,7 @@ func applyWinWaitFor(ctx context.Context, req providers.ApplyResourceChangeReque
 		h, err := winHost(ctx, conn)
 		if err == nil {
 			var ok bool
-			ok, err = w.Ready(ctx, h.client)
+			ok, err = w.Ready(ctx, h.raw())
 			if err == nil && ok {
 				resp.NewState = withSync(req.PlannedState, true)
 				return resp
@@ -279,7 +279,7 @@ func readWinReboot(ctx context.Context, req providers.ReadResourceRequest) provi
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	pending, err := windows.PendingReboot(ctx, h.client)
+	pending, err := windows.PendingReboot(ctx, h.raw())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -310,7 +310,7 @@ func applyWinReboot(ctx context.Context, req providers.ApplyResourceChangeReques
 	if err != nil {
 		return fail(err)
 	}
-	before, err := windows.BootID(ctx, h.client)
+	before, err := windows.BootID(ctx, h.raw())
 	if err != nil {
 		return fail(err)
 	}
@@ -318,7 +318,7 @@ func applyWinReboot(ctx context.Context, req providers.ApplyResourceChangeReques
 	vals["boot_id"] = cty.StringVal(before)
 	vals["pending"] = cty.False
 	if onlyIfPending(req.PlannedState) {
-		pending, err := windows.PendingReboot(ctx, h.client)
+		pending, err := windows.PendingReboot(ctx, h.raw())
 		if err != nil {
 			return fail(err)
 		}
@@ -327,7 +327,7 @@ func applyWinReboot(ctx context.Context, req providers.ApplyResourceChangeReques
 			return resp
 		}
 	}
-	if err := windows.ApplyReboot(ctx, h.client); err != nil {
+	if err := windows.ApplyReboot(ctx, h.raw()); err != nil {
 		return fail(err)
 	}
 	// Drop the pooled connection; the next dial makes a new one.
@@ -341,7 +341,7 @@ func applyWinReboot(ctx context.Context, req providers.ApplyResourceChangeReques
 		// whole read timeout.
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		return windows.BootID(ctx, h.client)
+		return windows.BootID(ctx, h.raw())
 	})
 	if err != nil {
 		return fail(err)
@@ -351,7 +351,7 @@ func applyWinReboot(ctx context.Context, req providers.ApplyResourceChangeReques
 		h, err := winHost(ctx, conn)
 		if err == nil {
 			var pending bool
-			if pending, err = windows.PendingReboot(ctx, h.client); err == nil {
+			if pending, err = windows.PendingReboot(ctx, h.raw()); err == nil {
 				vals["pending"] = cty.BoolVal(pending)
 			}
 		}
@@ -529,7 +529,7 @@ func readWinPowershell(ctx context.Context, req providers.ReadResourceRequest) p
 	}
 	// args_wo is never in state, so the check gets only args, at refresh and apply alike.
 	args, _ := scriptArgs(req.PriorState.GetAttr("args"), cty.NullVal(cty.Map(cty.String)))
-	ok, err := windows.Satisfied(ctx, h.client, winGuards(req.PriorState), args)
+	ok, err := windows.Satisfied(ctx, h.raw(), winGuards(req.PriorState), args)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -581,7 +581,7 @@ func applyWinPowershell(ctx context.Context, req providers.ApplyResourceChangeRe
 			return resp
 		}
 	}
-	done, err := windows.Satisfied(ctx, h.client, guards, checkArgs)
+	done, err := windows.Satisfied(ctx, h.raw(), guards, checkArgs)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(errors.New(windows.Scrub(err.Error(), secrets)))
 		return resp
@@ -591,14 +591,14 @@ func applyWinPowershell(ctx context.Context, req providers.ApplyResourceChangeRe
 		stdout, stderr = req.PriorState.GetAttr("stdout"), req.PriorState.GetAttr("stderr")
 	}
 	if !done {
-		out, err := windows.RunScript(ctx, h.client, req.PlannedState.GetAttr("script").AsString(), args, secrets, timeout)
+		out, err := windows.RunScript(ctx, h.raw(), req.PlannedState.GetAttr("script").AsString(), args, secrets, timeout)
 		if err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(err)
 			return resp
 		}
 		stdout, stderr = cty.StringVal(out.Stdout), cty.StringVal(out.Stderr)
 		if guards.Any() {
-			if ok, err := windows.Satisfied(ctx, h.client, guards, checkArgs); err != nil || !ok {
+			if ok, err := windows.Satisfied(ctx, h.raw(), guards, checkArgs); err != nil || !ok {
 				resp.Diagnostics = resp.Diagnostics.Append(errors.New("the script ran, but its guards still don't hold; check creates, removes and unless match what it does"))
 				return resp
 			}

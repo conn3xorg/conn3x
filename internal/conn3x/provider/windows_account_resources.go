@@ -189,7 +189,7 @@ func readWinUser(ctx context.Context, req providers.ReadResourceRequest) provide
 		return resp
 	}
 	u := winUserFrom(req.PriorState)
-	a, err := windows.ReadUser(ctx, h.client, u.Name)
+	a, err := windows.ReadUser(ctx, h.raw(), u.Name)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -216,7 +216,7 @@ func applyWinUser(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		if err != nil {
 			return fail(err)
 		}
-		if err := windows.ApplyUserRemove(ctx, h.client, stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
+		if err := windows.ApplyUserRemove(ctx, h.raw(), stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -240,7 +240,7 @@ func applyWinUser(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadUser(ctx, h.client, u.Name)
+	a, err := windows.ReadUser(ctx, h.raw(), u.Name)
 	if err != nil {
 		return fail(err)
 	}
@@ -250,10 +250,10 @@ func applyWinUser(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		password = &s
 	}
 	if password != nil || !u.Matches(a) {
-		if err := windows.ApplyUser(ctx, h.client, u, a, password); err != nil {
+		if err := windows.ApplyUser(ctx, h.raw(), u, a, password); err != nil {
 			return fail(err)
 		}
-		if a, err = windows.ReadUser(ctx, h.client, u.Name); err != nil {
+		if a, err = windows.ReadUser(ctx, h.raw(), u.Name); err != nil {
 			return fail(err)
 		}
 		if !u.Matches(a) {
@@ -362,7 +362,7 @@ func readWinGroup(ctx context.Context, req providers.ReadResourceRequest) provid
 		return resp
 	}
 	g := winGroupFrom(req.PriorState)
-	a, err := windows.ReadGroup(ctx, h.client, g)
+	a, err := windows.ReadGroup(ctx, h.raw(), g)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -386,7 +386,7 @@ func applyWinGroup(ctx context.Context, req providers.ApplyResourceChangeRequest
 		if err != nil {
 			return fail(err)
 		}
-		if err := windows.ApplyGroupRemove(ctx, h.client, stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
+		if err := windows.ApplyGroupRemove(ctx, h.raw(), stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -399,15 +399,15 @@ func applyWinGroup(ctx context.Context, req providers.ApplyResourceChangeRequest
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadGroup(ctx, h.client, g)
+	a, err := windows.ReadGroup(ctx, h.raw(), g)
 	if err != nil {
 		return fail(err)
 	}
 	if !g.Matches(a) {
-		if err := windows.ApplyGroup(ctx, h.client, g, a); err != nil {
+		if err := windows.ApplyGroup(ctx, h.raw(), g, a); err != nil {
 			return fail(err)
 		}
-		if a, err = windows.ReadGroup(ctx, h.client, g); err != nil {
+		if a, err = windows.ReadGroup(ctx, h.raw(), g); err != nil {
 			return fail(err)
 		}
 		if !g.Matches(a) {

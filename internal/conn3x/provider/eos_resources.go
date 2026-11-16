@@ -98,7 +98,7 @@ func eosDevice(ctx context.Context, conn cty.Value) (*eosConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	dev, err := eosEnable(h.client, conn)
+	dev, err := eosEnable(h.raw(), conn)
 	if err != nil {
 		return nil, err
 	}

@@ -251,7 +251,7 @@ func readVyOSDevice(ctx context.Context, req providers.ReadDataSourceRequest) pr
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	f, err := vyos.ReadFacts(ctx, h.client)
+	f, err := vyos.ReadFacts(ctx, h.raw())
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("conn3x_vyos_device: %w", err))
 		return resp

@@ -196,7 +196,7 @@ func readWinFile(ctx context.Context, req providers.ReadResourceRequest) provide
 		return resp
 	}
 	entries := winFileEntries(req.PriorState, !req.PriorState.GetAttr("content_hmac").IsNull())
-	s, err := windows.ReadPath(ctx, h.client, path, windows.Principals(entries, ""), true)
+	s, err := windows.ReadPath(ctx, h.raw(), path, windows.Principals(entries, ""), true)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading %s: %w", path, err))
 		return resp
@@ -260,7 +260,7 @@ func applyWinFile(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		if err != nil {
 			return fail(err)
 		}
-		if err := windows.ApplyFileRemove(ctx, h.client, path); err != nil {
+		if err := windows.ApplyFileRemove(ctx, h.raw(), path); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -293,7 +293,7 @@ func applyWinFile(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	}
 	entries := winFileEntries(planned, !wo.IsNull())
 	want := digest(content)
-	before, err := windows.ReadPath(ctx, h.client, path, windows.Principals(entries, ""), true)
+	before, err := windows.ReadPath(ctx, h.raw(), path, windows.Principals(entries, ""), true)
 	if err != nil {
 		return fail(errors.New(windows.Scrub(err.Error(), secrets)))
 	}
@@ -304,11 +304,11 @@ func applyWinFile(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		}
 	}
 	if !done {
-		if err := windows.ApplyFile(ctx, h.client, path, []byte(content), entries, secrets); err != nil {
+		if err := windows.ApplyFile(ctx, h.raw(), path, []byte(content), entries, secrets); err != nil {
 			return fail(fmt.Errorf("writing %s: %w", path, err))
 		}
 	}
-	after, err := windows.ReadPath(ctx, h.client, path, windows.Principals(entries, ""), true)
+	after, err := windows.ReadPath(ctx, h.raw(), path, windows.Principals(entries, ""), true)
 	if err != nil {
 		return fail(fmt.Errorf("reading back %s: %w", path, err))
 	}
@@ -368,7 +368,7 @@ func readWinDirectory(ctx context.Context, req providers.ReadResourceRequest) pr
 		return resp
 	}
 	entries := winEntries(req.PriorState.GetAttr("acl"))
-	s, err := windows.ReadPath(ctx, h.client, path, windows.Principals(entries, ""), false)
+	s, err := windows.ReadPath(ctx, h.raw(), path, windows.Principals(entries, ""), false)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading %s: %w", path, err))
 		return resp
@@ -406,10 +406,10 @@ func applyWinDirectory(ctx context.Context, req providers.ApplyResourceChangeReq
 		return fail(err)
 	}
 	entries := winEntries(req.PlannedState.GetAttr("acl"))
-	if err := windows.ApplyDirectory(ctx, h.client, path, entries); err != nil {
+	if err := windows.ApplyDirectory(ctx, h.raw(), path, entries); err != nil {
 		return fail(fmt.Errorf("making %s: %w", path, err))
 	}
-	s, err := windows.ReadPath(ctx, h.client, path, windows.Principals(entries, ""), false)
+	s, err := windows.ReadPath(ctx, h.raw(), path, windows.Principals(entries, ""), false)
 	if err != nil {
 		return fail(err)
 	}
@@ -501,7 +501,7 @@ func readWinACL(ctx context.Context, req providers.ReadResourceRequest) provider
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
 	}
-	s, err := windows.ReadPath(ctx, h.client, a.Path, windows.Principals(a.Entries, a.Owner), false)
+	s, err := windows.ReadPath(ctx, h.raw(), a.Path, windows.Principals(a.Entries, a.Owner), false)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading %s: %w", a.Path, err))
 		return resp
@@ -535,7 +535,7 @@ func applyWinACL(ctx context.Context, req providers.ApplyResourceChangeRequest) 
 		return fail(err)
 	}
 	names := windows.Principals(a.Entries, a.Owner)
-	s, err := windows.ReadPath(ctx, h.client, a.Path, names, false)
+	s, err := windows.ReadPath(ctx, h.raw(), a.Path, names, false)
 	if err != nil {
 		return fail(err)
 	}
@@ -552,10 +552,10 @@ func applyWinACL(ctx context.Context, req providers.ApplyResourceChangeRequest) 
 		return fail(err)
 	}
 	if !ok {
-		if err := windows.ApplyACL(ctx, h.client, a, s.Kind == "directory"); err != nil {
+		if err := windows.ApplyACL(ctx, h.raw(), a, s.Kind == "directory"); err != nil {
 			return fail(fmt.Errorf("setting rules on %s: %w", a.Path, err))
 		}
-		if s, err = windows.ReadPath(ctx, h.client, a.Path, names, false); err != nil {
+		if s, err = windows.ReadPath(ctx, h.raw(), a.Path, names, false); err != nil {
 			return fail(err)
 		}
 		if ok, err = winACLMatches(s, a); err != nil {

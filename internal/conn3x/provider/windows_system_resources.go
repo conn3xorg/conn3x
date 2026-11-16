@@ -138,7 +138,7 @@ func readWinRegistry(ctx context.Context, req providers.ReadResourceRequest) pro
 	}
 	v := winRegistryFrom(req.PriorState, stringOr(req.PriorState.GetAttr("data"), ""))
 	stored := req.PriorState.GetAttr("data_hmac")
-	a, err := windows.ReadRegistry(ctx, h.client, v, known(stored))
+	a, err := windows.ReadRegistry(ctx, h.raw(), v, known(stored))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -177,7 +177,7 @@ func applyWinRegistry(ctx context.Context, req providers.ApplyResourceChangeRequ
 		if err != nil {
 			return fail(err)
 		}
-		if err := windows.ApplyRegistryRemove(ctx, h.client, winRegistryFrom(req.PriorState, "")); err != nil {
+		if err := windows.ApplyRegistryRemove(ctx, h.raw(), winRegistryFrom(req.PriorState, "")); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -225,10 +225,10 @@ func applyWinRegistry(ctx context.Context, req providers.ApplyResourceChangeRequ
 		}
 		vals["data_hmac"] = cty.StringVal(winWoHMAC(key, winRegistryID(v), digest(c)))
 	}
-	if err := windows.ApplyRegistry(ctx, h.client, v); err != nil {
+	if err := windows.ApplyRegistry(ctx, h.raw(), v); err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadRegistry(ctx, h.client, v, !wo.IsNull())
+	a, err := windows.ReadRegistry(ctx, h.raw(), v, !wo.IsNull())
 	if err != nil {
 		return fail(err)
 	}
@@ -293,7 +293,7 @@ func readWinService(ctx context.Context, req providers.ReadResourceRequest) prov
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	_, ok, err := windows.ServiceInSync(ctx, h.client, winServiceFrom(req.PriorState))
+	_, ok, err := windows.ServiceInSync(ctx, h.raw(), winServiceFrom(req.PriorState))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -322,7 +322,7 @@ func applyWinService(ctx context.Context, req providers.ApplyResourceChangeReque
 	}
 	// One at a time per host, as a service can depend on another one starting.
 	defer lockHost(h, "windows_service")()
-	exists, ok, err := windows.ServiceInSync(ctx, h.client, s)
+	exists, ok, err := windows.ServiceInSync(ctx, h.raw(), s)
 	if err != nil {
 		return fail(err)
 	}
@@ -330,10 +330,10 @@ func applyWinService(ctx context.Context, req providers.ApplyResourceChangeReque
 		return fail(fmt.Errorf("no service named %s on this host", s.Name))
 	}
 	if !ok {
-		if err := windows.ApplyService(ctx, h.client, s); err != nil {
+		if err := windows.ApplyService(ctx, h.raw(), s); err != nil {
 			return fail(fmt.Errorf("changing %s: %w", s.Name, err))
 		}
-		if _, ok, err = windows.ServiceInSync(ctx, h.client, s); err != nil {
+		if _, ok, err = windows.ServiceInSync(ctx, h.raw(), s); err != nil {
 			return fail(err)
 		}
 		if !ok {
@@ -416,7 +416,7 @@ func readWinFeature(ctx context.Context, req providers.ReadResourceRequest) prov
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	ok, _, err := windows.FeatureInSync(ctx, h.client, winFeatureFrom(req.PriorState))
+	ok, _, err := windows.FeatureInSync(ctx, h.raw(), winFeatureFrom(req.PriorState))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -449,16 +449,16 @@ func applyWinFeature(ctx context.Context, req providers.ApplyResourceChangeReque
 	}
 	// Windows servicing takes one change at a time.
 	defer lockHost(h, "windows_feature")()
-	ok, pending, err := windows.FeatureInSync(ctx, h.client, f)
+	ok, pending, err := windows.FeatureInSync(ctx, h.raw(), f)
 	if err != nil {
 		return fail(err)
 	}
 	restart := pending
 	if !ok {
-		if restart, err = windows.ApplyFeature(ctx, h.client, f, timeout); err != nil {
+		if restart, err = windows.ApplyFeature(ctx, h.raw(), f, timeout); err != nil {
 			return fail(fmt.Errorf("changing %s: %w", f.Name, err))
 		}
-		if ok, _, err = windows.FeatureInSync(ctx, h.client, f); err != nil {
+		if ok, _, err = windows.FeatureInSync(ctx, h.raw(), f); err != nil {
 			return fail(err)
 		}
 		if !ok {
@@ -548,7 +548,7 @@ func planWinUpdateReads(ctx context.Context, req providers.PlanResourceChangeReq
 		log.Printf("[DEBUG] conn3x: windows_update: can't list the updates in the plan: %v", err)
 		return
 	}
-	pending, err := windows.PendingUpdates(ctx, h.client, winUpdateFrom(planned))
+	pending, err := windows.PendingUpdates(ctx, h.raw(), winUpdateFrom(planned))
 	switch {
 	case err != nil:
 		// The host answered, so this is worth saying; the apply searches again.
@@ -570,7 +570,7 @@ func readWinUpdate(ctx context.Context, req providers.ReadResourceRequest) provi
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	pending, err := windows.PendingUpdates(ctx, h.client, winUpdateFrom(req.PriorState))
+	pending, err := windows.PendingUpdates(ctx, h.raw(), winUpdateFrom(req.PriorState))
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_update: %w", err))
 		return resp
@@ -602,7 +602,7 @@ func applyWinUpdate(ctx context.Context, req providers.ApplyResourceChangeReques
 	}
 	// Windows servicing takes one change at a time.
 	defer lockHost(h, "windows_feature")()
-	installed, restart, err := windows.ApplyUpdates(ctx, h.client, u, timeout)
+	installed, restart, err := windows.ApplyUpdates(ctx, h.raw(), u, timeout)
 	if len(installed) > 0 {
 		log.Printf("[INFO] conn3x: windows_update on %s installed: %s", h.host, strings.Join(installed, "; "))
 	}

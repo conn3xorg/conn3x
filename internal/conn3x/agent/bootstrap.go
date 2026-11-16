@@ -13,6 +13,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/opentofu/opentofu/internal/conn3x/transport"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
@@ -149,11 +150,18 @@ type probedDir struct {
 	exec bool
 }
 
+// Host is the connection an agent starts over: it runs commands and leaves
+// one running with its stdin and stdout open.
+type Host interface {
+	transport.Conn
+	transport.Starter
+}
+
 // Attach starts an agent on the host c is connected to and returns a
 // client for it. It uses a verified copy cached on the host, or uploads one
 // when o.Upload allows. Whenever the agent can't run there it returns an
 // error wrapping ErrUnavailable, and the caller carries on with the shell.
-func Attach(ctx context.Context, c *ssh.Client, o Options) (*Client, error) {
+func Attach(ctx context.Context, c Host, o Options) (*Client, error) {
 	payload := o.Payload
 	if payload == nil {
 		payload = Embedded
@@ -254,7 +262,7 @@ func Attach(ctx context.Context, c *ssh.Client, o Options) (*Client, error) {
 
 // start runs the agent cached in dir, if its sha256 is still want, and
 // waits for its hello.
-func start(ctx context.Context, c *ssh.Client, dir, name, want string, become *ssh.Become) (*Client, error) {
+func start(ctx context.Context, c Host, dir, name, want string, become *ssh.Become) (*Client, error) {
 	script := hostScript(startScript, ssh.Quote(dir), ssh.Quote(name), want)
 	if become != nil {
 		a, err := startBecome(ctx, c, script, become)

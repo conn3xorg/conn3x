@@ -190,7 +190,10 @@ func keepsLogin(h *hostConn, v cty.Value, ids []string) error {
 	if err != nil || cfg.User != v.GetAttr("user").AsString() {
 		return err
 	}
-	k := h.client.LoginKey()
+	var k gossh.PublicKey
+	if c, ok := h.client.(interface{ LoginKey() gossh.PublicKey }); ok {
+		k = c.LoginKey()
+	}
 	if k == nil {
 		return fmt.Errorf("Conn3x logs in as %s, and can't tell which key it used, so it won't make that account's keys exclusive", cfg.User)
 	}

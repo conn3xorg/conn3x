@@ -27,6 +27,8 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/opentofu/opentofu/internal/conn3x/transport"
 )
 
 // ErrHostKey is wrapped by every host key verification failure.
@@ -95,11 +97,15 @@ func ParseJump(s string) (Jump, error) {
 }
 
 // Result is the outcome of one command.
-type Result struct {
-	Stdout   []byte
-	Stderr   []byte
-	ExitCode int
-}
+type Result = transport.Result
+
+// Client has every transport interface; another transport may have only Conn.
+var _ interface {
+	transport.Conn
+	transport.Starter
+	transport.Dialer
+	transport.Shell
+} = (*Client)(nil)
 
 // Client is an open connection to one host. It is safe for concurrent use;
 // each Run gets its own session on the shared connection. Sessions beyond
@@ -817,7 +823,15 @@ type Process struct {
 
 // Start runs cmd as given, without a PTY, and leaves its stdin and stdout
 // open for the caller. Unlike Run it adds no shell or locale around cmd.
-func (c *Client) Start(ctx context.Context, cmd string) (*Process, error) {
+func (c *Client) Start(ctx context.Context, cmd string) (transport.Process, error) {
+	p, err := c.startProcess(ctx, cmd)
+	if err != nil {
+		return nil, err // not a typed nil in the interface
+	}
+	return p, nil
+}
+
+func (c *Client) startProcess(ctx context.Context, cmd string) (*Process, error) {
 	session, err := c.session(ctx)
 	if err != nil {
 		return nil, err

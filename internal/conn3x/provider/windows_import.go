@@ -17,25 +17,25 @@ import (
 // first, for import.
 
 func hasWinService(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	exists, _, err := windows.ServiceInSync(ctx, h.client, winServiceFrom(v))
+	exists, _, err := windows.ServiceInSync(ctx, h.raw(), winServiceFrom(v))
 	return exists, err
 }
 
 // hasWinRegistry asks for the value's hash only: its data may be secret.
 func hasWinRegistry(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadRegistry(ctx, h.client, winRegistryFrom(v, ""), true)
+	a, err := windows.ReadRegistry(ctx, h.raw(), winRegistryFrom(v, ""), true)
 	return a.Exists, err
 }
 
 // hasWinFeature: the feature is installed. Its sub-features and tools are
 // what the step then manages.
 func hasWinFeature(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	installed, _, err := windows.FeatureInSync(ctx, h.client, windows.Feature{Name: v.GetAttr("name").AsString()})
+	installed, _, err := windows.FeatureInSync(ctx, h.raw(), windows.Feature{Name: v.GetAttr("name").AsString()})
 	return installed, err
 }
 
 func hasWinUser(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadUser(ctx, h.client, v.GetAttr("name").AsString())
+	a, err := windows.ReadUser(ctx, h.raw(), v.GetAttr("name").AsString())
 	return a.Exists, err
 }
 
@@ -43,64 +43,64 @@ func hasWinUser(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
 // it came from isn't checked, so source, url and sha256 are what a later
 // reinstall would use.
 func hasWinPackage(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	return windows.PackageInstalled(ctx, h.client, v.GetAttr("product_code").AsString())
+	return windows.PackageInstalled(ctx, h.raw(), v.GetAttr("product_code").AsString())
 }
 
 func hasWinFirewallRule(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadFirewallRule(ctx, h.client, v.GetAttr("name").AsString())
+	a, err := windows.ReadFirewallRule(ctx, h.raw(), v.GetAttr("name").AsString())
 	return a.Exists, err
 }
 
 func hasWinTask(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadTask(ctx, h.client, winTaskFrom(v))
+	a, err := windows.ReadTask(ctx, h.raw(), winTaskFrom(v))
 	return a.Exists, err
 }
 
 // hasWinAppPool and hasWinSite: a host without IIS has neither.
 func hasWinAppPool(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadAppPool(ctx, h.client, v.GetAttr("name").AsString())
+	a, err := windows.ReadAppPool(ctx, h.raw(), v.GetAttr("name").AsString())
 	return a.Installed && a.Exists, err
 }
 
 func hasWinSite(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadSite(ctx, h.client, v.GetAttr("name").AsString())
+	a, err := windows.ReadSite(ctx, h.raw(), v.GetAttr("name").AsString())
 	return a.Installed && a.Exists, err
 }
 
 // hasWinPath: an ACL step's file or folder is there, and not behind a
 // link, which the step won't follow. Its rules are what the step manages.
 func hasWinPath(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	s, err := windows.ReadPath(ctx, h.client, v.GetAttr("path").AsString(), nil, false)
+	s, err := windows.ReadPath(ctx, h.raw(), v.GetAttr("path").AsString(), nil, false)
 	return (s.Kind == "file" || s.Kind == "directory") && s.LinkOnWay == "", err
 }
 
 // hasWinInterface: the network interface is there. Its DNS servers are
 // what the step manages.
 func hasWinInterface(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadDNSClient(ctx, h.client, winDNSClientFrom(v))
+	a, err := windows.ReadDNSClient(ctx, h.raw(), winDNSClientFrom(v))
 	return a.Found, err
 }
 
 // hasWinADOU and hasWinADGroup run on a domain controller, as the steps do.
 func hasWinADOU(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadOU(ctx, h.client, winADOUFrom(v))
+	a, err := windows.ReadOU(ctx, h.raw(), winADOUFrom(v))
 	return a.Exists, err
 }
 
 func hasWinADGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadADGroup(ctx, h.client, winADGroupFrom(v))
+	a, err := windows.ReadADGroup(ctx, h.raw(), winADGroupFrom(v))
 	return a.Exists, err
 }
 
 // hasWinADUser: the domain has the user. Its password stays as it is until
 // a step sets one, since password_wo never goes into an import ID.
 func hasWinADUser(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadADUser(ctx, h.client, winADUserFrom(v))
+	a, err := windows.ReadADUser(ctx, h.raw(), winADUserFrom(v))
 	return a.Exists, err
 }
 
 func hasWinGroup(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadGroup(ctx, h.client, winGroupFrom(v))
+	a, err := windows.ReadGroup(ctx, h.raw(), winGroupFrom(v))
 	return a.Exists, err
 }
 
@@ -115,7 +115,7 @@ var importFill = map[string]func(context.Context, *hostConn, cty.Value) (cty.Val
 // but still fires its handlers. The read's hash must match what it got.
 func fillWinFile(ctx context.Context, h *hostConn, v cty.Value) (cty.Value, error) {
 	path := v.GetAttr("path").AsString()
-	content, err := windows.ReadFileContent(ctx, h.client, path)
+	content, err := windows.ReadFileContent(ctx, h.raw(), path)
 	if err != nil {
 		return cty.NilVal, err
 	}
@@ -131,21 +131,21 @@ func fillWinFile(ctx context.Context, h *hostConn, v cty.Value) (cty.Value, erro
 // would make it, by the same test a refresh uses. A promotion still
 // waiting for its reboot counts, as it does for in_sync.
 func hasWinForest(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	return winForestFrom(v).Matches(a), err
 }
 
 func hasWinChildDomain(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	return winChildDomainFrom(v).Matches(a), err
 }
 
 func hasWinDC(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	return winDCFrom(v).Matches(a), err
 }
 
 func hasWinMembership(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	a, err := windows.ReadForest(ctx, h.client)
+	a, err := windows.ReadForest(ctx, h.raw())
 	return winMembershipFrom(v).Matches(a), err
 }

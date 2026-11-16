@@ -66,7 +66,7 @@ func readWinDNSRecord(ctx context.Context, req providers.ReadResourceRequest) pr
 		return resp
 	}
 	d := winDNSRecordFrom(req.PriorState)
-	a, err := windows.ReadDNSRecord(ctx, h.client, d)
+	a, err := windows.ReadDNSRecord(ctx, h.raw(), d)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -78,8 +78,8 @@ func readWinDNSRecord(ctx context.Context, req providers.ReadResourceRequest) pr
 func applyWinDNSRecord(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	return applyWinStep(ctx, req, "windows_dns_record", func(ctx context.Context, h *hostConn, v cty.Value, remove bool) error {
 		if remove {
-			return windows.ApplyDNSRecordRemove(ctx, h.client, winDNSRecordFrom(v))
+			return windows.ApplyDNSRecordRemove(ctx, h.raw(), winDNSRecordFrom(v))
 		}
-		return windows.ApplyDNSRecord(ctx, h.client, winDNSRecordFrom(v))
+		return windows.ApplyDNSRecord(ctx, h.raw(), winDNSRecordFrom(v))
 	})
 }

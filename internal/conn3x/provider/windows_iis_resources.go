@@ -84,7 +84,7 @@ func readWinAppPool(ctx context.Context, req providers.ReadResourceRequest) prov
 		return resp
 	}
 	p := winAppPoolFrom(req.PriorState)
-	a, err := windows.ReadAppPool(ctx, h.client, p.Name)
+	a, err := windows.ReadAppPool(ctx, h.raw(), p.Name)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -108,7 +108,7 @@ func applyWinAppPool(ctx context.Context, req providers.ApplyResourceChangeReque
 		if err != nil {
 			return fail(err)
 		}
-		if err := windows.ApplyAppPoolRemove(ctx, h.client, stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
+		if err := windows.ApplyAppPoolRemove(ctx, h.raw(), stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -121,15 +121,15 @@ func applyWinAppPool(ctx context.Context, req providers.ApplyResourceChangeReque
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadAppPool(ctx, h.client, p.Name)
+	a, err := windows.ReadAppPool(ctx, h.raw(), p.Name)
 	if err != nil {
 		return fail(err)
 	}
 	if !p.Matches(a) {
-		if err := windows.ApplyAppPool(ctx, h.client, p); err != nil {
+		if err := windows.ApplyAppPool(ctx, h.raw(), p); err != nil {
 			return fail(fmt.Errorf("pool %s: %w", p.Name, err))
 		}
-		if a, err = windows.ReadAppPool(ctx, h.client, p.Name); err != nil {
+		if a, err = windows.ReadAppPool(ctx, h.raw(), p.Name); err != nil {
 			return fail(err)
 		}
 		if !p.Matches(a) {
@@ -225,7 +225,7 @@ func readWinSite(ctx context.Context, req providers.ReadResourceRequest) provide
 		return resp
 	}
 	s := winSiteFrom(req.PriorState)
-	a, err := windows.ReadSite(ctx, h.client, s.Name)
+	a, err := windows.ReadSite(ctx, h.raw(), s.Name)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -249,7 +249,7 @@ func applyWinSite(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		if err != nil {
 			return fail(err)
 		}
-		if err := windows.ApplySiteRemove(ctx, h.client, stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
+		if err := windows.ApplySiteRemove(ctx, h.raw(), stringOr(req.PriorState.GetAttr("name"), "")); err != nil {
 			return fail(err)
 		}
 		return resp
@@ -262,15 +262,15 @@ func applyWinSite(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	if err != nil {
 		return fail(err)
 	}
-	a, err := windows.ReadSite(ctx, h.client, s.Name)
+	a, err := windows.ReadSite(ctx, h.raw(), s.Name)
 	if err != nil {
 		return fail(err)
 	}
 	if !s.Matches(a) {
-		if err := windows.ApplySite(ctx, h.client, s); err != nil {
+		if err := windows.ApplySite(ctx, h.raw(), s); err != nil {
 			return fail(fmt.Errorf("site %s: %w", s.Name, err))
 		}
-		if a, err = windows.ReadSite(ctx, h.client, s.Name); err != nil {
+		if a, err = windows.ReadSite(ctx, h.raw(), s.Name); err != nil {
 			return fail(err)
 		}
 		if !s.Matches(a) {

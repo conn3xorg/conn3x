@@ -72,7 +72,7 @@ func readWinShare(ctx context.Context, req providers.ReadResourceRequest) provid
 		return resp
 	}
 	s := winShareFrom(req.PriorState)
-	a, err := windows.ReadShare(ctx, h.client, s)
+	a, err := windows.ReadShare(ctx, h.raw(), s)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp
@@ -88,8 +88,8 @@ func readWinShare(ctx context.Context, req providers.ReadResourceRequest) provid
 func applyWinShare(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	return applyWinStep(ctx, req, "windows_share", func(ctx context.Context, h *hostConn, v cty.Value, remove bool) error {
 		if remove {
-			return windows.ApplyShareRemove(ctx, h.client, winShareFrom(v).Name)
+			return windows.ApplyShareRemove(ctx, h.raw(), winShareFrom(v).Name)
 		}
-		return windows.ApplyShare(ctx, h.client, winShareFrom(v))
+		return windows.ApplyShare(ctx, h.raw(), winShareFrom(v))
 	})
 }
