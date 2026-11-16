@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # The Uninstall keys, in the 64-bit and 32-bit views. Never Win32_Product, which
 # can start a repair of every MSI on the host.
 foreach ($view in 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\', 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\') {

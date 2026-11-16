@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $root = if ($A.user) { [Microsoft.Win32.Registry]::CurrentUser } else { [Microsoft.Win32.Registry]::LocalMachine }
 $key = $root.OpenSubKey($A.key, $false)
 if (-not $key) { return @{ exists = $false } }

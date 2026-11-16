@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $s = Get-Service -Name $A.name -ErrorAction SilentlyContinue
 if (-not $s) { return @{ exists = $false } }
 $delayed = $false

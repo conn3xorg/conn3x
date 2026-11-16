@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $s = Get-Service -Name $A.name
 if ($A.start_mode) {
   # sc.exe, since Set-Service in this PowerShell can't set delayed start. The

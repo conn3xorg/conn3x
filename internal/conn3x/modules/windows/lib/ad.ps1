@@ -1,3 +1,6 @@
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
+
 # For the scripts that promote a domain controller or join a domain. The
 # folder checks need safepath, included before this.
 

@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $set = @{
   Direction = [string]$A.direction; Action = [string]$A.action
   Protocol = [string]$A.protocol; Enabled = $(if ($A.enabled) { 'True' } else { 'False' })

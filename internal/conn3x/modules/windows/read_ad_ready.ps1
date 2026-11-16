@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $PSModuleAutoLoadingPreference = 'None'
 $env:ADPS_LoadDefaultDrive = 0
 # Only a DC has AD to wait for. Anywhere else the OU, group or user read says

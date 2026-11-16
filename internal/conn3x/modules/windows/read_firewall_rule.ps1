@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $PSModuleAutoLoadingPreference = 'None'
 Import-Module NetSecurity
 # The name was checked for wildcards before it got here.

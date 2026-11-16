@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $PSModuleAutoLoadingPreference = 'None'
 Import-Module NetTCPIP, DnsClient
 # Azure NICs can show two adapters that are up, so with no name the one with the

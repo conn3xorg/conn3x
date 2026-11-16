@@ -1,4 +1,6 @@
 param([string]$In, [string]$Out)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # Runs as SYSTEM from a one-off scheduled task: Windows Update refuses to
 # download or install for a remote login. Its values come in a file, and its
 # result goes out in one, written whole.

@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # Windows Update only installs for a local login, so a one-off scheduled task
 # runs the worker as SYSTEM and this waits for its result. The folder is new
 # under the Windows folder, where only administrators can create anything and

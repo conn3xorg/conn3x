@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $r = @{ in_store = $false; has_key = $false; file_exists = $false; file_sha256 = '' }
 if ($A.thumbprint) {
   $at = 'Cert:\' + $A.location + '\' + $A.store + '\' + $A.thumbprint

@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # Accounts compare by SID, so Administrators and BUILTIN\Administrators are
 # one. A name that doesn't resolve gets "".
 $want = @{}

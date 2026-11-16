@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 Import-Module ServerManager
 # Never -Restart: reboots are their own step, so they show in the plan.
 if ($A.present) {

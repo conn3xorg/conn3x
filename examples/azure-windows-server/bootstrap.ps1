@@ -1,3 +1,6 @@
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
+
 # Runs once on first boot. load-bootstrap.ps1 runs it from the Custom Script
 # Extension's protected settings, which Windows holds encrypted. It reads the
 # host's private key from the same settings, so the key is never on a command

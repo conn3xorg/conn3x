@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 if (-not (Get-DnsServerZone -Name $A.zone -ErrorAction SilentlyContinue)) { throw "this server has no DNS zone $($A.zone); run the step on the zone's DNS server, usually a domain controller" }
 $ttl = [TimeSpan]::FromSeconds([int]$A.ttl)
 foreach ($v in @($A.remove_values)) {

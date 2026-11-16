@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # Taking the login out of a group it's in, such as Administrators, could lock
 # Conn3x out, whether it's a member itself or through another group, such as
 # Domain Admins. So in a group the login belongs to, none of the login's own

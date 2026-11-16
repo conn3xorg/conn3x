@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 #include ad
 # The password becomes a SecureString through .NET, as in apply_ad_forest.ps1.
 # A key login has no credentials of its own to reach the domain with, so the

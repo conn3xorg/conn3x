@@ -1,3 +1,6 @@
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
+
 # The Custom Script Extension runs this, passed in its command with
 # -EncodedCommand. It opens the extension's protected settings, which only
 # SYSTEM can decrypt, and runs bootstrap.ps1 from them, so the script is

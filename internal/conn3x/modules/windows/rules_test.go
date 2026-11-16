@@ -177,6 +177,17 @@ func TestScriptText(t *testing.T) {
 			t.Errorf("%s must start with param($A)", name)
 		}
 	}
+	// Every script, library ones included, carries the project's copyright
+	// and license lines, as the Go files do.
+	for _, name := range append(append([]string{}, files...), lib...) {
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), "# Copyright (c) The Conn3x Authors") || !strings.Contains(string(b), "# SPDX-License-Identifier: MPL-2.0") {
+			t.Errorf("%s needs the copyright and SPDX lines", name)
+		}
+	}
 }
 
 // A library is only for scripts that change things: a read must not load it.

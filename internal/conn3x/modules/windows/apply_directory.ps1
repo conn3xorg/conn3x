@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 #include safepath
 $sec = $null
 if ($A.exact) { $sec = New-Security ([Security.AccessControl.DirectorySecurity]) $A.entries }

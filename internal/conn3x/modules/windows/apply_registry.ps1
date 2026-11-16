@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($A.key)
 try {
   $kind = [Microsoft.Win32.RegistryValueKind]$A.kind

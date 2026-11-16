@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $store = 'Cert:\' + $A.location + '\' + $A.store
 if ($A.drop) {
   $thumb = [string]$A.thumbprint

@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 Import-Module NetTCPIP, DnsClient
 # The same choice of interface as read_dns_client.ps1.
 if ($A.interface) {

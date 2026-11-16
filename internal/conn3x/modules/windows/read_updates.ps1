@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # What Windows Update would install for these categories and lists. Searching
 # works from an SSH login; downloading and installing don't (apply_updates.ps1).
 $session = New-Object -ComObject Microsoft.Update.Session

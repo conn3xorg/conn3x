@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $PSModuleAutoLoadingPreference = 'None'
 # As read_iis_app_pool.ps1: read-only Microsoft.Web.Administration, no IIS: drive.
 $config = $env:windir + '\System32\inetsrv\config\applicationHost.config'

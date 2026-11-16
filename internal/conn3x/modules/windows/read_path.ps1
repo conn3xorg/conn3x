@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $out = @{ kind = 'missing'; link_on_way = ''; sids = @{} }
 foreach ($p in @($A.principals)) {
   if (-not $p) { continue }

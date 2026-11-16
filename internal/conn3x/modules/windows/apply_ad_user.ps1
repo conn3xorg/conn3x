@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 #include ad
 Import-AD
 # The password becomes a SecureString through .NET, never through a cmdlet:

@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $svc = New-Object -ComObject Schedule.Service
 $svc.Connect()
 try {

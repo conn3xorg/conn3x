@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 #include safepath
 #include ad
 $missing = Test-ADFolders @($A.database_path, $A.log_path, $A.sysvol_path)

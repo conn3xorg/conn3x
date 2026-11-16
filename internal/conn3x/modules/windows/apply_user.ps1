@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # The password becomes a SecureString through .NET, never through a cmdlet:
 # a logging policy can record a cmdlet's parameters, but shows a SecureString
 # only by its type name.

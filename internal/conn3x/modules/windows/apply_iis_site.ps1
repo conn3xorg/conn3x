@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 #include safepath
 $config = Join-Path $env:windir 'System32\inetsrv\config\applicationHost.config'
 if (-not (Test-Path -LiteralPath $config)) { throw 'IIS is not installed. Add a windows_feature step for Web-Server before this one.' }

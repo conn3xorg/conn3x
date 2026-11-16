@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $PSModuleAutoLoadingPreference = 'None'
 # Without its AD: drive the module loads faster, and reaches for nothing else.
 $env:ADPS_LoadDefaultDrive = 0

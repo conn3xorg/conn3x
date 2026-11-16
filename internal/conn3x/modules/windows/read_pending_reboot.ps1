@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # Windows servicing (TrustedInstaller) sets RebootPending while it works
 # and often clears it when it's done: after a domain join or a promotion it
 # ran about twelve minutes after boot and had the key up for two and a half

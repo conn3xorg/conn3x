@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($A.key, $false)
 if (-not $key) { return @{ exists = $false } }
 try {

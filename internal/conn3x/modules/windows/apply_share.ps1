@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # Not $A.remove: when the key is missing, that's the hashtable's own Remove
 # method, which is truthy.
 if ($A.drop) {

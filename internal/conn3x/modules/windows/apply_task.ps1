@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 #include safepath
 
 # Assert-Path checks a path the arguments name. One that doesn't exist yet is

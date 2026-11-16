@@ -1,3 +1,6 @@
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
+
 $ProgressPreference='SilentlyContinue'
 $ErrorActionPreference='Stop'
 $utf=New-Object Text.UTF8Encoding($false)

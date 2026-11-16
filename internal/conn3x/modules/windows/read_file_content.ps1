@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # A file's bytes, for import only: Conn3x otherwise reads just a hash. A link
 # at the path or on the way, or anything over max bytes, returns nothing.
 $at = [string]$A.path

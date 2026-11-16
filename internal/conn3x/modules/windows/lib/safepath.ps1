@@ -1,3 +1,6 @@
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
+
 # Included by apply scripts that touch files. Nothing here trusts a path between
 # two calls: every folder on the way stays open, without FILE_SHARE_DELETE, so it
 # can't be renamed or removed until this process ends, and is opened without

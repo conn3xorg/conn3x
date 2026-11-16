@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $PSModuleAutoLoadingPreference = 'None'
 Import-Module ScheduledTasks
 $out = @{ exists = $false; want_sid = ''; user_sid = '' }

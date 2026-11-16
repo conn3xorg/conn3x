@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 # The names conn3x generate steps lists for a kind, sorted by the caller.
 switch ([string]$A.kind) {
   'features' {

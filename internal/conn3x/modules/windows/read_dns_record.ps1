@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $r = @{ zone = $false; values = @(); ttl = 0 }
 $zone = Get-DnsServerZone -Name $A.zone -ErrorAction SilentlyContinue
 if (-not $zone) { return $r }

@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 #include ad
 Import-AD
 $ou = Get-ADOrganizationalUnit -Identity ([string]$A.dn) -Properties ProtectedFromAccidentalDeletion

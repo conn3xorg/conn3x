@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $PSModuleAutoLoadingPreference = 'None'
 Import-Module Microsoft.PowerShell.LocalAccounts
 $u = Get-LocalUser -Name $A.name -ErrorAction SilentlyContinue

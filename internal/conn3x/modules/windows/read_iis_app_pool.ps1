@@ -1,4 +1,6 @@
 param($A)
+# Copyright (c) The Conn3x Authors
+# SPDX-License-Identifier: MPL-2.0
 $PSModuleAutoLoadingPreference = 'None'
 # Microsoft.Web.Administration, opened read-only, reads applicationHost.config
 # and asks WAS for the state; no IIS: drive, which can change things on first use.
