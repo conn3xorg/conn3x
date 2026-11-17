@@ -280,3 +280,42 @@ func TestStepForEachPassesFunctionsOn(t *testing.T) {
 		}
 	}
 }
+
+// A step's for_each can name each, the host, so its items differ by host:
+// each host gets its own family's packages.
+func TestStepForEachPerHost(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": whenCircuit(`step "tools" {
+    for_each = { debian = ["apt-utils", "jq"], redhat = ["jq"] }[each.value.os]
+    package {
+      name = item.value
+    }
+  }`)})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	r := mod.ManagedResources["conn3x_package.web__tools"]
+	keys, d := instanceKeys(t, r.ForEach, nil)
+	if d.HasErrors() || strings.Join(keys, ",") != "web1/apt-utils,web1/jq,web2/jq" {
+		t.Fatalf("instances = %v, %v", keys, d)
+	}
+	// OpenTofu reads a for_each's references to order the graph; each is
+	// set here, per host, and it would refuse it.
+	for _, v := range r.ForEach.Variables() {
+		if v.RootName() == "each" {
+			t.Errorf("for_each passes on %s", v.RootName())
+		}
+	}
+	// Each host's items still have to be valid.
+	mod, diags = loadCircuitModule(t, map[string]string{"main.circuit.hcl": whenCircuit(`step "tools" {
+    for_each = { debian = ["jq", "jq"], redhat = ["jq"] }[each.value.os]
+    package {
+      name = item.value
+    }
+  }`)})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	if _, d := instanceKeys(t, mod.ManagedResources["conn3x_package.web__tools"].ForEach, nil); !d.HasErrors() || !strings.Contains(d.Error(), `lists "jq" twice`) {
+		t.Errorf("duplicate on one host: %v", d)
+	}
+}

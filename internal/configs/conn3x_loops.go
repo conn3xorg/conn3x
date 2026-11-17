@@ -33,34 +33,51 @@ var _ hcl.Expression = (*hostItemProduct)(nil)
 
 func (p *hostItemProduct) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 	hosts, diags := p.hosts.Value(ctx)
-	items, itemDiags := p.items.Value(ctx)
-	diags = append(diags, itemDiags...)
 	if diags.HasErrors() {
 		return cty.DynamicVal, diags
 	}
 	// Marks (ephemeral, sensitive) ride on the result, where the for_each
 	// checks report them; iterating a marked value would panic.
 	hosts, hostMarks := hosts.Unmark()
-	items, itemMarks := items.Unmark()
-	if !hosts.IsKnown() || !items.IsKnown() {
-		return cty.DynamicVal.WithMarks(hostMarks, itemMarks), diags
+	marks := []cty.ValueMarks{hostMarks}
+	if !hosts.IsKnown() {
+		return cty.DynamicVal.WithMarks(marks...), diags
 	}
-	pairs, keyMarks, err := itemPairs(items)
-	if err != nil {
-		rng := p.items.Range()
-		return cty.DynamicVal, append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  "Invalid for_each in step",
-			Detail:   err.Error(),
-			Subject:  &rng,
-		})
-	}
-	if pairs == nil {
-		return cty.DynamicVal.WithMarks(hostMarks, itemMarks, keyMarks), diags
+	// Items that name each are read once for each host, with each.key and
+	// each.value that host's, so they can differ by host; the rest are the
+	// same for every host and read once.
+	perHost := p.perHost()
+	var shared []itemPair
+	if !perHost {
+		items, itemDiags := p.items.Value(ctx)
+		diags = append(diags, itemDiags...)
+		if diags.HasErrors() {
+			return cty.DynamicVal, diags
+		}
+		var known bool
+		var d hcl.Diagnostics
+		if shared, known, d = p.pairs(items, &marks); d.HasErrors() || !known {
+			return cty.DynamicVal.WithMarks(marks...), append(diags, d...)
+		}
 	}
 	out := map[string]cty.Value{}
 	for it := hosts.ElementIterator(); it.Next(); {
 		hk, hv := it.Element()
+		pairs := shared
+		if perHost {
+			child := ctx.NewChild()
+			child.Variables = map[string]cty.Value{"each": cty.ObjectVal(map[string]cty.Value{"key": hk, "value": hv})}
+			items, itemDiags := p.items.Value(child)
+			diags = append(diags, itemDiags...)
+			if itemDiags.HasErrors() {
+				return cty.DynamicVal, diags
+			}
+			var known bool
+			var d hcl.Diagnostics
+			if pairs, known, d = p.pairs(items, &marks); d.HasErrors() || !known {
+				return cty.DynamicVal.WithMarks(marks...), append(diags, d...)
+			}
+		}
 		for _, item := range pairs {
 			out[hk.AsString()+"/"+item.key] = cty.ObjectVal(map[string]cty.Value{
 				"host_key": hk, "host": hv, "item_key": cty.StringVal(item.key), "item": item.value,
@@ -68,9 +85,41 @@ func (p *hostItemProduct) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 		}
 	}
 	if len(out) == 0 {
-		return cty.EmptyObjectVal.WithMarks(hostMarks, itemMarks, keyMarks), diags
+		return cty.EmptyObjectVal.WithMarks(marks...), diags
 	}
-	return cty.ObjectVal(out).WithMarks(hostMarks, itemMarks, keyMarks), diags
+	return cty.ObjectVal(out).WithMarks(marks...), diags
+}
+
+// perHost reports whether the items name each, and so differ by host.
+func (p *hostItemProduct) perHost() bool {
+	for _, t := range p.items.Variables() {
+		if t.RootName() == "each" {
+			return true
+		}
+	}
+	return false
+}
+
+// pairs reads one evaluation of the items, adding their marks to marks. It
+// returns false while they, or any of their keys, aren't known yet.
+func (p *hostItemProduct) pairs(items cty.Value, marks *[]cty.ValueMarks) ([]itemPair, bool, hcl.Diagnostics) {
+	items, itemMarks := items.Unmark()
+	*marks = append(*marks, itemMarks)
+	if !items.IsKnown() {
+		return nil, false, nil
+	}
+	pairs, keyMarks, err := itemPairs(items)
+	*marks = append(*marks, keyMarks)
+	if err != nil {
+		rng := p.items.Range()
+		return nil, false, hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid for_each in step",
+			Detail:   err.Error(),
+			Subject:  &rng,
+		}}
+	}
+	return pairs, pairs != nil, nil
 }
 
 type itemPair struct {
@@ -122,8 +171,16 @@ func itemPairs(items cty.Value) ([]itemPair, cty.ValueMarks, error) {
 	return pairs, marks, nil
 }
 
+// Variables leaves out each, which is set per host here; OpenTofu would
+// refuse it in a for_each.
 func (p *hostItemProduct) Variables() []hcl.Traversal {
-	return append(append([]hcl.Traversal{}, p.hosts.Variables()...), p.items.Variables()...)
+	out := append([]hcl.Traversal{}, p.hosts.Variables()...)
+	for _, t := range p.items.Variables() {
+		if t.RootName() != "each" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func (p *hostItemProduct) Functions() []hcl.Traversal { return exprFunctions(p.hosts, p.items) }
