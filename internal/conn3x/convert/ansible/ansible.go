@@ -524,6 +524,23 @@ var handlerKeys = map[string]bool{"name": true, "listen": true, "tags": true, "n
 // handler converts a handler that restarts or reloads a service into its
 // service block's attributes, returned with its Ansible name, or leaves it
 // for review.
+// gapPreconditions stops the plan for a host whose vars file doesn't set a
+// default the step reads, unless the caller sets it, as Ansible stops on
+// the undefined value. Without it HCL would say only that the key doesn't
+// identify an element.
+func (c *converter) gapPreconditions(sb *hclwrite.Body, names []string, present []osFamily) {
+	ids := make([]string, len(present))
+	for i, f := range present {
+		ids[i] = fmt.Sprintf("%q", f.id())
+	}
+	lb := sb.AppendNewBlock("lifecycle", nil).Body()
+	for _, n := range names {
+		pb := lb.AppendNewBlock("precondition", nil).Body()
+		pb.SetAttributeRaw("condition", rawTokens(fmt.Sprintf("var.%s != null || contains([%s], %s)", n, strings.Join(ids, ", "), c.axisExpr())))
+		pb.SetAttributeRaw("error_message", rawTokens(fmt.Sprintf(`"${each.key} loads none of the role's vars files that set %s, so Ansible would stop here too. Set var.%s for it."`, n, n)))
+	}
+}
+
 // daemonReloadOnly reports whether handler h does nothing but reload
 // systemd, as systemd_service: {daemon_reload: true} does, and its name.
 func daemonReloadOnly(h *yaml.Node) (string, bool) {
@@ -894,7 +911,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, why)
 		return
 	}
-	if x, ok := c.role.defaultTask(node); ok {
+	if x, ok := c.role.defaultTask(c.file, node); ok {
 		body.AppendNewline()
 		comment(body, fmt.Sprintf("Task %q (%s line %d) defaults %s to %s from vars/<family>.yml: it's a variable the caller can set, and the steps below use the family's value when it's null.", name, c.file, node.Line, x, c.role.defaultOf[x]))
 		c.res.Converted++
@@ -1161,12 +1178,18 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	var in *input
 	var steps []step
 	var reason string
+	var gapNames []string // defaults some hosts' vars file doesn't set
+	var gapPresent []osFamily
 	if names := c.familyNames(args, vars); len(names) == 0 {
 		in, steps, reason = run(vars)
 	} else {
 		// Convert once per family with its values, then join the steps.
+		// An entry whose file doesn't set a default the task reads is left
+		// out; its hosts meet the step's precondition instead.
 		byFamily := map[string][]step{}
 		axis := c.axisFor(fams)
+		var present []osFamily
+	entries:
 		for _, f := range axis {
 			fv := map[string]string{}
 			for k, v := range vars {
@@ -1178,6 +1201,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 					src = y
 				}
 				v, ok := c.role.familyVars[f.id()][src]
+				if !ok && c.role.defaultMissing[n][f.id()] {
+					gapNames = appendNew(gapNames, n)
+					continue entries
+				}
 				if why, unusable := c.role.familyWhy[f.id()][src]; unusable {
 					reason = fmt.Sprintf("refers to %q, which %s sets to %s, which the converter can't use yet", n, f.where(), why)
 					break
@@ -1210,9 +1237,14 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				}
 			}
 			byFamily[f.id()] = fsteps
+			present = append(present, f)
+		}
+		if reason == "" && len(present) == 0 {
+			reason = "reads values no vars file of the role sets for any family"
 		}
 		if reason == "" {
-			steps, reason = mergeFamilies(byFamily, axis, c.axisExpr())
+			steps, reason = mergeFamilies(byFamily, present, c.axisExpr())
+			gapPresent = present
 		}
 		// A variable the caller can set: convert again with var.X in its
 		// place, and use that where it's set.
@@ -1227,7 +1259,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		if reason == "" && len(callers) > 0 {
 			callerByFamily := map[string][]step{}
-			for _, f := range axis {
+			for _, f := range present {
 				fv := map[string]string{}
 				for k, v := range vars {
 					fv[k] = v
@@ -1247,7 +1279,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				callerByFamily[f.id()] = csteps
 			}
 			if reason == "" {
-				steps, reason = withCaller(steps, callerByFamily, c.role.defaultOf, axis)
+				steps, reason = withCaller(steps, callerByFamily, c.role.defaultOf, present)
 			}
 			if reason == "" {
 				for _, n := range callers {
@@ -1394,6 +1426,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			for _, a := range b.attrs {
 				inner.SetAttributeValue(a.key, a.val)
 			}
+		}
+		if len(gapNames) > 0 {
+			c.gapPreconditions(sb, gapNames, gapPresent)
 		}
 		if len(notify) > 0 && i == len(steps)-1 {
 			sb.SetAttributeRaw("notify", rawTokens("["+strings.Join(notify, ", ")+"]"))
@@ -1863,4 +1898,12 @@ func firstNonEmpty(ss ...string) string {
 		}
 	}
 	return ""
+}
+
+// appendNew appends s to list unless it's there already.
+func appendNew(list []string, s string) []string {
+	if slices.Contains(list, s) {
+		return list
+	}
+	return append(list, s)
 }

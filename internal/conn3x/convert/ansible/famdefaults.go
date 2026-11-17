@@ -32,13 +32,14 @@ var bareRef = regexp.MustCompile(`^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$`)
 // familyDefaults finds the set_fact tasks that default a variable to a
 // per-family one. It returns them by task, and the per-family name each
 // variable defaults to.
-func (c *converter) familyDefaults(tasks []*yaml.Node, vars map[string]string) (map[*yaml.Node]string, map[string]string) {
-	nodes, alias := map[*yaml.Node]string{}, map[string]string{}
+func (c *converter) familyDefaults(tasks []taskAt, vars map[string]string) (map[string]string, map[string]string, map[string]map[string]bool) {
+	nodes, alias, missing := map[string]string{}, map[string]string{}, map[string]map[string]bool{}
 	r := c.role
 	if r == nil || r.familyVars == nil {
-		return nodes, alias
+		return nodes, alias, missing
 	}
-	for _, n := range tasks {
+	for _, ta := range tasks {
+		n := ta.node
 		t := mapping(n)
 		want := 2
 		if t["name"] != nil {
@@ -67,17 +68,26 @@ func (c *converter) familyDefaults(tasks []*yaml.Node, vars map[string]string) (
 		if strings.Join(strings.Fields(cond), " ") != x+" is not defined" {
 			continue
 		}
-		set := true
+		// An entry whose file doesn't set it is a host Ansible stops on
+		// unless the caller sets x, as the steps' precondition says. One
+		// that sets it must exist, or there's nothing to default to.
+		gaps, some := map[string]bool{}, false
 		for _, f := range c.axisFor(osFamilies) {
-			_, ok := r.familyVars[f.id()][m[1]]
-			set = set && ok
+			if _, ok := r.familyVars[f.id()][m[1]]; ok {
+				some = true
+			} else {
+				gaps[f.id()] = true
+			}
 		}
-		if !set {
+		if !some {
 			continue
 		}
-		nodes[n], alias[x] = x, m[1]
+		nodes[taskKey(ta.file, n)], alias[x] = x, m[1]
+		if len(gaps) > 0 {
+			missing[x] = gaps
+		}
 	}
-	return nodes, alias
+	return nodes, alias, missing
 }
 
 // callerKeys checks that a task uses a caller-set variable only where its

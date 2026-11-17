@@ -216,6 +216,7 @@ data "conn3x_host" "facts" {
     port             = try(each.value.port, var.ssh_port)
     user             = try(each.value.user, var.ssh_user)
     host_key         = try(each.value.host_key, null)
+    container        = try(each.value.container, null)
     private_key_file = var.ssh_private_key_file
     known_hosts_file = var.ssh_known_hosts_file
     become           = var.ssh_become
@@ -251,6 +252,7 @@ data "conn3x_packages" "facts" {
     port             = try(each.value.port, var.ssh_port)
     user             = try(each.value.user, var.ssh_user)
     host_key         = try(each.value.host_key, null)
+    container        = try(each.value.container, null)
     private_key_file = var.ssh_private_key_file
     known_hosts_file = var.ssh_known_hosts_file
     become           = var.ssh_become
@@ -358,12 +360,18 @@ func (r *role) whenReadsFacts(w *yaml.Node) bool {
 
 // defaultTask reports whether node is a set_fact that defaults a variable
 // to a per-family one, and which variable.
-func (r *role) defaultTask(node *yaml.Node) (string, bool) {
+func (r *role) defaultTask(file string, node *yaml.Node) (string, bool) {
 	if r == nil {
 		return "", false
 	}
-	x, ok := r.defaultTasks[node]
+	x, ok := r.defaultTasks[taskKey(file, node)]
 	return x, ok
+}
+
+// taskKey names a task by where it is, since a file read twice, once to
+// find the defaults and once to convert, gives different nodes.
+func taskKey(file string, n *yaml.Node) string {
+	return fmt.Sprintf("%s:%d:%d", file, n.Line, n.Column)
 }
 
 // familyFact matches Ansible's ways of naming the host's family.

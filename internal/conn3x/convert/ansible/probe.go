@@ -55,7 +55,7 @@ func (c *converter) readOnly(t taskAt) bool {
 	if t.reason != "" {
 		return false
 	}
-	if _, ok := c.role.defaultTask(t.node); ok || c.role.isFamilyInclude(t.node, t.file) {
+	if _, ok := c.role.defaultTask(t.file, t.node); ok || c.role.isFamilyInclude(t.node, t.file) {
 		return true
 	}
 	m := mapping(t.node)
@@ -158,6 +158,7 @@ data "conn3x_command" %q {
     port             = try(each.value.port, var.ssh_port)
     user             = try(each.value.user, var.ssh_user)
     host_key         = try(each.value.host_key, null)
+    container        = try(each.value.container, null)
     private_key_file = var.ssh_private_key_file
     known_hosts_file = var.ssh_known_hosts_file
     become           = var.ssh_become

@@ -56,12 +56,16 @@ type role struct {
 	// defaultTasks are the set_fact tasks that default a variable to a
 	// per-family one, and defaultOf maps each such variable to that one;
 	// defaultUsed are those a step reads, which become variables.
-	defaultTasks map[*yaml.Node]string
+	defaultTasks map[string]string // by taskKey
 	// facts are the set_fact values render writes in place of their names;
 	// see plainFacts.
 	facts       map[string]string
 	defaultOf   map[string]string
 	defaultUsed map[string]bool
+	// defaultMissing are the axis entries, by id, whose vars file doesn't
+	// set a default's per-family value: hosts that load it, or nothing,
+	// stop in Ansible unless the caller sets the variable.
+	defaultMissing map[string]map[string]bool
 	// shadowed are defaults a file under vars/ also sets.
 	shadowed map[string]bool
 	// lists are the defaults that are lists of plain values, kept apart
@@ -235,7 +239,10 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			}
 		}
 	}
-	r.defaultTasks, r.defaultOf = c.familyDefaults(seq(tasks), vars)
+	// The set_fact defaults can be in a file main.yml includes, as
+	// geerlingguy.mysql's variables.yml.
+	flat := c.flatten(seq(tasks), tasksFile, []string{tasksFile})
+	r.defaultTasks, r.defaultOf, r.defaultMissing = c.familyDefaults(flat, vars)
 	r.facts = c.plainFacts()
 	r.defaultUsed = map[string]bool{}
 	c.steps(cb, at(seq(tasks), c.file), seq(handlers), handlersFile, false, vars)
@@ -367,7 +374,11 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			y := r.defaultOf[x]
 			fmt.Fprintf(&b, "| `%s` |", x)
 			for _, f := range axis {
-				fmt.Fprintf(&b, " `%s` |", r.familyVars[f.id()][y])
+				if v, ok := r.familyVars[f.id()][y]; ok {
+					fmt.Fprintf(&b, " `%s` |", v)
+				} else {
+					b.WriteString(" not set: the caller sets it |")
+				}
 			}
 			b.WriteString("\n")
 		}
