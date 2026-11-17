@@ -27,6 +27,9 @@ import (
 // hostItemProduct is a looping step's for_each.
 type hostItemProduct struct {
 	hosts, items hcl.Expression
+	// lenient leaves a host's items that aren't known yet unknown, rather
+	// than an error, for an import block, as whenFilter's does.
+	lenient bool
 }
 
 var _ hcl.Expression = (*hostItemProduct)(nil)
@@ -68,14 +71,28 @@ func (p *hostItemProduct) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 			child := ctx.NewChild()
 			child.Variables = map[string]cty.Value{"each": cty.ObjectVal(map[string]cty.Value{"key": hk, "value": hv})}
 			items, itemDiags := p.items.Value(child)
-			diags = append(diags, itemDiags...)
+			diags = append(diags, onHost(itemDiags, hk.AsString())...)
 			if itemDiags.HasErrors() {
 				return cty.DynamicVal, diags
 			}
 			var known bool
 			var d hcl.Diagnostics
-			if pairs, known, d = p.pairs(items, &marks); d.HasErrors() || !known {
-				return cty.DynamicVal.WithMarks(marks...), append(diags, d...)
+			pairs, known, d = p.pairs(items, &marks)
+			if d.HasErrors() {
+				return cty.DynamicVal, append(diags, onHost(d, hk.AsString())...)
+			}
+			if !known && p.lenient {
+				return cty.DynamicVal.WithMarks(marks...), diags
+			}
+			if !known {
+				rng := p.items.Range()
+				return cty.DynamicVal, append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "for_each isn't known yet",
+					Detail: fmt.Sprintf("for_each decides which items the step has on %s, so it has to be known when planning, but on %s it depends on something only the apply will know. "+
+						"A host that doesn't exist yet has no facts: give its entry in hosts the value for_each needs, such as os = \"ubuntu\", and read that first, as in try(each.value.os, ...).", hk.AsString(), hk.AsString()),
+					Subject: &rng,
+				})
 			}
 		}
 		for _, item := range pairs {
@@ -88,6 +105,18 @@ func (p *hostItemProduct) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 		return cty.EmptyObjectVal.WithMarks(marks...), diags
 	}
 	return cty.ObjectVal(out).WithMarks(marks...), diags
+}
+
+// onHost says which host each of diags came from, since the same items
+// expression is read once per host.
+func onHost(diags hcl.Diagnostics, host string) hcl.Diagnostics {
+	out := make(hcl.Diagnostics, len(diags))
+	for i, d := range diags {
+		c := *d
+		c.Detail = fmt.Sprintf("On %s: %s", host, d.Detail)
+		out[i] = &c
+	}
+	return out
 }
 
 // perHost reports whether the items name each, and so differ by host.

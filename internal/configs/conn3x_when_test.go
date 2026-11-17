@@ -315,7 +315,44 @@ func TestStepForEachPerHost(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatal(diags.Error())
 	}
-	if _, d := instanceKeys(t, mod.ManagedResources["conn3x_package.web__tools"].ForEach, nil); !d.HasErrors() || !strings.Contains(d.Error(), `lists "jq" twice`) {
+	if _, d := instanceKeys(t, mod.ManagedResources["conn3x_package.web__tools"].ForEach, nil); !d.HasErrors() || !strings.Contains(d.Error(), `On web1: for_each lists "jq" twice`) {
 		t.Errorf("duplicate on one host: %v", d)
+	}
+}
+
+// When one host's items fail, the error names the host: in a fleet the
+// expression alone doesn't say which one it was.
+func TestStepForEachPerHostNamesTheHost(t *testing.T) {
+	for name, tc := range map[string]struct {
+		forEach, want string
+		ctx           *hcl.EvalContext
+	}{
+		"a key the map lacks": {forEach: `{ debian = ["jq"] }[each.value.os]`, want: "On web2: The given key"},
+		"null":                {forEach: `each.value.os == "redhat" ? null : ["jq"]`, want: "On web2: for_each is null"},
+		"not known yet": {forEach: `var.tools[each.value.os]`, want: "on web1 it depends on something only the apply will know",
+			ctx: &hcl.EvalContext{Variables: map[string]cty.Value{"var": cty.ObjectVal(map[string]cty.Value{"tools": cty.UnknownVal(cty.Map(cty.List(cty.String)))})}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": whenCircuit(`step "tools" {
+    for_each = ` + tc.forEach + `
+    package {
+      name = item.value
+    }
+  }`)})
+			if diags.HasErrors() {
+				t.Fatal(diags.Error())
+			}
+			forEach := mod.ManagedResources["conn3x_package.web__tools"].ForEach
+			if _, d := instanceKeys(t, forEach, tc.ctx); !d.HasErrors() || !strings.Contains(d.Error(), tc.want) {
+				t.Errorf("got %v, want %q", d, tc.want)
+			}
+			// An import block reads for_each before variables are known,
+			// and leaves what it can't know unknown.
+			if tc.ctx != nil {
+				if v, d := lenientWhen(forEach).Value(tc.ctx); d.HasErrors() || v.IsKnown() {
+					t.Errorf("lenient: %#v, %v", v, d)
+				}
+			}
+		})
 	}
 }

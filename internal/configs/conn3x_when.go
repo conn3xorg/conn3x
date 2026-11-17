@@ -148,10 +148,16 @@ func stepFiltered(forEach hcl.Expression) bool {
 }
 
 // unfiltered is a step's instances before its when.
-// lenientWhen is forEach with its when, if it has one, lenient.
+// lenientWhen is forEach with its when and per-host items, if it has
+// them, lenient.
 func lenientWhen(forEach hcl.Expression) hcl.Expression {
 	switch e := forEach.(type) {
 	case *whenFilter:
+		c := *e
+		c.lenient = true
+		c.instances = lenientWhen(e.instances)
+		return &c
+	case *hostItemProduct:
 		c := *e
 		c.lenient = true
 		return &c
