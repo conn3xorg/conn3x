@@ -235,6 +235,28 @@ func (in *input) fail(reason string) {
 	}
 }
 
+// field records item.name, matched as m with itemField's submatches sub,
+// as a field the loop reads, with its default if it has one, and returns
+// the mark for item.value.name.
+func (in *input) field(key, m string, sub []string) string {
+	var d *string
+	if strings.Contains(m, "default(") {
+		d = &sub[2]
+		if sub[3] != "" {
+			d = &sub[3]
+		}
+	}
+	if old, seen := in.itemFields[sub[1]]; seen && (old == nil) != (d == nil) || seen && old != nil && d != nil && *old != *d {
+		in.fail(fmt.Sprintf("%s reads item.%s with a different default from elsewhere in the task", key, sub[1]))
+		return m
+	}
+	if in.itemFields == nil {
+		in.itemFields = map[string]*string{}
+	}
+	in.itemFields[sub[1]] = d
+	return refMark("item.value." + sub[1])
+}
+
 func (in *input) unused() []string {
 	var out []string
 	for k := range in.args {
@@ -253,38 +275,44 @@ var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\
 
 func (in *input) render(key, s string) string {
 	s = in.role.expandFacts(s)
+	inPath := in.role != nil && slices.Contains(pathArgs[in.mod], key)
 	if in.loop && in.itemVar != "" {
+		fieldRefs, fieldRef := itemField.FindAllStringIndex(s, -1), -1
+		orig := s
 		s = itemField.ReplaceAllStringFunc(s, func(m string) string {
+			fieldRef++
 			sub := itemField.FindStringSubmatch(m)
 			in.itemUsed = true
 			switch {
 			case len(in.role.lists[in.itemVar]) > 0:
 				in.fail(fmt.Sprintf("%s reads item.%s, but %q is a list of plain values", key, sub[1], in.itemVar))
+			case inPath && !packageModules[in.mod]:
+				// A field in a path holds to what the path needs, in every
+				// item the role sets and, by a validation, every one a
+				// caller does.
+				var values []string
+				for _, it := range in.role.maps[in.itemVar] {
+					if v, ok := it[sub[1]]; ok {
+						values = append(values, v)
+					}
+				}
+				if strings.Contains(m, "default(") {
+					values = append(values, sub[2]+sub[3]) // one of them is empty
+				}
+				if why := in.pathRef(orig, fieldRefs, fieldRef, in.itemVar+"."+sub[1], values); why != "" {
+					in.fail(fmt.Sprintf("%s uses item.%s from the role default %q and %s", key, sub[1], in.itemVar, why))
+					return m
+				}
+				return in.field(key, m, sub)
 			case !slices.Contains(verbatim[in.mod], key) || packageModules[in.mod]:
 				in.fail(fmt.Sprintf("%s uses item.%s from the role default %q, and the converter keeps a default as a variable only where Conn3x uses its value exactly as Ansible does, whatever it is set to; here it would have to check each item first", key, sub[1], in.itemVar))
 			default:
-				var d *string
-				if strings.Contains(m, "default(") {
-					d = &sub[2]
-					if sub[3] != "" {
-						d = &sub[3]
-					}
-				}
-				if old, seen := in.itemFields[sub[1]]; seen && (old == nil) != (d == nil) || seen && old != nil && d != nil && *old != *d {
-					in.fail(fmt.Sprintf("%s reads item.%s with a different default from elsewhere in the task", key, sub[1]))
-					return m
-				}
-				if in.itemFields == nil {
-					in.itemFields = map[string]*string{}
-				}
-				in.itemFields[sub[1]] = d
-				return refMark("item.value." + sub[1])
+				return in.field(key, m, sub)
 			}
 			return m
 		})
 	}
 	refs, ref := jinja.FindAllStringIndex(s, -1), -1
-	inPath := in.role != nil && slices.Contains(pathArgs[in.mod], key)
 	out := jinja.ReplaceAllStringFunc(s, func(m string) string {
 		ref++
 		name := jinja.FindStringSubmatch(m)[1]

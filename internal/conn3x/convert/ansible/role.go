@@ -277,7 +277,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`contains(["restarted", "reloaded"], var.%s)`, k)))
 			v.SetAttributeValue("error_message", cty.StringVal(k+" is a handler's state, so it must be restarted or reloaded, the two a Conn3x handler does."))
 		}
-		pathValidations(b.Body(), k, r.pathRules[k], false)
+		pathValidations(b.Body(), k, "", r.pathRules[k], false)
 		vb.AppendNewline()
 		vb.AppendBlock(b)
 	}
@@ -309,7 +309,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`alltrue([for p in var.%s : !strcontains(p, ",")])`, k)))
 			v.SetAttributeValue("error_message", cty.StringVal("Each item of "+k+" names one package, so it can't have a comma; Ansible would read one as a list."))
 		}
-		pathValidations(b, k, r.pathRules[k], true)
+		pathValidations(b, k, "", r.pathRules[k], true)
 	}
 
 	var looped []string
@@ -610,6 +610,9 @@ func (r *role) mapVariable(vb *hclwrite.Body, k, defaultsFile string) {
 		b.SetAttributeValue("default", cty.TupleVal(items))
 	}
 	b.SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+". Each item is one pass of the loop that uses it."))
+	for _, f := range fields {
+		pathValidations(b, k, f, r.pathRules[k+"."+f], false)
+	}
 	for _, key := range r.mapKeys[k] {
 		v := b.AppendNewBlock("validation", nil).Body()
 		v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf("length(distinct([for i in var.%s : i.%s])) == length(var.%s)", k, key, k)))
@@ -921,8 +924,8 @@ func yamlBool(n *yaml.Node) (bool, bool) {
 }
 
 // pathValidations adds the validations a default used in a path needs,
-// each item of it when list.
-func pathValidations(b *hclwrite.Body, k string, rules []string, list bool) {
+// each item of it when list, or field of each item when field is set.
+func pathValidations(b *hclwrite.Body, k, field string, rules []string, list bool) {
 	for _, rule := range []string{"abs", "noslash"} {
 		if !slices.Contains(rules, rule) {
 			continue
@@ -932,7 +935,10 @@ func pathValidations(b *hclwrite.Body, k string, rules []string, list bool) {
 			cond, msg = `!endswith(%s, "/")`, "a path that doesn't end in /, which Ansible reads as a directory to write into"
 		}
 		v := b.AppendNewBlock("validation", nil).Body()
-		if list {
+		if field != "" {
+			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf("alltrue([for i in var.%s : "+cond+"])", k, "i."+field)))
+			v.SetAttributeValue("error_message", cty.StringVal("Each item's "+field+" in "+k+" goes in a path, so it must be "+msg+"."))
+		} else if list {
 			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf("alltrue([for p in var.%s : "+cond+"])", k, "p")))
 			v.SetAttributeValue("error_message", cty.StringVal("Each item of "+k+" goes in a path, so it must be "+msg+"."))
 		} else {

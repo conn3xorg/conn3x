@@ -474,7 +474,7 @@ func TestRoleLoopOverAListDefault(t *testing.T) {
 			t.Errorf("variables.tf has no %q:\n%s", want, vars)
 		}
 	}
-	for _, gone := range []string{`variable "vhosts"`, `variable "twice"`, `variable "unused"`} {
+	for _, gone := range []string{`variable "twice"`, `variable "unused"`} {
 		if strings.Contains(vars, gone) {
 			t.Errorf("variables.tf has %s:\n%s", gone, vars)
 		}
@@ -483,7 +483,8 @@ func TestRoleLoopOverAListDefault(t *testing.T) {
 	for _, r := range res.Review {
 		tasks = append(tasks, r.Task)
 	}
-	if strings.Join(tasks, ",") != "Vhosts,Twice,As a value" {
+	// A list of maps with a field in a path converts since #879.
+	if strings.Join(tasks, ",") != "Twice,As a value" || !strings.Contains(vars, `variable "vhosts"`) {
 		t.Errorf("review %+v", res.Review)
 	}
 }
@@ -871,7 +872,8 @@ func TestRoleLoopOverMaps(t *testing.T) {
 	for _, r := range res.Review {
 		got = append(got, r.Task)
 	}
-	if res.Converted != 2 || strings.Join(got, ",") != "Whole item,Not verbatim,Missing field" {
+	// A field in a path converts too, now that it's checked as one (#879).
+	if res.Converted != 3 || strings.Join(got, ",") != "Whole item,Missing field" || !strings.Contains(main, `path = "/home/${item.value.name}"`) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
