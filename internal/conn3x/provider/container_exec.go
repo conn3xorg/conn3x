@@ -106,10 +106,14 @@ func (c *containerConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.
 	var exit *exec.ExitError
 	switch {
 	case errors.As(err, &exit) && ctx.Err() == nil:
-		// podman and docker exit 125 when they can't exec at all, such as
-		// for a container that isn't running; that's no command's status.
-		if c.engine != "kubectl" && exit.ExitCode() == 125 {
-			return res, fmt.Errorf("%s exec %s: %s", c.engine, c.container, bytes.TrimSpace(res.Stderr))
+		// The engine's own failures share codes a command can exit with,
+		// and which ones differs between engines and versions, so a code
+		// it uses is only the command's while the container still runs.
+		switch exit.ExitCode() {
+		case 125, 126, 127, 255:
+			if !c.running(ctx) {
+				return res, fmt.Errorf("%s exec %s: the container isn't running: %s", c.engine, c.container, bytes.TrimSpace(res.Stderr))
+			}
 		}
 		res.ExitCode = exit.ExitCode()
 		return res, nil
@@ -117,6 +121,26 @@ func (c *containerConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.
 		return res, fmt.Errorf("%s exec %s: %w", c.engine, c.container, err)
 	}
 	return res, nil
+}
+
+// running asks the engine whether the container is running.
+func (c *containerConn) running(ctx context.Context) bool {
+	var args []string
+	switch c.engine {
+	case "kubectl":
+		if c.context != "" {
+			args = append(args, "--context", c.context)
+		}
+		args = append(args, "get", "pod", c.container, "-o", "jsonpath={.status.phase}")
+		if c.namespace != "" {
+			args = append(args, "-n", c.namespace)
+		}
+		out, err := exec.CommandContext(ctx, c.engine, args...).Output()
+		return err == nil && string(out) == "Running"
+	default:
+		out, err := exec.CommandContext(ctx, c.engine, "container", "inspect", "-f", "{{.State.Running}}", c.container).Output()
+		return err == nil && string(bytes.TrimSpace(out)) == "true"
+	}
 }
 
 // Alive reports whether a command still runs in the container.

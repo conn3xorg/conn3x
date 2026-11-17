@@ -80,6 +80,9 @@ func TestExecInPodman(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if res, err := h.Run(context.Background(), "nope-not-a-command", nil); err != nil || res.ExitCode != 127 {
+		t.Fatalf("a missing command in a running container: %v, exit %d", err, res.ExitCode)
+	}
 	res, err := h.Run(context.Background(), "cat; echo; locale 2>/dev/null | head -n1; exit 3", []byte("from stdin"))
 	if err != nil || res.ExitCode != 3 || !strings.HasPrefix(string(res.Stdout), "from stdin\n") {
 		t.Fatalf("%v %d %q %q", err, res.ExitCode, res.Stdout, res.Stderr)
@@ -91,7 +94,7 @@ func TestExecInPodman(t *testing.T) {
 		t.Error("the same container got a second connection")
 	}
 	_ = exec.Command("podman", "stop", "-t", "0", name).Run()
-	if _, err := h.Run(context.Background(), "true", nil); err == nil || !strings.Contains(err.Error(), "podman exec "+name) {
+	if _, err := h.Run(context.Background(), "true", nil); err == nil || !strings.Contains(err.Error(), "isn't running") {
 		t.Errorf("a stopped container gave %v", err)
 	}
 }
