@@ -9,7 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -85,13 +88,26 @@ func (c *containerConn) args(cmd string) []string {
 		if c.namespace != "" {
 			a = append(a, "-n", c.namespace)
 		}
-		return append(a, c.container, "--", "/bin/sh", "-c", ssh.Prelude+cmd)
+		return append(append(a, c.container, "--"), reported(cmd)...)
 	default:
 		if c.user != "" {
 			a = append(a, "--user", c.user)
 		}
-		return append(a, c.container, "/bin/sh", "-c", ssh.Prelude+cmd)
+		return append(append(a, c.container), reported(cmd)...)
 	}
+}
+
+// exitMark starts the line the shell in the container writes to stderr
+// with the command's exit status.
+const exitMark = "\n\x01conn3x-exit:"
+
+// reported runs cmd in a shell that writes its exit status to stderr after
+// it, as exitMark and the number. The engines' own failures exit with codes
+// a command can use too, and differ between engines and versions, so a run
+// without that line is the engine's failure, whatever its code. The inner
+// shell keeps an exit in cmd from skipping the report.
+func reported(cmd string) []string {
+	return []string{"/bin/sh", "-c", `/bin/sh -c "$1"; rc=$?; printf '\n\001conn3x-exit:%d\n' "$rc" >&2; exit "$rc"`, "conn3x", ssh.Prelude + cmd}
 }
 
 func (c *containerConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
@@ -103,49 +119,31 @@ func (c *containerConn) Run(ctx context.Context, cmd string, stdin []byte) (ssh.
 		return ssh.Result{}, fmt.Errorf("%s: the command printed more than %d MiB, the most conn3x reads from one command on a host", c.Addr(), ssh.MaxOutput>>20)
 	}
 	res := ssh.Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
-	var exit *exec.ExitError
-	switch {
-	case errors.As(err, &exit) && ctx.Err() == nil:
-		// The engine's own failures share codes a command can exit with,
-		// and which ones differs between engines and versions, so a code
-		// it uses is only the command's while the container still runs.
-		switch exit.ExitCode() {
-		case 125, 126, 127, 255:
-			if !c.running(ctx) {
-				return res, fmt.Errorf("%s exec %s: the container isn't running: %s", c.engine, c.container, bytes.TrimSpace(res.Stderr))
-			}
-		}
-		res.ExitCode = exit.ExitCode()
-		return res, nil
-	case err != nil:
-		return res, fmt.Errorf("%s exec %s: %w", c.engine, c.container, err)
+	if ctx.Err() != nil {
+		return res, ctx.Err()
 	}
+	i := bytes.LastIndex(res.Stderr, []byte(exitMark))
+	code, convErr := -1, error(nil)
+	if i >= 0 {
+		code, convErr = strconv.Atoi(strings.TrimSuffix(string(res.Stderr[i+len(exitMark):]), "\n"))
+	}
+	if i < 0 || convErr != nil {
+		why := string(bytes.TrimSpace(res.Stderr))
+		if why == "" && err != nil {
+			why = err.Error()
+		}
+		return ssh.Result{Stdout: res.Stdout}, fmt.Errorf("%s exec %s: %s", c.engine, c.container, why)
+	}
+	res.Stderr, res.ExitCode = res.Stderr[:i], code
 	return res, nil
-}
-
-// running asks the engine whether the container is running.
-func (c *containerConn) running(ctx context.Context) bool {
-	var args []string
-	switch c.engine {
-	case "kubectl":
-		if c.context != "" {
-			args = append(args, "--context", c.context)
-		}
-		args = append(args, "get", "pod", c.container, "-o", "jsonpath={.status.phase}")
-		if c.namespace != "" {
-			args = append(args, "-n", c.namespace)
-		}
-		out, err := exec.CommandContext(ctx, c.engine, args...).Output()
-		return err == nil && string(out) == "Running"
-	default:
-		out, err := exec.CommandContext(ctx, c.engine, "container", "inspect", "-f", "{{.State.Running}}", c.container).Output()
-		return err == nil && string(bytes.TrimSpace(out)) == "true"
-	}
 }
 
 // Alive reports whether a command still runs in the container.
 func (c *containerConn) Alive() bool {
-	res, err := c.Run(context.Background(), "true", nil)
+	// kubectl has no request timeout of its own.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	res, err := c.Run(ctx, "true", nil)
 	return err == nil && res.ExitCode == 0
 }
 

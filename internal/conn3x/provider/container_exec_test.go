@@ -5,7 +5,9 @@ package provider
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -44,8 +46,8 @@ func TestExecArgs(t *testing.T) {
 			t.Fatal(err)
 		}
 		args := c.args("id")
-		got := c.engine + " " + strings.Join(args[:len(args)-1], " ")
-		if got != tc.want || !strings.HasSuffix(args[len(args)-1], "umask 022; id") {
+		got := c.engine + " " + strings.Join(args, " ")
+		if !strings.HasPrefix(got, tc.want+" ") || args[len(args)-2] != "conn3x" || !strings.HasSuffix(args[len(args)-1], "umask 022; id") {
 			t.Errorf("%v: %q %q", tc.set, got, args[len(args)-1])
 		}
 	}
@@ -83,6 +85,18 @@ func TestExecInPodman(t *testing.T) {
 	if res, err := h.Run(context.Background(), "nope-not-a-command", nil); err != nil || res.ExitCode != 127 {
 		t.Fatalf("a missing command in a running container: %v, exit %d", err, res.ExitCode)
 	}
+	if res, err := h.Run(context.Background(), "echo oops >&2; exit 255", nil); err != nil || res.ExitCode != 255 || string(res.Stderr) != "oops\n" {
+		t.Fatalf("a command's own 255: %v, exit %d, stderr %q", err, res.ExitCode, res.Stderr)
+	}
+	// The engine fails, exiting 255 while the container runs: an error,
+	// not a command's answer.
+	typo, err := pooled(context.Background(), execBlock(map[string]cty.Value{"host": cty.StringVal("box"), "container": cty.StringVal(name), "user": cty.StringVal("nosuchuser")}), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := typo.Run(context.Background(), "test -e /etc/passwd", nil); err == nil {
+		t.Fatalf("a user that doesn't exist read as exit %d", res.ExitCode)
+	}
 	res, err := h.Run(context.Background(), "cat; echo; locale 2>/dev/null | head -n1; exit 3", []byte("from stdin"))
 	if err != nil || res.ExitCode != 3 || !strings.HasPrefix(string(res.Stdout), "from stdin\n") {
 		t.Fatalf("%v %d %q %q", err, res.ExitCode, res.Stdout, res.Stderr)
@@ -94,7 +108,25 @@ func TestExecInPodman(t *testing.T) {
 		t.Error("the same container got a second connection")
 	}
 	_ = exec.Command("podman", "stop", "-t", "0", name).Run()
-	if _, err := h.Run(context.Background(), "true", nil); err == nil || !strings.Contains(err.Error(), "isn't running") {
+	if _, err := h.Run(context.Background(), "true", nil); err == nil || !strings.Contains(err.Error(), "podman exec "+name) {
 		t.Errorf("a stopped container gave %v", err)
+	}
+}
+
+// kubectl's own errors exit 1, as a command can; without the shell's
+// report they're the engine's failure. A stand-in kubectl shows it.
+func TestExecEngineFailureWithoutReport(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho 'Error from server (NotFound): pods \"web-0\" not found' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c, err := execTarget(execBlock(map[string]cty.Value{"container": cty.StringVal("web-0"), "container_engine": cty.StringVal("kubectl")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := c.Run(context.Background(), "test -e /etc/passwd", nil); err == nil || !strings.Contains(err.Error(), "NotFound") {
+		t.Fatalf("a missing pod gave exit %d, %v", res.ExitCode, err)
 	}
 }
