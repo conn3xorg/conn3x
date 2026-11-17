@@ -521,9 +521,6 @@ func neverTagged(n *yaml.Node) bool {
 // finds a handler by its name, so listen changes nothing.
 var handlerKeys = map[string]bool{"name": true, "listen": true, "tags": true, "no_log": true}
 
-// handler converts a handler that restarts or reloads a service into its
-// service block's attributes, returned with its Ansible name, or leaves it
-// for review.
 // gap is a default the step reads that some hosts' vars files don't set,
 // with the axis entries that do.
 type gap struct {
@@ -596,6 +593,9 @@ func daemonReloadOnly(h *yaml.Node) (string, bool) {
 	return scalar(t["name"]), ok && v && scalar(t["name"]) != ""
 }
 
+// handler converts a handler that restarts or reloads a service into its
+// service block's attributes, returned with its Ansible name, or leaves it
+// for review.
 func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]string) ([]attr, string, string) {
 	t := mapping(h)
 	hname := scalar(t["name"])
