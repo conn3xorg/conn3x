@@ -191,10 +191,11 @@ container, in about five.
   OUs, groups and users, on Windows Server 2022 and 2025, over OpenSSH. All 25 modules
   are out of experimental, and 21 take `import`, so a server you already run is adopted
   rather than set up again.
-- **Starts on network devices, experimentally.** Arista EOS, Juniper Junos and VyOS
-  steps configure a switch or router over its own CLI. Every step on a device goes into
-  one commit, with a timer that rolls the change back if it cuts Conn3x off. Tested on
-  cEOS-lab, vJunos-switch and a VyOS container, not yet on hardware. See
+- **Starts on network devices, experimentally.** Arista EOS, Cisco IOS XE and classic
+  IOS, Juniper Junos and VyOS steps configure a switch or router over its own CLI. Every
+  change to a device comes with a timer that rolls it back if it cuts Conn3x off. Tested
+  on cEOS-lab, IOS XE 17.18 and IOS 15.9 in Cisco Modeling Labs, vJunos-switch and a VyOS
+  container, not yet on hardware. See
   [Network devices](https://docs.conn3x.org/network-devices).
 - **Tells you what changed by hand.** `conn3x drift` reports changes made outside Conn3x,
   in the cloud and on your servers, and exits 2 when it finds some, so a scheduled job
@@ -232,7 +233,7 @@ and every change is tested on Rocky Linux 10, Fedora 45, Ubuntu 24.04 and Debian
 Windows Server 2022 and 2025 are in preview, with tested Azure examples for one server,
 a small domain, a whole Active Directory lab, and a domain controller with up to five
 IIS servers. All 25 Windows modules, Active Directory and `windows_update` included,
-are out of experimental. Arista EOS, Juniper Junos and VyOS devices are experimental.
+are out of experimental. Arista EOS, Cisco IOS XE and IOS, Juniper Junos and VyOS devices are experimental.
 Windows at scale is the work now, then more network devices.
 See the [roadmap](ROADMAP.md).
 
