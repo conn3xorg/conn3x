@@ -186,6 +186,9 @@ func readAuthorizedKey(ctx context.Context, req providers.ReadResourceRequest) p
 // in with, when the step's user is the account it logs in as: the next run
 // couldn't reach the host.
 func keepsLogin(h *hostConn, v cty.Value, ids []string) error {
+	if inContainer(v.GetAttr("ssh")) {
+		return nil // reached with exec, not a key
+	}
 	cfg, err := sshConfig(v.GetAttr("ssh"))
 	if err != nil || cfg.User != v.GetAttr("user").AsString() {
 		return err

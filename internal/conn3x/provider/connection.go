@@ -52,7 +52,15 @@ func connectionBlock() *configschema.NestedBlock {
 					Description: "Set by the circuit for a step with on = \"controller\": run on the machine Conn3x runs on, with /bin/sh, as whoever runs Conn3x, and no SSH.",
 				},
 				"port": {Type: cty.Number, Optional: true, Description: "SSH port. Defaults to 22."},
-				"user": {Type: cty.String, Optional: true, Description: "User to log in as. Required unless ssh_config_file sets one."},
+				"container": {
+					Type:        cty.String,
+					Optional:    true,
+					Description: "Reach the host as this container, with container_engine's exec on the machine Conn3x runs on, instead of SSH. The other SSH settings aren't read, except user and become. Steps that need SSH itself, such as Windows and network device steps, ssh_tunnel and the agent, aren't available.",
+				},
+				"container_engine": {Type: cty.String, Optional: true, Description: "With container: \"podman\" (default), \"docker\" or \"kubectl\"."},
+				"kube_namespace":   {Type: cty.String, Optional: true, Description: "With container_engine = \"kubectl\": the pod's namespace."},
+				"kube_context":     {Type: cty.String, Optional: true, Description: "With container_engine = \"kubectl\": the kubeconfig context to use."},
+				"user":             {Type: cty.String, Optional: true, Description: "User to log in as. Required unless ssh_config_file sets one."},
 				"jump_hosts": {
 					Type:        cty.List(cty.String),
 					Optional:    true,
@@ -400,6 +408,9 @@ func dial(ctx context.Context, conn cty.Value, upload bool) (*hostConn, error) {
 func pooled(ctx context.Context, conn cty.Value, maxWait time.Duration) (*hostConn, error) {
 	if onController(conn) {
 		return controller(), nil
+	}
+	if inContainer(conn) {
+		return containerHost(conn)
 	}
 	cfg, err := sshConfig(conn)
 	if err != nil {
@@ -779,6 +790,9 @@ var unreachable sync.Map
 // configuration now names, it returns a warning instead, and the step
 // keeps its state. Any other dial error is left for the read to report.
 func reachable(ctx context.Context, conn cty.Value) tfdiags.Diagnostics {
+	if inContainer(conn) {
+		return nil // the read reports a container that's gone
+	}
 	cfg, err := sshConfig(conn)
 	if err != nil {
 		return nil
@@ -822,7 +836,7 @@ func anotherMachine(prior, planned cty.Value) bool {
 		return false
 	}
 	was, now := prior.GetAttr("ssh"), planned.GetAttr("ssh")
-	if !was.IsWhollyKnown() || !now.IsWhollyKnown() || was.IsNull() || now.IsNull() ||
+	if !was.IsWhollyKnown() || !now.IsWhollyKnown() || was.IsNull() || now.IsNull() || inContainer(was) || inContainer(now) ||
 		!was.GetAttr("host").RawEquals(now.GetAttr("host")) { // a new host already replaces
 		return false
 	}

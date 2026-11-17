@@ -46,6 +46,9 @@ func parseConfirmAfter(v cty.Value) (time.Duration, error) {
 // whole ssh block: jump hosts and the host key check included. Logging in
 // is the proof a confirm needs.
 func freshLogin(ctx context.Context, conn cty.Value) (modules.Runner, func(), error) {
+	if inContainer(conn) {
+		return nil, nil, errors.New("confirm_after proves the change by logging in again over SSH, so it can't be used on a host reached with container")
+	}
 	cfg, err := sshConfig(conn)
 	if err != nil {
 		return nil, nil, err

@@ -614,12 +614,12 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 // host's address, each.value.
 // hostOverrides are the ssh settings a host object in hosts may set for
 // itself, over the circuit's ssh block.
-var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "jump_hosts", "legacy_algorithms"}
+var hostOverrides = []string{"user", "port", "private_key_file", "host_key", "jump_hosts", "legacy_algorithms", "container"}
 
 // sshOnly are the ssh settings a host object can't set. Naming one in a host
 // object is an error, because it would otherwise do nothing; any other field
 // is the user's own data, read with each.value.
-var sshOnly = []string{"host", "controller", "ssh_config_file", "proxy_command", "known_hosts_file", "become", "become_password_file", "agent", "timeout", "confirm_after"}
+var sshOnly = []string{"host", "controller", "ssh_config_file", "proxy_command", "known_hosts_file", "become", "become_password_file", "agent", "timeout", "confirm_after", "container_engine", "kube_namespace", "kube_context"}
 
 // Conn3xSSHSettings lists every ssh setting circuits know about, so the
 // provider can check it against its schema.
