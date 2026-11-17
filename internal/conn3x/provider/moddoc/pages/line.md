@@ -58,11 +58,13 @@ step "no_legacy_mirror" {
 For a file a mistake could lock you out of, such as `sshd_config` or `sudoers`, set `validate` to a command that checks the edited file. Conn3x writes the edit to a temporary file, runs the command with `%s` as its path, and swaps the file in only if the command exits 0. Otherwise the file is left as it was, and the step fails with the command's output:
 
 ```hcl
-line {
-  path     = "/etc/ssh/sshd_config"
-  regexp   = "^PermitRootLogin"
-  line     = "PermitRootLogin no"
-  validate = "/usr/sbin/sshd -t -f %s"
+step "root_login" {
+  line {
+    path     = "/etc/ssh/sshd_config"
+    regexp   = "^PermitRootLogin"
+    line     = "PermitRootLogin no"
+    validate = "/usr/sbin/sshd -t -f %s"
+  }
 }
 ```
 
