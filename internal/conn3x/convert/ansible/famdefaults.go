@@ -79,7 +79,9 @@ func (c *converter) familyDefaults(tasks []taskAt, vars map[string]string) (map[
 				gaps[f.id()] = true
 			}
 		}
-		if !some {
+		// A gap is only a host Ansible stops on when no file the converter
+		// doesn't follow sets the value.
+		if !some || (len(gaps) > 0 && !r.gapTrusted(m[1])) {
 			continue
 		}
 		nodes[taskKey(ta.file, n)], alias[x] = x, m[1]

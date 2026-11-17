@@ -66,6 +66,15 @@ type role struct {
 	// set a default's per-family value: hosts that load it, or nothing,
 	// stop in Ansible unless the caller sets the variable.
 	defaultMissing map[string]map[string]bool
+	// familyLists are the lists of plain values each axis entry's vars
+	// files set, and listDefaults the variables defaulted to one of them;
+	// listDefaultUsed those a converted step loops over.
+	// varsComplete is whether the converter follows every include_vars in
+	// the role.
+	varsComplete    bool
+	familyLists     map[string]map[string][]string
+	listDefaults    map[string]listDefault
+	listDefaultUsed map[string]bool
 	// shadowed are defaults a file under vars/ also sets.
 	shadowed map[string]bool
 	// lists are the defaults that are lists of plain values, kept apart
@@ -242,7 +251,17 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	// The set_fact defaults can be in a file main.yml includes, as
 	// geerlingguy.mysql's variables.yml.
 	flat := c.flatten(seq(tasks), tasksFile, []string{tasksFile})
+	r.varsComplete = r.varsIncludes != nil
+	for _, t := range flat {
+		if _, is, ok := c.readInclude(t.node); is && !ok {
+			r.varsComplete = false
+		}
+	}
 	r.defaultTasks, r.defaultOf, r.defaultMissing = c.familyDefaults(flat, vars)
+	if r.varsIncludes != nil {
+		r.familyLists = c.familyLists(r.axis)
+	}
+	r.listDefaults, r.listDefaultUsed = c.listDefaults(flat, vars), map[string]bool{}
 	r.facts = c.plainFacts()
 	r.defaultUsed = map[string]bool{}
 	c.steps(cb, at(seq(tasks), c.file), seq(handlers), handlersFile, false, vars)
@@ -343,6 +362,23 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		vb.AppendBlock(b)
 	}
 
+	for _, x := range sortedSet(r.listDefaultUsed) {
+		b := hclwrite.NewBlock("variable", []string{x})
+		b.Body().SetAttributeRaw("type", rawTokens("list(string)"))
+		b.Body().SetAttributeRaw("default", rawTokens("null"))
+		b.Body().SetAttributeValue("description", cty.StringVal(fmt.Sprintf("Set by the caller; otherwise the list %s sets in the vars/ file each host loads. Each item is one pass of the loop that uses it.", r.listDefaults[x].src)))
+		v := b.Body().AppendNewBlock("validation", nil).Body()
+		v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf("var.%s == null || length(distinct(var.%s)) == length(var.%s)", x, x, x)))
+		v.SetAttributeValue("error_message", cty.StringVal(x+" can't hold the same value twice: a step runs once per item."))
+		if r.commaFree[x] {
+			v := b.Body().AppendNewBlock("validation", nil).Body()
+			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`var.%s == null || alltrue([for p in var.%s : !strcontains(p, ",")])`, x, x)))
+			v.SetAttributeValue("error_message", cty.StringVal("Each item of "+x+" names one package, so it can't have a comma; Ansible would read one as a list."))
+		}
+		vb.AppendNewline()
+		vb.AppendBlock(b)
+	}
+
 	files := r.files
 	files["main.circuit.hcl"] = hclwrite.Format(f.Bytes())
 	variables := circuitVariables
@@ -390,6 +426,55 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// gapTrusted reports whether an axis entry without src means Ansible has no
+// value there: when the converter follows every include_vars, or else when
+// each vars file that sets src is one a followed include could load, for
+// some OS, Conn3x's or not. Otherwise an include it doesn't follow could
+// supply the value.
+func (r *role) gapTrusted(src string) bool {
+	if r.varsComplete {
+		return true // nothing the converter doesn't follow loads a file
+	}
+	for _, file := range r.varFiles[src] {
+		covered := false
+		for _, inc := range r.varsIncludes {
+			for _, t := range inc.templates {
+				covered = covered || templateMatches(t, file)
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+// factPattern is what each fact can put in a file name. os_family takes
+// one of Ansible's family names; a distribution can be any name.
+var factPattern = map[string]string{
+	"family":       `(?:RedHat|Debian|Suse|Archlinux|Gentoo|Alpine|FreeBSD|OpenBSD|NetBSD|DragonFly|Darwin|Solaris|AIX|HP-UX|Slackware|Mandrake|Altlinux|ClearLinux|Flatcar|Mandriva|Windows)`,
+	"major":        `[0-9]+`,
+	"version":      `[0-9][0-9.]*`,
+	"distribution": `[^/]+`,
+}
+
+// templateMatches reports whether a with_first_found or include_vars name
+// template could name file, a path such as vars/RedHat-9.yml.
+func templateMatches(segs []namePart, file string) bool {
+	var b strings.Builder
+	b.WriteString("^(?:vars/)?")
+	for _, s := range segs {
+		if s.fact != "" {
+			b.WriteString(factPattern[s.fact])
+		} else {
+			b.WriteString(regexp.QuoteMeta(strings.TrimPrefix(s.lit, "vars/")))
+		}
+	}
+	b.WriteString("$")
+	re, err := regexp.Compile(b.String())
+	return err == nil && re.MatchString(strings.TrimPrefix(file, "vars/"))
+}
 
 // otherVarFiles reads the top-level names set in vars/*.yml besides main,
 // so a reason can say a variable comes from one of them. A file that can't
