@@ -1105,7 +1105,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				if !ok {
 					v = *d
 				}
-				put = append(put, refMark("item.value."+f), v)
+				put = append(put, refMark("item.value."+f), markRefs(v, vars))
 			}
 			switch {
 			case why != "":
@@ -1115,7 +1115,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			}
 		}
 		if reason == "" && itemMaps != nil {
-			reason = mapLoopKey(itemMaps, in.itemFields)
+			_, reason = mapLoopKey(itemMaps, in.itemFields)
 		}
 		if reason == "" {
 			reason = resolveMarks(steps)
@@ -1329,7 +1329,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			sb.SetAttributeRaw("for_each", rawTokens("var."+listVar))
 			c.role.listUsed[listVar] = true
 		} else if itemMaps != nil {
-			sb.SetAttributeValue("for_each", mapLoopObject(itemMaps, in.itemFields, loopKey(in.itemFields)))
+			key, _ := mapLoopKey(itemMaps, in.itemFields)
+			if v, raw := mapLoopObject(itemMaps, in.itemFields, key, vars); raw != "" {
+				sb.SetAttributeRaw("for_each", rawTokens(raw))
+			} else {
+				sb.SetAttributeValue("for_each", v)
+			}
 		} else if items != nil {
 			vals := make([]cty.Value, len(items))
 			for i, it := range items {

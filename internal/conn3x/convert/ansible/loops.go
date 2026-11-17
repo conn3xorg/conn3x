@@ -5,7 +5,9 @@ package ansible
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -46,13 +48,45 @@ func literalLoop(n *yaml.Node) ([]string, string) {
 	return items, ""
 }
 
-// mapLoop reads loop: [{name: a, port: "80"}, ...], a list of maps of
-// plain values written in the task. ok is false for any other loop.
+// mapLoop reads loop: [{name: a, port: "80"}, ...], a list of maps
+// written in the task. A value is plain, as plainValue reads it, or text
+// with Jinja in it, which each item's own check proves. ok is false for
+// any other loop.
 func mapLoop(n *yaml.Node) ([]map[string]string, bool) {
 	if n == nil || n.Kind != yaml.SequenceNode || len(n.Content) == 0 || n.Content[0].Kind != yaml.MappingNode {
 		return nil, false
 	}
-	return mapList(n)
+	var items []map[string]string
+	for _, e := range n.Content {
+		if e.Kind != yaml.MappingNode {
+			return nil, false
+		}
+		item := map[string]string{}
+		for _, kv := range pairs(e) {
+			v, _, why := plainValue(kv[1])
+			if why == "a Jinja expression" {
+				v, why = kv[1].Value, ""
+			}
+			if why != "" || !identifier.MatchString(kv[0].Value) {
+				return nil, false
+			}
+			item[kv[0].Value] = v
+		}
+		items = append(items, item)
+	}
+	return items, true
+}
+
+// markRefs is an item's value with each {{ name }} as the mark the steps
+// use for it: a play variable's value, or var.name for a role default.
+func markRefs(v string, vars map[string]string) string {
+	return jinja.ReplaceAllStringFunc(v, func(m string) string {
+		name := jinja.FindStringSubmatch(m)[1]
+		if val, ok := vars[name]; ok {
+			return val
+		}
+		return refMark("var." + name)
+	})
 }
 
 // withItem is args with each {{ item.field }} in its text replaced by
@@ -88,39 +122,57 @@ func withItem(args map[string]*yaml.Node, it map[string]string) (out map[string]
 	return out, why
 }
 
-// mapLoopKey says why a written loop over maps can't key its steps: no
-// field every item needs, or two items with the same one. "" when it can.
-func mapLoopKey(items []map[string]string, fields map[string]*string) string {
-	key := loopKey(fields)
-	if key == "" {
-		return "loops over maps but reads only fields with a default, so there's no field every item has to tell the steps apart by"
+// mapLoopKey is the field a written loop over maps is keyed by: name if
+// the steps need it and it's written out in every item, else the first
+// such field in order. why says why there's none, or two items share it.
+func mapLoopKey(items []map[string]string, fields map[string]*string) (key, why string) {
+	plain := map[string]*string{}
+	for f, d := range fields {
+		if d != nil || !slices.ContainsFunc(items, func(it map[string]string) bool { return strings.Contains(it[f], "{{") }) {
+			plain[f] = d
+		}
+	}
+	if key = loopKey(plain); key == "" {
+		return "", "loops over maps, but no field every item has is written out in each, so there's nothing to tell the steps apart by"
 	}
 	seen := map[string]bool{}
 	for _, it := range items {
 		if seen[it[key]] {
-			return fmt.Sprintf("loops over maps with %s %q twice, and a step runs once per %s; write the task once per item", key, it[key], key)
+			return "", fmt.Sprintf("loops over maps with %s %q twice, and a step runs once per %s; write the task once per item", key, it[key], key)
 		}
 		seen[it[key]] = true
 	}
-	return ""
+	return key, ""
 }
 
 // mapLoopObject is a written loop over maps as for_each: each item by its
 // key field, with the fields the steps read, a missing one at its default.
-func mapLoopObject(items []map[string]string, fields map[string]*string, key string) cty.Value {
+// Plain values are written as they are; any with Jinja make it an HCL
+// expression, each {{ name }} a reference.
+func mapLoopObject(items []map[string]string, fields map[string]*string, key string, vars map[string]string) (cty.Value, string) {
 	byKey := map[string]cty.Value{}
+	var raw []string
+	templated := false
 	for _, it := range items {
 		obj := map[string]cty.Value{}
-		for f, d := range fields {
-			if v, ok := it[f]; ok {
-				obj[f] = cty.StringVal(v)
-			} else {
-				obj[f] = cty.StringVal(*d)
+		var parts []string
+		for _, f := range slices.Sorted(maps.Keys(fields)) {
+			v, ok := it[f]
+			if !ok {
+				v = *fields[f]
 			}
+			obj[f] = cty.StringVal(v)
+			m := markRefs(v, vars)
+			templated = templated || m != v
+			parts = append(parts, f+" = "+markTemplate(m))
 		}
 		byKey[it[key]] = cty.ObjectVal(obj)
+		raw = append(raw, fmt.Sprintf("  \"%s\" = { %s }", quoted(it[key]), strings.Join(parts, ", ")))
 	}
-	return cty.ObjectVal(byKey)
+	if templated {
+		return cty.NilVal, "{\n" + strings.Join(raw, "\n") + "\n}"
+	}
+	return cty.ObjectVal(byKey), ""
 }
 
 // loopSteps checks a looping task's steps use item.

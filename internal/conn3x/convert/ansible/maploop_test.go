@@ -72,3 +72,46 @@ func TestLiteralMapLoopInRole(t *testing.T) {
 		t.Fatalf("converted %d, review %+v\n%s", res.Converted, res.Review, main)
 	}
 }
+
+// An item's value can hold a role default, as security's sshd settings
+// do. for_each is written in HCL then, with the default as a variable,
+// and keyed by a field that's written out in every item.
+func TestLiteralMapLoopTemplated(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"defaults/main.yml": "security_ssh_port: \"22\"\n",
+		"tasks/main.yml": `- name: sshd
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  with_items:
+    - regexp: "^Port"
+      line: "Port {{ security_ssh_port }}"
+    - regexp: "^UseDNS"
+      line: "UseDNS no"
+- name: Keyed by a template
+  user: {name: "{{ item.name }}"}
+  loop:
+    - name: "{{ security_ssh_port }}"
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := strings.Join(strings.Fields(string(res.Files["main.circuit.hcl"])), " ")
+	if res.Converted != 1 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "no field every item has is written out") {
+		t.Fatalf("converted %d, review %+v\n%s", res.Converted, res.Review, main)
+	}
+	for _, want := range []string{
+		`"^Port" = { line = "Port ${var.security_ssh_port}", regexp = "^Port" }`,
+		`"^UseDNS" = { line = "UseDNS no", regexp = "^UseDNS" }`,
+	} {
+		if !strings.Contains(main, want) {
+			t.Errorf("no %s in:\n%s", want, main)
+		}
+	}
+	if !strings.Contains(string(res.Files["variables.tf"]), `variable "security_ssh_port"`) {
+		t.Errorf("no variable for the default:\n%s", res.Files["variables.tf"])
+	}
+}
