@@ -31,3 +31,17 @@ func TestEditValidateConverts(t *testing.T) {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
+
+// lineinfile's mode, owner and group are set with the edit.
+func TestEditModeConverts(t *testing.T) {
+	res := convertString(t, `- hosts: all
+  become: true
+  tasks:
+    - name: Sshd
+      lineinfile: {path: /etc/ssh/sshd_config, regexp: "^UseDNS", line: "UseDNS no", mode: 0600, owner: root, group: root}
+`)
+	hcl := strings.Join(strings.Fields(string(res.HCL)), " ")
+	if res.Converted != 1 || !strings.Contains(hcl, `mode = "0600"`) || !strings.Contains(hcl, `owner = "root"`) || !strings.Contains(hcl, `group = "root"`) {
+		t.Errorf("converted %d, review %+v\n%s", res.Converted, res.Review, res.HCL)
+	}
+}

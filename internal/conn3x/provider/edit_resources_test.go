@@ -15,6 +15,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/file"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/moduletest"
 	"github.com/opentofu/opentofu/internal/providers"
 )
@@ -33,7 +34,7 @@ func TestEditsToOneFileTakeTurns(t *testing.T) {
 			defer wg.Done()
 			h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
 			l := edit.Line{Line: fmt.Sprintf("k%d=%d", i, i)}
-			errs <- editFile(context.Background(), h, path, path, true, "", func(s string) (string, error) { return edit.ApplyLine(s, l) })
+			errs <- editFile(context.Background(), h, path, path, true, file.Desired{}, func(s string) (string, error) { return edit.ApplyLine(s, l) })
 		}()
 	}
 	wg.Wait()
@@ -101,7 +102,7 @@ func TestEditsWriteThroughLinksAndKeepTheMode(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := editFile(ctx, h, target, v.GetAttr("path").AsString(), false, "", tc.k.edit(v)); err != nil {
+			if err := editFile(ctx, h, target, v.GetAttr("path").AsString(), false, file.Desired{}, tc.k.edit(v)); err != nil {
 				t.Fatal(err)
 			}
 			if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
@@ -185,7 +186,7 @@ func TestEditFileGoesTheWayOfTheStepsPath(t *testing.T) {
 	dir := moduletest.RootDir(t)
 	moduletest.Sh(t, dir, "mkdir theirs; chown nobody theirs; echo kept > roots; chmod 0644 roots")
 	h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
-	err := editFile(context.Background(), h, dir+"/roots", dir+"/theirs/link", false, "", func(string) (string, error) { return "changed\n", nil })
+	err := editFile(context.Background(), h, dir+"/roots", dir+"/theirs/link", false, file.Desired{}, func(string) (string, error) { return "changed\n", nil })
 	if err == nil {
 		t.Error("the edit went through")
 	}
@@ -203,7 +204,7 @@ func TestEditValidate(t *testing.T) {
 	}
 	h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
 	set := func(line, validate string) error {
-		return editFile(context.Background(), h, path, path, false, validate, func(s string) (string, error) {
+		return editFile(context.Background(), h, path, path, false, file.Desired{ValidateCommand: validate}, func(s string) (string, error) {
 			return edit.ApplyLine(s, edit.Line{Line: line, Regexp: "^Port"})
 		})
 	}
@@ -241,5 +242,37 @@ func TestEditValidateWriteOnly(t *testing.T) {
 	})
 	if !lineKind.validate(bad).HasErrors() {
 		t.Errorf("a validate without %q was accepted", "%s")
+	}
+}
+
+// mode is set with the edit, and a file whose line is right but whose mode
+// isn't is changed too.
+func TestEditMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sshd_config")
+	if err := os.WriteFile(path, []byte("Port 22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
+	keep := func(s string) (string, error) { return edit.ApplyLine(s, edit.Line{Line: "Port 22"}) }
+	if err := editFile(context.Background(), h, path, path, false, file.Desired{Mode: "0644"}, keep); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o644 {
+		t.Errorf("mode %o, want 0644 with the line already there", st.Mode().Perm())
+	}
+	actual, err := file.Read(context.Background(), moduletest.Local{}, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := objFor(lineKind.schema(), map[string]cty.Value{"path": cty.StringVal(path), "line": cty.StringVal("Port 22"), "mode": cty.StringVal("0600")})
+	if file.NeedsChange(wanted(cfg, actual, actual.Content), actual) == false {
+		t.Error("a file at 0644 reads as in sync with mode 0600")
+	}
+	if bad := objFor(lineKind.schema(), map[string]cty.Value{"path": cty.StringVal(path), "line": cty.StringVal("x"), "mode": cty.StringVal("rw")}); !lineKind.validate(bad).HasErrors() {
+		t.Error(`mode "rw" was accepted`)
 	}
 }

@@ -743,9 +743,14 @@ func synchronizeModule(in *input) ([]step, string) {
 // shlex, but sh runs the next line as a command of its own.
 var shellSyntax = regexp.MustCompile("[|&;<>$`\\\\(){}\\[\\]*?~#\\n\\r]")
 
-// editValidate adds an edit step's validate from Ansible's, as a file
-// step's: the command that checks the edited file before it's swapped in.
-func (in *input) editValidate(attrs []attr) ([]attr, string) {
+// editFileArgs adds what an edit step sets on the file as a whole, as a
+// file step does: its mode, owner and group, and validate, the command that
+// checks the edited file before it's swapped in.
+func (in *input) editFileArgs(attrs []attr) ([]attr, string) {
+	if m, ok := in.mode("mode"); ok {
+		attrs = append(attrs, m)
+	}
+	attrs = in.owners(attrs)
 	if !in.has("validate") {
 		return attrs, ""
 	}
@@ -827,7 +832,7 @@ func lineModule(in *input) ([]step, string) {
 		return nil, "uses backrefs, which the converter can't translate yet"
 	}
 	in.ignore("backrefs", "backup")
-	attrs, why := in.editValidate(attrs)
+	attrs, why := in.editFileArgs(attrs)
 	if why != "" {
 		return nil, why
 	}
@@ -846,7 +851,7 @@ func blockModule(in *input) ([]step, string) {
 		return nil, "sets marker_begin or marker_end, which the converter can't translate yet"
 	}
 	in.ignore("backup")
-	attrs, why := in.editValidate(attrs)
+	attrs, why := in.editFileArgs(attrs)
 	if why != "" {
 		return nil, why
 	}

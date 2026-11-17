@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
@@ -264,6 +266,9 @@ func (k editKind) schema() providers.Schema {
 		"create":    {Type: cty.Bool, Optional: true, Description: "Create the file when it is missing. Otherwise a missing file is an error."},
 		"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the file as it is, \"delete\" takes the edit back out."},
 		"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the file already matches."},
+		"mode":      {Type: cty.String, Optional: true, Description: "The file's mode, such as \"0644\", set with the edit. Unset keeps the mode the file has, or 0644 for a file it creates."},
+		"owner":     {Type: cty.String, Optional: true, Description: "The file's owner, set with the edit. Unset keeps the owner the file has."},
+		"group":     {Type: cty.String, Optional: true, Description: "The file's group, set with the edit. Unset keeps the group the file has."},
 		"validate": {
 			Type: cty.String, Optional: true, WriteOnly: true,
 			Description: "A command that checks the edited file before it replaces the old one, such as \"sshd -t -f %s\". %s stands for the temporary file. Runs only when the edit changes the file, and is kept out of state.",
@@ -295,6 +300,11 @@ func (k editKind) validate(cfg cty.Value) tfdiags.Diagnostics {
 	if err := k.check(cfg); err != nil {
 		diags = diags.Append(attrError(k.name, err.Error()))
 	}
+	if m := cfg.GetAttr("mode"); !m.IsNull() {
+		if err := (file.Desired{Path: "/", Mode: m.AsString()}).Validate(); err != nil {
+			diags = diags.Append(attrError("mode", err.Error()))
+		}
+	}
 	if v := cfg.GetAttr("validate"); !v.IsNull() {
 		if err := (file.Desired{Path: "/", Mode: "0644", ValidateCommand: v.AsString()}).Validate(); err != nil {
 			diags = diags.Append(attrError("validate", err.Error()))
@@ -311,7 +321,7 @@ func (k editKind) plan(req providers.PlanResourceChangeRequest) providers.PlanRe
 	vals := resp.PlannedState.AsValueMap()
 	changed := req.PriorState.IsNull()
 	if !changed {
-		for name := range k.attrs {
+		for _, name := range append(slices.Collect(maps.Keys(k.attrs)), "mode", "owner", "group") {
 			if !req.PriorState.GetAttr(name).RawEquals(vals[name]) {
 				changed = true
 			}
@@ -343,7 +353,7 @@ func (k editKind) read(ctx context.Context, req providers.ReadResourceRequest) p
 			if err != nil {
 				return cty.NilVal, err
 			}
-			inSync = edited == actual.Content
+			inSync = !file.NeedsChange(wanted(prior, actual, edited), actual)
 		} else if k.missingOK != nil {
 			inSync = k.missingOK(prior)
 		}
@@ -370,7 +380,9 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 				return cty.NilVal, err
 			}
 			create := planned.GetAttr("create")
-			if err := editFile(ctx, h, target, path, known(create) && create.True(), stringOr(req.Config.GetAttr("validate"), ""), k.edit(planned)); err != nil {
+			want := fileAttrs(planned)
+			want.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")
+			if err := editFile(ctx, h, target, path, known(create) && create.True(), want, k.edit(planned)); err != nil {
 				return cty.NilVal, err
 			}
 			return cty.ObjectVal(vals), nil
@@ -389,7 +401,7 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 				return err
 			}
 			// The config, and so validate, is gone when the step is removed.
-			return editFile(ctx, h, target, path, false, "", k.remove(prior))
+			return editFile(ctx, h, target, path, false, fileAttrs(prior), k.remove(prior))
 		})
 }
 
@@ -438,7 +450,7 @@ printf '%s\n' "$r"`, modules.Follow(path)), nil)
 // Where someone else owns the way to via, editTarget's answer came from a
 // process of theirs, which they can make say anything. So the edit goes the
 // same way: as them, whatever file the answer names.
-func editFile(ctx context.Context, h *hostConn, path, via string, create bool, validate string, fn func(string) (string, error)) error {
+func editFile(ctx context.Context, h *hostConn, path, via string, create bool, want file.Desired, fn func(string) (string, error)) error {
 	defer lockHost(h, "edit\x00"+path)()
 	var routes []modules.Route
 	if via != path {
@@ -458,8 +470,39 @@ func editFile(ctx context.Context, h *hostConn, path, via string, create bool, v
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	if actual.Exists && edited == actual.Content {
+	d := want
+	d.Path, d.Content = path, edited
+	d = withActual(d, actual)
+	if actual.Exists && !file.NeedsChange(d, actual) {
 		return nil
 	}
-	return file.Apply(ctx, h, file.Desired{Path: path, Content: edited, Mode: actual.Mode, Owner: actual.Owner, Group: actual.Group, ValidateCommand: validate}, routes...)
+	return file.Apply(ctx, h, d, routes...)
+}
+
+// fileAttrs is the mode, owner and group an edit step sets, empty where it
+// leaves the file's own.
+func fileAttrs(v cty.Value) file.Desired {
+	return file.Desired{Mode: stringOr(v.GetAttr("mode"), ""), Owner: stringOr(v.GetAttr("owner"), ""), Group: stringOr(v.GetAttr("group"), "")}
+}
+
+// withActual fills what d leaves unset from the file as it is.
+func withActual(d file.Desired, a file.Actual) file.Desired {
+	if d.Mode == "" {
+		d.Mode = a.Mode
+	}
+	if d.Owner == "" {
+		d.Owner = a.Owner
+	}
+	if d.Group == "" {
+		d.Group = a.Group
+	}
+	return d
+}
+
+// wanted is the file an edit step v wants, given it as it is and its
+// content edited.
+func wanted(v cty.Value, a file.Actual, edited string) file.Desired {
+	d := fileAttrs(v)
+	d.Content = edited
+	return withActual(d, a)
 }
