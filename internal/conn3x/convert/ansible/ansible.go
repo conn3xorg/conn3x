@@ -377,6 +377,14 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	var handlerBlocks []*hclwrite.Block
 	usedH := map[string]int{}
 	for _, h := range handlerNodes {
+		if hname, ok := daemonReloadOnly(h); ok {
+			handlers[hname] = "" // notified, but nothing to run
+			why := "only runs systemctl daemon-reload, which Conn3x does itself before a service step or handler acts on a unit whose file changed, so it has no handler here. If it was for a unit nothing restarts, such as a timer, add a command step that runs systemctl daemon-reload"
+			cb.AppendNewline()
+			comment(cb, fmt.Sprintf("TODO(convert): Handler %q (%s line %d) %s.", hname, c.file, h.Line, why))
+			c.res.Notes = append(c.res.Notes, Issue{Task: hname, File: c.file, Line: h.Line, Reason: why})
+			continue
+		}
 		attrs, hname, when := c.handler(cb, h, vars)
 		if attrs == nil {
 			continue
@@ -516,6 +524,23 @@ var handlerKeys = map[string]bool{"name": true, "listen": true, "tags": true, "n
 // handler converts a handler that restarts or reloads a service into its
 // service block's attributes, returned with its Ansible name, or leaves it
 // for review.
+// daemonReloadOnly reports whether handler h does nothing but reload
+// systemd, as systemd_service: {daemon_reload: true} does, and its name.
+func daemonReloadOnly(h *yaml.Node) (string, bool) {
+	t := mapping(h)
+	for k := range t {
+		if k != "name" && keywords[k] {
+			return "", false
+		}
+	}
+	mod, args := moduleOf(t)
+	if mod != "systemd" && mod != "systemd_service" || len(args) != 1 {
+		return "", false
+	}
+	v, ok := yamlBool(args["daemon_reload"])
+	return scalar(t["name"]), ok && v && scalar(t["name"]) != ""
+}
+
 func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]string) ([]attr, string, string) {
 	t := mapping(h)
 	hname := scalar(t["name"])
@@ -1248,7 +1273,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			c.issue(body, name, node, fmt.Sprintf("notifies %q, which could not be converted", n))
 			return
 		}
-		notify = append(notify, "handler."+h)
+		if h != "" {
+			notify = append(notify, "handler."+h)
+		}
 	}
 	if kind := c.block.kind; kind != "" {
 		switch {
