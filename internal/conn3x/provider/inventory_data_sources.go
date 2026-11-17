@@ -47,7 +47,7 @@ func readPackagesData(ctx context.Context, req providers.ReadDataSourceRequest) 
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
-	family, err := pkg.DetectFamily(ctx, h)
+	family, err := h.packageFamily(ctx)
 	if err == nil {
 		var got map[string][]string
 		if got, err = pkg.Inventory(ctx, h, family); err == nil {

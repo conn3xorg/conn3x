@@ -23,6 +23,7 @@ import (
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/agent"
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/transport"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/conn3x/version"
@@ -118,11 +119,30 @@ type hostConn struct {
 	become   *ssh.Become // set when commands run as root
 	rootKey  string      // names the host in rootAgents
 
+	famMu sync.Mutex
+	fam   pkg.Family // the package family, read once per connection
+
 	mu        sync.Mutex
 	elevated  bool // Windows, with become: the login's token was checked
 	agent     *agent.Client
 	tried     [2]bool // attach tried without and with upload
 	attachErr error   // why a required agent couldn't start
+}
+
+// packageFamily is the host's package family, read from /etc/os-release
+// the first time a step asks and kept for the run: every package step
+// would read the same file otherwise.
+func (h *hostConn) packageFamily(ctx context.Context) (pkg.Family, error) {
+	h.famMu.Lock()
+	defer h.famMu.Unlock()
+	if h.fam != "" {
+		return h.fam, nil
+	}
+	f, err := pkg.DetectFamily(ctx, h)
+	if err == nil {
+		h.fam = f
+	}
+	return f, err
 }
 
 // Run sends cmd to the agent once one is attached, and through the shell

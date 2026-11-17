@@ -64,7 +64,7 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 			return nil, nil, err
 		}
 	case "packages":
-		family, err := pkg.DetectFamily(ctx, h)
+		family, err := h.packageFamily(ctx)
 		if err != nil {
 			return nil, nil, err
 		}

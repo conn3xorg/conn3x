@@ -74,7 +74,7 @@ func planRepository(req providers.PlanResourceChangeRequest) providers.PlanResou
 
 func readRepository(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
-		family, err := pkg.DetectFamily(ctx, h)
+		family, err := h.packageFamily(ctx)
 		if err != nil {
 			return cty.NilVal, err
 		}
@@ -88,7 +88,7 @@ func readRepository(ctx context.Context, req providers.ReadResourceRequest) prov
 
 func applyRepository(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	withFamily := func(ctx context.Context, h *hostConn, v cty.Value, do func(context.Context, *hostConn, pkg.Family, repo.Repo) error) error {
-		family, err := pkg.DetectFamily(ctx, h)
+		family, err := h.packageFamily(ctx)
 		if err != nil {
 			return err
 		}

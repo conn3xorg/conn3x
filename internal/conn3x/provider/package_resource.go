@@ -150,7 +150,7 @@ func readPackage(ctx context.Context, req providers.ReadResourceRequest) provide
 }
 
 func readPackageOnHost(ctx context.Context, host *hostConn, d pkg.Desired) (pkg.Actual, error) {
-	family, err := pkg.DetectFamily(ctx, host)
+	family, err := host.packageFamily(ctx)
 	if err != nil {
 		return pkg.Actual{}, err
 	}
@@ -181,7 +181,7 @@ func applyPackage(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	if req.PlannedState.IsNull() {
 		d = pkg.Desired{Name: d.Name, State: pkg.Absent}
 	}
-	family, err := pkg.DetectFamily(ctx, host)
+	family, err := host.packageFamily(ctx)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
 		return resp

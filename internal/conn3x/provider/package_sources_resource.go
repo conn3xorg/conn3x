@@ -75,7 +75,7 @@ func planPackageSources(req providers.PlanResourceChangeRequest) providers.PlanR
 
 // unlistedSources reads the host and returns the files s doesn't keep.
 func unlistedSources(ctx context.Context, h *hostConn, s repo.Sources) (pkg.Family, []string, error) {
-	family, err := pkg.DetectFamily(ctx, h)
+	family, err := h.packageFamily(ctx)
 	if err != nil {
 		return "", nil, err
 	}

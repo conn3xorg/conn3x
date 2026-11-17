@@ -318,7 +318,7 @@ func hasNMConnection(ctx context.Context, h *hostConn, v cty.Value) (bool, error
 
 // hasRepository: any of the repository's files is there.
 func hasRepository(ctx context.Context, h *hostConn, v cty.Value) (bool, error) {
-	family, err := pkg.DetectFamily(ctx, h)
+	family, err := h.packageFamily(ctx)
 	if err != nil {
 		return false, err
 	}

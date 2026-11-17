@@ -56,7 +56,7 @@ func planPackageHold(req providers.PlanResourceChangeRequest) providers.PlanReso
 func readPackageHold(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
 		want := packageHoldFrom(prior)
-		family, err := pkg.DetectFamily(ctx, h)
+		family, err := h.packageFamily(ctx)
 		if err != nil {
 			return cty.NilVal, err
 		}
@@ -70,7 +70,7 @@ func readPackageHold(ctx context.Context, req providers.ReadResourceRequest) pro
 
 func applyPackageHold(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	set := func(ctx context.Context, h *hostConn, want pkg.Hold) error {
-		family, err := pkg.DetectFamily(ctx, h)
+		family, err := h.packageFamily(ctx)
 		if err != nil {
 			return err
 		}
