@@ -16,6 +16,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/moduletest"
+	"github.com/opentofu/opentofu/internal/providers"
 )
 
 // Edits to one file on one host take turns. Run together, each reads the
@@ -32,7 +33,7 @@ func TestEditsToOneFileTakeTurns(t *testing.T) {
 			defer wg.Done()
 			h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
 			l := edit.Line{Line: fmt.Sprintf("k%d=%d", i, i)}
-			errs <- editFile(context.Background(), h, path, path, true, func(s string) (string, error) { return edit.ApplyLine(s, l) })
+			errs <- editFile(context.Background(), h, path, path, true, "", func(s string) (string, error) { return edit.ApplyLine(s, l) })
 		}()
 	}
 	wg.Wait()
@@ -100,7 +101,7 @@ func TestEditsWriteThroughLinksAndKeepTheMode(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := editFile(ctx, h, target, v.GetAttr("path").AsString(), false, tc.k.edit(v)); err != nil {
+			if err := editFile(ctx, h, target, v.GetAttr("path").AsString(), false, "", tc.k.edit(v)); err != nil {
 				t.Fatal(err)
 			}
 			if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
@@ -184,11 +185,61 @@ func TestEditFileGoesTheWayOfTheStepsPath(t *testing.T) {
 	dir := moduletest.RootDir(t)
 	moduletest.Sh(t, dir, "mkdir theirs; chown nobody theirs; echo kept > roots; chmod 0644 roots")
 	h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
-	err := editFile(context.Background(), h, dir+"/roots", dir+"/theirs/link", false, func(string) (string, error) { return "changed\n", nil })
+	err := editFile(context.Background(), h, dir+"/roots", dir+"/theirs/link", false, "", func(string) (string, error) { return "changed\n", nil })
 	if err == nil {
 		t.Error("the edit went through")
 	}
 	if got := moduletest.Sh(t, dir, "cat roots; stat -c %U roots"); got != "kept\nroot" {
 		t.Fatalf("root's file is now %q", got)
+	}
+}
+
+// validate checks the edited file before it replaces the old one: a
+// command that fails leaves the file as it was.
+func TestEditValidate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sshd_config")
+	if err := os.WriteFile(path, []byte("Port 22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &hostConn{runner: moduletest.Local{}, rootKey: "web1"}
+	set := func(line, validate string) error {
+		return editFile(context.Background(), h, path, path, false, validate, func(s string) (string, error) {
+			return edit.ApplyLine(s, edit.Line{Line: line, Regexp: "^Port"})
+		})
+	}
+	if err := set("Port 2222", "grep -q '^Port 22$' %s"); err == nil {
+		t.Fatal("an edit the validate command refuses was written")
+	}
+	if b, _ := os.ReadFile(path); string(b) != "Port 22\n" {
+		t.Fatalf("after a refused edit the file is %q", b)
+	}
+	if err := set("Port 2222", "grep -q '^Port 2222$' %s"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "Port 2222\n" {
+		t.Fatalf("after an accepted edit the file is %q", b)
+	}
+}
+
+// validate is write-only: the plan never keeps it.
+func TestEditValidateWriteOnly(t *testing.T) {
+	cfg := objFor(lineKind.schema(), map[string]cty.Value{
+		"path": cty.StringVal("/etc/ssh/sshd_config"), "line": cty.StringVal("Port 22"), "validate": cty.StringVal("sshd -t -f %s"),
+	})
+	if d := lineKind.validate(cfg); d.HasErrors() {
+		t.Fatal(d.Err())
+	}
+	resp := lineKind.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(cfg.Type()), ProposedNewState: cfg, Config: cfg})
+	if resp.Diagnostics.HasErrors() {
+		t.Fatal(resp.Diagnostics.Err())
+	}
+	if v := resp.PlannedState.GetAttr("validate"); !v.IsNull() {
+		t.Errorf("planned validate = %#v, want null", v)
+	}
+	bad := objFor(lineKind.schema(), map[string]cty.Value{
+		"path": cty.StringVal("/etc/x"), "line": cty.StringVal("x"), "validate": cty.StringVal("true"),
+	})
+	if !lineKind.validate(bad).HasErrors() {
+		t.Errorf("a validate without %q was accepted", "%s")
 	}
 }

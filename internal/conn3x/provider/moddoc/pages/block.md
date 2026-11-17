@@ -63,4 +63,4 @@ When you delete a `block` step, `on_remove` decides what happens on the host. Th
 
 ## From Ansible
 
-`conn3x convert ansible` turns `blockinfile` tasks into `block` steps. It keeps Ansible's marker, `# {mark} ANSIBLE MANAGED BLOCK` by default, so the block Ansible already wrote is the one Conn3x manages. A task that sets `marker_begin` or `marker_end` stays a TODO.
+`conn3x convert ansible` turns `blockinfile` tasks into `block` steps. It keeps Ansible's marker, `# {mark} ANSIBLE MANAGED BLOCK` by default, so the block Ansible already wrote is the one Conn3x manages. `validate` is carried across. A task that sets `marker_begin` or `marker_end` stays a TODO.

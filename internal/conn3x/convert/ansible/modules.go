@@ -743,6 +743,19 @@ func synchronizeModule(in *input) ([]step, string) {
 // shlex, but sh runs the next line as a command of its own.
 var shellSyntax = regexp.MustCompile("[|&;<>$`\\\\(){}\\[\\]*?~#\\n\\r]")
 
+// editValidate adds an edit step's validate from Ansible's, as a file
+// step's: the command that checks the edited file before it's swapped in.
+func (in *input) editValidate(attrs []attr) ([]attr, string) {
+	if !in.has("validate") {
+		return attrs, ""
+	}
+	v, why := fileValidate(in.str("validate"))
+	if why != "" {
+		return nil, why
+	}
+	return append(attrs, s("validate", v)), ""
+}
+
 // fileValidate turns Ansible's validate into a file step's. Ansible splits
 // the command into arguments and runs it without a shell, while Conn3x runs
 // it through one with %s already quoted, so quotes around %s go and shell
@@ -814,6 +827,10 @@ func lineModule(in *input) ([]step, string) {
 		return nil, "uses backrefs, which the converter can't translate yet"
 	}
 	in.ignore("backrefs", "backup")
+	attrs, why := in.editValidate(attrs)
+	if why != "" {
+		return nil, why
+	}
 	return one("line", attrs)
 }
 
@@ -829,6 +846,10 @@ func blockModule(in *input) ([]step, string) {
 		return nil, "sets marker_begin or marker_end, which the converter can't translate yet"
 	}
 	in.ignore("backup")
+	attrs, why := in.editValidate(attrs)
+	if why != "" {
+		return nil, why
+	}
 	return one("block", attrs, "Keeps Ansible's marker, so the block it already wrote is the one Conn3x manages.")
 }
 

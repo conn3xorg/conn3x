@@ -53,10 +53,25 @@ step "no_legacy_mirror" {
 
 **Conflicts.** If another step in the same circuit writes the whole file with `file` or `template`, `conn3x validate` warns you, because each apply would undo the other. Put the line into that file's content instead.
 
+## Checking the file first
+
+For a file a mistake could lock you out of, such as `sshd_config` or `sudoers`, set `validate` to a command that checks the edited file. Conn3x writes the edit to a temporary file, runs the command with `%s` as its path, and swaps the file in only if the command exits 0. Otherwise the file is left as it was, and the step fails with the command's output:
+
+```hcl
+line {
+  path     = "/etc/ssh/sshd_config"
+  regexp   = "^PermitRootLogin"
+  line     = "PermitRootLogin no"
+  validate = "/usr/sbin/sshd -t -f %s"
+}
+```
+
+It runs only when the edit changes the file, and isn't kept in state. Removing the step with `on_remove = "delete"` doesn't run it, since the step's configuration is gone by then.
+
 ## Removal
 
 When you delete a `line` step, `on_remove` decides what happens on the host. The default, `"forget"`, leaves the file as it is. `"delete"` removes lines equal to `line`. It doesn't restore a line that `regexp` replaced.
 
 ## From Ansible
 
-`conn3x convert ansible` turns `lineinfile` tasks into `line` steps, with `insertafter`, `insertbefore`, `create` and `state` carried across. A task that uses `backrefs` stays a TODO.
+`conn3x convert ansible` turns `lineinfile` tasks into `line` steps, with `insertafter`, `insertbefore`, `create`, `state` and `validate` carried across. A task that uses `backrefs` stays a TODO.

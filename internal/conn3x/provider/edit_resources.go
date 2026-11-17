@@ -264,6 +264,10 @@ func (k editKind) schema() providers.Schema {
 		"create":    {Type: cty.Bool, Optional: true, Description: "Create the file when it is missing. Otherwise a missing file is an error."},
 		"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the file as it is, \"delete\" takes the edit back out."},
 		"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the file already matches."},
+		"validate": {
+			Type: cty.String, Optional: true, WriteOnly: true,
+			Description: "A command that checks the edited file before it replaces the old one, such as \"sshd -t -f %s\". %s stands for the temporary file. Runs only when the edit changes the file, and is kept out of state.",
+		},
 	}
 	for name, a := range k.attrs {
 		attrs[name] = a
@@ -291,6 +295,11 @@ func (k editKind) validate(cfg cty.Value) tfdiags.Diagnostics {
 	if err := k.check(cfg); err != nil {
 		diags = diags.Append(attrError(k.name, err.Error()))
 	}
+	if v := cfg.GetAttr("validate"); !v.IsNull() {
+		if err := (file.Desired{Path: "/", Mode: "0644", ValidateCommand: v.AsString()}).Validate(); err != nil {
+			diags = diags.Append(attrError("validate", err.Error()))
+		}
+	}
 	return diags
 }
 
@@ -316,6 +325,7 @@ func (k editKind) plan(req providers.PlanResourceChangeRequest) providers.PlanRe
 	} else {
 		vals["in_sync"] = cty.True
 	}
+	vals["validate"] = cty.NullVal(cty.String) // write-only, so adding it never shows a diff
 	resp.PlannedState = cty.ObjectVal(vals)
 	return resp
 }
@@ -360,7 +370,7 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 				return cty.NilVal, err
 			}
 			create := planned.GetAttr("create")
-			if err := editFile(ctx, h, target, path, known(create) && create.True(), k.edit(planned)); err != nil {
+			if err := editFile(ctx, h, target, path, known(create) && create.True(), stringOr(req.Config.GetAttr("validate"), ""), k.edit(planned)); err != nil {
 				return cty.NilVal, err
 			}
 			return cty.ObjectVal(vals), nil
@@ -378,7 +388,8 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 			if err != nil {
 				return err
 			}
-			return editFile(ctx, h, target, path, false, k.remove(prior))
+			// The config, and so validate, is gone when the step is removed.
+			return editFile(ctx, h, target, path, false, "", k.remove(prior))
 		})
 }
 
@@ -427,7 +438,7 @@ printf '%s\n' "$r"`, modules.Follow(path)), nil)
 // Where someone else owns the way to via, editTarget's answer came from a
 // process of theirs, which they can make say anything. So the edit goes the
 // same way: as them, whatever file the answer names.
-func editFile(ctx context.Context, h *hostConn, path, via string, create bool, fn func(string) (string, error)) error {
+func editFile(ctx context.Context, h *hostConn, path, via string, create bool, validate string, fn func(string) (string, error)) error {
 	defer lockHost(h, "edit\x00"+path)()
 	var routes []modules.Route
 	if via != path {
@@ -450,5 +461,5 @@ func editFile(ctx context.Context, h *hostConn, path, via string, create bool, f
 	if actual.Exists && edited == actual.Content {
 		return nil
 	}
-	return file.Apply(ctx, h, file.Desired{Path: path, Content: edited, Mode: actual.Mode, Owner: actual.Owner, Group: actual.Group}, routes...)
+	return file.Apply(ctx, h, file.Desired{Path: path, Content: edited, Mode: actual.Mode, Owner: actual.Owner, Group: actual.Group, ValidateCommand: validate}, routes...)
 }

@@ -149,7 +149,7 @@ func changeKnownHost(ctx context.Context, h *hostConn, v cty.Value, present bool
 	if err != nil {
 		return err
 	}
-	return editFile(ctx, h, target, sshkey.SystemKnownHosts, present, func(s string) (string, error) {
+	return editFile(ctx, h, target, sshkey.SystemKnownHosts, present, "", func(s string) (string, error) {
 		return sshkey.EditKnownHosts(s, host, key, present)
 	})
 }
