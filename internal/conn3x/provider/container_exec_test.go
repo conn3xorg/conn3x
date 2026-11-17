@@ -55,7 +55,7 @@ func TestExecTargetRefuses(t *testing.T) {
 	for want, set := range map[string]map[string]cty.Value{
 		"can't be set with container_engine = \"kubectl\"": {"container": cty.StringVal("p"), "container_engine": cty.StringVal("kubectl"), "user": cty.StringVal("root")},
 		"go with container_engine = \"kubectl\"":           {"container": cty.StringVal("c"), "kube_namespace": cty.StringVal("x")},
-		"not \"lxc\"":                                       {"container": cty.StringVal("c"), "container_engine": cty.StringVal("lxc")},
+		"not \"lxc\"":                                      {"container": cty.StringVal("c"), "container_engine": cty.StringVal("lxc")},
 	} {
 		if _, err := execTarget(execBlock(set)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%v: %v, want %q", set, err, want)
