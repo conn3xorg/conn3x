@@ -927,6 +927,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		return
 	}
 	var items []string
+	var itemMaps []map[string]string
 	if listVar != "" {
 		items = c.role.lists[listVar]
 		if items == nil {
@@ -934,7 +935,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 	} else if l := firstNode(t["loop"], t["with_items"]); l != nil {
 		var why string
-		if items, why = literalLoop(l); why != "" {
+		if ms, ok := mapLoop(l); ok {
+			itemMaps, items = ms, []string{}
+		} else if items, why = literalLoop(l); why != "" {
 			c.issue(body, name, node, why)
 			return
 		}
@@ -1045,7 +1048,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	}
 	run := func(vars map[string]string) (*input, []step, string) {
 		in := c.input(mod, args, vars, items)
-		in.itemVar = listVar
+		in.itemVar, in.itemMaps = listVar, itemMaps
 		in.factsLater = c.factsAfter[node]
 		in.wait = wait
 		in.jsonEdits, in.jsonWhy = c.jsonEdits[node], c.jsonWhy[node]
@@ -1074,6 +1077,45 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			case !sameForItem(steps, got, it):
 				reason = fmt.Sprintf("loops over %q, which Ansible reads differently from the other items, such as a package name it splits at a comma; write the task once per item", it)
 			}
+		}
+		// Written maps can be checked the same way, each item's fields
+		// written into the task in place of item.name.
+		if reason == "" && itemMaps != nil {
+			reason = in.problem
+		}
+		for i, it := range itemMaps {
+			if reason != "" {
+				break
+			}
+			a, why := withItem(args, it)
+			if why != "" {
+				reason = fmt.Sprintf("loops over maps, and item %d %s, so Ansible would stop there", i+1, why)
+				break
+			}
+			one := c.input(mod, a, vars, nil)
+			one.factsLater, one.wait = in.factsLater, in.wait
+			one.jsonEdits, one.jsonWhy = in.jsonEdits, in.jsonWhy
+			got, why := m(one)
+			if why == "" {
+				why = one.problem
+			}
+			var put []string
+			for f, d := range in.itemFields {
+				v, ok := it[f]
+				if !ok {
+					v = *d
+				}
+				put = append(put, refMark("item.value."+f), v)
+			}
+			switch {
+			case why != "":
+				reason = fmt.Sprintf("loops over maps, and for item %d: %s", i+1, why)
+			case !sameWith(steps, got, strings.NewReplacer(put...)):
+				reason = fmt.Sprintf("loops over maps, and Ansible reads item %d differently from the others, such as a package name it splits at a comma; write the task once per item", i+1)
+			}
+		}
+		if reason == "" && itemMaps != nil {
+			reason = mapLoopKey(itemMaps, in.itemFields)
 		}
 		if reason == "" {
 			reason = resolveMarks(steps)
@@ -1286,6 +1328,8 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		} else if listVar != "" {
 			sb.SetAttributeRaw("for_each", rawTokens("var."+listVar))
 			c.role.listUsed[listVar] = true
+		} else if itemMaps != nil {
+			sb.SetAttributeValue("for_each", mapLoopObject(itemMaps, in.itemFields, loopKey(in.itemFields)))
 		} else if items != nil {
 			vals := make([]cty.Value, len(items))
 			for i, it := range items {

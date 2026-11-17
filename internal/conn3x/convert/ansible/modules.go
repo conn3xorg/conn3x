@@ -91,6 +91,9 @@ type input struct {
 	// itemVar names the role default a loop runs over, whose items the
 	// caller sets, so item is held to what a default is held to.
 	itemVar string
+	// itemMaps are the items of a loop over maps written in the task,
+	// whose fields can be read anywhere: each item is checked by itself.
+	itemMaps []map[string]string
 	// itemFields are the fields read from items that are maps, as
 	// item.name: nil for a bare read, which needs the field, or the
 	// default a | default('x') gives it.
@@ -276,7 +279,7 @@ var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\
 func (in *input) render(key, s string) string {
 	s = in.role.expandFacts(s)
 	inPath := in.role != nil && slices.Contains(pathArgs[in.mod], key)
-	if in.loop && in.itemVar != "" {
+	if in.loop && (in.itemVar != "" || in.itemMaps != nil) {
 		fieldRefs, fieldRef := itemField.FindAllStringIndex(s, -1), -1
 		orig := s
 		s = itemField.ReplaceAllStringFunc(s, func(m string) string {
@@ -284,6 +287,8 @@ func (in *input) render(key, s string) string {
 			sub := itemField.FindStringSubmatch(m)
 			in.itemUsed = true
 			switch {
+			case in.itemMaps != nil:
+				return in.field(key, m, sub)
 			case len(in.role.lists[in.itemVar]) > 0:
 				in.fail(fmt.Sprintf("%s reads item.%s, but %q is a list of plain values", key, sub[1], in.itemVar))
 			case inPath && !packageModules[in.mod]:
@@ -326,6 +331,10 @@ func (in *input) render(key, s string) string {
 		}
 		if name == "item" && in.loop {
 			in.itemUsed = true
+			if in.itemMaps != nil {
+				in.fail(fmt.Sprintf("%s uses each whole item of the loop, which are maps; read a field, such as item.name", key))
+				return m
+			}
 			if in.role != nil && in.role.maps[in.itemVar] != nil {
 				in.fail(fmt.Sprintf("%s uses each whole item of %q, which are maps; read a field, such as item.name", key, in.itemVar))
 				return m

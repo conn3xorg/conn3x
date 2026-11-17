@@ -4,6 +4,7 @@
 package ansible
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -43,6 +44,83 @@ func literalLoop(n *yaml.Node) ([]string, string) {
 		items = append(items, e.Value)
 	}
 	return items, ""
+}
+
+// mapLoop reads loop: [{name: a, port: "80"}, ...], a list of maps of
+// plain values written in the task. ok is false for any other loop.
+func mapLoop(n *yaml.Node) ([]map[string]string, bool) {
+	if n == nil || n.Kind != yaml.SequenceNode || len(n.Content) == 0 || n.Content[0].Kind != yaml.MappingNode {
+		return nil, false
+	}
+	return mapList(n)
+}
+
+// withItem is args with each {{ item.field }} in its text replaced by
+// that field of it, or the field's default. why says which field it lacks.
+func withItem(args map[string]*yaml.Node, it map[string]string) (out map[string]*yaml.Node, why string) {
+	var fill func(n *yaml.Node) *yaml.Node
+	fill = func(n *yaml.Node) *yaml.Node {
+		c := *n
+		if n.Kind == yaml.ScalarNode {
+			c.Value = itemField.ReplaceAllStringFunc(n.Value, func(m string) string {
+				sub := itemField.FindStringSubmatch(m)
+				if v, ok := it[sub[1]]; ok {
+					return v
+				}
+				if strings.Contains(m, "default(") {
+					return sub[2] + sub[3]
+				}
+				why = "doesn't have " + sub[1]
+				return m
+			})
+			return &c
+		}
+		c.Content = make([]*yaml.Node, len(n.Content))
+		for i, e := range n.Content {
+			c.Content[i] = fill(e)
+		}
+		return &c
+	}
+	out = map[string]*yaml.Node{}
+	for k, v := range args {
+		out[k] = fill(v)
+	}
+	return out, why
+}
+
+// mapLoopKey says why a written loop over maps can't key its steps: no
+// field every item needs, or two items with the same one. "" when it can.
+func mapLoopKey(items []map[string]string, fields map[string]*string) string {
+	key := loopKey(fields)
+	if key == "" {
+		return "loops over maps but reads only fields with a default, so there's no field every item has to tell the steps apart by"
+	}
+	seen := map[string]bool{}
+	for _, it := range items {
+		if seen[it[key]] {
+			return fmt.Sprintf("loops over maps with %s %q twice, and a step runs once per %s; write the task once per item", key, it[key], key)
+		}
+		seen[it[key]] = true
+	}
+	return ""
+}
+
+// mapLoopObject is a written loop over maps as for_each: each item by its
+// key field, with the fields the steps read, a missing one at its default.
+func mapLoopObject(items []map[string]string, fields map[string]*string, key string) cty.Value {
+	byKey := map[string]cty.Value{}
+	for _, it := range items {
+		obj := map[string]cty.Value{}
+		for f, d := range fields {
+			if v, ok := it[f]; ok {
+				obj[f] = cty.StringVal(v)
+			} else {
+				obj[f] = cty.StringVal(*d)
+			}
+		}
+		byKey[it[key]] = cty.ObjectVal(obj)
+	}
+	return cty.ObjectVal(byKey)
 }
 
 // loopSteps checks a looping task's steps use item.
@@ -119,10 +197,16 @@ func quoted(s string) string {
 // sameForItem reports whether steps built with item as a mark are, with
 // value in its place, the steps the module built for value itself.
 func sameForItem(marked, got []step, value string) bool {
+	return sameWith(marked, got, strings.NewReplacer(itemMark, value))
+}
+
+// sameWith reports whether steps built with marks are, with put's values
+// in their place, the steps the module built for those values.
+func sameWith(marked, got []step, repl *strings.Replacer) bool {
 	put := func(v cty.Value) cty.Value {
 		out, err := cty.Transform(v, func(_ cty.Path, v cty.Value) (cty.Value, error) {
 			if v.IsKnown() && !v.IsNull() && v.Type() == cty.String {
-				return cty.StringVal(strings.ReplaceAll(v.AsString(), itemMark, value)), nil
+				return cty.StringVal(repl.Replace(v.AsString())), nil
 			}
 			return v, nil
 		})

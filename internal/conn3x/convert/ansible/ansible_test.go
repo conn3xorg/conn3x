@@ -218,11 +218,11 @@ func TestConvertsLiteralLoops(t *testing.T) {
 // Loops the converter can't prove the same stay for a person.
 func TestRefusesOtherLoops(t *testing.T) {
 	for reason, task := range map[string]string{
-		"loop over a variable": "package: {name: \"{{ item }}\"}\n      loop: \"{{ pkgs }}\"",
-		"item.name":            "user: {name: \"{{ item.name }}\"}\n      loop: [{name: a}, {name: b}]",
-		"uses when":            "package: {name: \"{{ item }}\"}\n      loop: [a, b]\n      when: x",
-		"doesn't use item":     "package: {name: vim}\n      loop: [a, b]",
-		"uses loop_control":    "package: {name: \"{{ i }}\"}\n      loop: [a, b]\n      loop_control: {loop_var: i}",
+		"loop over a variable":     "package: {name: \"{{ item }}\"}\n      loop: \"{{ pkgs }}\"",
+		"item 2 doesn't have name": "user: {name: \"{{ item.name }}\"}\n      loop: [{name: a}, {user: b}]",
+		"uses when":                "package: {name: \"{{ item }}\"}\n      loop: [a, b]\n      when: x",
+		"doesn't use item":         "package: {name: vim}\n      loop: [a, b]",
+		"uses loop_control":        "package: {name: \"{{ i }}\"}\n      loop: [a, b]\n      loop_control: {loop_var: i}",
 	} {
 		res := convertString(t, "- hosts: all\n  vars: {pkgs: x}\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
