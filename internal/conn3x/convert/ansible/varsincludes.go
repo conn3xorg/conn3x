@@ -65,7 +65,7 @@ func (t hostTest) hcl() string {
 	}
 	quoted := make([]string, len(t.names))
 	for i, n := range t.names {
-		quoted[i] = fmt.Sprintf("%q", n)
+		quoted[i] = hclString(n)
 	}
 	out := fmt.Sprintf("contains([%s], %s)", strings.Join(quoted, ", "), ref)
 	if t.not {

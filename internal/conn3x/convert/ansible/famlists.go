@@ -125,9 +125,9 @@ func (c *converter) listForEach(x string) (expr string, present []osFamily, why 
 				return "", nil, fmt.Sprintf("loops over %q, which %s lists %q in twice, and a step runs once per item", x, f.where(), it)
 			}
 			seen[it] = true
-			quoted = append(quoted, fmt.Sprintf("%q", it))
+			quoted = append(quoted, hclString(it))
 		}
-		parts = append(parts, fmt.Sprintf("%q = [%s]", f.id(), strings.Join(quoted, ", ")))
+		parts = append(parts, fmt.Sprintf("%s = [%s]", hclString(f.id()), strings.Join(quoted, ", ")))
 		present = append(present, f)
 	}
 	return fmt.Sprintf("var.%s != null ? var.%s : { %s }[%s]", x, x, strings.Join(parts, ", "), c.axisExpr()), present, ""

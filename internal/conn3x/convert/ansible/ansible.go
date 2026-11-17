@@ -540,7 +540,7 @@ func (c *converter) gapPreconditions(sb *hclwrite.Body, gaps []gap) {
 	for _, g := range gaps {
 		ids := make([]string, len(g.present))
 		for i, f := range g.present {
-			ids[i] = fmt.Sprintf("%q", f.id())
+			ids[i] = hclString(f.id())
 		}
 		pb := lb.AppendNewBlock("precondition", nil).Body()
 		pb.SetAttributeRaw("condition", rawTokens(fmt.Sprintf("var.%s != null || contains([%s], %s)", g.name, strings.Join(ids, ", "), c.axisExpr())))
@@ -1457,7 +1457,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		var conds []string
 		if familyCond && len(fams) < len(osFamilies) {
-			conds = append(conds, fmt.Sprintf("local.os_family[each.key] == %q", fams[0].conn3x))
+			conds = append(conds, "local.os_family[each.key] == "+hclString(fams[0].conn3x))
 			c.role.familyUsed = true
 		}
 		if boolCond != "" {

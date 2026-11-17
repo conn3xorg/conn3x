@@ -241,6 +241,13 @@ func markTemplate(v string) string {
 }
 
 // quoted escapes s for the inside of an HCL string.
+// hclString is s as an HCL quoted string. Go's %q escapes for Go: it leaves
+// ${ and %{ live, so a role's text would run as an expression in the
+// circuit, and it writes escapes HCL doesn't have, such as \a and \x00.
+func hclString(s string) string {
+	return `"` + quoted(s) + `"`
+}
+
 func quoted(s string) string {
 	q := string(hclwrite.TokensForValue(cty.StringVal(s)).Bytes())
 	return q[1 : len(q)-1]

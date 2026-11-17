@@ -181,7 +181,7 @@ func mergeFamilies(byFamily map[string][]step, fams []osFamily, expr string) ([]
 			for _, f := range fams {
 				k := f.id()
 				if !hclsyntax.ValidIdentifier(k) {
-					k = fmt.Sprintf("%q", k)
+					k = hclString(k)
 				}
 				parts = append(parts, k+" = "+string(hclwrite.TokensForValue(vals[f.id()]).Bytes()))
 			}

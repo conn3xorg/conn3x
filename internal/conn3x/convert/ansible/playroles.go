@@ -507,8 +507,8 @@ func (c *converter) module(call *roleCall, head *hclwrite.Body, playVars map[str
 	b.AppendNewline()
 	hosts := head.GetAttribute("hosts").Expr().BuildTokens(nil)
 	if call.family != "" {
-		b.SetAttributeRaw("hosts", rawTokens(fmt.Sprintf("{ for h, addr in %s : h => addr if data.conn3x_host.%s[h].os_family == %q }",
-			strings.TrimSpace(string(hosts.Bytes())), c.facts[strings.TrimSpace(string(hosts.Bytes()))], call.family)))
+		b.SetAttributeRaw("hosts", rawTokens(fmt.Sprintf("{ for h, addr in %s : h => addr if data.conn3x_host.%s[h].os_family == %s }",
+			strings.TrimSpace(string(hosts.Bytes())), c.facts[strings.TrimSpace(string(hosts.Bytes()))], hclString(call.family))))
 	} else {
 		b.SetAttributeRaw("hosts", hosts)
 	}

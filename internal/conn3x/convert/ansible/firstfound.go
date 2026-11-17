@@ -206,7 +206,7 @@ func (c *converter) versionBlocks(incs []varsInclude) string {
 	if entries, err := os.ReadDir(c.path("vars")); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() {
-				files = append(files, fmt.Sprintf("%q", e.Name()))
+				files = append(files, hclString(e.Name()))
 			}
 		}
 	}
