@@ -541,6 +541,37 @@ func (c *converter) gapPreconditions(sb *hclwrite.Body, names []string, present 
 	}
 }
 
+// packageListAsLoop reads a package task whose name is a role default
+// that's a list, name: "{{ php_packages }}", as the same task looping over
+// it with name: "{{ item }}". Ansible installs the list in one go and a step
+// per item in turn, which leaves the host the same. t is changed in place;
+// the task's own node, which a TODO quotes, isn't.
+func (c *converter) packageListAsLoop(t map[string]*yaml.Node) {
+	if c.role == nil || t["loop"] != nil || t["with_items"] != nil {
+		return
+	}
+	for k, v := range t {
+		if keywords[k] || !packageModules[k[strings.LastIndex(k, ".")+1:]] || v.Kind != yaml.MappingNode {
+			continue
+		}
+		args := mapping(v)
+		m := bareRef.FindStringSubmatch(scalar(args["name"]))
+		if m == nil || c.role.lists[m[1]] == nil {
+			return
+		}
+		cp := *v
+		cp.Content = append([]*yaml.Node(nil), v.Content...)
+		for i := 0; i+1 < len(cp.Content); i += 2 {
+			if cp.Content[i].Value == "name" {
+				cp.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Value: "{{ item }}", Line: v.Line, Column: v.Column}
+			}
+		}
+		t[k] = &cp
+		t["loop"] = &yaml.Node{Kind: yaml.ScalarNode, Value: "{{ " + m[1] + " }}", Line: v.Line, Column: v.Column}
+		return
+	}
+}
+
 // daemonReloadOnly reports whether handler h does nothing but reload
 // systemd, as systemd_service: {daemon_reload: true} does, and its name.
 func daemonReloadOnly(h *yaml.Node) (string, bool) {
@@ -944,6 +975,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.res.Converted++
 		return
 	}
+	c.packageListAsLoop(t)
 	// A loop over a role default that's a list becomes for_each over its
 	// variable. with_items flattens one level, which a list of plain
 	// values doesn't have.

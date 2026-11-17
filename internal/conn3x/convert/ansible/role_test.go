@@ -484,7 +484,9 @@ func TestRoleLoopOverAListDefault(t *testing.T) {
 		tasks = append(tasks, r.Task)
 	}
 	// A list of maps with a field in a path converts since #879.
-	if strings.Join(tasks, ",") != "Twice,As a value" || !strings.Contains(vars, `variable "vhosts"`) {
+	// A package task whose name is the list installs each item since it
+	// reads as a loop over it.
+	if strings.Join(tasks, ",") != "Twice" || !strings.Contains(vars, `variable "vhosts"`) {
 		t.Errorf("review %+v", res.Review)
 	}
 }
