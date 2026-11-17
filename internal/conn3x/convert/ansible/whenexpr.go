@@ -148,3 +148,60 @@ func (r *role) lengthWhen(n *yaml.Node) string {
 
 // whenListRe finds the lists a converted step's when reads the length of.
 var whenListRe = regexp.MustCompile(`length\(var\.([A-Za-z_][A-Za-z0-9_]*)\)`)
+
+// checkModeReason is why a task that runs only in check mode stays for
+// review.
+const checkModeReason = "runs only under ansible-playbook --check, and a circuit's apply never is; conn3x plan is the check"
+
+// dropCheckMode takes ansible_check_mode out of a task, t, as it reads on
+// a real run, where it's false: not ansible_check_mode leaves its when,
+// and ignore_errors of it, or a written false, goes. It returns
+// checkModeReason when the when needs check mode, so the task never runs.
+func dropCheckMode(t map[string]*yaml.Node) string {
+	if n := deref(t["ignore_errors"]); n != nil && n.Kind == yaml.ScalarNode {
+		if v, ok := yamlBool(n); (ok && !v) || isCheckMode(n.Value) {
+			delete(t, "ignore_errors")
+		}
+	}
+	w := deref(t["when"])
+	if w == nil {
+		return ""
+	}
+	conds := []*yaml.Node{w}
+	if w.Kind == yaml.SequenceNode {
+		conds = w.Content
+	}
+	var kept []*yaml.Node
+	for _, c := range conds {
+		if c.Kind != yaml.ScalarNode {
+			kept = append(kept, c)
+			continue
+		}
+		var parts []string
+		for _, p := range splitTop(strings.Join(strings.Fields(c.Value), " "), " and ") {
+			switch p = strings.TrimSpace(p); {
+			case p == "ansible_check_mode":
+				return checkModeReason
+			case p != "not ansible_check_mode":
+				parts = append(parts, p)
+			}
+		}
+		if len(parts) > 0 {
+			kept = append(kept, &yaml.Node{Kind: yaml.ScalarNode, Value: strings.Join(parts, " and "), Line: c.Line, Column: c.Column})
+		}
+	}
+	switch {
+	case len(kept) == 0:
+		delete(t, "when")
+	case w.Kind == yaml.SequenceNode:
+		t["when"] = &yaml.Node{Kind: yaml.SequenceNode, Content: kept}
+	default:
+		t["when"] = kept[0]
+	}
+	return ""
+}
+
+// isCheckMode is a template of ansible_check_mode alone.
+func isCheckMode(v string) bool {
+	return strings.Join(strings.Fields(v), "") == "{{ansible_check_mode}}"
+}

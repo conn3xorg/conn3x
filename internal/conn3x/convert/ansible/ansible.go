@@ -527,6 +527,10 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 		c.issue(cb, hname, h, neverReason)
 		return nil, "", ""
 	}
+	if why := dropCheckMode(t); why != "" {
+		c.issue(cb, hname, h, why)
+		return nil, "", ""
+	}
 	var when string
 	if w := t["when"]; w != nil {
 		if when = c.handlerWhen(w); when == "" {
@@ -859,6 +863,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	}
 	if c.playNever || neverTagged(t["tags"]) {
 		c.issue(body, name, node, neverReason)
+		return
+	}
+	if why := dropCheckMode(t); why != "" {
+		c.issue(body, name, node, why)
 		return
 	}
 	if x, ok := c.role.defaultTask(node); ok {
