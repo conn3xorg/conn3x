@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | [try-it-locally](try-it-locally) | Plan, apply, a clean second plan, and drift, against a throwaway container | Podman or Docker |
 | [secrets](secrets) | A password on the host and an HMAC in state, with `content_wo` and a write-only template | Podman or Docker |
+| [baseline-checks](baseline-checks) | Report-only checks of a CIS-style baseline: hosts that allow root SSH login, keep passwords too long or have world-writable files, from a plan that changes nothing | Podman or Docker |
 | [digitalocean](digitalocean) | Three droplets created and configured in one plan, with pinned host keys | A DigitalOcean account |
 | [azure-windows-server](azure-windows-server) | Experimental. A Windows Server VM created and configured in one plan | An Azure subscription |
 | [azure-domain](azure-domain) | Experimental. A new Active Directory domain and a server joined to it, from one plan | An Azure subscription |
