@@ -148,6 +148,14 @@ func Apply(ctx context.Context, r modules.Runner, d Desired) error {
 		if *d.Masked {
 			verb = "mask"
 		}
+		// A mask leaves an enabled unit's .wants links, and reads as not
+		// enabled, so disable must come first or it never happens, and a
+		// later unmask brings the unit back enabled.
+		if *d.Masked && a.Enabled && d.Enabled != nil && !*d.Enabled {
+			if err := run(ctx, r, "systemctl disable -- "+unit); err != nil {
+				return err
+			}
+		}
 		if err := run(ctx, r, "systemctl "+verb+" -- "+unit); err != nil {
 			return err
 		}

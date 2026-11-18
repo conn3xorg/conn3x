@@ -18,6 +18,9 @@ circuit "cis" {
 
         [Service]
         ExecStart=/bin/sleep infinity
+
+        [Install]
+        WantedBy=multi-user.target
       EOT
     }
   }
@@ -27,6 +30,7 @@ circuit "cis" {
       name   = "conn3x-demo"
       state  = "stopped"
       masked = {{.Masked}}
+      {{.Enabled}}
     }
   }
 

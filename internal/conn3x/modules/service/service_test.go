@@ -271,3 +271,23 @@ func TestMasked(t *testing.T) {
 		t.Error("masked = false with started was refused")
 	}
 }
+
+// masked = true with enabled = false disables an enabled unit before the
+// mask, while systemd still reports it enabled.
+func TestMaskDisablesFirst(t *testing.T) {
+	yes, no := true, false
+	h := &maskHost{host{show: show("loaded", "active", "enabled", "no")}}
+	if err := Apply(ctx, h, Desired{Name: "rpcbind", State: Stopped, Enabled: &no, Masked: &yes}); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(h.ran, "\n")
+	d, m := strings.Index(all, "systemctl disable -- 'rpcbind.service'"), strings.Index(all, "systemctl mask -- 'rpcbind.service'")
+	if d < 0 || m < 0 || d > m {
+		t.Errorf("want disable before mask in:\n%s", all)
+	}
+	// Without enabled = false the links stay, as systemctl mask leaves them.
+	h = &maskHost{host{show: show("loaded", "active", "enabled", "no")}}
+	if err := Apply(ctx, h, Desired{Name: "rpcbind", Masked: &yes}); err != nil || strings.Contains(strings.Join(h.ran, "\n"), "disable") {
+		t.Errorf("disabled without enabled = false: %v, %v", err, h.ran)
+	}
+}
