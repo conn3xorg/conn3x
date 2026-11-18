@@ -128,6 +128,8 @@ type Client struct {
 
 	// loginKey is the public key the target accepted for this login.
 	loginKey gossh.PublicKey
+
+	shells shells // long-lived shells for Run; see shell.go
 }
 
 // LoginKey is the public key this connection logged in to the target with,
@@ -695,7 +697,18 @@ const Prelude = "export LC_ALL=C; umask 022; "
 // Run executes cmd with /bin/sh in the C locale under umask 022, feeding it
 // stdin. A non-zero exit status is reported in Result, not as an error.
 func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, error) {
+	if stdin == nil && shellsEnabled() {
+		if res, ok, err := c.runInShell(ctx, cmd); ok {
+			return res, err
+		}
+	}
+	c.trimShells()
 	res, err := c.exec(ctx, "LC_ALL=C exec /bin/sh -c "+Quote(Prelude+cmd), stdin)
+	if err == nil {
+		c.shells.mu.Lock()
+		c.shells.ready = true
+		c.shells.mu.Unlock()
+	}
 	if err == nil && res.ExitCode != 0 && windowsShellRefused(res.Stderr) {
 		return res, fmt.Errorf("ssh %s: %w", c.addr, ErrWindowsHost)
 	}
