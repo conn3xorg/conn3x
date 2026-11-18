@@ -271,3 +271,37 @@ func TestLimitValidate(t *testing.T) {
 		}
 	}
 }
+
+// With backrefs, line is a template for the last matching line, a file
+// with no match is left as it is, and a group regexp lacks is refused.
+func TestLineBackrefs(t *testing.T) {
+	l := Line{Regexp: `^(\s*)#?\s*PermitRootLogin\b.*`, Line: "${1}PermitRootLogin no", Backrefs: true}
+	in := "Port 22\n  #PermitRootLogin yes\n"
+	got, err := ApplyLine(in, l)
+	if err != nil || got != "Port 22\n  PermitRootLogin no\n" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if again, _ := ApplyLine(got, l); again != got {
+		t.Errorf("a second apply changed it: %q", again)
+	}
+	if got, _ := ApplyLine("Port 22\n", l); got != "Port 22\n" {
+		t.Errorf("no match added a line: %q", got)
+	}
+	named := Line{Regexp: `^(?P<key>GRUB_TIMEOUT)=.*`, Line: "${key}=1", Backrefs: true}
+	if got, _ := ApplyLine("GRUB_TIMEOUT=5\n", named); got != "GRUB_TIMEOUT=1\n" {
+		t.Errorf("named group: %q", got)
+	}
+	for _, bad := range []Line{
+		{Line: "x", Backrefs: true},
+		{Regexp: "^a", Line: "x", Backrefs: true, State: Absent},
+		{Regexp: "^(a)", Line: "${2}", Backrefs: true},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%+v validated", bad)
+		}
+	}
+	// Without backrefs, ${1} is just text, as before.
+	if got, _ := ApplyLine("a=1\n", Line{Regexp: "^(a)=", Line: "${1}"}); got != "${1}\n" {
+		t.Errorf("without backrefs: %q", got)
+	}
+}

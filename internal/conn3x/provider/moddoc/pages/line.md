@@ -27,6 +27,19 @@ step "swappiness" {
 }
 ```
 
+Change part of a line and keep the rest, as Ansible's `backrefs` does. `$${1}` is the first group of `regexp`, written with `$$` so HCL doesn't read it as its own `${}`:
+
+```hcl
+step "root_login" {
+  line {
+    path     = "/etc/ssh/sshd_config"
+    regexp   = "^([ \\t]*)#?PermitRootLogin\\b.*"
+    line     = "$${1}PermitRootLogin no"
+    backrefs = true
+  }
+}
+```
+
 Remove every line that matches:
 
 ```hcl
@@ -44,6 +57,8 @@ step "no_legacy_mirror" {
 **Reading.** Every plan reads the file on the host and applies the edit to a copy of its content. If the result is the same as the file, the step is in sync and nothing is planned. Otherwise the plan shows an update.
 
 **Matching.** With `regexp`, Conn3x replaces the last line that matches. When no line matches, and the exact `line` isn't already in the file, it adds `line` at the place `insert_after` or `insert_before` gives. Without `regexp`, it adds `line` only when no line is exactly equal to it. `insert_after` uses the last matching line and `insert_before` the first. When neither matches, or you set neither, the line goes at the end of the file. `"BOF"` and `"EOF"` stand for the start and the end.
+
+**Backrefs.** With `backrefs = true`, `line` is a template for the last line `regexp` matches: `${1}` or `${name}` brings in what a group matched, and `$$` is a dollar sign. A file where no line matches is left as it is and reads as in sync, so nothing is added. A reference to a group `regexp` doesn't have is an error when you validate. `backrefs` needs `regexp`, and can't go with `state = "absent"` or `on_remove = "delete"`. Make sure the line it writes still matches `regexp` and expands to itself, as above. A template like `$${1} quiet` on `^(GRUB_CMDLINE_LINUX=".*)"$` adds another `quiet` on every apply, and Go's regular expressions have no lookahead to rule that out.
 
 **Removing lines.** With `state = "absent"`, Conn3x removes every line equal to `line`, or every line matching `regexp` when you set one.
 
@@ -76,4 +91,4 @@ When you delete a `line` step, `on_remove` decides what happens on the host. The
 
 ## From Ansible
 
-`conn3x convert ansible` turns `lineinfile` tasks into `line` steps, with `insertafter`, `insertbefore`, `create`, `state` and `validate` carried across. A task that uses `backrefs` stays a TODO.
+`conn3x convert ansible` turns `lineinfile` tasks into `line` steps, with `insertafter`, `insertbefore`, `create`, `state` and `validate` carried across. A task with `backrefs` becomes a `line` step with `backrefs = true` when the converter can prove its `regexp` means the same in Go as in Python, the same check as for [`replace`](/modules/replace), with `\1`, `\g<1>` and `\g<name>` rewritten as `${1}` and `${name}`. Otherwise it stays a TODO, with the reason.

@@ -35,11 +35,9 @@ func (r Replace) compile() (*regexp.Regexp, error) {
 // group that doesn't exist would expand to nothing and lose text, so it's
 // an error here. Without references, the replacement must survive its own
 // regexp, or the file could never settle.
-func (r Replace) Validate() error {
-	re, err := r.compile()
-	if err != nil {
-		return err
-	}
+// checkRefs refuses a ${1} or ${name} in tmpl, the argument called arg,
+// that names no group of re, and reports whether tmpl refers to none.
+func checkRefs(re *regexp.Regexp, tmpl, arg string) (literal bool, err error) {
 	names := map[string]bool{}
 	for i, n := range re.SubexpNames() {
 		names[strconv.Itoa(i)] = true
@@ -47,15 +45,27 @@ func (r Replace) Validate() error {
 			names[n] = true
 		}
 	}
-	literal := true
-	for _, m := range templateRef.FindAllStringSubmatch(r.With, -1) {
+	literal = true
+	for _, m := range templateRef.FindAllStringSubmatch(tmpl, -1) {
 		if m[0] == "$$" {
 			continue
 		}
 		literal = false
 		if ref := m[1] + m[2]; !names[ref] {
-			return fmt.Errorf("replace: %s isn't a group in regexp; to follow a group with letters or digits, write ${1}", m[0])
+			return false, fmt.Errorf("%s: %s isn't a group in regexp; to follow a group with letters or digits, write ${1}", arg, m[0])
 		}
+	}
+	return literal, nil
+}
+
+func (r Replace) Validate() error {
+	re, err := r.compile()
+	if err != nil {
+		return err
+	}
+	literal, err := checkRefs(re, r.With, "replace")
+	if err != nil {
+		return err
 	}
 	if text := strings.ReplaceAll(r.With, "$$", "$"); literal && re.ReplaceAllString(text, r.With) != text {
 		return r.neverSettles()

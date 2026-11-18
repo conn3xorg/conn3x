@@ -45,6 +45,7 @@ var lineKind = editKind{
 		"insert_after":  {Type: cty.String, Optional: true, Description: "When adding, insert after the last line matching this regexp, or \"EOF\" (default)."},
 		"insert_before": {Type: cty.String, Optional: true, Description: "When adding, insert before the first line matching this regexp, or \"BOF\"."},
 		"state":         {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\"."},
+		"backrefs":      {Type: cty.Bool, Optional: true, Description: "true makes line a template for the last line regexp matches, with ${1} or ${name} for regexp's groups, and leaves a file where nothing matches as it is. Needs regexp."},
 	},
 	edit: func(v cty.Value) func(string) (string, error) {
 		l := lineFrom(v)
@@ -58,14 +59,23 @@ var lineKind = editKind{
 		}
 		return func(s string) (string, error) { return edit.ApplyLine(s, l) }
 	},
-	check: func(v cty.Value) error { return lineFrom(v).Validate() },
+	check: func(v cty.Value) error {
+		l := lineFrom(v)
+		// What a backrefs line wrote depends on what it replaced, so there's
+		// no line to take back out.
+		if l.Backrefs && stringOr(v.GetAttr("on_remove"), "") == onRemoveDelete {
+			return errors.New(`backrefs can't go with on_remove = "delete": the line it wrote depends on the one it replaced, so there's nothing to take out`)
+		}
+		return l.Validate()
+	},
 }
 
 func lineFrom(v cty.Value) edit.Line {
 	return edit.Line{
 		Line: stringOr(v.GetAttr("line"), ""), Regexp: stringOr(v.GetAttr("regexp"), ""),
 		InsertAfter: stringOr(v.GetAttr("insert_after"), ""), InsertBefore: stringOr(v.GetAttr("insert_before"), ""),
-		State: edit.State(stringOr(v.GetAttr("state"), "")),
+		State:    edit.State(stringOr(v.GetAttr("state"), "")),
+		Backrefs: known(v.GetAttr("backrefs")) && v.GetAttr("backrefs").True(),
 	}
 }
 

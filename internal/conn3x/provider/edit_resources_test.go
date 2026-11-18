@@ -276,3 +276,16 @@ func TestEditMode(t *testing.T) {
 		t.Error(`mode "rw" was accepted`)
 	}
 }
+
+// backrefs with on_remove = "delete" is refused: there's no line to take out.
+func TestLineBackrefsRefusesDelete(t *testing.T) {
+	ssh, dir := brShellHost(t)
+	a := map[string]cty.Value{"path": cty.StringVal(dir + "/a"), "regexp": cty.StringVal("^(a)="), "line": cty.StringVal("${1}=1"), "backrefs": cty.True}
+	if diags := lineKind.validate(eosStep("conn3x_line", a, ssh)); diags.HasErrors() {
+		t.Fatalf("backrefs: %v", diags.Err())
+	}
+	a["on_remove"] = cty.StringVal("delete")
+	if diags := lineKind.validate(eosStep("conn3x_line", a, ssh)); !diags.HasErrors() {
+		t.Error("backrefs with on_remove = delete validated")
+	}
+}

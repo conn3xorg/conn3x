@@ -35,6 +35,10 @@ type Line struct {
 	InsertAfter  string // regexp, or "EOF" (the default)
 	InsertBefore string // regexp, or "BOF"
 	State        State  // default Present
+	// Backrefs makes Line a template for the last line Regexp matches,
+	// with ${1} or ${name} for its groups, and leaves a file with no match
+	// as it is, as Ansible's lineinfile backrefs does.
+	Backrefs bool
 }
 
 // Validate checks a Line before anything is edited.
@@ -56,11 +60,19 @@ func (l Line) Validate() error {
 	if l.InsertAfter != "" && l.InsertBefore != "" {
 		return errors.New("set insert_after or insert_before, not both")
 	}
+	if l.Backrefs && (l.Regexp == "" || l.State == Absent) {
+		return errors.New("backrefs needs a regexp, and state \"present\"")
+	}
 	for name, re := range map[string]string{"regexp": l.Regexp, "insert_after": l.InsertAfter, "insert_before": l.InsertBefore} {
 		if re != "" && re != bof && re != eof {
 			if _, err := regexp.Compile(re); err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
+		}
+	}
+	if l.Backrefs {
+		if _, err := checkRefs(regexp.MustCompile(l.Regexp), l.Line, "line"); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -95,10 +107,17 @@ func ApplyLine(content string, l Line) (string, error) {
 
 	if re != nil {
 		for i := len(lines) - 1; i >= 0; i-- {
-			if re.MatchString(lines[i]) {
-				lines[i] = l.Line
+			if m := re.FindStringSubmatchIndex(lines[i]); m != nil {
+				if l.Backrefs {
+					lines[i] = string(re.ExpandString(nil, l.Line, lines[i], m))
+				} else {
+					lines[i] = l.Line
+				}
 				return join(lines, final), nil
 			}
+		}
+		if l.Backrefs {
+			return content, nil
 		}
 	}
 	for _, s := range lines {

@@ -831,10 +831,29 @@ func editTarget(in *input) []attr {
 
 func lineModule(in *input) ([]step, string) {
 	attrs := editTarget(in)
-	attrs = in.optional(attrs, "line", "line")
-	attrs = in.optional(attrs, "regexp", "regexp", "regex")
 	if in.bool("backrefs", false) {
-		return nil, "uses backrefs, which the converter can't translate yet"
+		key := "regexp"
+		if !in.has(key) {
+			key = "regex"
+		}
+		pattern, line := in.text(key), in.text("line")
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		if pattern == "" {
+			return nil, "uses backrefs without a regexp"
+		}
+		if why := unprovableRegexp(pattern); why != "" {
+			return nil, why
+		}
+		tmpl, why := goTemplate(line, regexp.MustCompile(pattern))
+		if why != "" {
+			return nil, why
+		}
+		attrs = append(attrs, s("line", tmpl), s("regexp", pattern), attr{key: "backrefs", val: cty.True})
+	} else {
+		attrs = in.optional(attrs, "line", "line")
+		attrs = in.optional(attrs, "regexp", "regexp", "regex")
 	}
 	in.ignore("backrefs")
 	attrs, why := in.editFileArgs(attrs)
