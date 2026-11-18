@@ -8,7 +8,9 @@
 #   publish-packages.sh OUT TAG [TAG...]
 #
 # OUT is an empty directory to write the site into; each TAG is a release,
-# newest first, whose packages are downloaded with gh. The key that signs
+# newest first, whose packages are downloaded with gh. A TAG of the form
+# OWNER/REPO@TAG is a release of another repository, such as
+# conn3xorg/conn3x-ui@v0.4.0, so its packages share the repositories. The key that signs
 # the repository metadata must already be in gpg's keyring, its ID in
 # GPG_KEY_ID. The packages themselves are signed at build time (nfpms in
 # .goreleaser.yaml).
@@ -27,12 +29,19 @@ site_url=${PACKAGES_SITE_URL:-https://conn3xorg.github.io/packages}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$out/apt/pool/main/c/conn3x" "$out/rpm"
+mkdir -p "$out/rpm"
 
-for tag in "$@"; do
-	mkdir -p "$work/rpm/$tag"
-	gh release download "$tag" -R "$repo" -p '*.deb' -D "$out/apt/pool/main/c/conn3x" --clobber
-	gh release download "$tag" -R "$repo" -p '*.rpm' -D "$work/rpm/$tag" --clobber
+# Each release's RPMs go under OWNER/REPO/releases/download/TAG, so one base
+# URL, github.com, reaches every repository's.
+for arg in "$@"; do
+	from=$repo tag=$arg
+	if [[ $arg == */*@* ]]; then
+		from=${arg%@*} tag=${arg#*@}
+	fi
+	pool=$out/apt/pool/main/c/${from#*/}
+	mkdir -p "$pool" "$work/rpm/$from/releases/download/$tag"
+	gh release download "$tag" -R "$from" -p '*.deb' -D "$pool" --clobber
+	gh release download "$tag" -R "$from" -p '*.rpm' -D "$work/rpm/$from/releases/download/$tag" --clobber
 done
 
 # apt: one suite, stable, with a Packages index per architecture, and a
@@ -59,7 +68,7 @@ done
 
 # dnf: metadata over the downloaded RPMs, with every location under the
 # release download URL, and repomd.xml signed for repo_gpgcheck.
-createrepo_c --quiet --baseurl "https://github.com/$repo/releases/download/" --outputdir "$out/rpm" "$work/rpm"
+createrepo_c --quiet --baseurl "https://github.com/" --outputdir "$out/rpm" "$work/rpm"
 gpg --batch --yes --local-user "$GPG_KEY_ID" --armor --detach-sign -o "$out/rpm/repodata/repomd.xml.asc" "$out/rpm/repodata/repomd.xml"
 
 gpg --batch --armor --export "$GPG_KEY_ID" > "$out/conn3x.asc"

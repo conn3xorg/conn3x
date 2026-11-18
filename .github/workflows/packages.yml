@@ -29,13 +29,18 @@ jobs:
           FIRST_SIGNED: v0.20.0
         run: |
           latest=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts --limit 1 --json tagName -q '.[0].tagName')
+          # conn3x-ui's newest release that has packages, if any yet.
+          ui=$(gh release list --repo conn3xorg/conn3x-ui --exclude-pre-releases --exclude-drafts --limit 5 --json tagName -q '.[].tagName' \
+            | while read -r t; do gh release view "$t" --repo conn3xorg/conn3x-ui --json assets -q '.assets[].name' | grep -q '\.deb$' && { echo "$t"; break; }; done || true)
+          echo "ui=$ui" >> "$GITHUB_OUTPUT"
+          want=$latest${ui:+ conn3xorg/conn3x-ui@$ui}
           have=$(curl -fsS https://conn3xorg.github.io/packages/version 2>/dev/null || true)
-          echo "latest=$latest have=$have"
+          echo "want=$want have=$have"
           # Packages are signed from v0.20.0 on; the repo file has
           # gpgcheck=1, so nothing older goes in.
           if [ "$(printf '%s\n' "$FIRST_SIGNED" "$latest" | sort -V | head -1)" != "$FIRST_SIGNED" ]; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
-          elif [ "$latest" = "$have" ] && [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+          elif [ "$want" = "$have" ] && [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
@@ -50,6 +55,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUSH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           PACKAGES_GPG_KEY: ${{ secrets.PACKAGES_GPG_KEY }}
+          UI: ${{ steps.latest.outputs.ui }}
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q apt-utils createrepo-c
           # The key has no passphrase: it lives only in the release
@@ -66,8 +72,9 @@ jobs:
             if [ "$(printf '%s\n' v0.20.0 "$t" | sort -V | head -1)" = v0.20.0 ]; then tags+=("$t"); fi
           done
           site="$RUNNER_TEMP/site"
-          scripts/publish-packages.sh "$site" "${tags[@]}"
-          printf '%s' "${tags[0]}" > "$site/version"
+          ui=${UI:+conn3xorg/conn3x-ui@$UI}
+          scripts/publish-packages.sh "$site" "${tags[@]}" ${ui:+"$ui"}
+          printf '%s' "${tags[0]}${ui:+ $ui}" > "$site/version"
           cd "$site"
           git init -q -b gh-pages
           git -c user.name="conn3x packages" -c user.email="packages@conn3x.org" add -A
