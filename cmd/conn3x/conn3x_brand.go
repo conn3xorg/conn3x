@@ -187,7 +187,7 @@ func brandTree(cmd *command.Command) {
 		brandTree(&cmd.Commands[i])
 	}
 	if cmd.Name == "" {
-		cmd.Commands = append(cmd.Commands, driftCommand(), convertCommand(), generateCommand(), lintCommand(), lspCommand(), mcpCommand(), runCommand())
+		cmd.Commands = append(cmd.Commands, driftCommand(), convertCommand(), generateCommand(), eachCommand(), lintCommand(), lspCommand(), mcpCommand(), runCommand())
 	}
 }
 
