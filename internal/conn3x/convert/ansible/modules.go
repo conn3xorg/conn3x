@@ -678,7 +678,9 @@ func copyModule(in *input) ([]step, string) {
 		}
 		attrs = append(attrs, s("validate", v))
 	}
-	in.ignore("backup")
+	if in.bool("backup", false) {
+		attrs = append(attrs, attr{key: "backup", val: cty.True})
+	}
 	return one("file", in.owners(attrs), in.modeNote()...)
 }
 
@@ -891,7 +893,9 @@ func templateModule(in *input) ([]step, string) {
 		}
 		attrs = append(attrs, s("validate", v))
 	}
-	in.ignore("backup")
+	if in.bool("backup", false) {
+		attrs = append(attrs, attr{key: "backup", val: cty.True})
+	}
 	return one("template", in.owners(attrs), in.modeNote()...)
 }
 

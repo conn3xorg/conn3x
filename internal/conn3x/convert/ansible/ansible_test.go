@@ -1136,6 +1136,7 @@ func TestEditBackupConverts(t *testing.T) {
 		"blockinfile: {path: /etc/a, block: 'x', backup: yes}",
 		"ini_file: {path: /etc/a, section: s, option: o, value: 'v', backup: yes}",
 		"replace: {path: /etc/a, regexp: a, replace: 'x', backup: yes}",
+		"copy: {dest: /etc/a, content: 'x', mode: '0644', backup: yes}",
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if !strings.Contains(string(res.HCL), "backup") || strings.Contains(string(res.HCL), "TODO(convert):") {

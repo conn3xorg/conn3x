@@ -91,3 +91,26 @@ func TestEditStepBackup(t *testing.T) {
 		t.Errorf("a refused edit made a copy: %v", c)
 	}
 }
+
+// A file step, and so a template step, keeps a copy the same way.
+func TestFileStepBackup(t *testing.T) {
+	ssh, dir := brShellHost(t)
+	path := filepath.Join(dir, "nginx.conf")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := eosStep("conn3x_file", map[string]cty.Value{"path": cty.StringVal(path), "content": cty.StringVal("new\n"), "mode": cty.StringVal("0644"), "backup": cty.True}, ssh)
+	if _, err := unitCreate(t, "conn3x_file", cfg); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := filepath.Glob(path + file.BackupSuffix + "*~")
+	if len(c) != 1 {
+		t.Fatalf("copies %v, want one", c)
+	}
+	if b, _ := os.ReadFile(c[0]); string(b) != "old\n" {
+		t.Errorf("the copy holds %q", b)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "new\n" {
+		t.Errorf("the file is %q", b)
+	}
+}

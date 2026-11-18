@@ -62,6 +62,10 @@ func fileSchema() providers.Schema {
 					Type: cty.String, Optional: true, WriteOnly: true,
 					Description: "A command that checks new content before it replaces the file, such as \"visudo -cf %s\". %s stands for the temporary file. Runs only when the content changes, and is kept out of state.",
 				},
+				"backup": {
+					Type: cty.Bool, Optional: true,
+					Description: "true copies the file, before a change replaces it, beside itself with .conn3x-, the time in UTC, a number and a ~ after its name, such as nginx.conf.conn3x-20261118T130501Z.4127~, keeping its mode and owner. The ~ keeps cron.d, logrotate.d and the like from loading the copy. Old copies stay until you remove them.",
+				},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{
 				"ssh": connectionBlock(),
@@ -351,6 +355,7 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		Mode:    planned.GetAttr("mode").AsString(),
 		Owner:   stringOr(planned.GetAttr("owner"), ""),
 		Group:   stringOr(planned.GetAttr("group"), ""),
+		Backup:  known(planned.GetAttr("backup")) && planned.GetAttr("backup").True(),
 	}
 	if contentChanging(req.PriorState, planned) {
 		desired.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")

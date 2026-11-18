@@ -164,7 +164,7 @@ func moduleDocs(_ context.Context, args json.RawMessage) (any, error) {
 			argsOut = append(argsOut, map[string]any{"name": name, "required": required})
 		}
 		sort.Slice(argsOut, func(i, j int) bool { return argsOut[i]["name"].(string) < argsOut[j]["name"].(string) })
-		return map[string]any{"module": "template", "description": templateDescription + " source is the template's path in the circuit's directory, destination the path on the host, and vars the values it reads. mode, owner, group, on_remove and validate are as for file; write_only keeps the rendered content out of state.", "arguments": argsOut}, nil
+		return map[string]any{"module": "template", "description": templateDescription + " source is the template's path in the circuit's directory, destination the path on the host, and vars the values it reads. mode, owner, group, on_remove, validate and backup are as for file; write_only keeps the rendered content out of state.", "arguments": argsOut}, nil
 	}
 	if in.Module == "script" {
 		var argsOut []map[string]any
