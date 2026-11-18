@@ -941,6 +941,9 @@ func serviceModule(in *input) ([]step, string) {
 	if in.has("enabled") {
 		attrs = append(attrs, attr{key: "enabled", val: cty.BoolVal(in.bool("enabled", false))})
 	}
+	if in.has("masked") {
+		attrs = append(attrs, attr{key: "masked", val: cty.BoolVal(in.bool("masked", false))})
+	}
 	var notes []string
 	if in.has("daemon_reload") {
 		in.ignore("daemon_reload")

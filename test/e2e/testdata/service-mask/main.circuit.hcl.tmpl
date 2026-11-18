@@ -1,0 +1,40 @@
+circuit "cis" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # A package's unit, as rpcbind's is: in /usr/lib, which a mask overrides.
+  step "unit" {
+    file {
+      path    = "/usr/lib/systemd/system/conn3x-demo.service"
+      content = <<-EOT
+        [Unit]
+        Description=Conn3x demo service
+
+        [Service]
+        ExecStart=/bin/sleep infinity
+      EOT
+    }
+  }
+
+  step "demo" {
+    service {
+      name   = "conn3x-demo"
+      state  = "stopped"
+      masked = {{.Masked}}
+    }
+  }
+
+  # Not installed: a mask keeps it from ever running once it is.
+  step "never" {
+    service {
+      name   = "conn3x-never"
+      masked = true
+    }
+  }
+}

@@ -26,9 +26,11 @@ func serviceSchema() providers.Schema {
 				"name":       {Type: cty.String, Required: true, Description: "Unit name. \".service\" is added when there is no suffix."},
 				"state":      {Type: cty.String, Optional: true, Description: "\"started\" or \"stopped\". Left as is when unset."},
 				"enabled":    {Type: cty.Bool, Optional: true, Description: "Start at boot. Left as is when unset."},
+				"masked":     {Type: cty.Bool, Optional: true, Description: "true masks the unit, linking it to /dev/null so nothing can start it, not even a unit that depends on it; false unmasks it. Masking works on a unit that isn't installed yet. Can't go with state = \"started\" or enabled = true. Left as is when unset."},
 				"on_remove":  {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the unit, \"delete\" stops and disables it."},
 				"running":    {Type: cty.Bool, Computed: true, Description: "Whether the unit is running."},
 				"is_enabled": {Type: cty.Bool, Computed: true, Description: "Whether the unit starts at boot."},
+				"is_masked":  {Type: cty.Bool, Computed: true, Description: "Whether the unit is masked."},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{
 				"ssh": connectionBlock(),
@@ -43,15 +45,19 @@ func desiredService(v cty.Value) service.Desired {
 		b := e.True()
 		d.Enabled = &b
 	}
+	if m := v.GetAttr("masked"); !m.IsNull() && m.IsKnown() {
+		b := m.True()
+		d.Masked = &b
+	}
 	return d
 }
 
 func actualService(v cty.Value) service.Actual {
-	running, enabled := v.GetAttr("running"), v.GetAttr("is_enabled")
+	running, enabled, masked := v.GetAttr("running"), v.GetAttr("is_enabled"), v.GetAttr("is_masked")
 	if running.IsNull() || !running.IsKnown() {
 		return service.Actual{}
 	}
-	return service.Actual{Exists: true, Running: running.True(), Enabled: !enabled.IsNull() && enabled.True()}
+	return service.Actual{Exists: true, Running: running.True(), Enabled: !enabled.IsNull() && enabled.True(), Masked: known(masked) && masked.True()}
 }
 
 func validateService(cfg cty.Value) tfdiags.Diagnostics {
@@ -86,9 +92,11 @@ func planService(req providers.PlanResourceChangeRequest) providers.PlanResource
 	if req.PriorState.IsNull() || !planned.IsWhollyKnown() || service.NeedsChange(desiredService(planned), actualService(req.PriorState)) {
 		vals["running"] = cty.UnknownVal(cty.Bool)
 		vals["is_enabled"] = cty.UnknownVal(cty.Bool)
+		vals["is_masked"] = cty.UnknownVal(cty.Bool)
 	} else {
 		vals["running"] = req.PriorState.GetAttr("running")
 		vals["is_enabled"] = req.PriorState.GetAttr("is_enabled")
+		vals["is_masked"] = req.PriorState.GetAttr("is_masked")
 	}
 	resp.PlannedState = cty.ObjectVal(vals)
 	if !req.PriorState.IsNull() {
@@ -169,9 +177,11 @@ func serviceState(base cty.Value, actual service.Actual) cty.Value {
 	if !actual.Exists {
 		vals["running"] = cty.NullVal(cty.Bool)
 		vals["is_enabled"] = cty.NullVal(cty.Bool)
+		vals["is_masked"] = cty.NullVal(cty.Bool)
 	} else {
 		vals["running"] = cty.BoolVal(actual.Running)
 		vals["is_enabled"] = cty.BoolVal(actual.Enabled)
+		vals["is_masked"] = cty.BoolVal(actual.Masked)
 	}
 	return cty.ObjectVal(vals)
 }

@@ -1,7 +1,7 @@
 // Copyright (c) The Conn3x Authors
 // SPDX-License-Identifier: MPL-2.0
 
-// Package service starts, stops, enables and disables systemd units.
+// Package service starts, stops, enables, disables and masks systemd units.
 package service
 
 import (
@@ -24,12 +24,15 @@ const (
 	Stopped State = "stopped"
 )
 
-// Desired is the unit as it should be. An empty State or nil Enabled
-// leaves that aspect alone.
+// Desired is the unit as it should be. An empty State, or a nil Enabled
+// or Masked, leaves that aspect alone.
 type Desired struct {
 	Name    string
 	State   State
 	Enabled *bool
+	// Masked links the unit to /dev/null, so nothing can start it, not
+	// even another unit that wants it.
+	Masked *bool
 }
 
 // Actual is the unit as it is.
@@ -38,6 +41,7 @@ type Actual struct {
 	Running     bool
 	Enabled     bool
 	NeedsReload bool // its unit file changed since systemd last loaded it
+	Masked      bool
 }
 
 var unitPattern = regexp.MustCompile(`^[A-Za-z0-9:_.@\\-]+$`)
@@ -57,9 +61,13 @@ func (d Desired) Validate() error {
 	}
 	switch d.State {
 	case "", Started, Stopped:
-		return nil
+	default:
+		return fmt.Errorf("state must be %q or %q, not %q", Started, Stopped, d.State)
 	}
-	return fmt.Errorf("state must be %q or %q, not %q", Started, Stopped, d.State)
+	if d.Masked != nil && *d.Masked && (d.State == Started || d.Enabled != nil && *d.Enabled) {
+		return errors.New("a masked unit can't be started or enabled")
+	}
+	return nil
 }
 
 // Read asks systemd for the unit's state. A runner that is a
@@ -103,6 +111,7 @@ func actual(props map[string]string) Actual {
 		Running:     props["ActiveState"] == "active" || props["ActiveState"] == "activating" || props["ActiveState"] == "reloading",
 		Enabled:     strings.HasPrefix(props["UnitFileState"], "enabled"),
 		NeedsReload: props["NeedDaemonReload"] == "yes",
+		Masked:      props["LoadState"] == "masked" || strings.HasPrefix(props["UnitFileState"], "masked"),
 	}
 }
 
@@ -112,6 +121,9 @@ func NeedsChange(d Desired, a Actual) bool {
 		return true
 	}
 	if d.State == Started && !a.Running || d.State == Stopped && a.Running {
+		return true
+	}
+	if d.Masked != nil && *d.Masked != a.Masked {
 		return true
 	}
 	return d.Enabled != nil && *d.Enabled != a.Enabled
@@ -128,6 +140,21 @@ func Apply(ctx context.Context, r modules.Runner, d Desired) error {
 		return err
 	}
 	unit := ssh.Quote(Unit(d.Name))
+	// Mask or unmask first: a masked unit can't be enabled or started, and
+	// masking one that doesn't exist yet is how it's kept from ever running.
+	// systemctl reloads systemd itself after either.
+	if d.Masked != nil && *d.Masked != a.Masked {
+		verb := "unmask"
+		if *d.Masked {
+			verb = "mask"
+		}
+		if err := run(ctx, r, "systemctl "+verb+" -- "+unit); err != nil {
+			return err
+		}
+		if a, err = Read(ctx, r, d.Name); err != nil {
+			return err
+		}
+	}
 	if a.NeedsReload || !a.Exists {
 		if err := run(ctx, r, "systemctl daemon-reload"); err != nil {
 			return err

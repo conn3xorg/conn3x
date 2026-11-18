@@ -222,3 +222,52 @@ func TestHandlerReloadsSystemdWhenUnitChanged(t *testing.T) {
 		}
 	}
 }
+
+// masking reads as systemd reports it, after "systemctl mask".
+type maskHost struct{ host }
+
+func (h *maskHost) Run(ctx context.Context, cmd string, in []byte) (ssh.Result, error) {
+	if strings.Contains(cmd, "systemctl mask") {
+		h.show = show("masked", "inactive", "masked", "no")
+	}
+	return h.host.Run(ctx, cmd, in)
+}
+
+func TestMasked(t *testing.T) {
+	yes, no := true, false
+	// A masked unit reads as masked; masking one that's running stops it
+	// once the mask is on, and one that isn't installed can be masked.
+	for name, sh := range map[string]string{
+		"running":       show("loaded", "active", "enabled", "no"),
+		"not installed": show("not-found", "inactive", "", "no"),
+	} {
+		h := &maskHost{host{show: sh}}
+		if err := Apply(ctx, h, Desired{Name: "rpcbind", State: Stopped, Masked: &yes}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		all := strings.Join(h.ran, "\n")
+		if !strings.Contains(all, "systemctl mask -- 'rpcbind.service'") {
+			t.Errorf("%s: no mask in:\n%s", name, all)
+		}
+		a, _ := Read(ctx, h, "rpcbind")
+		if !a.Masked || NeedsChange(Desired{Name: "rpcbind", State: Stopped, Masked: &yes}, a) {
+			t.Errorf("%s: after the mask %+v", name, a)
+		}
+	}
+
+	h := &host{show: show("masked", "inactive", "masked", "no")}
+	if err := Apply(ctx, h, Desired{Name: "rpcbind", Masked: &no}); err != nil || !strings.Contains(strings.Join(h.ran, "\n"), "systemctl unmask -- 'rpcbind.service'") {
+		t.Errorf("unmask: %v, ran %v", err, h.ran)
+	}
+	if !NeedsChange(Desired{Name: "rpcbind", Masked: &yes}, Actual{Exists: true}) {
+		t.Error("an unmasked unit with masked = true needs no change")
+	}
+	for _, d := range []Desired{{Name: "a", State: Started, Masked: &yes}, {Name: "a", Enabled: &yes, Masked: &yes}} {
+		if d.Validate() == nil {
+			t.Errorf("%+v validated", d)
+		}
+	}
+	if (Desired{Name: "a", State: Started, Masked: &no}).Validate() != nil {
+		t.Error("masked = false with started was refused")
+	}
+}
