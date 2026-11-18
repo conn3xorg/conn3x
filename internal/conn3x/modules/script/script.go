@@ -140,13 +140,27 @@ func (s Script) Call(ctx context.Context, r modules.Runner, mode string, state j
 	if secrets := stringsIn(s.ArgsWO); len(secrets) > 0 {
 		for _, field := range [...]json.RawMessage{out.State, out.Changes} {
 			for v := range stringsIn(field) {
-				if secrets[v] {
+				if holdsSecret(v, secrets) {
 					return Result{}, fmt.Errorf("the program's %s returned an args_wo value in its state or changes, which Conn3x would store; it wasn't saved", mode)
 				}
 			}
 		}
 	}
 	return out, nil
+}
+
+// minEmbedded is the shortest args_wo value looked for inside a longer
+// string, such as TOKEN=... or a URL's password. Shorter ones, like "on",
+// would refuse almost anything, so they only match a whole string.
+const minEmbedded = 6
+
+func holdsSecret(v string, secrets map[string]bool) bool {
+	for secret := range secrets {
+		if v == secret || len(secret) >= minEmbedded && strings.Contains(v, secret) {
+			return true
+		}
+	}
+	return false
 }
 
 // stringsIn is every non-empty string value in a JSON document, as a set.
