@@ -34,14 +34,18 @@ func driftCommand() command.Command {
 
 A cloud resource whose changes your config wouldn't undo, such as a table's row count, is listed but isn't drift.
 
+With -limit, only the matching hosts' steps are read, as with plan -limit: conn3x drift -limit==web3 checks web3 and nothing else.
+
 Exits 0 when nothing drifted, 2 when something did, and 1 on errors. It takes the same options as plan, except -json: for machine-readable drift, run plan -refresh-only -json.`,
 		GroupID: command.MainCommandGroup.ID,
 	}
 	// Declaring plan's options lets the CLI accept them; the refresh-only
 	// plan run below parses them for real.
 	view := arguments.BindPlan(&cmd.CommandLine).View
-	var reportPath string
+	var reportPath, limit string
 	cmd.CommandLine.StringVar(&reportPath, "report", "", reportFlagHelp).SetDisplay("=run.json")
+	// The plan below takes -limit itself; declaring it here lets drift accept it.
+	cmd.CommandLine.StringVar(&limit, "limit", "", "Check only the hosts that match, as plan's -limit does. Cloud resources are still read.").SetDisplay("=hosts")
 	cmd.Run = func(m command.Meta) int {
 		if view.ViewType == arguments.ViewJSON {
 			fmt.Fprintln(stderr, "Error: drift has no -json output. For machine-readable drift, run conn3x plan -refresh-only -json.")

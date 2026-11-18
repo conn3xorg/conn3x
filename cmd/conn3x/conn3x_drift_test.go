@@ -22,8 +22,8 @@ func TestDriftIsACommand(t *testing.T) {
 }
 
 func TestDriftPlanArgs(t *testing.T) {
-	got := driftPlanArgs([]string{"-chdir=infra", "drift", "-var-file=prod.tfvars"})
-	want := []string{"-chdir=infra", "plan", "-refresh-only", "-detailed-exitcode", "-json", "-var-file=prod.tfvars"}
+	got := driftPlanArgs([]string{"-chdir=infra", "drift", "-var-file=prod.tfvars", "-limit==web3"})
+	want := []string{"-chdir=infra", "plan", "-refresh-only", "-detailed-exitcode", "-json", "-var-file=prod.tfvars", "-limit==web3"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q", got)
 	}
