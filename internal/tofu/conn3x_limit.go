@@ -184,12 +184,22 @@ func conn3xLimitMoves(opts *PlanOpts, diags tfdiags.Diagnostics) tfdiags.Diagnos
 }
 
 // conn3xLimitMatched warns when a -limit matched no host at all, since
-// that usually means a typo rather than a plan you wanted.
+// that usually means a typo rather than a plan you wanted, and for each
+// "=name" term that matched nothing, even when others did. The second
+// warning's summary is always "-limit term =NAME matched no host", so a
+// caller such as conn3x-ui can read which named hosts weren't planned.
 func conn3xLimitMatched(opts *PlanOpts) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if opts.Limit != nil && !opts.Limit.Matched() {
+	if opts.Limit == nil {
+		return diags
+	}
+	if !opts.Limit.Matched() {
 		diags = diags.Append(tfdiags.Sourceless(tfdiags.Warning, "-limit matched no host",
 			fmt.Sprintf("No circuit host matched %q, so this plan changes no circuit step. Host names are the keys of each circuit's hosts.", opts.Limit)))
+	}
+	for _, term := range opts.Limit.Unmatched() {
+		diags = diags.Append(tfdiags.Sourceless(tfdiags.Warning, "-limit term "+term+" matched no host",
+			fmt.Sprintf("No circuit host is named %s, or another term left it out, so this plan changes nothing on it.", term[1:])))
 	}
 	return diags
 }

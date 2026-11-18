@@ -29,6 +29,9 @@ type term struct {
 	re   *regexp.Regexp
 	// exact is a "=name" term: the host with that name, and no group.
 	exact string
+	// hit is set once the host exact names has matched the whole pattern,
+	// so Unmatched can say which named hosts a run never reached.
+	hit *atomic.Bool
 	// sub is a term such as webservers[0:2], which Resolve turns into
 	// picked when webservers is a group; until then it's a glob.
 	sub    *subscript
@@ -124,7 +127,7 @@ func Parse(raw string) (*Pattern, error) {
 			if name = strings.TrimSpace(name); name == "" {
 				return nil, fmt.Errorf("%q has an empty term", raw)
 			}
-			t.exact = name
+			t.exact, t.hit = name, new(atomic.Bool)
 		} else if strings.HasPrefix(s, "~") {
 			re, err := regexp.Compile(s[1:])
 			if err != nil {
@@ -244,8 +247,27 @@ func (p *Pattern) MatchIn(host string, groups []string) bool {
 	}
 	if ok {
 		p.matched.Store(true)
+		for _, t := range p.any {
+			if t.hit != nil && t.exact == host {
+				t.hit.Store(true)
+			}
+		}
 	}
 	return ok
+}
+
+// Unmatched lists, as "=name", each "=" term whose host hasn't matched the
+// pattern: a host no circuit has, or one a "&" or "!" term left out. A
+// caller that names hosts one by one, such as an alert, can then say which
+// it never reached, even when others matched.
+func (p *Pattern) Unmatched() []string {
+	var out []string
+	for _, t := range p.any {
+		if t.hit != nil && !t.hit.Load() {
+			out = append(out, "="+t.exact)
+		}
+	}
+	return out
 }
 
 // Matched reports whether any host has matched so far.

@@ -94,6 +94,22 @@ func TestConn3xLimitNoMatch(t *testing.T) {
 	}
 }
 
+// A "=" term that matched nothing gets its own warning, with the term in a
+// fixed summary, even when another term matched; conn3x-ui reads it to say
+// which of an alert's hosts weren't checked.
+func TestConn3xLimitUnmatchedTerm(t *testing.T) {
+	plan, msgs := limitPlan(t, "=a,=ghost", plans.NormalMode)
+	if len(plannedAddrs(plan)) == 0 {
+		t.Fatal("=a should still plan host a")
+	}
+	if !slices.Contains(msgs, "-limit term =ghost matched no host") || slices.Contains(msgs, "-limit matched no host") {
+		t.Errorf("diagnostics %v: want =ghost named, and no all-hosts warning since a matched", msgs)
+	}
+	if _, msgs := limitPlan(t, "=a", plans.NormalMode); slices.ContainsFunc(msgs, func(m string) bool { return strings.HasPrefix(m, "-limit term") }) {
+		t.Errorf("diagnostics %v: =a matched, so no term warning", msgs)
+	}
+}
+
 func TestConn3xLimitDestroy(t *testing.T) {
 	if _, msgs := limitPlan(t, "a", plans.DestroyMode); !slices.Contains(msgs, "-limit can't be used with -destroy") {
 		t.Errorf("diagnostics %v: want -destroy refused", msgs)

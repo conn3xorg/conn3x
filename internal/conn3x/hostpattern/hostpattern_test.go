@@ -54,6 +54,31 @@ func TestMatch(t *testing.T) {
 	}
 }
 
+// Unmatched names each "=" term no host matched, so a caller naming hosts
+// one by one can tell which it never reached when others matched.
+func TestUnmatched(t *testing.T) {
+	for raw, want := range map[string]string{
+		"=web1,=ghost":       "=ghost",
+		"=web1,=web2":        "",
+		"=ghost,=gone":       "=ghost,=gone",
+		"=web1,=web2:!=web2": "=web2", // matched by name, then left out
+		"web*,=ghost":        "=ghost",
+		"web*":               "",
+		"=web1,=web1":        "",
+	} {
+		p, err := Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range []string{"web1", "web2", "db1"} {
+			p.Match(h)
+		}
+		if got := strings.Join(p.Unmatched(), ","); got != want {
+			t.Errorf("%s: Unmatched() = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	for _, pattern := range []string{"", ",", "web1,!", "web1,&", "~(", "web[", "=", "web1,=", "!="} {
 		if _, err := Parse(pattern); err == nil {
