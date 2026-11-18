@@ -14,11 +14,14 @@ func TestConvertModuleArguments(t *testing.T) {
 	for task, want := range map[string][]string{
 		"blockinfile: { path: /etc/hosts, block: '10.0.0.1 db', insertafter: EOF, create: yes }": {
 			"block {", `content      = "10.0.0.1 db"`, `marker       = "# {mark} ANSIBLE MANAGED BLOCK"`, `insert_after = "EOF"`, "create       = true", "Keeps Ansible's marker"},
-		"blockinfile: { path: /etc/hosts, block: x, marker: '## {mark} app', state: absent }": {`marker  = "## {mark} app"`, `state   = "absent"`},
-		"community.general.ufw: { rule: allow, port: '22', proto: tcp, from_ip: 10.0.0.0/8 }": {"ufw {", `action = "allow"`, `port   = "22/tcp"`, `from   = "10.0.0.0/8"`},
-		"ufw: { rule: deny, port: '53', proto: any }":                                         {`port   = "53"`},
-		"seboolean: { name: httpd_can_network_connect, state: yes, persistent: yes }":         {"selinux_boolean {", "value = true"},
-		"sefcontext: { target: '/srv/www(/.*)?', setype: httpd_sys_content_t }":               {"selinux_fcontext {", `setype = "httpd_sys_content_t"`},
+		"blockinfile: { path: /etc/hosts, block: x, marker: '## {mark} app', state: absent }":          {`marker  = "## {mark} app"`, `state   = "absent"`},
+		"community.general.ufw: { rule: allow, port: '22', proto: tcp, from_ip: 10.0.0.0/8 }":          {"ufw {", `action = "allow"`, `port   = "22/tcp"`, `from   = "10.0.0.0/8"`},
+		"community.crypto.openssh_keypair: { path: /root/.ssh/id_ed25519, type: ed25519, size: 4096 }": {"ssh_keypair {", `type = "ed25519"`},
+		"openssh_keypair: { path: /home/d/.ssh/id_rsa, owner: d, comment: d@web1 }":                    {`type    = "rsa"`, "bits    = 4096", `owner   = "d"`, `comment = "d@web1"`},
+		"openssh_keypair: { path: /k, type: ecdsa, size: 384, mode: '0600' }":                          {"bits = 384"},
+		"ufw: { rule: deny, port: '53', proto: any }":                                                  {`port   = "53"`},
+		"seboolean: { name: httpd_can_network_connect, state: yes, persistent: yes }":                  {"selinux_boolean {", "value = true"},
+		"sefcontext: { target: '/srv/www(/.*)?', setype: httpd_sys_content_t }":                        {"selinux_fcontext {", `setype = "httpd_sys_content_t"`},
 		"get_url: { url: 'https://example.com/a.tgz', dest: /tmp/a.tgz, checksum: 'sha256:abc', mode: '0644' }": {
 			"download {", `sha256 = "abc"`, `mode   = "0644"`},
 		"unarchive: { src: /tmp/a.tgz, dest: /opt, remote_src: yes, creates: /opt/a }": {"archive {", `creates = "/opt/a"`},
@@ -44,7 +47,14 @@ func TestConvertModuleArguments(t *testing.T) {
 	}
 
 	for task, reason := range map[string]string{
-		"blockinfile: { path: /etc/hosts, block: x, marker_begin: BEGIN }": "marker_begin or marker_end",
+		"blockinfile: { path: /etc/hosts, block: x, marker_begin: BEGIN }":                "marker_begin or marker_end",
+		"openssh_keypair: { path: /k, passphrase: hunter2 }":                              "sets a passphrase",
+		"openssh_keypair: { path: /k, type: rsa, size: 2048 }":                            "2048-bit rsa key",
+		"openssh_keypair: { path: /k, type: dsa }":                                        "makes a dsa key",
+		"openssh_keypair: { path: /k, regenerate: always }":                               "regenerate: always",
+		"openssh_keypair: { path: /k, force: yes }":                                       "sets force",
+		"openssh_keypair: { path: /k, private_key_format: pkcs8 }":                        "private_key_format: pkcs8",
+		"openssh_keypair: { path: /k, mode: '0644' }":                                     "sets mode 0644",
 		"ufw: { state: enabled }":                                                         "changes ufw itself",
 		"seboolean: { name: httpd_can_network_connect, state: yes }":                      "until reboot only",
 		"get_url: { url: 'https://example.com/a', dest: /tmp/a }":                         "no sha256 checksum",

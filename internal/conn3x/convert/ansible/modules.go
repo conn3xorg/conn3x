@@ -549,6 +549,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"cron":               cronModule,
 	"sysctl":             sysctlModule,
 	"openssl_privatekey": privateKeyModule,
+	"openssh_keypair":    sshKeypairModule,
 	"openssl_csr":        csrModule,
 	"postgresql_db":      pgDatabaseModule,
 	"postgresql_user":    pgRoleModule,

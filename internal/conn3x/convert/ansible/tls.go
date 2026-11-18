@@ -5,6 +5,7 @@ package ansible
 
 import (
 	"cmp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -88,4 +89,53 @@ func csrModule(in *input) ([]step, string) {
 	}
 	in.ignore("return_content", "backup", "select_crypto_backend")
 	return one("tls_csr", in.owners(attrs))
+}
+
+// sshKeypairModule converts community.crypto.openssh_keypair. Ansible's
+// default key is RSA 4096, which the step is told, since its own default is
+// ed25519. Both write the private key with ssh-keygen, at mode 0600. A
+// passphrase, another format or mode, a regenerate other than the default,
+// or a DSA key goes to review.
+func sshKeypairModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	if in.has("passphrase") {
+		return nil, "sets a passphrase, and an ssh_keypair step makes keys without one"
+	}
+	if r := in.str("regenerate"); r != "" && r != "partial_idempotence" && r != "full_idempotence" {
+		return nil, "sets regenerate: " + r + ", and an ssh_keypair step always makes a new key when the type or bits differ and keeps it otherwise"
+	}
+	if f := in.str("private_key_format"); f != "" && f != "auto" && f != "ssh" {
+		return nil, "sets private_key_format: " + f + "; an ssh_keypair step writes the OpenSSH format ssh-keygen does"
+	}
+	if m, ok := in.mode("mode"); ok && m.val.AsString() != "0600" {
+		return nil, "sets mode " + m.val.AsString() + "; an ssh_keypair step keeps the private key at 0600"
+	}
+	attrs := []attr{s("path", in.str("path"))}
+	typ := cmp.Or(in.str("type"), "rsa")
+	bits := map[string]int{"rsa": 4096, "ecdsa": 256}[typ]
+	switch typ {
+	case "rsa", "ecdsa":
+		if v := in.str("size"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return nil, "sets size " + v + ", which isn't a number"
+			}
+			bits = n
+		}
+		if ok := map[string][]int{"rsa": {3072, 4096}, "ecdsa": {256, 384, 521}}[typ]; !slices.Contains(ok, bits) {
+			return nil, "makes a " + strconv.Itoa(bits) + "-bit " + typ + " key; an ssh_keypair step makes RSA keys of 3072 or 4096 bits and ECDSA keys of 256, 384 or 521"
+		}
+		attrs = append(attrs, s("type", typ), attr{key: "bits", val: cty.NumberIntVal(int64(bits))})
+	case "ed25519":
+		in.ignore("size") // Ansible ignores it for ed25519
+		attrs = append(attrs, s("type", "ed25519"))
+	default:
+		return nil, "makes a " + typ + " key; an ssh_keypair step makes rsa, ecdsa and ed25519 keys"
+	}
+	if in.bool("force", false) {
+		return nil, "sets force, so Ansible makes a new key on every run; an ssh_keypair step keeps the key it made"
+	}
+	attrs = in.optional(attrs, "comment", "comment")
+	in.ignore("force", "backend")
+	return one("ssh_keypair", in.owners(attrs))
 }

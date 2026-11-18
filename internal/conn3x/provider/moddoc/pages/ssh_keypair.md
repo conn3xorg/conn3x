@@ -40,3 +40,7 @@ step "legacy_key" {
 ## Removal
 
 `on_remove = "forget"`, the default, leaves both files. `on_remove = "delete"` removes the private key and the `.pub` file.
+
+## From Ansible
+
+`conn3x convert ansible` turns `community.crypto.openssh_keypair` tasks into `ssh_keypair` steps, with `path`, `type`, `size` as `bits`, `comment`, `owner` and `group`. Ansible's default key is RSA 4096, so a task without `type` gets `type = "rsa"` and `bits = 4096`, not this step's ed25519. A task stays a TODO, with the reason, when it sets a `passphrase`, `force`, a `regenerate` other than `partial_idempotence` or `full_idempotence`, a `private_key_format` other than `auto` or `ssh`, a mode other than `0600`, or a key this step doesn't make, such as DSA or a 2048-bit RSA key. The passphrase is left out of the TODO.
