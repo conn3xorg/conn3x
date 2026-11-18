@@ -8,7 +8,8 @@
 #   publish-packages.sh OUT TAG [TAG...]
 #
 # OUT is an empty directory to write the site into; each TAG is a release,
-# newest first, whose packages are downloaded with gh. A TAG of the form
+# newest first, whose packages are downloaded with gh and checked against
+# the build provenance its release workflow attested. A TAG of the form
 # OWNER/REPO@TAG is a release of another repository, such as
 # conn3xorg/conn3x-ui@v0.4.0, so its packages share the repositories. The key that signs
 # the repository metadata must already be in gpg's keyring, its ID in
@@ -40,8 +41,19 @@ for arg in "$@"; do
 	fi
 	pool=$out/apt/pool/main/c/${from#*/}
 	mkdir -p "$pool" "$work/rpm/$from/releases/download/$tag"
-	gh release download "$tag" -R "$from" -p '*.deb' -D "$pool" --clobber
-	gh release download "$tag" -R "$from" -p '*.rpm' -D "$work/rpm/$from/releases/download/$tag" --clobber
+	dl=$work/dl/$from/$tag
+	mkdir -p "$dl"
+	gh release download "$tag" -R "$from" -p '*.deb' -p '*.rpm' -D "$dl" --clobber
+	# apt checks the signed index, not each .deb, so the key vouches for
+	# whatever is indexed; a release asset can be swapped without a new
+	# release. Only packages the repository's own release workflow built
+	# go in.
+	for f in "$dl"/*.deb "$dl"/*.rpm; do
+		gh attestation verify "$f" --repo "$from" --signer-workflow "$from/.github/workflows/release.yml" >/dev/null \
+			|| { echo "$f has no attestation from $from's release workflow; not publishing" >&2; exit 1; }
+	done
+	mv "$dl"/*.deb "$pool/"
+	mv "$dl"/*.rpm "$work/rpm/$from/releases/download/$tag/"
 done
 
 # apt: one suite, stable, with a Packages index per architecture, and a

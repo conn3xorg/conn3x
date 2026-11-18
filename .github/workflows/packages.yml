@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  # gh attestation verify, in publish-packages.sh.
+  attestations: read
 
 concurrency:
   group: packages
