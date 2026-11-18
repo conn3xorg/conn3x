@@ -84,3 +84,34 @@ func TestParseInventory(t *testing.T) {
 		t.Errorf("3000 packages: %d, %v", len(got), err)
 	}
 }
+
+// debManual keeps what someone installed: not the essential or required
+// base an image marks manual, and not a package another one needs, even
+// through an alternative or a recommendation.
+func TestDebManual(t *testing.T) {
+	out := "bash\ncurl\nlibcurl4\nnginx\nnginx-common\nvim\nvim-runtime\n@@@\n" +
+		"ii \tbash\tyes\trequired\t, , \n" +
+		"ii \tcurl\tno\toptional\tlibcurl4 (= 8.5.0), , \n" +
+		"ii \tlibcurl4\tno\toptional\t, , \n" +
+		"ii \tnginx\tno\toptional\tnginx-common (= 1.24.0), , \n" +
+		"ii \tnginx-common\tno\toptional\t, , \n" +
+		"ii \tvim\tno\toptional\tvim-runtime | vim-tiny, , \n" +
+		"ii \tvim-runtime\tno\toptional\t, , \n" +
+		"rc \tgone\tno\toptional\tcurl, , \n"
+	got, err := debManual(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"curl": true, "nginx": true, "vim": true}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for n := range want {
+		if !got[n] {
+			t.Errorf("missing %s in %v", n, got)
+		}
+	}
+	if _, err := debManual("no marker"); err == nil {
+		t.Error("output without @@@ wasn't refused")
+	}
+}

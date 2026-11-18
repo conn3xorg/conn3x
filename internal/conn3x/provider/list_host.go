@@ -34,11 +34,14 @@ type ListKind struct {
 // ListKinds are the kinds a host can be listed for.
 var ListKinds = map[string]ListKind{
 	"packages": {"package", "name", "", false},
-	"services": {"service", "name", "", false},
-	"users":    {"user", "name", "", false},
-	"mounts":   {"mount", "path", "", false},
-	"sysctl":   {"sysctl", "name", "value", false},
-	"timers":   {"timer", "name", "", true},
+	// manual_packages is packages without those pulled in as dependencies
+	// or shipped with the image, which are most of a fresh host's.
+	"manual_packages": {"package", "name", "", false},
+	"services":        {"service", "name", "", false},
+	"users":           {"user", "name", "", false},
+	"mounts":          {"mount", "path", "", false},
+	"sysctl":          {"sysctl", "name", "value", false},
+	"timers":          {"timer", "name", "", true},
 
 	"windows_features": {"windows_feature", "name", "", false},
 	"windows_services": {"windows_service", "name", "", false},
@@ -63,7 +66,7 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 		if err != nil {
 			return nil, nil, err
 		}
-	case "packages":
+	case "packages", "manual_packages":
 		family, err := h.packageFamily(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -72,8 +75,20 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 		if err != nil {
 			return nil, nil, err
 		}
+		var manual map[string]bool
+		if kind == "manual_packages" {
+			if manual, err = pkg.Manual(ctx, h, family); err != nil {
+				return nil, nil, err
+			}
+		}
 		for n := range got {
-			names = append(names, n)
+			key := n
+			if family == pkg.RPM {
+				key = pkg.BareName(n) // dnf's list has no architectures
+			}
+			if manual == nil || manual[key] {
+				names = append(names, n)
+			}
 		}
 	case "services":
 		got, err := service.Inventory(ctx, h)

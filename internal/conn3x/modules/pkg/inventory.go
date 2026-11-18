@@ -176,3 +176,88 @@ func rpmvercmp(a, b string) int {
 		return 1
 	}
 }
+
+// manualCmd prints the names of the packages someone asked for, as opposed
+// to those pulled in as dependencies or shipped with the image. dnf's
+// user-installed list says it (dnf 4 and 5 both take --qf; dnf 4 adds its
+// own newline, so blank lines are skipped). apt's manual marks don't on
+// their own, since images built with debootstrap mark nearly everything
+// manual, so Deb also prints each package's essential flag, priority and
+// what it needs, after a line of @@@, for debManual to filter.
+var manualCmd = map[Family]string{
+	Deb: `apt-mark showmanual && echo @@@ && dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${Essential}\t${Priority}\t${Depends}, ${Pre-Depends}, ${Recommends}\n'`,
+	RPM: `command -v dnf >/dev/null || { echo "listing hand-installed packages needs dnf" >&2; exit 1; }; dnf -q repoquery --userinstalled --qf '%{name}\n'`,
+}
+
+// Manual returns the names of the packages installed by hand, as the tool
+// prints them: apt's with :arch for another architecture, as Inventory's
+// are, and dnf's bare, so match those with BareName.
+func Manual(ctx context.Context, r modules.Runner, family Family) (map[string]bool, error) {
+	cmd, ok := manualCmd[family]
+	if !ok {
+		return nil, fmt.Errorf("unknown package family %q", family)
+	}
+	res, err := r.Run(ctx, cmd, nil)
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("listing hand-installed packages: %s", strings.TrimSpace(string(res.Stderr)))
+	}
+	if family == Deb {
+		return debManual(string(res.Stdout))
+	}
+	got := map[string]bool{}
+	for _, l := range strings.Split(string(res.Stdout), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			got[l] = true
+		}
+	}
+	return got, nil
+}
+
+// debManual keeps the packages apt marks manual that no other installed
+// package depends on, pre-depends on or recommends, and that aren't
+// essential, required or important: what someone installed, not the base
+// system an image marked manual wholesale. A package another needs is
+// adopted with the one that needs it.
+func debManual(out string) (map[string]bool, error) {
+	marks, packages, ok := strings.Cut(out, "@@@\n")
+	if !ok {
+		return nil, fmt.Errorf("listing hand-installed packages: unexpected output")
+	}
+	needed, base := map[string]bool{}, map[string]bool{}
+	for _, l := range strings.Split(packages, "\n") {
+		f := strings.Split(l, "\t")
+		if len(f) != 5 || len(f[0]) < 2 || f[0][1] != 'i' {
+			continue
+		}
+		if f[2] == "yes" || f[3] == "required" || f[3] == "important" {
+			base[f[1]] = true
+		}
+		for _, alt := range strings.Split(f[4], ",") {
+			for _, d := range strings.Split(alt, "|") {
+				d, _, _ = strings.Cut(strings.TrimSpace(d), " ")
+				needed[strings.TrimSuffix(d, ":any")] = true
+			}
+		}
+	}
+	got := map[string]bool{}
+	for _, p := range strings.Fields(marks) {
+		if bare, _, _ := strings.Cut(p, ":"); !needed[p] && !needed[bare] && !base[bare] {
+			got[p] = true
+		}
+	}
+	return got, nil
+}
+
+// BareName is an rpm Inventory name without the architecture another
+// architecture's package carries: glibc for glibc.i686.
+func BareName(name string) string {
+	for _, arch := range []string{".i686", ".i386", ".x86_64", ".aarch64", ".noarch", ".ppc64le", ".s390x", ".armv7hl"} {
+		if strings.HasSuffix(name, arch) {
+			return strings.TrimSuffix(name, arch)
+		}
+	}
+	return name
+}

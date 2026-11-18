@@ -144,3 +144,34 @@ func TestGenerateStepReadsAFile(t *testing.T) {
 		t.Errorf("write-only: exit %d, %q, %q", code, out.String(), errOut.String())
 	}
 }
+
+// manual_packages lists only what was installed by hand: on Debian and
+// Ubuntu, apt's manual marks without the base system or anything another
+// package needs; on the Red Hat family, dnf's user-installed list, where a
+// package of another architecture keeps its name.
+func TestGenerateStepsManualPackages(t *testing.T) {
+	for name, tc := range map[string]struct {
+		replies []string
+		want    string
+	}{
+		"deb": {[]string{
+			"cat /etc/os-release", "ID=ubuntu\nID_LIKE=debian\n",
+			"dpkg --print-architecture", "amd64\nbase-files\tamd64\t13ubuntu10\nlibc6\tamd64\t2.39-0ubuntu8\nlibc6\ti386\t2.39-0ubuntu8\nnginx\tamd64\t1.24.0-2ubuntu7\n",
+			"apt-mark showmanual", "base-files\nlibc6:i386\nnginx\n@@@\n" +
+				"ii \tbase-files\tyes\trequired\t, , \n" +
+				"ii \tlibc6\tno\trequired\t, , \n" +
+				"ii \tnginx\tno\toptional\tlibc6 (>= 2.34), , \n",
+		}, "nginx\n"},
+		"rpm": {[]string{
+			"cat /etc/os-release", "ID=rocky\nID_LIKE=\"rhel centos fedora\"\n",
+			"rpm -qa", "x86_64\nbash\tx86_64\t0:5.2.26-6.el10\nglibc\ti686\t0:2.39-37.el10\npostgresql-server\tx86_64\t0:16.8-2.el10\n",
+			"repoquery --userinstalled", "glibc\n\npostgresql-server\n\n",
+		}, "glibc.i686\npostgresql-server\n"},
+	} {
+		o := brGenHost(t, brReplies(tc.replies...), nil)
+		var out, errOut bytes.Buffer
+		if code := runGenerateSteps(context.Background(), o, "manual_packages", "", &out, &errOut); code != 0 || out.String() != tc.want {
+			t.Errorf("%s: exit %d, %q, %q", name, code, out.String(), errOut.String())
+		}
+	}
+}
