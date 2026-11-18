@@ -127,6 +127,9 @@ type converter struct {
 	// probeWhy holds the role's probes, by task: "" for one converted to a
 	// data source, else why it stays.
 	probeWhy map[*yaml.Node]string
+	// unreadRegister holds the tasks whose register nothing reads; see
+	// findUnreadRegisters.
+	unreadRegister map[*yaml.Node]bool
 	// block is the task being converted's place in a block with rescue or
 	// always, if it has one.
 	block taskAt
@@ -433,6 +436,7 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	used := map[string]int{}
 	c.jsonPairs(tasks)
 	c.findProbes(tasks, vars)
+	c.findUnreadRegisters(tasks)
 	for _, t := range tasks {
 		c.file = t.file
 		if t.reason != "" {
@@ -982,6 +986,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.res.Converted++
 		return
 	}
+	if c.role != nil && t["when"] != nil && cacheOnly(t) {
+		body.AppendNewline()
+		comment(body, fmt.Sprintf("Task %q (%s line %d) only refreshes the package lists: Conn3x refreshes them itself after writing a repository and when a package isn't found, so its when doesn't matter.", name, c.file, node.Line))
+		c.res.Converted++
+		return
+	}
 	c.packageListAsLoop(t)
 	// A loop over a role default that's a list becomes for_each over its
 	// variable. with_items flattens one level, which a list of plain
@@ -1104,6 +1114,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		// The PostgreSQL steps run psql as postgres themselves.
 		if k == "become_user" && scalar(t[k]) == "postgres" && runsAsPostgres(t) {
+			continue
+		}
+		if k == "register" && c.unreadRegister[node] {
 			continue
 		}
 		if keywords[k] && !harmless[k] {
