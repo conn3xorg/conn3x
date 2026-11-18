@@ -271,7 +271,7 @@ func (k editKind) schema() providers.Schema {
 		"group":     {Type: cty.String, Optional: true, Description: "The file's group, set with the edit. Unset keeps the group the file has."},
 		"backup": {
 			Type: cty.Bool, Optional: true,
-			Description: "true copies the file, before an edit changes it, to the same path with .conn3x- and the time in UTC after it, such as sshd_config.conn3x-20261118T130501Z, keeping its mode and owner. An apply that changes nothing makes no copy. Old copies stay until you remove them.",
+			Description: "true copies the file, before an edit changes it, beside itself with .conn3x-, the time in UTC, a number and a ~ after its name, such as job.conn3x-20261118T130501Z.4127~, keeping its mode and owner. The ~ keeps cron.d, logrotate.d and the like from loading the copy. An apply that changes nothing makes no copy. Old copies stay until you remove them.",
 		},
 		"validate": {
 			Type: cty.String, Optional: true, WriteOnly: true,

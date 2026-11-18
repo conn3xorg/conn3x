@@ -6,6 +6,7 @@ package provider
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
@@ -44,6 +45,9 @@ func TestEditStepBackup(t *testing.T) {
 	if len(c) != 1 {
 		t.Fatalf("copies %v, want one", c)
 	}
+	if !strings.HasSuffix(c[0], "~") {
+		t.Errorf("copy %s doesn't end in ~, so a .d directory would load it", c[0])
+	}
 	b, _ := os.ReadFile(c[0])
 	if string(b) != "a=1\nb=2\n" {
 		t.Errorf("the copy holds %q, want the file before the edit", b)
@@ -63,12 +67,27 @@ func TestEditStepBackup(t *testing.T) {
 		t.Errorf("an edit that changed nothing made a copy: %v", c)
 	}
 
+	// Two backed-up edits back to back, as two line steps on one file run,
+	// both land, with a copy each, even within one second.
+	if _, err := unitCreate(t, "conn3x_line", step("d=4", true)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unitCreate(t, "conn3x_line", step("e=5", true)); err != nil {
+		t.Fatalf("the second edit in a row: %v", err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "a=1\nb=2\nc=3\nd=4\ne=5\n" {
+		t.Errorf("after two edits in a row the file is %q", b)
+	}
+	if c := copies(); len(c) != 3 {
+		t.Errorf("copies %v, want three", c)
+	}
+
 	// A refused edit leaves the file and makes no copy.
-	refused := brWith(step("d=4", true), map[string]cty.Value{"validate": cty.StringVal("false")})
+	refused := brWith(step("f=6", true), map[string]cty.Value{"validate": cty.StringVal("false")})
 	if _, err := unitCreate(t, "conn3x_line", refused); err == nil {
 		t.Fatal("validate = false passed")
 	}
-	if c := copies(); len(c) != 1 {
+	if c := copies(); len(c) != 3 {
 		t.Errorf("a refused edit made a copy: %v", c)
 	}
 }

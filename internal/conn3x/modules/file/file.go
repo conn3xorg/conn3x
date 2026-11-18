@@ -27,13 +27,16 @@ type Desired struct {
 	// ValidateCommand, when set, checks the new content before it replaces
 	// the file. %s stands for the temporary file's path.
 	ValidateCommand string
-	// Backup copies the file as it was to Path plus BackupSuffix and the
-	// time in UTC, with its mode and owner, just before replacing it.
+	// Backup copies the file as it was, with its mode and owner, just
+	// before replacing it: see BackupSuffix.
 	Backup bool
 }
 
-// BackupSuffix starts a backup copy's name, before the time it was made:
-// /etc/ssh/sshd_config.conn3x-20261118T130501Z.
+// BackupSuffix starts a backup copy's name. After it come the time in
+// UTC, the writing shell's PID, so two edits in one second get two
+// copies, and a "~", which cron.d, logrotate.d and the like skip, so a
+// copy is never loaded as a second config:
+// /etc/cron.d/job.conn3x-20261118T130501Z.4127~
 const BackupSuffix = ".conn3x-"
 
 // Actual is the file as it is.
@@ -233,7 +236,7 @@ func backupScript(backup bool) string {
 		return ""
 	}
 	return `if [ -f "$p" ]; then
-  b="$p` + BackupSuffix + `$(date -u +%Y%m%dT%H%M%SZ)"
+  b="$p` + BackupSuffix + `$(date -u +%Y%m%dT%H%M%SZ).$$~"
   [ ! -e "$b" ] || { echo "$b is already there" >&2; exit 1; }
   cp -p -- "$p" "$b"
 fi
