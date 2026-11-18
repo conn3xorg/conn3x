@@ -226,6 +226,9 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		if _, err := proxyCommandOf(all.Vars(h)); err != nil {
 			return fail("host %s: %s", h, err)
 		}
+		if _, err := becomeOf(all.Vars(h)); err != nil {
+			return fail("host %s: %s", h, err)
+		}
 	}
 	hostsFor := func(p *hostpattern.Pattern) []*runHost {
 		var hosts []*runHost
@@ -404,7 +407,7 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 		}
 		ssh["proxy_command"] = cty.ListVal(words)
 	}
-	if vars["conn3x_ssh_become"] == "true" {
+	if b, _ := becomeOf(vars); b {
 		ssh["become"] = cty.True
 	}
 	if p, err := strconv.Atoi(vars["ansible_port"]); err == nil {
@@ -416,6 +419,25 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 		ssh["become"] = cty.True
 	}
 	return ssh
+}
+
+// becomeOf reports whether a host's commands run as root: -circuits'
+// conn3x_ssh_become, or the inventory's ansible_become, which takes
+// Ansible's true values. Become goes to root only, so another
+// ansible_become_user is an error rather than a run as the wrong user.
+func becomeOf(vars map[string]string) (bool, error) {
+	if vars["conn3x_ssh_become"] == "true" {
+		return true, nil
+	}
+	switch strings.ToLower(vars["ansible_become"]) {
+	case "true", "yes", "on", "y", "t", "1":
+	default:
+		return false, nil
+	}
+	if u := vars["ansible_become_user"]; u != "" && u != "root" {
+		return false, fmt.Errorf("ansible_become_user is %s, but conn3x run only becomes root", u)
+	}
+	return true, nil
 }
 
 // proxyCommandOf is a host's proxy command: the list -circuits carries

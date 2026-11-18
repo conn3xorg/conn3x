@@ -185,3 +185,26 @@ func TestRunProxyCommand(t *testing.T) {
 		t.Errorf("a string proxy_command: %v", err)
 	}
 }
+
+// ansible_become takes Ansible's true values, -become wins, and a become
+// user other than root is refused.
+func TestRunAnsibleBecome(t *testing.T) {
+	for v, want := range map[string]bool{"true": true, "yes": true, "True": true, "1": true, "false": false, "no": false, "": false} {
+		got := (runOptions{}).sshFor("a", map[string]string{"ansible_become": v})["become"]
+		if want != (got == cty.True) {
+			t.Errorf("ansible_become=%q: become %#v", v, got)
+		}
+	}
+	if got := (runOptions{become: true}).sshFor("a", map[string]string{"ansible_become": "false"})["become"]; got != cty.True {
+		t.Errorf("-become with ansible_become=false: %#v", got)
+	}
+	if _, err := becomeOf(map[string]string{"ansible_become": "yes", "ansible_become_user": "postgres"}); err == nil {
+		t.Error("ansible_become_user=postgres was accepted")
+	}
+	if b, err := becomeOf(map[string]string{"ansible_become": "yes", "ansible_become_user": "root"}); err != nil || !b {
+		t.Errorf("ansible_become_user=root: %v, %v", b, err)
+	}
+	if b, err := becomeOf(map[string]string{"ansible_become_user": "postgres"}); err != nil || b {
+		t.Errorf("a become user without ansible_become: %v, %v", b, err)
+	}
+}
