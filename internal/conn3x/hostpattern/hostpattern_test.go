@@ -65,6 +65,7 @@ func TestUnmatched(t *testing.T) {
 		"web*,=ghost":        "=ghost",
 		"web*":               "",
 		"=web1,=web1":        "",
+		"=ghost,=ghost":      "=ghost",
 	} {
 		p, err := Parse(raw)
 		if err != nil {

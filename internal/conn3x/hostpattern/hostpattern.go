@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -263,8 +264,8 @@ func (p *Pattern) MatchIn(host string, groups []string) bool {
 func (p *Pattern) Unmatched() []string {
 	var out []string
 	for _, t := range p.any {
-		if t.hit != nil && !t.hit.Load() {
-			out = append(out, "="+t.exact)
+		if t.hit != nil && !t.hit.Load() && !slices.Contains(out, "="+t.exact) {
+			out = append(out, "="+t.exact) // once, however often it's named
 		}
 	}
 	return out
