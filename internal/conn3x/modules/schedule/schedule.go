@@ -236,3 +236,62 @@ type DropInError struct{ Dirs []string }
 func (e DropInError) Error() string {
 	return "drop-ins in " + strings.Join(e.Dirs, " and ") + " change what this timer's units say, so the step can't make it run as written. Fold them into the step's arguments and remove them, then apply again"
 }
+
+// ParseCron reads the /etc/cron.d file name as the Cron a cron step would
+// write it as. It returns why not when the file holds something the step
+// can't say: more than one job, a variable such as MAILTO, a SHELL or PATH
+// other than the step's, or a % cron would turn into stdin.
+func ParseCron(name, content string) (Cron, string) {
+	if !cronName.MatchString(name) {
+		return Cron{}, "cron skips a file named like this, so it never runs"
+	}
+	var job string
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok && !strings.ContainsAny(k, " \t") {
+			v = strings.Trim(strings.TrimSpace(v), `"'`)
+			switch {
+			case k == "SHELL" && v == "/bin/sh", k == "PATH" && v == "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin":
+				continue
+			}
+			return Cron{}, "sets " + k + ", which a cron step doesn't"
+		}
+		if job != "" {
+			return Cron{}, "holds more than one job, and a cron step's file holds one"
+		}
+		job = line
+	}
+	if job == "" {
+		return Cron{}, "holds no job"
+	}
+	f := strings.Fields(job)
+	n := 5
+	if strings.HasPrefix(f[0], "@") {
+		n = 1
+	}
+	if len(f) < n+2 {
+		return Cron{}, "has a job line that isn't a schedule, a user and a command"
+	}
+	c := Cron{Name: name, Schedule: strings.Join(f[:n], " "), User: f[n]}
+	// The command is the rest of the line as written, spaces and all.
+	rest := job
+	for range n + 1 {
+		rest = strings.TrimLeft(rest, " \t")
+		rest = rest[strings.IndexAny(rest, " \t"):]
+	}
+	cmd := strings.TrimSpace(rest)
+	if strings.Contains(strings.ReplaceAll(cmd, `\%`, ""), "%") {
+		return Cron{}, "has a % in its command, which cron turns into stdin, and a cron step's command can't"
+	}
+	c.Command = strings.ReplaceAll(cmd, `\%`, "%")
+	if c.User == "root" {
+		c.User = ""
+	}
+	if err := c.Validate(); err != nil {
+		return Cron{}, err.Error()
+	}
+	return c, ""
+}

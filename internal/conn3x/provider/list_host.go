@@ -42,6 +42,7 @@ var ListKinds = map[string]ListKind{
 	"mounts":          {"mount", "path", "", false},
 	"sysctl":          {"sysctl", "name", "value", false},
 	"timers":          {"timer", "name", "", true},
+	"cron":            {"cron", "name", "", true},
 
 	"windows_features": {"windows_feature", "name", "", false},
 	"windows_services": {"windows_service", "name", "", false},
@@ -145,6 +146,24 @@ done; true`, nil)
 			names = append(names, parts[0])
 			values[parts[0]] = timerJSON(parts[0], parts[2], parts[1], strings.Fields(parts[3]))
 		}
+	case "cron":
+		// Each file in /etc/cron.d, the place a cron step writes its jobs.
+		res, err := h.Run(ctx, `for f in /etc/cron.d/*; do
+  [ -f "$f" ] && [ ! -L "$f" ] || continue
+  printf '\036%s\037' "$(basename "$f")"; cat "$f"
+done; true`, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		values = map[string]string{}
+		for _, rec := range strings.Split(string(res.Stdout), "\x1e") {
+			name, content, ok := strings.Cut(rec, "\x1f")
+			if !ok {
+				continue
+			}
+			names = append(names, name)
+			values[name] = cronJSON(name, content)
+		}
 	case "users", "mounts":
 		cmd := "getent passwd"
 		if kind == "mounts" {
@@ -174,7 +193,7 @@ done; true`, nil)
 			}
 		}
 	default:
-		return nil, nil, fmt.Errorf("can't list %q; conn3x generate steps lists packages, services, users, mounts, sysctl and timers, and on Windows windows_features, windows_services, windows_users and windows_groups", kind)
+		return nil, nil, fmt.Errorf("can't list %q; conn3x generate steps lists packages, services, users, mounts, sysctl, timers and cron, and on Windows windows_features, windows_services, windows_users and windows_groups", kind)
 	}
 	sort.Strings(names)
 	return names, values, nil
@@ -193,6 +212,22 @@ func fullSSH(conn cty.Value) cty.Value {
 		}
 	}
 	return cty.ObjectVal(vals)
+}
+
+// cronJSON is a cron.d file's step arguments, or why it can't be adopted,
+// as ListKind.Full describes.
+func cronJSON(name, content string) string {
+	c, why := schedule.ParseCron(name, content)
+	if why != "" {
+		b, _ := json.Marshal(map[string]string{"skip": why})
+		return string(b)
+	}
+	attrs := map[string]any{"name": c.Name, "schedule": c.Schedule, "command": c.Command}
+	if c.User != "" {
+		attrs["user"] = c.User
+	}
+	b, _ := json.Marshal(map[string]any{"attrs": attrs})
+	return string(b)
 }
 
 // timerJSON is a timer's step arguments, or why it can't be adopted, as

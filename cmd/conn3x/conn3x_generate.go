@@ -86,18 +86,18 @@ The host is checked against known_hosts (~/.ssh/known_hosts unless -known-hosts-
 	steps := command.Command{
 		Name:  "steps",
 		Short: "List what a host has, and print steps for what you pick",
-		Long: `Lists the packages, services, users, mounts, sysctl settings or timers a host has, and with -match prints a step with import = true for each one that matches, as generate step does for one. Adopting a long-lived server then takes one command per kind, not one per object.
+		Long: `Lists the packages, services, users, mounts, sysctl settings, timers or cron jobs a host has, and with -match prints a step with import = true for each one that matches, as generate step does for one. Adopting a long-lived server then takes one command per kind, not one per object.
 
   conn3x generate steps -host 203.0.113.10 -user root packages
   conn3x generate steps -host 203.0.113.10 -user root -match 'nginx*,postgresql-16' packages >> adopt.circuit.hcl
   conn3x generate steps -host 203.0.113.10 -user root -match '*' mounts
 
-manual_packages lists only the packages someone installed, leaving out the hundreds a fresh image ships with or that came in as dependencies: on the Red Hat family, dnf's user-installed list; on Debian and Ubuntu, apt's manual marks without the essential, required and important base, and without any package another installed one needs, which is adopted with the one that needs it. users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. sysctl lists the kernel parameters set in /etc/sysctl.conf and /etc/sysctl.d, with their values; a sysctl step keeps its setting in a file of its own, /etc/sysctl.d/90-conn3x-NAME.conf, so the first apply after adopting one writes that file. The file it came from stays, and since the kernel reads these files in name order, a later one's value wins at boot: take the setting out of it once the step is in. timers lists the systemd timers written into /etc/systemd/system, not a package's own, with their schedule and command; a timer step holds what it reads from both units, and since the step writes its units its own way, the first apply rewrites them. A timer with something a timer step doesn't set, such as RandomizedDelaySec or a second OnCalendar, is listed with the reason and not adopted. On a Windows host, windows_features lists the installed features, windows_services the services, and windows_users and windows_groups the local accounts; their steps hold the name alone, since a Windows module leaves the rest as it is until you set it. -match takes globs, separated by commas.
+manual_packages lists only the packages someone installed, leaving out the hundreds a fresh image ships with or that came in as dependencies: on the Red Hat family, dnf's user-installed list; on Debian and Ubuntu, apt's manual marks without the essential, required and important base, and without any package another installed one needs, which is adopted with the one that needs it. users lists accounts with a UID from 1000, the ones people made. mounts lists the mount points in /etc/fstab. sysctl lists the kernel parameters set in /etc/sysctl.conf and /etc/sysctl.d, with their values; a sysctl step keeps its setting in a file of its own, /etc/sysctl.d/90-conn3x-NAME.conf, so the first apply after adopting one writes that file. The file it came from stays, and since the kernel reads these files in name order, a later one's value wins at boot: take the setting out of it once the step is in. timers lists the systemd timers written into /etc/systemd/system, not a package's own, with their schedule and command; a timer step holds what it reads from both units, and since the step writes its units its own way, the first apply rewrites them. A timer with something a timer step doesn't set, such as RandomizedDelaySec or a second OnCalendar, is listed with the reason and not adopted. cron lists the files in /etc/cron.d with their schedule and command; a cron step's file holds one job, so a file with several, or with a variable such as MAILTO, is listed with the reason and not adopted, and the first apply rewrites an adopted file in the step's own form. Users' crontabs aren't listed. On a Windows host, windows_features lists the installed features, windows_services the services, and windows_users and windows_groups the local accounts; their steps hold the name alone, since a Windows module leaves the rest as it is until you set it. -match takes globs, separated by commas.
 
 Each step is read the way generate step reads one, so pasting the steps into a circuit and planning adopts them with nothing to change. An object that can't be read is reported on stderr and the rest still print. Exits 0 when everything matched printed, 1 when anything failed.`,
 	}
 	steps.CommandLine.PositionalArg(&kind, "KIND", true)
-	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|manual_packages|services|users|mounts|sysctl|timers|windows_features|windows_services|windows_users|windows_groups"
+	steps.UsageOverride.Usage = "conn3x [global options] generate steps -host <HOST> [options] packages|manual_packages|services|users|mounts|sysctl|timers|cron|windows_features|windows_services|windows_users|windows_groups"
 	steps.CommandLine.StringVar(&so.host, "host", "", "Host name or address to read from.")
 	steps.CommandLine.StringVar(&so.user, "user", "", "User to log in as.")
 	steps.CommandLine.IntVar(&so.port, "port", 0, "SSH port. Defaults to 22.")
@@ -130,7 +130,7 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 	}
 	k, ok := provider.ListKinds[kind]
 	if !ok {
-		return fail("%q isn't a kind generate steps lists: packages, manual_packages, services, users, mounts, sysctl, timers, windows_features, windows_services, windows_users or windows_groups", kind)
+		return fail("%q isn't a kind generate steps lists: packages, manual_packages, services, users, mounts, sysctl, timers, cron, windows_features, windows_services, windows_users or windows_groups", kind)
 	}
 	names, values, err := provider.ListHost(ctx, kind, o.sshValue())
 	if err != nil {
@@ -144,7 +144,11 @@ func runGenerateSteps(ctx context.Context, o generateOptions, kind, match string
 				if why != "" {
 					n += "  (can't adopt: " + why + ")"
 				} else {
-					n += " = " + fmt.Sprint(attrs["on_calendar"]) + ": " + fmt.Sprint(attrs["command"])
+					when := attrs["on_calendar"]
+					if when == nil {
+						when = attrs["schedule"]
+					}
+					n += " = " + fmt.Sprint(when) + ": " + fmt.Sprint(attrs["command"])
 				}
 			case k.Value != "":
 				n += " = " + values[n]

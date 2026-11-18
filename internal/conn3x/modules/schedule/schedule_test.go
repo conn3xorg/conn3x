@@ -115,3 +115,33 @@ func TestParseTimerRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+// A cron step's own file reads back as the same Cron, and a hand-written
+// one-job file reads as the step that would write it. What a step can't
+// say is reported, not adopted as something else.
+func TestParseCron(t *testing.T) {
+	c := Cron{Name: "backup", Schedule: "0 2 * * *", User: "deploy", Command: "date +%F >> /var/log/b"}
+	content, err := c.Content()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, why := ParseCron("backup", content); why != "" || got != c {
+		t.Errorf("round trip: %+v, %q", got, why)
+	}
+	if got, why := ParseCron("logs", "# rotate\n@daily root  /usr/local/bin/rotate --all\n"); why != "" || got != (Cron{Name: "logs", Schedule: "@daily", Command: "/usr/local/bin/rotate --all"}) {
+		t.Errorf("hand-written: %+v, %q", got, why)
+	}
+	for name, tc := range map[string]struct{ file, content, want string }{
+		"two jobs":      {"two", "* * * * * root a\n* * * * * root b\n", "more than one job"},
+		"MAILTO":        {"mail", "MAILTO=ops@example.com\n* * * * * root a\n", "sets MAILTO"},
+		"another SHELL": {"bash", "SHELL=/bin/bash\n* * * * * root a\n", "sets SHELL"},
+		"stdin %":       {"pct", "* * * * * root date +%F\n", "% in its command"},
+		"a dot in name": {"php.dpkg-old", "* * * * * root a\n", "never runs"},
+		"no job":        {"empty", "# nothing\n", "no job"},
+		"short line":    {"short", "* * * * * root\n", "isn't a schedule"},
+	} {
+		if _, why := ParseCron(tc.file, tc.content); !strings.Contains(why, tc.want) {
+			t.Errorf("%s: %q, want %q", name, why, tc.want)
+		}
+	}
+}

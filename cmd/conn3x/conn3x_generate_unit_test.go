@@ -175,3 +175,25 @@ func TestGenerateStepsManualPackages(t *testing.T) {
 		}
 	}
 }
+
+// cron lists each /etc/cron.d file with its schedule and command, or why a
+// cron step can't adopt it, and -match prints a step from what it read.
+func TestGenerateStepsCron(t *testing.T) {
+	files := "\x1ebackup\x1f# nightly\n0 2 * * * deploy /usr/local/bin/backup.sh\n" +
+		"\x1ee2scrub_all\x1fSHELL=/bin/bash\n10 3 * * 0 root test -e /run/systemd/system || /sbin/e2scrub_all\n"
+	o := brGenHost(t, brReplies("/etc/cron.d/*", files), nil)
+	var out, errOut bytes.Buffer
+	if code := runGenerateSteps(context.Background(), o, "cron", "", &out, &errOut); code != 0 ||
+		out.String() != "backup = 0 2 * * *: /usr/local/bin/backup.sh\ne2scrub_all  (can't adopt: sets SHELL, which a cron step doesn't)\n" {
+		t.Fatalf("list: exit %d, %q, %q", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	if code := runGenerateSteps(context.Background(), o, "cron", "backup", &out, &errOut); code != 0 {
+		t.Fatalf("match: exit %d, %q", code, errOut.String())
+	}
+	for _, want := range []string{`cron {`, `name     = "backup"`, `schedule = "0 2 * * *"`, `user     = "deploy"`, `command  = "/usr/local/bin/backup.sh"`, `import = true`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("step is missing %s:\n%s", want, out.String())
+		}
+	}
+}
