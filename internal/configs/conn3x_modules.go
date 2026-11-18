@@ -24,3 +24,15 @@ func TemplateArguments() map[string]bool {
 	}
 	return out
 }
+
+// ScriptArguments are the arguments a script step takes, as written in a
+// circuit, each with whether it's required. The step lowers to
+// conn3x_script, whose own attributes (program, JSON strings) aren't what a
+// circuit writes, so docs, editors and assistants list these instead.
+func ScriptArguments() map[string]bool {
+	out := map[string]bool{}
+	for _, a := range scriptSchema.Attributes {
+		out[a.Name] = a.Required
+	}
+	return out
+}

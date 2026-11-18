@@ -30,8 +30,12 @@ func TestWritesAPagePerModule(t *testing.T) {
 		}
 	}
 	pages, _ := filepath.Glob(filepath.Join(dir, "*.md"))
-	if want := len(configs.Conn3xStepModules()); len(pages) != want {
+	// script's page is written by hand, as template's is.
+	if want := len(configs.Conn3xStepModules()) - 1; len(pages) != want {
 		t.Errorf("%d pages for %d modules", len(pages), want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "script.md")); err == nil {
+		t.Error("script.md was generated; it's written by hand")
 	}
 }
 

@@ -39,6 +39,7 @@ var circuitModules = map[string]string{
 	"postgresql_role":      "conn3x_postgresql_role",
 	"limit":                "conn3x_limit",
 	"command":              "conn3x_command",
+	"script":               "conn3x_script",
 	"cron":                 "conn3x_cron",
 	"crontab":              "conn3x_crontab",
 	"timer":                "conn3x_timer",
@@ -513,6 +514,14 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			return nil, nil, diags
 		}
 		resourceType, ok, moduleAttrs = "conn3x_file", true, attrs
+	}
+	if module.Type == "script" {
+		attrs, scriptDiags := lowerScript(module)
+		diags = append(diags, scriptDiags...)
+		if scriptDiags.HasErrors() {
+			return nil, nil, diags
+		}
+		moduleAttrs = attrs
 	}
 	if !ok {
 		rng := module.TypeRange
@@ -1010,6 +1019,52 @@ func lowerTemplate(module *hclsyntax.Block) (hclsyntax.Attributes, hcl.Diagnosti
 		},
 		SrcRange:  src.SrcRange,
 		NameRange: src.NameRange,
+	}
+	return out, nil
+}
+
+var scriptSchema = &hcl.BodySchema{
+	Attributes: []hcl.AttributeSchema{
+		{Name: "source", Required: true},
+		{Name: "interpreter"},
+		{Name: "args"},
+		{Name: "args_wo"},
+		{Name: "on_remove"},
+	},
+}
+
+// lowerScript turns a script module into conn3x_script arguments: the
+// program is read on the controller, and the arguments travel as JSON:
+//
+//	script { source = S, args = A, args_wo = W }
+//	  => program = file(S), args = jsonencode(A), args_wo = jsonencode(W)
+func lowerScript(module *hclsyntax.Block) (hclsyntax.Attributes, hcl.Diagnostics) {
+	_, diags := module.Body.Content(scriptSchema)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	in := module.Body.Attributes
+	out := hclsyntax.Attributes{}
+	for _, name := range []string{"interpreter", "on_remove"} {
+		if a, ok := in[name]; ok {
+			out[name] = a
+		}
+	}
+	call := func(to, fn string, from *hclsyntax.Attribute) {
+		out[to] = &hclsyntax.Attribute{
+			Name: to,
+			Expr: &hclsyntax.FunctionCallExpr{
+				Name: fn, Args: []hclsyntax.Expression{from.Expr},
+				NameRange: from.NameRange, OpenParenRange: from.SrcRange, CloseParenRange: from.SrcRange,
+			},
+			SrcRange: from.SrcRange, NameRange: from.NameRange,
+		}
+	}
+	call("program", "file", in["source"])
+	for _, name := range []string{"args", "args_wo"} {
+		if a, ok := in[name]; ok {
+			call(name, "jsonencode", a)
+		}
 	}
 	return out, nil
 }

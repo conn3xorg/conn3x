@@ -81,6 +81,9 @@ func write(dir string) error {
 		return err
 	}
 	for name, rt := range configs.Conn3xStepModules() {
+		if name == "script" {
+			continue // written by hand, like template: its resource's attributes aren't what a circuit writes
+		}
 		schema, ok := schemas[rt]
 		if !ok {
 			return fmt.Errorf("%s: no schema for %s", name, rt)

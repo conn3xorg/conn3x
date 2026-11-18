@@ -166,6 +166,14 @@ func moduleDocs(_ context.Context, args json.RawMessage) (any, error) {
 		sort.Slice(argsOut, func(i, j int) bool { return argsOut[i]["name"].(string) < argsOut[j]["name"].(string) })
 		return map[string]any{"module": "template", "description": templateDescription + " source is the template's path in the circuit's directory, destination the path on the host, and vars the values it reads. mode, owner, group, on_remove and validate are as for file; write_only keeps the rendered content out of state.", "arguments": argsOut}, nil
 	}
+	if in.Module == "script" {
+		var argsOut []map[string]any
+		for name, required := range configs.ScriptArguments() {
+			argsOut = append(argsOut, map[string]any{"name": name, "required": required})
+		}
+		sort.Slice(argsOut, func(i, j int) bool { return argsOut[i]["name"].(string) < argsOut[j]["name"].(string) })
+		return map[string]any{"module": "script", "description": "Experimental. A module you wrote yourself: a program in the circuit's directory that speaks JSON on stdin and stdout, with modes read, plan, apply and remove. source is the program's path, interpreter what runs it, args an object it gets as JSON, and args_wo arguments kept out of plan and state.", "arguments": argsOut, "page": "https://docs.conn3x.org/modules/script"}, nil
+	}
 	typ, ok := configs.CircuitModules()[in.Module]
 	if !ok {
 		return nil, fmt.Errorf("there's no module %q; search_modules lists them", in.Module)

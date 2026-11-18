@@ -1370,3 +1370,66 @@ circuit "core" {
 		t.Error("a step got backup_dir")
 	}
 }
+
+func TestScriptStepLowersToScript(t *testing.T) {
+	src := `
+circuit "app" {
+  hosts = { app1 = "203.0.113.10" }
+  ssh {
+    user = "root"
+  }
+  step "env" {
+    script {
+      source      = "${path.module}/modules/kv.py"
+      interpreter = ["python3"]
+      args        = { key = "MODE", value = each.key }
+      args_wo     = { token = "t" }
+      on_remove   = "delete"
+    }
+  }
+}
+`
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	r, ok := mod.ManagedResources["conn3x_script.app__env"]
+	if !ok {
+		t.Fatalf("no conn3x_script.app__env; have %v", keys(mod.ManagedResources))
+	}
+	content, diags := r.Config.Content(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "program", Required: true}, {Name: "interpreter"}, {Name: "args"}, {Name: "args_wo"}, {Name: "on_remove"}},
+		Blocks:     []hcl.BlockHeaderSchema{{Type: "ssh"}},
+	})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	for name, fn := range map[string]string{"program": "file", "args": "jsonencode", "args_wo": "jsonencode"} {
+		call, ok := content.Attributes[name].Expr.(*hclsyntax.FunctionCallExpr)
+		if !ok || call.Name != fn || len(call.Args) != 1 {
+			t.Errorf("%s is %T, want %s(...)", name, content.Attributes[name].Expr, fn)
+		}
+	}
+	for _, name := range []string{"interpreter", "on_remove"} {
+		if _, ok := content.Attributes[name]; !ok {
+			t.Errorf("%s not carried over", name)
+		}
+	}
+
+	_, diags = loadCircuitModule(t, map[string]string{"main.circuit.hcl": `
+circuit "app" {
+  hosts = { app1 = "203.0.113.10" }
+  ssh {
+    user = "root"
+  }
+  step "env" {
+    script {
+      args = {}
+    }
+  }
+}
+`})
+	if !diags.HasErrors() || !strings.Contains(diags.Error(), "source") {
+		t.Errorf("a script without source: %v", diags)
+	}
+}
