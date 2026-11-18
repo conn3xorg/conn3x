@@ -76,15 +76,18 @@ func (s Script) ensure(ctx context.Context, r modules.Runner) error {
 	p := ssh.Quote(s.path())
 	cmd := fmt.Sprintf(`sum() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1; }
 p=%[1]s; if [ -f "$p" ] && [ "$(sum "$p")" = %[2]s ]; then exit 0; fi
-install -d -m 0700 %[3]s && t=$(mktemp %[3]s/.new.XXXXXX) && cat > "$t" && chmod 0700 "$t" &&
-[ "$(sum "$t")" = %[2]s ] && mv -f "$t" "$p" || { rm -f "$t"; echo "the program didn't arrive whole" >&2; exit 1; }`,
+install -d -m 0700 %[3]s || exit 1
+t=$(mktemp %[3]s/.new.XXXXXX) || exit 1
+trap 'rm -f "$t"' EXIT
+cat > "$t" && chmod 0700 "$t" && [ "$(sum "$t")" = %[2]s ] && mv -f "$t" "$p" || { echo "the program didn't arrive whole" >&2; exit 1; }
+trap - EXIT`,
 		p, ssh.Quote(s.Sum()), ssh.Quote(Dir))
 	res, err := r.Run(ctx, cmd, s.Program)
 	if err != nil {
 		return err
 	}
 	if res.ExitCode != 0 {
-		return fmt.Errorf("copying the program to %s: %s", Dir, strings.TrimSpace(string(res.Stderr)))
+		return fmt.Errorf("copying the program to %s: %s. A script step needs become, or a login that can write %s", Dir, strings.TrimSpace(string(res.Stderr)), Dir)
 	}
 	return nil
 }
@@ -132,7 +135,49 @@ func (s Script) Call(ctx context.Context, r modules.Runner, mode string, state j
 	if mode == "plan" && out.InSync == nil {
 		return Result{}, errors.New(`the program's plan has no "in_sync"`)
 	}
+	// What the program returns is saved in state and shown in the plan, so
+	// a write-only value in it would undo args_wo. Refuse it unsaved.
+	if secrets := stringsIn(s.ArgsWO); len(secrets) > 0 {
+		for _, field := range [...]json.RawMessage{out.State, out.Changes} {
+			for v := range stringsIn(field) {
+				if secrets[v] {
+					return Result{}, fmt.Errorf("the program's %s returned an args_wo value in its state or changes, which Conn3x would store; it wasn't saved", mode)
+				}
+			}
+		}
+	}
 	return out, nil
+}
+
+// stringsIn is every non-empty string value in a JSON document, as a set.
+func stringsIn(doc json.RawMessage) map[string]bool {
+	out := map[string]bool{}
+	if len(doc) == 0 {
+		return out
+	}
+	var v any
+	if json.Unmarshal(doc, &v) != nil {
+		return out
+	}
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case string:
+			if v != "" {
+				out[v] = true
+			}
+		case []any:
+			for _, e := range v {
+				walk(e)
+			}
+		case map[string]any:
+			for _, e := range v {
+				walk(e)
+			}
+		}
+	}
+	walk(v)
+	return out
 }
 
 func orEmpty(m json.RawMessage) json.RawMessage {

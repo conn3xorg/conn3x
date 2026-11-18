@@ -114,3 +114,23 @@ func TestValidate(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// A program that hands an args_wo value back, in state or in changes, is
+// refused, so Conn3x never stores it.
+func TestCallRefusesArgsWOInOutput(t *testing.T) {
+	ctx, _ := setup(t)
+	r := moduletest.Local{}
+	for name, out := range map[string]string{
+		"state":   `{"state":{"conf":{"password":"hunter2"}},"changed":true}`,
+		"changes": `{"in_sync":false,"changes":[{"path":"password","after":"hunter2"}]}`,
+	} {
+		s := Script{Program: []byte("cat >/dev/null\necho '" + out + "'\n"), Interpreter: []string{"sh"}, ArgsWO: json.RawMessage(`{"password":"hunter2"}`)}
+		if _, err := s.Call(ctx, r, "apply", nil); err == nil || !strings.Contains(err.Error(), "args_wo value") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	ok := Script{Program: []byte("cat >/dev/null\necho '{\"state\":{\"user\":\"app\"}}'\n"), Interpreter: []string{"sh"}, ArgsWO: json.RawMessage(`{"password":"hunter2"}`)}
+	if _, err := ok.Call(ctx, r, "apply", nil); err != nil {
+		t.Errorf("state without the secret: %v", err)
+	}
+}
