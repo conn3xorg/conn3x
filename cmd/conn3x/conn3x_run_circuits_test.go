@@ -204,6 +204,12 @@ func TestRunAnsibleBecome(t *testing.T) {
 	if b, err := becomeOf(map[string]string{"ansible_become": "yes", "ansible_become_user": "root"}); err != nil || !b {
 		t.Errorf("ansible_become_user=root: %v, %v", b, err)
 	}
+	if _, err := becomeOf(map[string]string{"ansible_become": "yes", "ansible_become_method": "su"}); err == nil {
+		t.Error("ansible_become_method=su was accepted")
+	}
+	if b, err := becomeOf(map[string]string{"ansible_become": "yes", "ansible_become_method": "sudo"}); err != nil || !b {
+		t.Errorf("ansible_become_method=sudo: %v, %v", b, err)
+	}
 	if b, err := becomeOf(map[string]string{"ansible_become_user": "postgres"}); err != nil || b {
 		t.Errorf("a become user without ansible_become: %v, %v", b, err)
 	}

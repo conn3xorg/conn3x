@@ -423,8 +423,9 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 
 // becomeOf reports whether a host's commands run as root: -circuits'
 // conn3x_ssh_become, or the inventory's ansible_become, which takes
-// Ansible's true values. Become goes to root only, so another
-// ansible_become_user is an error rather than a run as the wrong user.
+// Ansible's true values. Become goes to root with sudo only, so another
+// ansible_become_user or ansible_become_method is an error rather than a
+// run as the wrong user, or sudo's own refusal on a host without it.
 func becomeOf(vars map[string]string) (bool, error) {
 	if vars["conn3x_ssh_become"] == "true" {
 		return true, nil
@@ -436,6 +437,9 @@ func becomeOf(vars map[string]string) (bool, error) {
 	}
 	if u := vars["ansible_become_user"]; u != "" && u != "root" {
 		return false, fmt.Errorf("ansible_become_user is %s, but conn3x run only becomes root", u)
+	}
+	if m := vars["ansible_become_method"]; m != "" && m != "sudo" {
+		return false, fmt.Errorf("ansible_become_method is %s, but conn3x run becomes root with sudo", m)
 	}
 	return true, nil
 }
