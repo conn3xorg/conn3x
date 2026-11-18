@@ -173,8 +173,19 @@ func newClient(addr string, conn *gossh.Client, jumps []*gossh.Client) *Client {
 // it stops once the cap is down to one session.
 func (c *Client) session(ctx context.Context) (*gossh.Session, error) {
 	for {
-		if err := c.acquire(ctx); err != nil {
+		// An idle shell is the one holder of a slot that can give it back
+		// on demand; without that, a command with stdin could wait for good
+		// behind shells nobody is using.
+		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		select {
+		case c.slots <- struct{}{}:
+		default:
+			c.closeIdleShell()
+			if err := c.acquire(ctx); err != nil {
+				return nil, err
+			}
 		}
 		s, err := c.conn.NewSession()
 		if err == nil {

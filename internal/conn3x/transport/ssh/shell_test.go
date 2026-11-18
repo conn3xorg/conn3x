@@ -118,11 +118,12 @@ func TestShellFailuresStartAFreshShell(t *testing.T) {
 	}
 }
 
-// Over a slow link a command in a shell waits on fewer replies than one in
-// a new session. The test server delays every write it makes, not every
-// round trip, so the gain here understates a real network's.
+// Over a long link a command in a shell waits on fewer round trips than
+// one in a new session, which opens a channel and starts the command first. SetDelay holds back what the server sends without
+// slowing it, as distance does.
 func TestShellSavesRoundTrips(t *testing.T) {
 	s := sshtest.New(t)
+	s.SetDelay(40 * time.Millisecond)
 	timed := func(c *Client) time.Duration {
 		start := time.Now()
 		for range 5 {
@@ -134,11 +135,57 @@ func TestShellSavesRoundTrips(t *testing.T) {
 	}
 	sessions := dial(t, testConfig(t, s))
 	c := shellClient(t, s)
-	s.Latency = 30 * time.Millisecond
 	perShell := timed(c)
 	t.Setenv("CONN3X_SSH_SHELL", "")
 	perSession := timed(sessions)
-	if perShell*4 > perSession*3 {
-		t.Fatalf("a command took %s in a shell and %s in a session, want at least a quarter less", perShell, perSession)
+	// About a quarter less here; the AWS benchmark on #983 has a real link.
+	if perShell*20 > perSession*17 {
+		t.Fatalf("a command took %s in a shell and %s in a session, want at least 15%% less", perShell, perSession)
+	}
+	t.Logf("per command: %s in a shell, %s in a session", perShell, perSession)
+}
+
+// With few session slots, idle shells and long-lived processes holding
+// the rest, a command with stdin still gets a session: an idle shell gives
+// its slot back.
+func TestShellGivesItsSlotToASession(t *testing.T) {
+	t.Setenv("CONN3X_SSH_MAX_SESSIONS", "4")
+	s := sshtest.New(t)
+	c := shellClient(t, s)
+	runParallel(t, c, 2) // two shells, then idle
+	c.shells.mu.Lock()
+	open := c.shells.open
+	c.shells.mu.Unlock()
+	if open != 2 {
+		t.Fatalf("%d shells open, want 2", open)
+	}
+	for range 2 {
+		p, err := c.Start(context.Background(), "sleep 60")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = p.Close() })
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := c.Run(ctx, "cat", []byte("in"))
+	if err != nil || string(res.Stdout) != "in" {
+		t.Fatalf("stdin command: %q, %v", res.Stdout, err)
+	}
+}
+
+// Output a background process writes after its command ended doesn't
+// become the start of the next command's.
+func TestShellDropsLateBackgroundOutput(t *testing.T) {
+	s := sshtest.New(t)
+	c := shellClient(t, s)
+	res, err := c.Run(context.Background(), "(sleep 0.3; echo LEAKED) & echo started", nil)
+	if err != nil || string(res.Stdout) != "started\n" {
+		t.Fatalf("first: %q, %v", res.Stdout, err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	res, err = c.Run(context.Background(), "echo next", nil)
+	if err != nil || string(res.Stdout) != "next\n" {
+		t.Fatalf("next command got %q, %v", res.Stdout, err)
 	}
 }

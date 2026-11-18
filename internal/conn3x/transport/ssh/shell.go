@@ -76,6 +76,22 @@ func (c *Client) maxShells() int {
 	return c.limit / 2
 }
 
+// closeIdleShell closes one idle shell, if there is one, so its slot comes
+// back for a session.
+func (c *Client) closeIdleShell() {
+	p := &c.shells
+	p.mu.Lock()
+	n := len(p.idle)
+	if n == 0 {
+		p.mu.Unlock()
+		return
+	}
+	sh := p.idle[n-1]
+	p.idle = p.idle[:n-1]
+	p.mu.Unlock()
+	c.dropShell(sh)
+}
+
 // trimShells closes idle shells beyond maxShells, which happens when the
 // server turns out to allow fewer sessions than the cap: an idle shell holds
 // its slot, and a command waiting for one would wait for good.
@@ -104,6 +120,10 @@ func (c *Client) runInShell(ctx context.Context, cmd string) (Result, bool, erro
 		return Result{}, false, err
 	}
 	res, err := sh.run(ctx, cmd)
+	if errors.Is(err, errStillWriting) {
+		c.dropShell(sh)
+		return res, true, nil
+	}
 	if err != nil {
 		c.dropShell(sh)
 		if errors.Is(err, errOverOutput) {
@@ -222,6 +242,9 @@ func (c *Client) dropShell(sh *shell) {
 var (
 	errOverOutput = errors.New("output over the limit")
 	errNoSlot     = errors.New("no free session slot")
+	// errStillWriting is a command that finished with something it left
+	// running still writing to the shell's output.
+	errStillWriting = errors.New("a background process is still writing")
 )
 
 // run sends cmd to the shell and reads its output to the markers.
@@ -229,22 +252,31 @@ func (sh *shell) run(ctx context.Context, cmd string) (Result, error) {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	nonce := hex.EncodeToString(b)
-	line := fmt.Sprintf("(LC_ALL=C exec /bin/sh -c %s) </dev/null; printf '\\n\\001%s %%d\\n' $?; printf '\\n\\001%s\\n' >&2\n",
-		Quote(Prelude+cmd), nonce, nonce)
+	line := fmt.Sprintf("printf '\\001%s-start\\n'; printf '\\001%s-start\\n' >&2; (LC_ALL=C exec /bin/sh -c %s) </dev/null; printf '\\n\\001%s %%d\\n' $?; printf '\\n\\001%s\\n' >&2\n",
+		nonce, nonce, Quote(Prelude+cmd), nonce, nonce)
 
 	type read struct {
 		out, rest []byte
 		err       error
 	}
 	outc, errc := make(chan read, 1), make(chan read, 1)
-	go func() {
-		out, rest, err := readTo(sh.stdout, sh.pendingOut, []byte("\n\x01"+nonce+" "), true)
-		outc <- read{out, rest, err}
-	}()
-	go func() {
-		out, rest, err := readTo(sh.stderr, sh.pendingErr, []byte("\n\x01"+nonce+"\n"), false)
-		errc <- read{out, rest, err}
-	}()
+	start := []byte("\x01" + nonce + "-start\n")
+	// Anything before a stream's start marker was written by something an
+	// earlier command left running; it's dropped, not taken as this
+	// command's output.
+	stream := func(r io.Reader, pending, end []byte, line bool) read {
+		early, rest, err := readTo(r, pending, start, false)
+		if err != nil {
+			return read{err: err}
+		}
+		if len(early) > 0 {
+			log.Printf("[DEBUG] conn3x: dropped %d bytes a background process wrote after its command ended", len(early))
+		}
+		out, rest, err := readTo(r, rest, end, line)
+		return read{out, rest, err}
+	}
+	go func() { outc <- stream(sh.stdout, sh.pendingOut, []byte("\n\x01"+nonce+" "), true) }()
+	go func() { errc <- stream(sh.stderr, sh.pendingErr, []byte("\n\x01"+nonce+"\n"), false) }()
 	if _, err := io.WriteString(sh.stdin, line); err != nil {
 		return Result{}, err
 	}
@@ -271,7 +303,13 @@ func (sh *shell) run(ctx context.Context, cmd string) (Result, error) {
 		return Result{}, fmt.Errorf("unreadable exit status %q", status)
 	}
 	sh.pendingOut, sh.pendingErr = rest, e.rest
-	return Result{Stdout: o.out, Stderr: e.out, ExitCode: code}, nil
+	res := Result{Stdout: o.out, Stderr: e.out, ExitCode: code}
+	if len(rest) > 0 || len(e.rest) > 0 {
+		// Something the command started is still writing. The output is
+		// the command's; the shell isn't safe for the next one.
+		return res, errStillWriting
+	}
+	return res, nil
 }
 
 // readTo reads r, after what's in pending, up to marker, and returns what
