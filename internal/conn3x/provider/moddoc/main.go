@@ -47,10 +47,15 @@ const referenceMarker = "<!-- reference -->"
 // splice puts a hand-written page around a generated one: the part before
 // the marker follows the description, replacing the generated example, and
 // the part after it closes the page.
+// pageLink is a link from one hand-written page to another, as pageName.md,
+// which works where the pages are read on GitHub but not on the site.
+var pageLink = regexp.MustCompile(`\]\(([a-z0-9_]+)\.md(#[^)]*)?\)`)
+
 func splice(gen, hand string) string {
 	if hand == "" {
 		return gen
 	}
+	hand = pageLink.ReplaceAllString(hand, "](/modules/$1$2)")
 	intro, notes, _ := strings.Cut(hand, referenceMarker)
 	head, rest, ok := strings.Cut(gen, "## Arguments")
 	if !ok {

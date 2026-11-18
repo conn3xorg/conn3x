@@ -123,3 +123,18 @@ func TestMarksBothSidesOfAPair(t *testing.T) {
 		t.Error("an optional single field no longer says No")
 	}
 }
+
+// A hand-written page links its neighbours as name.md, for GitHub; on the
+// site that's a 404, so splice points them at /modules/name.
+func TestSpliceRewritesPageLinks(t *testing.T) {
+	gen := "# x\n\n## Arguments\n\nargs\n"
+	out := splice(gen, "See [`windows_reboot`](windows_reboot.md) and [a](wait_for.md#url), not [b](https://example.com/c.md).\n")
+	for _, want := range []string{"(/modules/windows_reboot)", "(/modules/wait_for#url)", "(https://example.com/c.md)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %s in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "(windows_reboot.md)") {
+		t.Errorf("a .md link is left:\n%s", out)
+	}
+}
