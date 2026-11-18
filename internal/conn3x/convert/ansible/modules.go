@@ -747,6 +747,9 @@ var shellSyntax = regexp.MustCompile("[|&;<>$`\\\\(){}\\[\\]*?~#\\n\\r]")
 // file step does: its mode, owner and group, and validate, the command that
 // checks the edited file before it's swapped in.
 func (in *input) editFileArgs(attrs []attr) ([]attr, string) {
+	if in.bool("backup", false) {
+		attrs = append(attrs, attr{key: "backup", val: cty.True})
+	}
 	if m, ok := in.mode("mode"); ok {
 		attrs = append(attrs, m)
 	}
@@ -831,7 +834,7 @@ func lineModule(in *input) ([]step, string) {
 	if in.bool("backrefs", false) {
 		return nil, "uses backrefs, which the converter can't translate yet"
 	}
-	in.ignore("backrefs", "backup")
+	in.ignore("backrefs")
 	attrs, why := in.editFileArgs(attrs)
 	if why != "" {
 		return nil, why
@@ -850,7 +853,6 @@ func blockModule(in *input) ([]step, string) {
 	if in.has("marker_begin") || in.has("marker_end") {
 		return nil, "sets marker_begin or marker_end, which the converter can't translate yet"
 	}
-	in.ignore("backup")
 	attrs, why := in.editFileArgs(attrs)
 	if why != "" {
 		return nil, why

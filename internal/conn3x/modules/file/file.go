@@ -27,7 +27,14 @@ type Desired struct {
 	// ValidateCommand, when set, checks the new content before it replaces
 	// the file. %s stands for the temporary file's path.
 	ValidateCommand string
+	// Backup copies the file as it was to Path plus BackupSuffix and the
+	// time in UTC, with its mode and owner, just before replacing it.
+	Backup bool
 }
+
+// BackupSuffix starts a backup copy's name, before the time it was made:
+// /etc/ssh/sshd_config.conn3x-20261118T130501Z.
+const BackupSuffix = ".conn3x-"
 
 // Actual is the file as it is.
 type Actual struct {
@@ -205,17 +212,32 @@ tmp=$(mktemp "$(dirname -- "$p")/.conn3x.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
 cat > "$tmp"
 chmod %s "$tmp"
-%s%s`+SyncFile+`
+%s%s%s`+SyncFile+`
 `+Replace+`
 trap - EXIT
 `+SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
-		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group), validateScript(d.ValidateCommand))
+		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group), validateScript(d.ValidateCommand), backupScript(d.Backup))
 	res, err := run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group, Path: d.Path}, append(via, modules.Parent(d.Path))...), []byte(d.Content))
 	if err != nil && res.ExitCode == validateFailed {
 		return &ValidateError{Output: strings.TrimSpace(string(res.Stderr))}
 	}
 	return err
+}
+
+// backupScript copies "$p", when it's there, to its backup name once the
+// new content has passed validate, so a refused edit leaves no copy. A
+// copy that fails stops the write: the old file stays, uncopied but whole.
+func backupScript(backup bool) string {
+	if !backup {
+		return ""
+	}
+	return `if [ -f "$p" ]; then
+  b="$p` + BackupSuffix + `$(date -u +%Y%m%dT%H%M%SZ)"
+  [ ! -e "$b" ] || { echo "$b is already there" >&2; exit 1; }
+  cp -p -- "$p" "$b"
+fi
+`
 }
 
 // validateScript runs the validate command on "$tmp" once it has its final

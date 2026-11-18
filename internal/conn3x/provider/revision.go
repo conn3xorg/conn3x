@@ -43,8 +43,9 @@ func planRevision(prior, planned cty.Value) cty.Value {
 }
 
 // offHost are settings that change nothing on the host when they change:
-// what to do on removal, and how long to wait for a reboot or a wait_for.
-var offHost = []string{"on_remove", "timeout"}
+// what to do on removal, how long to wait for a reboot or a wait_for, and
+// whether a later edit keeps a copy.
+var offHost = []string{"on_remove", "timeout", "backup"}
 
 // sshMachine are the ssh settings that choose which machine is reached.
 // The rest only change how Conn3x logs in to it.

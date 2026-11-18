@@ -391,7 +391,6 @@ func TestRefusesIniAndReplaceItCantProve(t *testing.T) {
 		ini + "exclusive: no}":                                                       "exclusive",
 		ini + "allow_no_value: yes}":                                                 "allow_no_value",
 		ini + "ignore_spaces: yes}":                                                  "ignore_spaces",
-		ini + "backup: yes}":                                                         "backup",
 		ini + "mode: '0600'}":                                                        "sets mode",
 		ini + "owner: root}":                                                         "sets owner",
 		ini + "section_has_values: []}":                                              "section_has_values",
@@ -404,7 +403,6 @@ func TestRefusesIniAndReplaceItCantProve(t *testing.T) {
 		"replace: {path: /a, regexp: a, replace: yes}":                               "may read",
 		rep + "a, after: b}":                                                         "sets after",
 		rep + "a, before: b}":                                                        "sets before",
-		rep + "a, backup: yes}":                                                      "backup",
 		rep + "a, encoding: latin-1}":                                                "encoding",
 		rep + "a, validate: 'x %s'}":                                                 "sets validate",
 		rep + "a, mode: '0600'}":                                                     "sets mode",
@@ -1127,6 +1125,21 @@ func TestFileAbsentWithMoreIsLeft(t *testing.T) {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
 			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}
+
+// backup: yes on an edit task becomes backup = true on its step.
+func TestEditBackupConverts(t *testing.T) {
+	for _, task := range []string{
+		"lineinfile: {path: /etc/a, line: 'x=1', backup: yes}",
+		"blockinfile: {path: /etc/a, block: 'x', backup: yes}",
+		"ini_file: {path: /etc/a, section: s, option: o, value: 'v', backup: yes}",
+		"replace: {path: /etc/a, regexp: a, replace: 'x', backup: yes}",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if !strings.Contains(string(res.HCL), "backup") || strings.Contains(string(res.HCL), "TODO(convert):") {
+			t.Errorf("%s:\n%s", task, res.HCL)
 		}
 	}
 }

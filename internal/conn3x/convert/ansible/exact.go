@@ -107,7 +107,10 @@ func iniFileModule(in *input) ([]step, string) {
 	if !in.bool("exclusive", true) {
 		return nil, "sets exclusive: no; an ini step keeps one line for each option"
 	}
-	for _, key := range []string{"allow_no_value", "ignore_spaces", "backup"} {
+	if in.bool("backup", false) {
+		attrs = append(attrs, attr{key: "backup", val: cty.True})
+	}
+	for _, key := range []string{"allow_no_value", "ignore_spaces"} {
 		if in.bool(key, false) {
 			return nil, "sets " + key + ", which an ini step doesn't have"
 		}
@@ -144,13 +147,14 @@ func replaceModule(in *input) ([]step, string) {
 	if e := strings.ToLower(in.str("encoding")); in.has("encoding") && e != "utf-8" && e != "utf8" {
 		return nil, fmt.Sprintf("sets encoding %q; Conn3x edits files as UTF-8", e)
 	}
-	if in.bool("backup", false) {
-		return nil, "sets backup, which a replace step doesn't have"
-	}
 	if err := (edit.Replace{Regexp: pattern, With: tmpl}).Validate(); err != nil {
 		return nil, "never settles or can't be a replace step: " + err.Error()
 	}
-	return one("replace", []attr{s("path", in.str("path", "dest", "destfile", "name")), s("regexp", pattern), s("replace", tmpl)})
+	attrs := []attr{s("path", in.str("path", "dest", "destfile", "name")), s("regexp", pattern), s("replace", tmpl)}
+	if in.bool("backup", false) {
+		attrs = append(attrs, attr{key: "backup", val: cty.True})
+	}
+	return one("replace", attrs)
 }
 
 // unprovableRegexp says why a Python regexp might not match what the same
