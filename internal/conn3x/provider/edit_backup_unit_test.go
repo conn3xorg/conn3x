@@ -4,10 +4,13 @@
 package provider
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -125,5 +128,49 @@ func TestFileBackupRefusesContentWO(t *testing.T) {
 	}
 	if diags := validateFile(brWith(cfg, map[string]cty.Value{"backup": cty.False})); diags.HasErrors() {
 		t.Errorf("content_wo without backup: %v", diags.Err())
+	}
+}
+
+// backup_keep keeps only the newest copies: after four edits with a keep
+// of 2, the two left hold the file as it was before the last two edits.
+func TestEditStepBackupKeep(t *testing.T) {
+	ssh, dir := brShellHost(t)
+	path := filepath.Join(dir, "app.conf")
+	if err := os.WriteFile(path, []byte("v=0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 4; i++ {
+		cfg := eosStep("conn3x_line", map[string]cty.Value{
+			"path": cty.StringVal(path), "regexp": cty.StringVal("^v="), "line": cty.StringVal(fmt.Sprintf("v=%d", i)),
+			"backup": cty.True, "backup_keep": cty.NumberIntVal(2),
+		}, ssh)
+		if _, err := unitCreate(t, "conn3x_line", cfg); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(1100 * time.Millisecond) // a new second, so the names sort by time
+	}
+	c, _ := filepath.Glob(path + file.BackupSuffix + "*~")
+	if len(c) != 2 {
+		t.Fatalf("copies %v, want two", c)
+	}
+	sort.Strings(c)
+	for i, want := range []string{"v=2\n", "v=3\n"} {
+		if b, _ := os.ReadFile(c[i]); string(b) != want {
+			t.Errorf("copy %d holds %q, want %q", i, b, want)
+		}
+	}
+
+	for name, attrs := range map[string]map[string]cty.Value{
+		"zero":           {"backup": cty.True, "backup_keep": cty.NumberIntVal(0)},
+		"a fraction":     {"backup": cty.True, "backup_keep": cty.NumberFloatVal(1.5)},
+		"without backup": {"backup_keep": cty.NumberIntVal(3)},
+	} {
+		a := map[string]cty.Value{"path": cty.StringVal(path), "line": cty.StringVal("x=1")}
+		for k, v := range attrs {
+			a[k] = v
+		}
+		if diags := lineKind.validate(eosStep("conn3x_line", a, ssh)); !diags.HasErrors() {
+			t.Errorf("%s: validated", name)
+		}
 	}
 }

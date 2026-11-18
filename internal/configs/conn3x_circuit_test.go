@@ -404,6 +404,7 @@ circuit "web" {
       reload        = "systemctl reload nginx"
       confirm_after = "60s"
       backup        = true
+      backup_keep   = 5
     }
   }
   step "motd" {
@@ -423,7 +424,7 @@ circuit "web" {
 		t.Fatalf("no conn3x_file.web__nginx_conf; have %v", keys(mod.ManagedResources))
 	}
 	content, diags := r.Config.Content(&hcl.BodySchema{
-		Attributes: []hcl.AttributeSchema{{Name: "path", Required: true}, {Name: "content", Required: true}, {Name: "mode"}, {Name: "validate"}, {Name: "reload"}, {Name: "confirm_after"}, {Name: "backup"}},
+		Attributes: []hcl.AttributeSchema{{Name: "path", Required: true}, {Name: "content", Required: true}, {Name: "mode"}, {Name: "validate"}, {Name: "reload"}, {Name: "confirm_after"}, {Name: "backup"}, {Name: "backup_keep"}},
 		Blocks:     []hcl.BlockHeaderSchema{{Type: "ssh"}},
 	})
 	if diags.HasErrors() {
@@ -439,7 +440,7 @@ circuit "web" {
 	if _, ok := content.Attributes["validate"]; !ok {
 		t.Fatal("validate not carried over")
 	}
-	for _, name := range []string{"reload", "confirm_after", "backup"} {
+	for _, name := range []string{"reload", "confirm_after", "backup", "backup_keep"} {
 		if _, ok := content.Attributes[name]; !ok {
 			t.Fatalf("%s not carried over", name)
 		}

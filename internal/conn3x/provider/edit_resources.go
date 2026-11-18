@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/big"
 	"slices"
 	"strings"
 
@@ -273,6 +274,10 @@ func (k editKind) schema() providers.Schema {
 			Type: cty.Bool, Optional: true,
 			Description: "true copies the file, before an edit changes it, beside itself with .conn3x-, the time in UTC, a number and a ~ after its name, such as job.conn3x-20261118T130501Z.4127~, keeping its mode and owner. The ~ keeps cron.d, logrotate.d and the like from loading the copy. An apply that changes nothing makes no copy. Old copies stay until you remove them.",
 		},
+		"backup_keep": {
+			Type: cty.Number, Optional: true,
+			Description: "With backup, keeps only this many of the newest copies, removing older ones each time a new one is made. Unset keeps them all.",
+		},
 		"validate": {
 			Type: cty.String, Optional: true, WriteOnly: true,
 			Description: "A command that checks the edited file before it replaces the old one, such as \"sshd -t -f %s\". %s stands for the temporary file. Runs only when the edit changes the file, and is kept out of state.",
@@ -313,6 +318,9 @@ func (k editKind) validate(cfg cty.Value) tfdiags.Diagnostics {
 		if err := (file.Desired{Path: "/", Mode: "0644", ValidateCommand: v.AsString()}).Validate(); err != nil {
 			diags = diags.Append(attrError("validate", err.Error()))
 		}
+	}
+	if err := validateBackupKeep(cfg); err != nil {
+		diags = diags.Append(attrError("backup_keep", err.Error()))
 	}
 	return diags
 }
@@ -487,7 +495,32 @@ func editFile(ctx context.Context, h *hostConn, path, via string, create bool, w
 // leaves the file's own.
 func fileAttrs(v cty.Value) file.Desired {
 	b := v.GetAttr("backup")
-	return file.Desired{Mode: stringOr(v.GetAttr("mode"), ""), Owner: stringOr(v.GetAttr("owner"), ""), Group: stringOr(v.GetAttr("group"), ""), Backup: known(b) && b.True()}
+	return file.Desired{Mode: stringOr(v.GetAttr("mode"), ""), Owner: stringOr(v.GetAttr("owner"), ""), Group: stringOr(v.GetAttr("group"), ""), Backup: known(b) && b.True(), BackupKeep: backupKeep(v)}
+}
+
+// backupKeep is a step's backup_keep, or 0 when it's unset.
+func backupKeep(v cty.Value) int {
+	k := v.GetAttr("backup_keep")
+	if !known(k) {
+		return 0
+	}
+	n, _ := k.AsBigFloat().Int64()
+	return int(n)
+}
+
+// validateBackupKeep refuses a backup_keep below 1, or one without backup.
+func validateBackupKeep(cfg cty.Value) error {
+	k := cfg.GetAttr("backup_keep")
+	if k.IsNull() || !k.IsKnown() {
+		return nil
+	}
+	if n, acc := k.AsBigFloat().Int64(); acc != big.Exact || n < 1 {
+		return errors.New("backup_keep must be a whole number from 1")
+	}
+	if b := cfg.GetAttr("backup"); b.IsKnown() && (b.IsNull() || b.False()) {
+		return errors.New("backup_keep needs backup = true")
+	}
+	return nil
 }
 
 // withActual fills what d leaves unset from the file as it is.

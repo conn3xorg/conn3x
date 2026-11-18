@@ -62,6 +62,10 @@ func fileSchema() providers.Schema {
 					Type: cty.String, Optional: true, WriteOnly: true,
 					Description: "A command that checks new content before it replaces the file, such as \"visudo -cf %s\". %s stands for the temporary file. Runs only when the content changes, and is kept out of state.",
 				},
+				"backup_keep": {
+					Type: cty.Number, Optional: true,
+					Description: "With backup, keeps only this many of the newest copies, removing older ones each time a new one is made. Unset keeps them all.",
+				},
 				"backup": {
 					Type: cty.Bool, Optional: true,
 					Description: "true copies the file, before a change replaces it, beside itself with .conn3x-, the time in UTC, a number and a ~ after its name, such as nginx.conf.conn3x-20261118T130501Z.4127~, keeping its mode and owner. The ~ keeps cron.d, logrotate.d and the like from loading the copy. Old copies stay until you remove them. Can't be used with content_wo, since each copy would keep the secret it replaced.",
@@ -90,6 +94,9 @@ func validateFile(cfg cty.Value) tfdiags.Diagnostics {
 	// one being rotated out, at the same mode, until someone removes it.
 	if b := cfg.GetAttr("backup"); b.IsKnown() && !b.IsNull() && b.True() && !cfg.GetAttr("content_wo").IsNull() {
 		diags = diags.Append(attrError("backup", "backup can't go with content_wo, or a template's write_only: each change would keep the secret it replaced in a copy beside the file"))
+	}
+	if err := validateBackupKeep(cfg); err != nil {
+		diags = diags.Append(attrError("backup_keep", err.Error()))
 	}
 	if r := cfg.GetAttr("reload"); r.IsKnown() && !r.IsNull() && cfg.GetAttr("confirm_after").IsNull() {
 		diags = diags.Append(attrError("reload", "reload goes with confirm_after: it's run between writing the file and confirming the change over a new login"))
@@ -355,12 +362,13 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		}
 	}
 	desired := file.Desired{
-		Path:    planned.GetAttr("path").AsString(),
-		Content: content.AsString(),
-		Mode:    planned.GetAttr("mode").AsString(),
-		Owner:   stringOr(planned.GetAttr("owner"), ""),
-		Group:   stringOr(planned.GetAttr("group"), ""),
-		Backup:  known(planned.GetAttr("backup")) && planned.GetAttr("backup").True(),
+		Path:       planned.GetAttr("path").AsString(),
+		Content:    content.AsString(),
+		Mode:       planned.GetAttr("mode").AsString(),
+		Owner:      stringOr(planned.GetAttr("owner"), ""),
+		Group:      stringOr(planned.GetAttr("group"), ""),
+		Backup:     known(planned.GetAttr("backup")) && planned.GetAttr("backup").True(),
+		BackupKeep: backupKeep(planned),
 	}
 	if contentChanging(req.PriorState, planned) {
 		desired.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")

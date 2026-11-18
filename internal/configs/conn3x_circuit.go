@@ -962,6 +962,7 @@ var templateSchema = &hcl.BodySchema{
 		{Name: "confirm_after"},
 		{Name: "reload"},
 		{Name: "backup"},
+		{Name: "backup_keep"},
 	},
 }
 
@@ -981,7 +982,7 @@ func lowerTemplate(module *hclsyntax.Block) (hclsyntax.Attributes, hcl.Diagnosti
 	}
 	in := module.Body.Attributes
 	out := hclsyntax.Attributes{}
-	for _, name := range []string{"mode", "owner", "group", "on_remove", "validate", "confirm_after", "reload", "backup"} {
+	for _, name := range []string{"mode", "owner", "group", "on_remove", "validate", "confirm_after", "reload", "backup", "backup_keep"} {
 		if a, ok := in[name]; ok {
 			out[name] = a
 		}

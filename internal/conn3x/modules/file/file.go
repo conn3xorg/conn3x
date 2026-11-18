@@ -30,6 +30,9 @@ type Desired struct {
 	// Backup copies the file as it was, with its mode and owner, just
 	// before replacing it: see BackupSuffix.
 	Backup bool
+	// BackupKeep, when above 0, removes all but that many of the newest
+	// backup copies once a new one is made.
+	BackupKeep int
 }
 
 // BackupSuffix starts a backup copy's name. After it come the time in
@@ -220,7 +223,7 @@ chmod %s "$tmp"
 trap - EXIT
 `+SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
-		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group), validateScript(d.ValidateCommand), backupScript(d.Backup))
+		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group), validateScript(d.ValidateCommand), backupScript(d.Backup, d.BackupKeep))
 	res, err := run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group, Path: d.Path}, append(via, modules.Parent(d.Path))...), []byte(d.Content))
 	if err != nil && res.ExitCode == validateFailed {
 		return &ValidateError{Output: strings.TrimSpace(string(res.Stderr))}
@@ -231,15 +234,23 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null ||
 // backupScript copies "$p", when it's there, to its backup name once the
 // new content has passed validate, so a refused edit leaves no copy. A
 // copy that fails stops the write: the old file stays, uncopied but whole.
-func backupScript(backup bool) string {
+func backupScript(backup bool, keep int) string {
 	if !backup {
 		return ""
+	}
+	// The copies' names hold a fixed-width UTC time, so the glob, sorted
+	// in the C locale, lists them oldest first.
+	prune := ""
+	if keep > 0 {
+		prune = fmt.Sprintf(`  set -- "$p"`+BackupSuffix+`[0-9]*T*Z.*~
+  while [ -e "$1" ] && [ $# -gt %d ]; do rm -f -- "$1"; shift; done
+`, keep)
 	}
 	return `if [ -f "$p" ]; then
   b="$p` + BackupSuffix + `$(date -u +%Y%m%dT%H%M%SZ).$$~"
   [ ! -e "$b" ] || { echo "$b is already there" >&2; exit 1; }
   cp -p -- "$p" "$b"
-fi
+` + prune + `fi
 `
 }
 
