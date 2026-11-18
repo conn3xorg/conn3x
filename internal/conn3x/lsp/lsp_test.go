@@ -62,9 +62,13 @@ type client struct {
 
 func start(t *testing.T, self string) *client {
 	t.Helper()
+	return startWith(t, &Server{Name: "conn3x", Version: "test", Self: self})
+}
+
+func startWith(t *testing.T, s *Server) *client {
+	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	s := &Server{Name: "conn3x", Version: "test", Self: self}
 	done := make(chan error, 1)
 	go func() { done <- s.Serve(context.Background(), inR, outW) }()
 	t.Cleanup(func() {
@@ -224,5 +228,55 @@ func TestSaveValidates(t *testing.T) {
 		if len(p["diagnostics"].([]any)) != 0 {
 			t.Errorf("%s not cleared: %v", p["uri"], p["diagnostics"])
 		}
+	}
+}
+
+// A directory with provider plugins installed isn't validated, since that
+// would start them: the editor is told once why, and nothing runs, unless
+// the server was started with AllowPlugins.
+func TestSaveSkipsDirectoriesWithPlugins(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in for conn3x is a shell script")
+	}
+	dir := t.TempDir()
+	ran := filepath.Join(dir, "ran")
+	self := filepath.Join(dir, "conn3x")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\ntouch "+ran+"\necho '{\"diagnostics\":[]}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".terraform", "providers", "registry.opentofu.org"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	uri := "file://" + filepath.ToSlash(dir) + "/main.tf"
+	save := func(c *client) {
+		c.write(map[string]any{"method": "textDocument/didSave", "params": map[string]any{"textDocument": map[string]any{"uri": uri}}})
+	}
+
+	c := start(t, self)
+	c.call("initialize", map[string]any{})
+	c.open(uri, "")
+	save(c)
+	m := c.read()
+	if m["method"] != "window/showMessage" || !strings.Contains(m["params"].(map[string]any)["message"].(string), "-allow-plugins") {
+		t.Fatalf("got %v, want a message naming -allow-plugins", m)
+	}
+	save(c)
+	// The second refusal says nothing; a call proves no message is queued.
+	if got := c.call("shutdown", nil); got != nil {
+		t.Fatalf("shutdown: %v", got)
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Fatal("validate ran in a directory with plugins installed")
+	}
+
+	c2 := startWith(t, &Server{Name: "conn3x", Version: "test", Self: self, AllowPlugins: true})
+	c2.call("initialize", map[string]any{})
+	c2.open(uri, "")
+	save(c2)
+	if m := c2.read(); m["method"] != "textDocument/publishDiagnostics" {
+		t.Fatalf("with AllowPlugins: %v", m)
+	}
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatal("validate didn't run with AllowPlugins")
 	}
 }

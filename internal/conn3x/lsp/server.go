@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/opentofu/opentofu/internal/conn3x/plugins"
 )
 
 // Server answers an editor's requests about the circuit files it has open.
@@ -34,6 +36,11 @@ type Server struct {
 	Name, Version string
 	// Self is the conn3x binary, which runs conn3x validate on save.
 	Self string
+	// AllowPlugins lets validate run in a directory with provider plugins
+	// installed, which starts them. Off, such a directory isn't validated,
+	// since saving a file from a repository only cloned would run what it
+	// committed there.
+	AllowPlugins bool
 
 	cat  catalog
 	mu   sync.Mutex
@@ -41,9 +48,11 @@ type Server struct {
 	// shown are the files each directory's last validate put problems on,
 	// so the next one can clear those that are fixed.
 	shown map[string]map[string]bool
-	out   io.Writer
-	wmu   sync.Mutex
-	wg    sync.WaitGroup
+	// warned are the directories validate was refused in, told once.
+	warned map[string]bool
+	out    io.Writer
+	wmu    sync.Mutex
+	wg     sync.WaitGroup
 }
 
 type message struct {
@@ -69,6 +78,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s.cat = loadCatalog()
 	s.docs = map[string]string{}
 	s.shown = map[string]map[string]bool{}
+	s.warned = map[string]bool{}
 	s.out = out
 	defer s.wg.Wait()
 	r := textproto.NewReader(bufio.NewReader(in))
@@ -344,6 +354,18 @@ func (s *Server) validate(ctx context.Context, uri string) {
 		return
 	}
 	dir := filepath.Dir(filepath.FromSlash(u.Path))
+	if what := plugins.Installed(dir); what != "" && !s.AllowPlugins {
+		s.mu.Lock()
+		first := !s.warned[dir]
+		s.warned[dir] = true
+		s.mu.Unlock()
+		if first {
+			params, _ := json.Marshal(map[string]any{"type": 2, "message": fmt.Sprintf(
+				"conn3x lsp didn't validate %s: it has provider plugins installed (%s), and validating would start them. Start conn3x lsp with -allow-plugins if you trust them.", dir, what)})
+			s.send(message{Method: "window/showMessage", Params: params})
+		}
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, validateTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.Self, "validate", "-json", "-no-color")

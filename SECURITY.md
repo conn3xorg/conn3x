@@ -38,6 +38,12 @@ directory whose circuits you trust. They refuse a directory with provider
 plugins installed unless you start it with `-allow-plugins`, because
 validating starts those plugins.
 
+`conn3x lsp`, the language server for editors, runs `conn3x validate` in a
+file's directory when you save it. It skips a directory with provider
+plugins installed, and tells the editor why, unless you start it with
+`-allow-plugins`, so saving a file from a repository you only cloned starts
+nothing that repository committed.
+
 ## Supported versions
 
 Security fixes go to the latest minor version, so upgrade to the newest

@@ -21,9 +21,9 @@ import (
 	"github.com/opentofu/opentofu/internal/configs"
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/lint"
+	"github.com/opentofu/opentofu/internal/conn3x/plugins"
 	"github.com/opentofu/opentofu/internal/conn3x/provider"
 	"github.com/opentofu/opentofu/internal/conn3x/report"
-	"github.com/opentofu/opentofu/internal/depsfile"
 )
 
 // CatalogueURL is where the official circuits are listed.
@@ -314,25 +314,8 @@ func noPlugins(o Options, dir string) error {
 	if o.AllowPlugins {
 		return nil
 	}
-	refuse := func(what string) error {
+	if what := plugins.Installed(dir); what != "" {
 		return fmt.Errorf("%s has provider plugins installed (%s), and this would start them. Start conn3x mcp with -allow-plugins if you trust the plugins in the directories it serves", dir, what)
-	}
-	lock := filepath.Join(dir, ".terraform.lock.hcl")
-	if _, err := os.Lstat(lock); err == nil {
-		locks, diags := depsfile.LoadLocksFromFile(lock)
-		if diags.HasErrors() || len(locks.AllProviders()) > 0 {
-			return refuse(".terraform.lock.hcl")
-		}
-	}
-	data := os.Getenv("TF_DATA_DIR")
-	if data == "" {
-		data = ".terraform"
-	}
-	if !filepath.IsAbs(data) {
-		data = filepath.Join(dir, data)
-	}
-	if entries, _ := os.ReadDir(filepath.Join(data, "providers")); len(entries) > 0 {
-		return refuse(filepath.Join(data, "providers"))
 	}
 	return nil
 }
