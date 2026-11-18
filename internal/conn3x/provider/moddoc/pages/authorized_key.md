@@ -59,7 +59,9 @@ step "old_laptop" {
 
 **Finding the file.** Conn3x looks the user up in the account database and uses `.ssh/authorized_keys` in their home directory. The user has to exist, so put the step after the [`user`](/modules/user) step that creates them.
 
-**Matching keys.** Keys are compared by type and key data. A comment or options in front of the key don't count, so a key that's already there with a different comment is left as it is.
+**Matching keys.** Keys are compared by type and key data, so a key that's already there with a different comment is left as it is.
+
+**Options.** Options in front of `key`, such as `from="10.0.0.0/8"` or `command="..."`, are part of what the step sets. If the key is already there without exactly those options, its line is rewritten with them, and any other line holding the same key is removed, since `sshd` would let the key in through that line without them. The order of the options doesn't matter. A `key` with no options leaves any options already on the host as they are, so a restriction someone added by hand stays. Before v0.27.0, options were ignored when the key was already there. Adding `from=` to the key Conn3x logs in with takes effect too, so make sure the address Conn3x connects from is in it.
 
 **Reading.** Every plan reads the file and checks whether the key is present, or absent with `state = "absent"`. If someone removed the key by hand, the plan shows the step out of sync and the next apply adds it back.
 
@@ -70,7 +72,7 @@ step "old_laptop" {
 **Changing the key.** Changing `user` or `key` replaces the step. With the default `on_remove`, Conn3x removes the old key and adds the new one.
 
 **Keeping only these keys.** With `exclusive = true`, `key` holds every key the user may log in with, one per line, and Conn3x makes `authorized_keys` exactly those:
-- **Removing the rest:** a key that isn't listed is removed, and so is a line Conn3x can't read as a key, since `sshd` might still take it. Listed keys that are already there stay as they are, with their options and comments. Blank lines and `#` comments stay too.
+- **Removing the rest:** a key that isn't listed is removed, and so is a line Conn3x can't read as a key, since `sshd` might still take it. Listed keys that are already there stay as they are, with their options and comments, unless the listed line has options and theirs differ, when it's rewritten as listed. Blank lines and `#` comments stay too.
 - **The plan:** every plan reads the file, and the step's `unlisted` holds each key it would remove, by type and SHA-256 fingerprint. The plan shows them going, and a warning names them with their comments. The comments aren't kept in state, since they're often email addresses.
 - **Changing the list:** adding or removing a key is an update, not a replacement, so the step never removes the old keys first.
 - **The key Conn3x logs in with:** if `user` is the account Conn3x logs in as, and the key that logged it in isn't listed, the apply is refused, because the next run couldn't log in.

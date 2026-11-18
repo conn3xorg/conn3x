@@ -183,3 +183,39 @@ func genKey(t *testing.T, comment string) string {
 	}
 	return strings.TrimSpace(string(gossh.MarshalAuthorizedKey(k))) + " " + comment
 }
+
+// A wanted key with options rewrites a line without exactly those, and
+// drops another line for the same key; a wanted key without options leaves
+// options on the host alone; a different comment is in sync.
+func TestEditOptions(t *testing.T) {
+	const k = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+	from := `from="10.0.0.0/8" ` + k
+	for name, tc := range map[string]struct{ have, want, out string }{
+		"adds the option":         {k + " me@laptop\n", from + " me", from + " me\n"},
+		"changes the option":      {`from="192.168.0.0/16" ` + k + "\n", from, from + "\n"},
+		"same options, new note":  {from + " old\n", from + " new", from + " old\n"},
+		"same options, new order": {`no-pty,from="10.0.0.0/8" ` + k + "\n", `from="10.0.0.0/8",no-pty ` + k, `no-pty,from="10.0.0.0/8" ` + k + "\n"},
+		"no options wanted":       {from + "\n", k, from + "\n"},
+		"drops the open copy":     {from + "\n" + k + "\n", from, from + "\n"},
+		"absent drops every copy": {from + "\n" + k + "\n", "", ""},
+	} {
+		present := tc.want != ""
+		want := tc.want
+		if !present {
+			want = k
+		}
+		got, err := Edit(tc.have, want, present)
+		if err != nil || got != tc.out {
+			t.Errorf("%s: %q, %v; want %q", name, got, err, tc.out)
+		}
+	}
+
+	got, _, err := EditExclusive(k+" me\n", from)
+	if err != nil || got != from+"\n" {
+		t.Errorf("exclusive: %q, %v", got, err)
+	}
+	got, _, err = EditExclusive(from+"\n", k)
+	if err != nil || got != from+"\n" {
+		t.Errorf("exclusive without options: %q, %v", got, err)
+	}
+}

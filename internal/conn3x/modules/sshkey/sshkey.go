@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -32,10 +33,35 @@ func parse(line string) (string, error) {
 	return string(gossh.MarshalAuthorizedKey(pub)), nil
 }
 
+// options returns a key line's options, such as from="10.0.0.0/8", sorted,
+// or nil when it has none or isn't a key.
+func options(line string) []string {
+	_, _, opts, _, err := gossh.ParseAuthorizedKey([]byte(line))
+	if err != nil || len(opts) == 0 {
+		return nil
+	}
+	return slices.Sorted(slices.Values(opts))
+}
+
+// keepAs is the line to keep for a key already in the file, when want is the
+// line a step asks for: the line as it is, unless want has options and the
+// line doesn't have exactly those. A want without options leaves whatever
+// options are there, so restrictions added by hand stay.
+func keepAs(line, want string) string {
+	if w := options(want); w != nil && !slices.Equal(options(line), w) {
+		return want
+	}
+	return line
+}
+
 // Edit returns authorized_keys content with key present or absent. Keys are
-// compared by type and data, so comments and options don't matter.
+// compared by type and data, so a comment doesn't matter. Options do when
+// key has them: the key's line is rewritten to carry exactly those, and
+// another line with the same key goes, since sshd would let the key in
+// through it without them.
 func Edit(content, key string, present bool) (string, error) {
-	want, err := parse(strings.TrimSpace(key))
+	key = strings.TrimSpace(key)
+	want, err := parse(key)
 	if err != nil {
 		return "", err
 	}
@@ -47,15 +73,17 @@ func Edit(content, key string, present bool) (string, error) {
 	found := false
 	for _, l := range lines {
 		if id, err := parse(l); err == nil && id == want {
-			found = true
-			if !present {
+			if !present || (found && options(key) != nil) {
+				found = true
 				continue
 			}
+			found = true
+			l = keepAs(l, key)
 		}
 		kept = append(kept, l)
 	}
 	if present && !found {
-		kept = append(kept, strings.TrimSpace(key))
+		kept = append(kept, key)
 	}
 	if len(kept) == 0 {
 		return "", nil
@@ -93,7 +121,8 @@ func (u Unlisted) String() string { return u.Type + " " + u.Fingerprint }
 
 // EditExclusive returns authorized_keys content holding exactly the keys an
 // exclusive step lists: listed keys already there stay as written, with
-// their options and comments, missing ones are added, and every other key is
+// their options and comments, unless the listed line has options and theirs
+// differ, when it's rewritten as listed; missing ones are added, and every other key is
 // taken out and returned. Blank and comment lines stay. A line that isn't a
 // key Conn3x can read goes too, since sshd might still take it.
 func EditExclusive(content, key string) (string, []Unlisted, error) {
@@ -102,8 +131,10 @@ func EditExclusive(content, key string) (string, []Unlisted, error) {
 		return "", nil, err
 	}
 	want := map[string]bool{}
-	for _, id := range ids {
+	listed := map[string]string{}
+	for i, id := range ids {
 		want[id] = true
+		listed[id] = lines[i]
 	}
 	var kept []string
 	var gone []Unlisted
@@ -128,7 +159,7 @@ func EditExclusive(content, key string) (string, []Unlisted, error) {
 				continue
 			}
 			have[id] = true
-			kept = append(kept, l)
+			kept = append(kept, keepAs(l, listed[id]))
 		}
 	}
 	for i, id := range ids {
