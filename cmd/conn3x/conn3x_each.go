@@ -302,8 +302,11 @@ func gitChanges(root, ref string) (files, gone []string, err error) {
 	}
 	seen := map[string]bool{}
 	for _, args := range [][]string{
-		{"diff", "--name-only", ref + "...HEAD"},
-		{"diff", "--name-only", "HEAD"},
+		// --no-renames: a moved file is a delete in one place and an add in
+		// another, and the configuration it left changed as much as the one
+		// it went to.
+		{"diff", "--name-only", "--no-renames", ref + "...HEAD"},
+		{"diff", "--name-only", "--no-renames", "HEAD"},
 		{"ls-files", "--others", "--exclude-standard", "--full-name"},
 	} {
 		lines, err := git(args...)
@@ -323,9 +326,13 @@ func gitChanges(root, ref string) (files, gone []string, err error) {
 			}
 		}
 	}
-	deleted, err := git("diff", "--name-only", "--diff-filter=D", ref+"...HEAD")
-	if err != nil {
-		return nil, nil, err
+	var deleted []string
+	for _, base := range []string{ref + "...HEAD", "HEAD"} { // committed, and not yet
+		lines, err := git("diff", "--name-only", "--no-renames", "--diff-filter=D", base)
+		if err != nil {
+			return nil, nil, err
+		}
+		deleted = append(deleted, lines...)
 	}
 	dirs := map[string]bool{}
 	for _, l := range deleted {

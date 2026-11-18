@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -153,5 +154,31 @@ func TestEachPlanFailureSkipsDependents(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(f.calls, ","), "app plan") {
 		t.Error("app planned after network failed")
+	}
+}
+
+// A file moved from one configuration to another changes both, and a
+// configuration moved away whole is gone, whether the move is committed
+// or not.
+func TestEachChangesSeeMoves(t *testing.T) {
+	root := eachRepo(t)
+	git := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	git("mv", "old/main.tf", "network/old.tf")
+	files, gone, err := gitChanges(root, "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(gone, ",") != "old" || !slices.Contains(files, "old/main.tf") || !slices.Contains(files, "network/old.tf") {
+		t.Errorf("uncommitted move: files %v, gone %v", files, gone)
+	}
+	git("commit", "-qm", "move")
+	if files, gone, err = gitChanges(root, "base"); err != nil || strings.Join(gone, ",") != "old" || !slices.Contains(files, "old/main.tf") {
+		t.Errorf("committed move: files %v, gone %v, %v", files, gone, err)
 	}
 }
