@@ -108,7 +108,7 @@ echo '# changed' >> /etc/systemd/system/conn3x-stale.service`
 		{"conn3x-on", service.Actual{Exists: true, Running: true, Enabled: true}},
 		{"conn3x-off", service.Actual{Exists: true}},
 		{"conn3x-failed", service.Actual{Exists: true}},
-		{"conn3x-masked", service.Actual{Exists: true}},
+		{"conn3x-masked", service.Actual{Exists: true, Masked: true}},
 		{"conn3x-stale", service.Actual{Exists: true, Running: true, NeedsReload: true}},
 		{"conn3x-nope", service.Actual{}},
 		{"sshd", service.Actual{Exists: true, Running: true, Enabled: true}}, // an alias on Debian and Ubuntu
