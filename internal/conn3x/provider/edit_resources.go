@@ -83,7 +83,9 @@ var blockKind = editKind{
 	name: "block",
 	attrs: map[string]*configschema.Attribute{
 		"content":       {Type: cty.String, Optional: true, Description: "Lines of the block."},
-		"marker":        {Type: cty.String, Optional: true, Description: "Marker line with {mark}, which becomes BEGIN and END. Defaults to \"# {mark} CONN3X MANAGED BLOCK\"."},
+		"marker":        {Type: cty.String, Optional: true, Description: "Marker line with {mark}, which becomes marker_begin and marker_end. Defaults to \"# {mark} CONN3X MANAGED BLOCK\"."},
+		"marker_begin":  {Type: cty.String, Optional: true, Description: "What {mark} becomes on the block's first line. Defaults to \"BEGIN\"."},
+		"marker_end":    {Type: cty.String, Optional: true, Description: "What {mark} becomes on the block's last line. Defaults to \"END\". Must differ from marker_begin."},
 		"insert_after":  {Type: cty.String, Optional: true, Description: "Where a new block goes: after the last match of this regexp, or \"EOF\" (default)."},
 		"insert_before": {Type: cty.String, Optional: true, Description: "Where a new block goes: before the first match of this regexp, or \"BOF\"."},
 		"state":         {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\"."},
@@ -103,6 +105,7 @@ var blockKind = editKind{
 func blockFrom(v cty.Value) edit.Block {
 	return edit.Block{
 		Content: stringOr(v.GetAttr("content"), ""), Marker: stringOr(v.GetAttr("marker"), ""),
+		MarkerBegin: stringOr(v.GetAttr("marker_begin"), ""), MarkerEnd: stringOr(v.GetAttr("marker_end"), ""),
 		InsertAfter: stringOr(v.GetAttr("insert_after"), ""), InsertBefore: stringOr(v.GetAttr("insert_before"), ""),
 		State: edit.State(stringOr(v.GetAttr("state"), "")),
 	}

@@ -872,9 +872,8 @@ func blockModule(in *input) ([]step, string) {
 		marker = in.str("marker")
 	}
 	attrs = append(attrs, s("marker", marker))
-	if in.has("marker_begin") || in.has("marker_end") {
-		return nil, "sets marker_begin or marker_end, which the converter can't translate yet"
-	}
+	attrs = in.optional(attrs, "marker_begin", "marker_begin")
+	attrs = in.optional(attrs, "marker_end", "marker_end")
 	attrs, why := in.editFileArgs(attrs)
 	if why != "" {
 		return nil, why

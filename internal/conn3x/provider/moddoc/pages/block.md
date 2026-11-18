@@ -45,7 +45,7 @@ step "old_hosts" {
 <!-- reference -->
 ## How it works
 
-**Markers.** Conn3x finds the block by its marker lines: `marker` with `{mark}` replaced by `BEGIN` and `END`. The default marker gives `# BEGIN CONN3X MANAGED BLOCK` and `# END CONN3X MANAGED BLOCK`. Each step in the same file needs its own marker. If the file has a `BEGIN` line with no matching `END`, Conn3x stops with an error, so you can fix the file by hand.
+**Markers.** Conn3x finds the block by its marker lines: `marker` with `{mark}` replaced by `marker_begin` and `marker_end`, `BEGIN` and `END` unless you set them. The default marker gives `# BEGIN CONN3X MANAGED BLOCK` and `# END CONN3X MANAGED BLOCK`. Set the words for a file where those don't fit, such as `marker_begin = "start"` and `marker_end = "stop"`. They must differ, or the block's end couldn't be found. Each step in the same file needs its own marker. If the file has a begin line with no matching end line, Conn3x stops with an error, so you can fix the file by hand.
 
 **Reading.** Every plan reads the file on the host and applies the edit to a copy of its content. If the result is the same as the file, the step is in sync and nothing is planned. Otherwise the plan shows an update.
 
@@ -63,4 +63,4 @@ When you delete a `block` step, `on_remove` decides what happens on the host. Th
 
 ## From Ansible
 
-`conn3x convert ansible` turns `blockinfile` tasks into `block` steps. It keeps Ansible's marker, `# {mark} ANSIBLE MANAGED BLOCK` by default, so the block Ansible already wrote is the one Conn3x manages. `validate` is carried across. A task that sets `marker_begin` or `marker_end` stays a TODO.
+`conn3x convert ansible` turns `blockinfile` tasks into `block` steps. It keeps Ansible's marker, `# {mark} ANSIBLE MANAGED BLOCK` by default, so the block Ansible already wrote is the one Conn3x manages. `validate` is carried across. `marker_begin` and `marker_end` carry over too.

@@ -305,3 +305,27 @@ func TestLineBackrefs(t *testing.T) {
 		t.Errorf("without backrefs: %q", got)
 	}
 }
+
+// marker_begin and marker_end replace BEGIN and END, the block is found
+// again by them, and equal words are refused.
+func TestBlockMarkerWords(t *testing.T) {
+	b := Block{Content: "a\n", Marker: "; {mark} conn3x", MarkerBegin: "START", MarkerEnd: "STOP"}
+	got, err := ApplyBlock("x\n", b)
+	if err != nil || got != "x\n; START conn3x\na\n; STOP conn3x\n" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if again, err := ApplyBlock(got, b); err != nil || again != got {
+		t.Errorf("second apply: %q, %v", again, err)
+	}
+	b.Content = "b\n"
+	if got, _ := ApplyBlock(got, b); got != "x\n; START conn3x\nb\n; STOP conn3x\n" {
+		t.Errorf("changed content: %q", got)
+	}
+	b.MarkerEnd = "START"
+	if b.Validate() == nil {
+		t.Error("equal marker words validated")
+	}
+	if (Block{Content: "a", MarkerBegin: "END"}).Validate() == nil {
+		t.Error("marker_begin END, the default end, validated")
+	}
+}

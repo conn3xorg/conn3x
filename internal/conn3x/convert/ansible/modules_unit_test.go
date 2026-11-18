@@ -19,6 +19,7 @@ func TestConvertModuleArguments(t *testing.T) {
 		"community.crypto.openssh_keypair: { path: /root/.ssh/id_ed25519, type: ed25519, size: 4096 }": {"ssh_keypair {", `type = "ed25519"`},
 		"openssh_keypair: { path: /home/d/.ssh/id_rsa, owner: d, comment: d@web1 }":                    {`type    = "rsa"`, "bits    = 4096", `owner   = "d"`, `comment = "d@web1"`},
 		"openssh_keypair: { path: /k, type: ecdsa, size: 384, mode: '0600' }":                          {"bits = 384"},
+		"blockinfile: { path: /etc/hosts, block: x, marker_begin: START, marker_end: STOP }":           {"marker_begin", `"START"`, "marker_end", `"STOP"`},
 		"ufw: { rule: deny, port: '53', proto: any }":                                                  {`port   = "53"`},
 		"seboolean: { name: httpd_can_network_connect, state: yes, persistent: yes }":                  {"selinux_boolean {", "value = true"},
 		"sefcontext: { target: '/srv/www(/.*)?', setype: httpd_sys_content_t }":                        {"selinux_fcontext {", `setype = "httpd_sys_content_t"`},
@@ -47,7 +48,6 @@ func TestConvertModuleArguments(t *testing.T) {
 	}
 
 	for task, reason := range map[string]string{
-		"blockinfile: { path: /etc/hosts, block: x, marker_begin: BEGIN }":                "marker_begin or marker_end",
 		"openssh_keypair: { path: /k, passphrase: hunter2 }":                              "sets a passphrase",
 		"openssh_keypair: { path: /k, type: rsa, size: 2048 }":                            "2048-bit rsa key",
 		"openssh_keypair: { path: /k, type: dsa }":                                        "makes a dsa key",

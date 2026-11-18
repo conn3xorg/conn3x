@@ -165,6 +165,8 @@ const DefaultMarker = "# {mark} CONN3X MANAGED BLOCK"
 type Block struct {
 	Content      string
 	Marker       string // with {mark}; default DefaultMarker
+	MarkerBegin  string // what {mark} becomes on the first line; default BEGIN
+	MarkerEnd    string // and on the last; default END
 	InsertAfter  string
 	InsertBefore string
 	State        State
@@ -183,6 +185,11 @@ func (b Block) Validate() error {
 	if b.InsertAfter != "" && b.InsertBefore != "" {
 		return errors.New("set insert_after or insert_before, not both")
 	}
+	if begin, end := b.marks(); begin == end {
+		return errors.New("marker_begin and marker_end must differ, or the block's end can't be found")
+	} else if strings.ContainsAny(begin+end, "\n\r") {
+		return errors.New("marker_begin and marker_end must be on one line")
+	}
 	for name, re := range map[string]string{"insert_after": b.InsertAfter, "insert_before": b.InsertBefore} {
 		if re != "" && re != bof && re != eof {
 			if _, err := regexp.Compile(re); err != nil {
@@ -191,6 +198,18 @@ func (b Block) Validate() error {
 		}
 	}
 	return nil
+}
+
+// marks is what {mark} becomes on the block's first and last lines.
+func (b Block) marks() (string, string) {
+	begin, end := b.MarkerBegin, b.MarkerEnd
+	if begin == "" {
+		begin = "BEGIN"
+	}
+	if end == "" {
+		end = "END"
+	}
+	return begin, end
 }
 
 // ApplyBlock returns content with the block inserted, replaced or removed.
@@ -202,8 +221,9 @@ func ApplyBlock(content string, b Block) (string, error) {
 	if marker == "" {
 		marker = DefaultMarker
 	}
-	begin := strings.ReplaceAll(marker, "{mark}", "BEGIN")
-	end := strings.ReplaceAll(marker, "{mark}", "END")
+	mb, me := b.marks()
+	begin := strings.ReplaceAll(marker, "{mark}", mb)
+	end := strings.ReplaceAll(marker, "{mark}", me)
 
 	lines, final := split(content)
 	start, stop := -1, -1
