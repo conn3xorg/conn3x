@@ -1120,3 +1120,54 @@ func winADUserModule(in *input) ([]step, string) {
 	}
 	return one("windows_ad_user", attrs, notes...)
 }
+
+// winShareModule converts ansible.windows.win_share. Its full, change and
+// read are comma-separated accounts, and with rule_action set, the default,
+// they're the share's whole set of Allow entries, which is what the three
+// lists are to windows_share, so all three are always written, empty or
+// not. As in Ansible, an account gets only its highest right. win_share
+// also sets enumeration, caching and encryption on every run, which
+// windows_share leaves alone: other values go to review, the defaults get
+// a note.
+func winShareModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	for key, why := range map[string]string{
+		"deny":       "sets deny entries, which a windows_share step leaves alone",
+		"scope_name": "sets scope_name, which a windows_share step doesn't",
+	} {
+		if in.has(key) {
+			return nil, why
+		}
+	}
+	if r := in.str("rule_action"); r != "" && r != "set" {
+		return nil, "sets rule_action: " + r + ", so Ansible keeps grants it isn't given; a windows_share step's lists are the whole set"
+	}
+	if in.bool("list", false) {
+		return nil, "sets list: yes, turning access-based enumeration off, which a windows_share step doesn't manage"
+	}
+	if c := in.str("caching_mode"); c != "" && c != "Manual" {
+		return nil, "sets caching_mode " + c + ", which a windows_share step doesn't manage"
+	}
+	if in.bool("encrypt", false) {
+		return nil, "sets encrypt, which a windows_share step doesn't manage"
+	}
+	in.ignore("list", "caching_mode", "encrypt", "rule_action")
+	// Ansible sets the description to "" when the task gives none.
+	attrs := []attr{s("name", in.str("name")), s("path", in.str("path")), s("description", in.str("description"))}
+	seen := map[string]bool{}
+	for _, right := range []string{"full", "change", "read"} {
+		vals := []cty.Value{}
+		for _, a := range strings.Split(in.str(right), ",") {
+			if a = strings.TrimSpace(a); a != "" && !seen[strings.ToLower(a)] {
+				seen[strings.ToLower(a)] = true
+				vals = append(vals, cty.StringVal(a))
+			}
+		}
+		v := cty.ListValEmpty(cty.String)
+		if len(vals) > 0 {
+			v = cty.ListVal(vals)
+		}
+		attrs = append(attrs, attr{key: right + "_access", val: v})
+	}
+	return one("windows_share", attrs, "win_share also turns on access-based enumeration, sets caching to Manual and turns encryption off on every run; a windows_share step leaves those as the share has them.")
+}

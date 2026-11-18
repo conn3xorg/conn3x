@@ -40,3 +40,9 @@ step "finance_share" {
 ## Removal
 
 `on_remove = "delete"`, the default, removes the share when the step goes, as with every step that grants access. The folder and its files stay. `on_remove = "forget"` leaves the share.
+
+## From Ansible
+
+`conn3x convert ansible` turns `ansible.windows.win_share` tasks into `windows_share` steps. `full`, `change` and `read`, comma-separated in Ansible, become the three lists. All three are always written, empty or not, since with Ansible's default `rule_action: set` they're the share's whole set of Allow entries, as the lists are here. As in Ansible, an account named under more than one right keeps only the highest. A task without `description` gets `description = ""`, since Ansible clears it.
+
+`win_share` also turns on access-based enumeration, sets caching to `Manual` and turns encryption off on every run. This step leaves those as the share has them, so the step says so in a note. A task stays a TODO, with the reason, when it sets `deny`, `rule_action: add`, `list: yes`, another `caching_mode`, `encrypt`, `scope_name` or `state: absent`.
