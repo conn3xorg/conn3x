@@ -185,10 +185,11 @@ func (c *Client) session(ctx context.Context) (*gossh.Session, error) {
 		select {
 		case c.slots <- struct{}{}:
 		default:
-			c.closeIdleShell()
-			// A shell busy now gives its slot up when it finishes, while
-			// anyone waits here; see runInShell.
+			// Counted as waiting first, so a shell that finishes from here
+			// on gives its slot up (see runInShell), then any shell already
+			// idle is closed.
 			c.waiting.Add(1)
+			c.closeIdleShell()
 			err := c.acquire(ctx)
 			c.waiting.Add(-1)
 			if err != nil {
