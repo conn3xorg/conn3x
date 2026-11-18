@@ -30,6 +30,10 @@ func TestMatch(t *testing.T) {
 		"~^(web|db)1$,web3":   {"web1", "web3", "db1"},
 		"nothing":             nil,
 		"web*:!web*":          nil,
+		"=web1":               {"web1"},
+		"=web1,=db2":          {"web1", "db2"},
+		"=web*":               nil, // a name, not a glob
+		"web*:!=web3":         {"web1", "web2"},
 	} {
 		p, err := Parse(pattern)
 		if err != nil {
@@ -51,7 +55,7 @@ func TestMatch(t *testing.T) {
 }
 
 func TestParseErrors(t *testing.T) {
-	for _, pattern := range []string{"", ",", "web1,!", "web1,&", "~(", "web["} {
+	for _, pattern := range []string{"", ",", "web1,!", "web1,&", "~(", "web[", "=", "web1,=", "!="} {
 		if _, err := Parse(pattern); err == nil {
 			t.Errorf("%q parsed, want an error", pattern)
 		}
@@ -67,6 +71,13 @@ func TestMatchInGroups(t *testing.T) {
 		"web*:dbservers":  "db1,web1,web2",
 		"~^db":            "db1",
 		"all:!webservers": "db1",
+		// "=" names one host, and never a group, so a value that happens to
+		// be a group's name can't widen what it picks.
+		"=webservers":       "",
+		"=web1":             "web1",
+		"=web1,=db1":        "db1,web1",
+		"eu:!=web1":         "db1",
+		"webservers:&=web2": "web2",
 	} {
 		p, err := Parse(raw)
 		if err != nil {

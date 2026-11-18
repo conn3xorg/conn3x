@@ -17,7 +17,7 @@ import (
 	"github.com/opentofu/opentofu/internal/tofu"
 )
 
-const limitFlagHelp = `Run circuit steps only on the hosts that match, as with Ansible's --limit: host names and globs split by "," or ":", "!" in front to leave hosts out, "&" to narrow, "~" for a regular expression. Other hosts' steps are left as they are. Cannot be used with -target or -exclude.`
+const limitFlagHelp = `Run circuit steps only on the hosts that match, as with Ansible's --limit: host names and globs split by "," or ":", "!" in front to leave hosts out, "&" to narrow, "~" for a regular expression, "=" for one host by its exact name and never a group. Other hosts' steps are left as they are. Cannot be used with -target or -exclude.`
 
 // withLimit gives plan, apply or refresh a -limit flag, which it hands to
 // the plan (see internal/tofu/conn3x_limit.go).

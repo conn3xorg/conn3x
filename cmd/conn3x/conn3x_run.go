@@ -48,7 +48,7 @@ func runCommand() command.Command {
   conn3x run -i inventory.ini all -m package -a 'name=htop' -check
   conn3x run -circuits . web -a uptime
 
-Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, and the group_vars and host_vars beside it. Or, with -circuits DIR, from the circuits in DIR's .tf and .circuit.hcl files: each circuit is a group named after it, and its hosts keep its ssh settings and their own host objects', written out in full. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names.
+Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, and the group_vars and host_vars beside it. Or, with -circuits DIR, from the circuits in DIR's .tf and .circuit.hcl files: each circuit is a group named after it, and its hosts keep its ssh settings and their own host objects', written out in full. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names, except a "=" term, which is one host by its exact name.
 
 -a without -m runs a command through the host's shell. With -m, it's a module a step can use, and -a holds its arguments as NAME=VALUE, quoted as a shell would. -m file takes src=PATH too, a text file on this machine to send as the content, as Ansible's copy does. A module does what it does in a step: on a host that's already in line it changes nothing and says ok. -check stops before changing anything.
 

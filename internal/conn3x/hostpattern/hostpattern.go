@@ -3,7 +3,8 @@
 
 // Package hostpattern reads Ansible-style host patterns, such as
 // "web*,db1", "web*:!web3" or "~^db[0-9]$", and matches host names
-// against them.
+// against them. A "=" term, such as "=web1", is Conn3x's own: one host by
+// its exact name, never a group, for a caller that must not widen a run.
 package hostpattern
 
 import (
@@ -26,6 +27,8 @@ type Pattern struct {
 type term struct {
 	glob string
 	re   *regexp.Regexp
+	// exact is a "=name" term: the host with that name, and no group.
+	exact string
 	// sub is a term such as webservers[0:2], which Resolve turns into
 	// picked when webservers is a group; until then it's a glob.
 	sub    *subscript
@@ -95,8 +98,9 @@ func (s *subscript) pick(hosts []string) map[string]bool {
 }
 
 // Parse reads a pattern. Terms are separated by "," or ":". A term is a
-// host name, a glob with * ? and [ ], "all" for every host, or a regular
-// expression after "~". A group with a subscript, such as webservers[0]
+// host name, a glob with * ? and [ ], "all" for every host, a regular
+// expression after "~", or one host's exact name after "=", which matches
+// that host only: not a group, a glob or "all". A group with a subscript, such as webservers[0]
 // or webservers[1:3], picks hosts by position once Resolve knows the
 // group's order.
 // "&" in front of a term narrows to the hosts it matches too, and "!"
@@ -116,7 +120,12 @@ func Parse(raw string) (*Pattern, error) {
 			return nil, fmt.Errorf("%q has an empty term", raw)
 		}
 		var t term
-		if strings.HasPrefix(s, "~") {
+		if name, ok := strings.CutPrefix(s, "="); ok {
+			if name = strings.TrimSpace(name); name == "" {
+				return nil, fmt.Errorf("%q has an empty term", raw)
+			}
+			t.exact = name
+		} else if strings.HasPrefix(s, "~") {
 			re, err := regexp.Compile(s[1:])
 			if err != nil {
 				return nil, fmt.Errorf("%q: %s isn't a regular expression: %w", raw, s, err)
@@ -196,6 +205,9 @@ func (t term) matchName(name string) bool {
 
 // match is whether the term names the host or one of its groups.
 func (t term) match(host string, groups []string) bool {
+	if t.exact != "" {
+		return host == t.exact // never a group
+	}
 	if t.picked != nil {
 		return t.picked[host]
 	}
