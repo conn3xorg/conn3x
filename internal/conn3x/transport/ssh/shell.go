@@ -136,13 +136,13 @@ func (c *Client) runInShell(ctx context.Context, cmd string) (Result, bool, erro
 	}
 	limit := c.maxShells()
 	c.shells.mu.Lock()
-	over := c.shells.open > limit
+	over := c.shells.open > limit || c.waiting.Load() > 0
 	if !over {
 		c.shells.idle = append(c.shells.idle, sh)
 	}
 	c.shells.mu.Unlock()
 	if over {
-		c.dropShell(sh) // the cap fell while it ran
+		c.dropShell(sh) // the cap fell while it ran, or a session waits
 	}
 	return res, true, nil
 }

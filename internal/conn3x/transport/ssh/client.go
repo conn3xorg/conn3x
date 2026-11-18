@@ -130,6 +130,9 @@ type Client struct {
 	loginKey gossh.PublicKey
 
 	shells shells // long-lived shells for Run; see shell.go
+	// waiting counts sessions waiting for a slot, which a shell that
+	// finishes gives up rather than holding it idle.
+	waiting atomic.Int32
 }
 
 // LoginKey is the public key this connection logged in to the target with,
@@ -183,7 +186,12 @@ func (c *Client) session(ctx context.Context) (*gossh.Session, error) {
 		case c.slots <- struct{}{}:
 		default:
 			c.closeIdleShell()
-			if err := c.acquire(ctx); err != nil {
+			// A shell busy now gives its slot up when it finishes, while
+			// anyone waits here; see runInShell.
+			c.waiting.Add(1)
+			err := c.acquire(ctx)
+			c.waiting.Add(-1)
+			if err != nil {
 				return nil, err
 			}
 		}

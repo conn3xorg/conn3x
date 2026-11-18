@@ -189,3 +189,39 @@ func TestShellDropsLateBackgroundOutput(t *testing.T) {
 		t.Fatalf("next command got %q, %v", res.Stdout, err)
 	}
 }
+
+// The same, with both shells busy when the command with stdin asks: a shell
+// gives its slot up as soon as it finishes.
+func TestShellGivesItsSlotWhenBusy(t *testing.T) {
+	t.Setenv("CONN3X_SSH_MAX_SESSIONS", "4")
+	s := sshtest.New(t)
+	c := shellClient(t, s)
+	runParallel(t, c, 2)
+	for range 2 {
+		p, err := c.Start(context.Background(), "sleep 60")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = p.Close() })
+	}
+	busy := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := c.Run(context.Background(), "sleep 1", nil)
+			busy <- err
+		}()
+	}
+	time.Sleep(200 * time.Millisecond) // both shells are running sleep 1
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	res, err := c.Run(ctx, "cat", []byte("in"))
+	if err != nil || string(res.Stdout) != "in" {
+		t.Fatalf("stdin command with both shells busy: %q, %v after %s", res.Stdout, err, time.Since(start))
+	}
+	for range 2 {
+		if err := <-busy; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
