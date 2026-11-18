@@ -13,4 +13,14 @@
 /.github/workflows/stable.yml @jamesconwaydev @foothillsdigital
 /scripts/stable-channel.sh @jamesconwaydev @foothillsdigital
 /.goreleaser.yaml @jamesconwaydev @foothillsdigital
+# Code that runs a program someone else wrote: a script step's program on
+# hosts, and conn3x validate (with its provider plugins) for an editor or an
+# assistant, guarded by the plugin check.
+/internal/conn3x/modules/script/ @jamesconwaydev @foothillsdigital
+/internal/conn3x/provider/script_resource.go @jamesconwaydev @foothillsdigital
+/internal/conn3x/lsp/ @jamesconwaydev @foothillsdigital
+/internal/conn3x/mcp/ @jamesconwaydev @foothillsdigital
+/internal/conn3x/plugins/ @jamesconwaydev @foothillsdigital
+/scripts/publish-packages.sh @jamesconwaydev @foothillsdigital
+/.github/workflows/packages.yml @jamesconwaydev @foothillsdigital
 /.github/CODEOWNERS @jamesconwaydev @foothillsdigital
