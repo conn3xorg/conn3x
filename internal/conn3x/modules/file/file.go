@@ -208,8 +208,18 @@ func NeedsChange(d Desired, a Actual) bool {
 // the old file or the new one, never an empty one. On SELinux hosts the result is relabelled for its final path.
 // via is as for Read.
 func Apply(ctx context.Context, r modules.Runner, d Desired, via ...modules.Route) error {
+	_, err := ApplyBackup(ctx, r, d, via...)
+	return err
+}
+
+// backupLine starts the line the script prints with a backup copy's path.
+const backupLine = "conn3x-backup="
+
+// ApplyBackup is Apply, and returns the path of the copy d.Backup made,
+// or "" when there was no file to copy.
+func ApplyBackup(ctx context.Context, r modules.Runner, d Desired, via ...modules.Route) (string, error) {
 	if err := d.Validate(); err != nil {
-		return err
+		return "", err
 	}
 	script := fmt.Sprintf(`set -e
 p=%s
@@ -226,9 +236,18 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null ||
 		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group), validateScript(d.ValidateCommand), backupScript(d.Backup, d.BackupKeep))
 	res, err := run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group, Path: d.Path}, append(via, modules.Parent(d.Path))...), []byte(d.Content))
 	if err != nil && res.ExitCode == validateFailed {
-		return &ValidateError{Output: strings.TrimSpace(string(res.Stderr))}
+		return "", &ValidateError{Output: strings.TrimSpace(string(res.Stderr))}
 	}
-	return err
+	if err != nil {
+		return "", err
+	}
+	backup := ""
+	for _, line := range strings.Split(string(res.Stdout), "\n") {
+		if b, ok := strings.CutPrefix(line, backupLine); ok {
+			backup = b
+		}
+	}
+	return backup, nil
 }
 
 // backupScript copies "$p", when it's there, to its backup name once the
@@ -250,6 +269,7 @@ func backupScript(backup bool, keep int) string {
   b="$p` + BackupSuffix + `$(date -u +%Y%m%dT%H%M%SZ).$$~"
   [ ! -e "$b" ] || { echo "$b is already there" >&2; exit 1; }
   cp -p -- "$p" "$b"
+  printf '` + backupLine + `%s\n' "$b"
 ` + prune + `fi
 `
 }

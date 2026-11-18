@@ -278,6 +278,7 @@ func (k editKind) schema() providers.Schema {
 			Type: cty.Number, Optional: true,
 			Description: "With backup, keeps only this many of the newest copies, removing older ones each time a new one is made. Unset keeps them all.",
 		},
+		"backup_file": backupFileAttr(),
 		"validate": {
 			Type: cty.String, Optional: true, WriteOnly: true,
 			Description: "A command that checks the edited file before it replaces the old one, such as \"sshd -t -f %s\". %s stands for the temporary file. Runs only when the edit changes the file, and is kept out of state.",
@@ -394,8 +395,12 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 			create := planned.GetAttr("create")
 			want := fileAttrs(planned)
 			want.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")
-			if err := editFile(ctx, h, target, path, known(create) && create.True(), want, k.edit(planned)); err != nil {
+			backup, err := editFileBackup(ctx, h, target, path, known(create) && create.True(), want, k.edit(planned))
+			if err != nil {
 				return cty.NilVal, err
+			}
+			if backup != "" {
+				vals["backup_file"] = cty.StringVal(backup)
 			}
 			return cty.ObjectVal(vals), nil
 		},
@@ -463,6 +468,13 @@ printf '%s\n' "$r"`, modules.Follow(path)), nil)
 // process of theirs, which they can make say anything. So the edit goes the
 // same way: as them, whatever file the answer names.
 func editFile(ctx context.Context, h *hostConn, path, via string, create bool, want file.Desired, fn func(string) (string, error)) error {
+	_, err := editFileBackup(ctx, h, path, via, create, want, fn)
+	return err
+}
+
+// editFileBackup is editFile, and returns the path of the copy want.Backup
+// made, or "" when it made none.
+func editFileBackup(ctx context.Context, h *hostConn, path, via string, create bool, want file.Desired, fn func(string) (string, error)) (string, error) {
 	defer lockHost(h, "edit\x00"+path)()
 	var routes []modules.Route
 	if via != path {
@@ -470,25 +482,25 @@ func editFile(ctx context.Context, h *hostConn, path, via string, create bool, w
 	}
 	actual, err := file.Read(ctx, h, path, routes...)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !actual.Exists {
 		if !create {
-			return fmt.Errorf("%s does not exist; set create = true to create it", path)
+			return "", fmt.Errorf("%s does not exist; set create = true to create it", path)
 		}
 		actual = file.Actual{Mode: "0644"}
 	}
 	edited, err := fn(actual.Content)
 	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return "", fmt.Errorf("%s: %w", path, err)
 	}
 	d := want
 	d.Path, d.Content = path, edited
 	d = withActual(d, actual)
 	if actual.Exists && !file.NeedsChange(d, actual) {
-		return nil
+		return "", nil
 	}
-	return file.Apply(ctx, h, d, routes...)
+	return file.ApplyBackup(ctx, h, d, routes...)
 }
 
 // fileAttrs is the mode, owner and group an edit step sets, empty where it
@@ -506,6 +518,49 @@ func backupKeep(v cty.Value) int {
 	}
 	n, _ := k.AsBigFloat().Int64()
 	return int(n)
+}
+
+func backupFileAttr() *configschema.Attribute {
+	return &configschema.Attribute{
+		Type: cty.String, Computed: true,
+		Description: "With backup, the path of the newest copy this step made, such as /etc/app.conf.conn3x-20261118T130501Z.4127~. Null until it makes one, and when backup is off.",
+	}
+}
+
+// planBackupFile leaves backup_file unknown when an apply is planned with
+// backup on, since it may make a copy, keeps it when nothing is planned,
+// and clears it when backup is off.
+func planBackupFile(prior, planned cty.Value) cty.Value {
+	if planned.IsNull() || !planned.Type().IsObjectType() || !planned.Type().HasAttribute("backup_file") {
+		return planned
+	}
+	vals := planned.AsValueMap()
+	switch b := vals["backup"]; {
+	case b.IsKnown() && (b.IsNull() || b.False()):
+		vals["backup_file"] = cty.NullVal(cty.String)
+	case prior.IsNull():
+		vals["backup_file"] = cty.UnknownVal(cty.String)
+	default:
+		vals["backup_file"] = prior.GetAttr("backup_file")
+		if !cty.ObjectVal(vals).RawEquals(prior) {
+			vals["backup_file"] = cty.UnknownVal(cty.String)
+		}
+	}
+	return cty.ObjectVal(vals)
+}
+
+// applyBackupFile settles a backup_file the apply left unknown, as it does
+// when no copy was made: the last copy is still the newest.
+func applyBackupFile(prior, state cty.Value) cty.Value {
+	if state.IsNull() || !state.Type().HasAttribute("backup_file") || state.GetAttr("backup_file").IsKnown() {
+		return state
+	}
+	vals := state.AsValueMap()
+	vals["backup_file"] = cty.NullVal(cty.String)
+	if !prior.IsNull() {
+		vals["backup_file"] = prior.GetAttr("backup_file")
+	}
+	return cty.ObjectVal(vals)
 }
 
 // validateBackupKeep refuses a backup_keep below 1, or one without backup.

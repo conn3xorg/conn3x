@@ -41,12 +41,17 @@ func TestEditStepBackup(t *testing.T) {
 		t.Fatalf("an edit without backup made %v", c)
 	}
 
-	if _, err := unitCreate(t, "conn3x_line", step("c=3", true)); err != nil {
+	state, err := unitCreate(t, "conn3x_line", step("c=3", true))
+	if err != nil {
 		t.Fatal(err)
 	}
 	c := copies()
 	if len(c) != 1 {
 		t.Fatalf("copies %v, want one", c)
+	}
+	// The edit writes through readlink -f, so the path is the real one.
+	if real, _ := filepath.EvalSymlinks(c[0]); state.GetAttr("backup_file") != cty.StringVal(real) {
+		t.Errorf("backup_file %#v, want %s", state.GetAttr("backup_file"), real)
 	}
 	if !strings.HasSuffix(c[0], "~") {
 		t.Errorf("copy %s doesn't end in ~, so a .d directory would load it", c[0])
@@ -103,12 +108,16 @@ func TestFileStepBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := eosStep("conn3x_file", map[string]cty.Value{"path": cty.StringVal(path), "content": cty.StringVal("new\n"), "mode": cty.StringVal("0644"), "backup": cty.True}, ssh)
-	if _, err := unitCreate(t, "conn3x_file", cfg); err != nil {
+	state, err := unitCreate(t, "conn3x_file", cfg)
+	if err != nil {
 		t.Fatal(err)
 	}
 	c, _ := filepath.Glob(path + file.BackupSuffix + "*~")
 	if len(c) != 1 {
 		t.Fatalf("copies %v, want one", c)
+	}
+	if got := state.GetAttr("backup_file"); got != cty.StringVal(c[0]) {
+		t.Errorf("backup_file %#v, want %s", got, c[0])
 	}
 	if b, _ := os.ReadFile(c[0]); string(b) != "old\n" {
 		t.Errorf("the copy holds %q", b)
@@ -172,5 +181,37 @@ func TestEditStepBackupKeep(t *testing.T) {
 		if diags := lineKind.validate(eosStep("conn3x_line", a, ssh)); !diags.HasErrors() {
 			t.Errorf("%s: validated", name)
 		}
+	}
+}
+
+// backup_file is unknown when an apply with backup is planned, kept when
+// nothing is, null with backup off, and an apply that makes no copy keeps
+// the last one.
+func TestPlanBackupFile(t *testing.T) {
+	obj := func(backup cty.Value, file, content string) cty.Value {
+		f := cty.NullVal(cty.String)
+		if file != "" {
+			f = cty.StringVal(file)
+		}
+		return cty.ObjectVal(map[string]cty.Value{"backup": backup, "backup_file": f, "content": cty.StringVal(content)})
+	}
+	prior := obj(cty.True, "/a~", "x")
+	for name, tc := range map[string]struct{ prior, planned, want cty.Value }{
+		"nothing to apply": {prior, obj(cty.True, "/a~", "x"), cty.StringVal("/a~")},
+		"a change":         {prior, obj(cty.True, "/a~", "y"), cty.UnknownVal(cty.String)},
+		"a new step":       {cty.NullVal(prior.Type()), obj(cty.True, "", "y"), cty.UnknownVal(cty.String)},
+		"backup off":       {prior, obj(cty.False, "/a~", "x"), cty.NullVal(cty.String)},
+		"backup unset":     {prior, obj(cty.NullVal(cty.Bool), "/a~", "y"), cty.NullVal(cty.String)},
+	} {
+		if got := planBackupFile(tc.prior, tc.planned).GetAttr("backup_file"); !got.RawEquals(tc.want) {
+			t.Errorf("%s: %#v, want %#v", name, got, tc.want)
+		}
+	}
+	unknown := cty.ObjectVal(map[string]cty.Value{"backup": cty.True, "backup_file": cty.UnknownVal(cty.String), "content": cty.StringVal("y")})
+	if got := applyBackupFile(prior, unknown).GetAttr("backup_file"); got != cty.StringVal("/a~") {
+		t.Errorf("no copy made: %#v, want the last one", got)
+	}
+	if got := applyBackupFile(cty.NullVal(prior.Type()), unknown).GetAttr("backup_file"); !got.RawEquals(cty.NullVal(cty.String)) {
+		t.Errorf("no copy on a new step: %#v, want null", got)
 	}
 }

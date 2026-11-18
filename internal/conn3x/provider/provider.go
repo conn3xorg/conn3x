@@ -378,6 +378,7 @@ func (p *Provider) PlanResourceChange(ctx context.Context, req providers.PlanRes
 			read(ctx, req, &resp)
 			done()
 		}
+		resp.PlannedState = planBackupFile(req.PriorState, resp.PlannedState)
 		resp.PlannedState = planRevision(req.PriorState, resp.PlannedState)
 		if anotherMachine(req.PriorState, resp.PlannedState) {
 			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("port"))
@@ -401,6 +402,7 @@ func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyR
 		defer logStep("apply", req.TypeName, named, start, locked)
 		resp := rt.apply(ctx, req)
 		resp.NewState = applyRevision(req.PlannedState, resp.NewState)
+		resp.NewState = applyBackupFile(req.PriorState, resp.NewState)
 		resp.Diagnostics = locateApplyErrors(rt.schema().Block, resp.Diagnostics)
 		return resp
 	}

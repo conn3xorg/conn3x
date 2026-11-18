@@ -66,6 +66,7 @@ func fileSchema() providers.Schema {
 					Type: cty.Number, Optional: true,
 					Description: "With backup, keeps only this many of the newest copies, removing older ones each time a new one is made. Unset keeps them all.",
 				},
+				"backup_file": backupFileAttr(),
 				"backup": {
 					Type: cty.Bool, Optional: true,
 					Description: "true copies the file, before a change replaces it, beside itself with .conn3x-, the time in UTC, a number and a ~ after its name, such as nginx.conf.conn3x-20261118T130501Z.4127~, keeping its mode and owner. The ~ keeps cron.d, logrotate.d and the like from loading the copy. Old copies stay until you remove them. Can't be used with content_wo, since each copy would keep the secret it replaced.",
@@ -373,7 +374,8 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	if contentChanging(req.PriorState, planned) {
 		desired.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")
 	}
-	write := func() error { return file.Apply(ctx, client, desired) }
+	var backup string
+	write := func() (err error) { backup, err = file.ApplyBackup(ctx, client, desired); return err }
 	var err2 error
 	if after, _ := parseConfirmAfter(planned.GetAttr("confirm_after")); after > 0 && fileChanging(req.PriorState, planned) {
 		g := confirm.Guard{ID: newGuardID(), Files: []string{desired.Path}, Reload: stringOr(planned.GetAttr("reload"), ""), After: after}
@@ -402,6 +404,11 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		return resp
 	}
 	resp.NewState = stateFrom(planned, actual, key)
+	if backup != "" {
+		vals := resp.NewState.AsValueMap()
+		vals["backup_file"] = cty.StringVal(backup)
+		resp.NewState = cty.ObjectVal(vals)
+	}
 	return resp
 }
 
