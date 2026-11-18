@@ -114,3 +114,16 @@ func TestFileStepBackup(t *testing.T) {
 		t.Errorf("the file is %q", b)
 	}
 }
+
+// backup with content_wo is refused: rotating a secret would keep the old
+// one in a copy.
+func TestFileBackupRefusesContentWO(t *testing.T) {
+	ssh, dir := brShellHost(t)
+	cfg := eosStep("conn3x_file", map[string]cty.Value{"path": cty.StringVal(filepath.Join(dir, "token")), "content_wo": cty.StringVal("s3cret"), "mode": cty.StringVal("0600"), "backup": cty.True}, ssh)
+	if diags := validateFile(cfg); !diags.HasErrors() || !strings.Contains(diags.Err().Error(), "content_wo") {
+		t.Errorf("backup with content_wo: %v", diags.Err())
+	}
+	if diags := validateFile(brWith(cfg, map[string]cty.Value{"backup": cty.False})); diags.HasErrors() {
+		t.Errorf("content_wo without backup: %v", diags.Err())
+	}
+}
