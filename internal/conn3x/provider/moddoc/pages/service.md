@@ -63,7 +63,7 @@ step "no_rpcbind" {
 
 **Missing units.** The unit has to exist on the host, unless the step masks it. Install its package in an earlier step; steps run in the order written.
 
-**Restarts.** A `service` step never restarts a unit that is already running. When a configuration file changes, notify a handler, which runs `systemctl restart`, or `systemctl reload` with `action = "reload"`, after the circuit's steps.
+**Restarts.** A `service` step never restarts a unit that is already running. When a configuration file changes, notify a handler, which runs `systemctl restart`, or `systemctl reload` with `action = "reload"`, after the circuit's steps. A unit that isn't running is started instead of reloaded, since systemd can't reload it, as Ansible's `reloaded` does.
 
 ## Removal
 

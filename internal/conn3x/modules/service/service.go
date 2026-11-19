@@ -208,7 +208,8 @@ func Restart(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "restart")
 }
 
-// Reload asks the unit to reload its configuration.
+// Reload asks the unit to reload its configuration, or starts it when it
+// isn't running.
 func Reload(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "reload")
 }
@@ -226,6 +227,12 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 		if err := run(ctx, r, "systemctl daemon-reload"); err != nil {
 			return err
 		}
+	}
+	// A unit that isn't running can't reload, and systemctl refuses. Ansible
+	// starts it instead, and so does this: a reload asks for the new config
+	// to be in use, and a start does that.
+	if verb == "reload" && !a.Running {
+		verb = "start"
 	}
 	return run(ctx, r, "systemctl "+verb+" -- "+ssh.Quote(Unit(name)))
 }

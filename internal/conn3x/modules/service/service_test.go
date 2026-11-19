@@ -335,3 +335,21 @@ func TestMaskDisablesFirst(t *testing.T) {
 		t.Errorf("disabled without enabled = false: %v, %v", err, h.ran)
 	}
 }
+
+// A reload of a unit that isn't running starts it, as Ansible's systemd
+// module does; a restart already starts it.
+func TestReloadStartsAStoppedUnit(t *testing.T) {
+	for verb, want := range map[string]string{"reload": "start", "restart": "restart"} {
+		h := &host{show: show("loaded", "inactive", "enabled", "no")}
+		fn := Reload
+		if verb == "restart" {
+			fn = Restart
+		}
+		if err := fn(ctx, h, "web"); err != nil {
+			t.Fatal(err)
+		}
+		if got := h.ran[len(h.ran)-1]; got != "systemctl "+want+" -- 'web.service'" {
+			t.Errorf("%s on a stopped unit ran %q", verb, got)
+		}
+	}
+}
