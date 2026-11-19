@@ -38,6 +38,7 @@ var circuitModules = map[string]string{
 	"postgresql_database":  "conn3x_postgresql_database",
 	"postgresql_extension": "conn3x_postgresql_extension",
 	"postgresql_schema":    "conn3x_postgresql_schema",
+	"postgresql_setting":   "conn3x_postgresql_setting",
 	"postgresql_role":      "conn3x_postgresql_role",
 	"limit":                "conn3x_limit",
 	"command":              "conn3x_command",

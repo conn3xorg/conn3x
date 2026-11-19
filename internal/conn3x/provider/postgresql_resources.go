@@ -489,3 +489,84 @@ func applyPgSchema(ctx context.Context, req providers.ApplyResourceChangeRequest
 			return nil
 		})
 }
+
+func pgSettingSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "A server setting of the PostgreSQL server on the host, such as work_mem, set with ALTER SYSTEM in postgresql.auto.conf and then reloaded, through psql as the postgres user. Conn3x never restarts the server: restart_required says when the setting waits for one.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
+			"name":     {Type: cty.String, Required: true, Description: "Setting name, as pg_settings lists it, such as shared_buffers or pg_stat_statements.max."},
+			"value": {Type: cty.String, Required: true, Description: "Value, as postgresql.conf takes it, such as \"256MB\", \"30s\" or \"on\". A number is compared in the setting's own unit, rounded as PostgreSQL rounds it, so 256MB and 262144kB are the same. " +
+				"For search_path and the *_preload_libraries settings, give a comma-separated list, such as \"pg_stat_statements, auto_explain\"."},
+			"on_remove":        {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the setting, \"delete\" runs ALTER SYSTEM RESET, so the other configuration files decide it again, and reloads."},
+			"restart_required": {Type: cty.Bool, Computed: true, Description: "Whether the server only takes the setting after a restart, such as for shared_buffers. Notify a handler that restarts PostgreSQL to have it take effect."},
+			"in_sync":          {Type: cty.Bool, Computed: true, Description: "Whether the setting matched at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func pgSettingFrom(v cty.Value) postgresql.Setting {
+	return postgresql.Setting{Name: stringOr(v.GetAttr("name"), ""), Value: stringOr(v.GetAttr("value"), "")}
+}
+
+func validatePgSetting(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := pgSettingFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func planPgSetting(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	resp := planSynced(req, "postgresql_setting", []string{"name"}, []string{"value"})
+	if p := resp.PlannedState; !p.IsNull() && !p.GetAttr("in_sync").IsKnown() {
+		vals := p.AsValueMap()
+		vals["restart_required"] = cty.UnknownVal(cty.Bool)
+		resp.PlannedState = cty.ObjectVal(vals)
+	}
+	return resp
+}
+
+// withSetting records what the server says of the setting.
+func withSetting(v cty.Value, inSync bool, st postgresql.SettingState) cty.Value {
+	vals := v.AsValueMap()
+	vals["in_sync"] = cty.BoolVal(inSync)
+	vals["restart_required"] = cty.BoolVal(st.Pending)
+	return cty.ObjectVal(vals)
+}
+
+func readPgSetting(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		s := pgSettingFrom(prior)
+		st, err := postgresql.ReadSetting(ctx, h, s.Name)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("postgresql_setting %s: %w", s.Name, err)
+		}
+		return withSetting(prior, s.Matches(st), st), nil
+	})
+}
+
+func applyPgSetting(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			s := pgSettingFrom(planned)
+			st, err := postgresql.ApplySetting(ctx, h, s)
+			if err != nil {
+				return cty.NilVal, fmt.Errorf("postgresql_setting %s: %w", s.Name, err)
+			}
+			return withSetting(planned, true, st), nil
+		},
+		func(ctx context.Context, h *hostConn, prior cty.Value) error {
+			s := pgSettingFrom(prior)
+			if err := postgresql.ResetSetting(ctx, h, s.Name); err != nil {
+				return fmt.Errorf("postgresql_setting %s: %w", s.Name, err)
+			}
+			return nil
+		})
+}

@@ -154,6 +154,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_postgresql_database":          {pgDatabaseSchema, validatePgDatabase, planPgDatabase, readPgDatabase, applyPgDatabase, upgradeWith(pgDatabaseSchema)},
 	"conn3x_postgresql_extension":         {pgExtensionSchema, validatePgExtension, planPgExtension, readPgExtension, applyPgExtension, upgradeWith(pgExtensionSchema)},
 	"conn3x_postgresql_schema":            {pgSchemaSchema, validatePgSchema, planPgSchema, readPgSchema, applyPgSchema, upgradeWith(pgSchemaSchema)},
+	"conn3x_postgresql_setting":           {pgSettingSchema, validatePgSetting, planPgSetting, readPgSetting, applyPgSetting, upgradeWith(pgSettingSchema)},
 	"conn3x_postgresql_role":              {pgRoleSchema, validatePgRole, planPgRole, readPgRole, applyPgRole, upgradeWith(pgRoleSchema)},
 	"conn3x_windows_package":              {winPackageSchema, validateWinPackage, planWinPackage, readWinPackage, applyWinPackage, upgradeWith(winPackageSchema)},
 	"conn3x_windows_powershell":           {winPowershellSchema, validateWinPowershell, planWinPowershell, readWinPowershell, applyWinPowershell, upgradeWith(winPowershellSchema)},

@@ -1,0 +1,43 @@
+circuit "db" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # Taken on a reload. on_remove = "delete" resets it on destroy.
+  step "work_mem" {
+    postgresql_setting {
+      name      = "work_mem"
+      value     = "64MB"
+      on_remove = "delete"
+    }
+  }
+
+  # 100kB is 12.5 pages of 8 kB, which PostgreSQL rounds to 12.
+  step "effective_cache_size" {
+    postgresql_setting {
+      name  = "effective_cache_size"
+      value = "100kB"
+    }
+  }
+
+  # Waits for a restart, which nothing here does.
+  step "shared_buffers" {
+    postgresql_setting {
+      name  = "shared_buffers"
+      value = "0.25GB"
+    }
+  }
+
+  # A list of quoted names.
+  step "search_path" {
+    postgresql_setting {
+      name  = "search_path"
+      value = "\"$user\", public, reporting"
+    }
+  }
+}

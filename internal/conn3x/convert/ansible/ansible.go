@@ -936,7 +936,7 @@ var keywords = map[string]bool{
 // runs psql as the postgres user.
 func runsAsPostgres(t map[string]*yaml.Node) bool {
 	for k := range t {
-		if m := k[strings.LastIndex(k, ".")+1:]; !keywords[k] && (m == "postgresql_db" || m == "postgresql_user" || m == "postgresql_ext" || m == "postgresql_schema") {
+		if m := k[strings.LastIndex(k, ".")+1:]; !keywords[k] && (m == "postgresql_db" || m == "postgresql_user" || m == "postgresql_ext" || m == "postgresql_schema" || m == "postgresql_alter_system" || m == "postgresql_set") {
 			return true
 		}
 	}
