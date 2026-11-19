@@ -55,7 +55,7 @@ step "team" {
 
 **What's managed.** Conn3x checks and sets only the attributes you give. Leave out `uid`, `group`, `groups`, `home` or `shell`, and Conn3x records what the host has and leaves it alone.
 
-**Creating.** A new user is created with `useradd -m`, which also creates its home directory. `system = true` adds `-r` for a system account, and only matters when the account is created.
+**Creating.** A new user is created with `useradd -m`, which also creates its home directory. `system = true` adds `-r` for a system account, and only matters when the account is created. `create_home = false` creates it with `useradd -M` instead, without a home directory, as a service account usually is. It also only matters at creation: a home directory that's already there is left alone, and changing it later changes nothing on the host.
 
 **Changing.** When an existing account differs, Conn3x runs `usermod` with the attributes you set. Changing `home` this way updates the account but doesn't move the old directory's files.
 
@@ -73,4 +73,4 @@ When you delete a `user` step, `on_remove` decides what happens on the host. The
 
 ## From Ansible
 
-`conn3x convert ansible` turns `user` tasks into `user` steps, carrying over `uid`, `group`, `groups`, `home`, `shell` and `system`. Conn3x always creates a home directory for a new user, so a task with `create_home: no` stays a TODO. `append: true` becomes `append = true`. A task with `state: absent` stays a TODO, as does one with a `uid` that isn't a whole number. A task with `password` converts with a TODO to set `password_hash_wo`, since Ansible's is already a hash. The hash isn't copied into the circuit. With `update_password: on_create`, the TODO also says to add `password_on_create = true`.
+`conn3x convert ansible` turns `user` tasks into `user` steps, carrying over `uid`, `group`, `groups`, `home`, `shell`, `system`, and `create_home: false` (or its older name, `createhome`). `append: true` becomes `append = true`. A task with `state: absent` stays a TODO, as does one with a `uid` that isn't a whole number. A task with `password` converts with a TODO to set `password_hash_wo`, since Ansible's is already a hash. The hash isn't copied into the circuit. With `update_password: on_create`, the TODO also says to add `password_on_create = true`.

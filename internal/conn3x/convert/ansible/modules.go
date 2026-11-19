@@ -1122,9 +1122,14 @@ func userModule(in *input) ([]step, string) {
 	if in.has("system") {
 		attrs = append(attrs, attr{key: "system", val: cty.BoolVal(in.bool("system", false))})
 	}
-	if !in.bool("create_home", true) {
-		return nil, "sets create_home: no; Conn3x always creates the home directory"
+	// createhome is Ansible's older name for create_home.
+	for _, k := range []string{"create_home", "createhome"} {
+		if in.has(k) && !in.bool(k, true) {
+			attrs = append(attrs, attr{key: "create_home", val: cty.False})
+			break
+		}
 	}
+	in.ignore("create_home", "createhome")
 	// Ansible's password is already a crypt hash. It's never read, so it
 	// can't end up in the output.
 	var notes []string

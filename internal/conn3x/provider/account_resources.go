@@ -27,16 +27,17 @@ func userSchema() providers.Schema {
 		Block: &configschema.Block{
 			Description: "A local user account.",
 			Attributes: map[string]*configschema.Attribute{
-				"id":       {Type: cty.String, Computed: true},
-				"revision": revisionAttr(),
-				"name":     {Type: cty.String, Required: true, Description: "Login name."},
-				"uid":      {Type: cty.Number, Optional: true, Computed: true, Description: "User ID."},
-				"group":    {Type: cty.String, Optional: true, Computed: true, Description: "Primary group."},
-				"groups":   {Type: cty.Set(cty.String), Optional: true, Computed: true, Description: "Supplementary groups: the complete list, unless append is true."},
-				"append":   {Type: cty.Bool, Optional: true, Description: "true makes groups the ones the user must be in, adding any it's missing with usermod -a, and leaves the other groups it's in alone. Defaults to false, where groups is the complete list."},
-				"home":     {Type: cty.String, Optional: true, Computed: true, Description: "Home directory. Created with the user."},
-				"shell":    {Type: cty.String, Optional: true, Computed: true, Description: "Login shell."},
-				"system":   {Type: cty.Bool, Optional: true, Description: "Create as a system account."},
+				"id":          {Type: cty.String, Computed: true},
+				"revision":    revisionAttr(),
+				"name":        {Type: cty.String, Required: true, Description: "Login name."},
+				"uid":         {Type: cty.Number, Optional: true, Computed: true, Description: "User ID."},
+				"group":       {Type: cty.String, Optional: true, Computed: true, Description: "Primary group."},
+				"groups":      {Type: cty.Set(cty.String), Optional: true, Computed: true, Description: "Supplementary groups: the complete list, unless append is true."},
+				"append":      {Type: cty.Bool, Optional: true, Description: "true makes groups the ones the user must be in, adding any it's missing with usermod -a, and leaves the other groups it's in alone. Defaults to false, where groups is the complete list."},
+				"home":        {Type: cty.String, Optional: true, Computed: true, Description: "Home directory. Created with the user."},
+				"shell":       {Type: cty.String, Optional: true, Computed: true, Description: "Login shell."},
+				"system":      {Type: cty.Bool, Optional: true, Description: "Create as a system account."},
+				"create_home": {Type: cty.Bool, Optional: true, Description: "false creates the user without a home directory, with useradd -M, as a service account usually is. Defaults to true. Like system, it only matters when the user is created, and a home directory that's already there is left alone."},
 				"password_wo": {
 					Type: cty.String, Optional: true, Sensitive: true, WriteOnly: true,
 					Description: "Write-only: the account's password, never kept in state. Conn3x makes the $6$ (SHA-512) hash /etc/shadow holds and sets it with chpasswd -e, so the password never reaches the host's process list; a new value plans a change through password_hmac, and so does a password changed on the host. Needs root: log in as root, or set become. Unset leaves the password alone.",
@@ -81,6 +82,9 @@ func userSpec(cfg cty.Value) account.UserSpec {
 	}
 	if v := cfg.GetAttr("append"); known(v) {
 		s.AppendGroups = v.True()
+	}
+	if v := cfg.GetAttr("create_home"); known(v) {
+		s.NoHome = v.False()
 	}
 	return s
 }

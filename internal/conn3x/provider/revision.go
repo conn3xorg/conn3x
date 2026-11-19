@@ -45,9 +45,9 @@ func planRevision(prior, planned cty.Value) cty.Value {
 // offHost are settings that change nothing on the host when they change:
 // what to do on removal, how long to wait for a reboot or a wait_for, and
 // whether a later edit keeps a copy, and where the last one went, whether a
-// password is set only when a user is created, and how a package that isn't
-// there yet would be installed.
-var offHost = []string{"on_remove", "timeout", "backup", "backup_keep", "backup_file", "password_on_create", "install_recommends"}
+// password is set or a home directory made only when a user is created, and
+// how a package that isn't there yet would be installed.
+var offHost = []string{"on_remove", "timeout", "backup", "backup_keep", "backup_file", "password_on_create", "create_home", "install_recommends"}
 
 // sshMachine are the ssh settings that choose which machine is reached.
 // The rest only change how Conn3x logs in to it.

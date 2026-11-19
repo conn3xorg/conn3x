@@ -96,7 +96,6 @@ func TestConvertModuleArguments(t *testing.T) {
 		"get_url: { url: 'https://example.com/a', dest: /tmp/a }":                                        "no sha256 checksum",
 		"unarchive: { src: a.tgz, dest: /opt }":                                                          "from the controller",
 		"unarchive: { src: /tmp/a.tgz, dest: /opt, remote_src: yes }":                                    "no creates guard",
-		"user: { name: app, create_home: no }":                                                           "create_home: no",
 		"sysctl: { name: vm.swappiness, value: '10', sysctl_file: /etc/sysctl.d/x.conf }":                "named sysctl_file",
 		"kernel_blacklist: { blacklist_file: /etc/modprobe.d/x.conf }":                                   "has no name",
 		"cron: { name: x, job: /bin/true, cron_file: x }":                                                "named cron_file",

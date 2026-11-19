@@ -148,3 +148,14 @@ func TestValidateNames(t *testing.T) {
 		t.Error("relative shell accepted")
 	}
 }
+
+// A service account is created without a home directory: -M, never -m.
+func TestApplyUserCreateNoHome(t *testing.T) {
+	h := &host{answers: map[string]string{"getent passwd": ""}}
+	if err := ApplyUser(ctx, h, UserSpec{Name: "svc", System: true, NoHome: true}); err != nil {
+		t.Fatal(err)
+	}
+	if last := h.ran[len(h.ran)-1]; !strings.Contains(last, "useradd -M ") || strings.Contains(last, " -m ") {
+		t.Errorf("useradd for a user without a home: %s", last)
+	}
+}

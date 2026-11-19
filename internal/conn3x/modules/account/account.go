@@ -32,6 +32,9 @@ type UserSpec struct {
 	Home         *string
 	Shell        *string
 	System       bool // only used when creating
+	// NoHome creates the user without a home directory (useradd -M), as a
+	// service account usually is. Only used when creating.
+	NoHome bool
 }
 
 // missingGroups is what of s.Groups the user isn't in yet.
@@ -182,7 +185,11 @@ func ApplyUser(ctx context.Context, r modules.Runner, s UserSpec) error {
 		args = append(args, "-s", ssh.Quote(*s.Shell))
 	}
 	if !u.Exists {
-		cmd := append([]string{"useradd", "-m"}, args...)
+		home := "-m"
+		if s.NoHome {
+			home = "-M"
+		}
+		cmd := append([]string{"useradd", home}, args...)
 		if s.System {
 			cmd = append(cmd, "-r")
 		}
