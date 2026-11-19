@@ -235,3 +235,24 @@ func TestRunAnsibleModuleHints(t *testing.T) {
 		}
 	}
 }
+
+// -m service with state=restarted or reloaded becomes the handlers'
+// action; other states, and other modules, are left alone.
+func TestRunServiceAction(t *testing.T) {
+	name := cty.StringVal("nginx")
+	for st, want := range map[string]string{"restarted": "restart", "reloaded": "reload"} {
+		typ, args, err := serviceAction("service", "conn3x_service", map[string]cty.Value{"name": name, "state": cty.StringVal(st)})
+		if err != nil || typ != "conn3x_service_action" || args["action"] != cty.StringVal(want) || args["name"] != name || len(args) != 2 {
+			t.Errorf("state=%s: %s %v %v", st, typ, args, err)
+		}
+	}
+	if typ, _, _ := serviceAction("service", "conn3x_service", map[string]cty.Value{"name": name, "state": cty.StringVal("started")}); typ != "conn3x_service" {
+		t.Errorf("state=started became %s", typ)
+	}
+	if _, _, err := serviceAction("service", "conn3x_service", map[string]cty.Value{"name": name, "state": cty.StringVal("restarted"), "enabled": cty.True}); err == nil {
+		t.Error("restarted with enabled was accepted")
+	}
+	if typ, _, _ := serviceAction("command", "conn3x_command", map[string]cty.Value{"state": cty.StringVal("restarted")}); typ != "conn3x_command" {
+		t.Errorf("another module became %s", typ)
+	}
+}

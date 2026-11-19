@@ -86,8 +86,13 @@ func RunOnce(ctx context.Context, typeName string, args, ssh map[string]cty.Valu
 }
 
 // unguarded is a command that sets none of the guards that would make it
-// skip.
+// skip, or a service action, which has nothing to skip for.
 func unguarded(typeName string, args map[string]cty.Value) bool {
+	// A restart or reload has nothing on the host to be in line with, so,
+	// run on its own, it always acts.
+	if typeName == "conn3x_service_action" {
+		return true
+	}
 	if typeName != "conn3x_command" {
 		return false
 	}

@@ -196,6 +196,9 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		if args, err = runArgs(ctx, module, typ, o.args, o.module == ""); err != nil {
 			return fail("%s", err)
 		}
+		if typ, args, err = serviceAction(module, typ, args); err != nil {
+			return fail("%s", err)
+		}
 	}
 
 	var inv *ansible.Inventory
@@ -526,8 +529,6 @@ func taskParams(raw string) (map[string]cty.Value, error) {
 	return out, nil
 }
 
-// runArgs reads -a: the command itself, or a module's NAME=VALUE pairs,
-// split as a shell would split them.
 // ansibleModuleHints answers the Ansible module names people type first
 // with what does the job here. They aren't aliases: the arguments differ,
 // and an alias would take Ansible arguments that mean something else.
@@ -544,6 +545,29 @@ var ansibleModuleHints = map[string]string{
 	"ping":            "run -a true, which checks the login and, with -become, sudo",
 }
 
+// serviceAction turns -m service with state=restarted or reloaded, the
+// commonest ad-hoc call, into the action handlers use, which restarts or
+// reloads every time. A step refuses those states, since in a circuit they
+// would act on every apply; here acting once is the point.
+func serviceAction(module, typ string, args map[string]cty.Value) (string, map[string]cty.Value, error) {
+	st, ok := args["state"]
+	if module != "service" || !ok || !st.IsKnown() || st.IsNull() {
+		return typ, args, nil
+	}
+	action := map[string]string{"restarted": "restart", "reloaded": "reload"}[st.AsString()]
+	if action == "" {
+		return typ, args, nil
+	}
+	for k := range args {
+		if k != "name" && k != "state" {
+			return "", nil, fmt.Errorf("-a: state=%s restarts or reloads, and can't go with %s; run that separately", st.AsString(), k)
+		}
+	}
+	return "conn3x_service_action", map[string]cty.Value{"name": args["name"], "action": cty.StringVal(action)}, nil
+}
+
+// runArgs reads -a: the command itself, or a module's NAME=VALUE pairs,
+// split as a shell would split them.
 func runArgs(ctx context.Context, module, typ, raw string, asCommand bool) (map[string]cty.Value, error) {
 	if asCommand {
 		return map[string]cty.Value{"command": cty.StringVal(raw)}, nil
