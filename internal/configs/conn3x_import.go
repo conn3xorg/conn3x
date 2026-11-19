@@ -243,7 +243,7 @@ func (h *importHosts) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 		return cty.DynamicVal, append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "Invalid import in step", Detail: detail, Subject: &rng})
 	}
 	keys, _ = keys.Unmark()
-	if keys.IsNull() || !(keys.Type().IsListType() || keys.Type().IsSetType() || keys.Type().IsTupleType()) {
+	if t := keys.Type(); keys.IsNull() || !t.IsListType() && !t.IsSetType() && !t.IsTupleType() {
 		return bad("import is true, false, or a list of host names.")
 	}
 	instances := map[string]cty.Value{}
