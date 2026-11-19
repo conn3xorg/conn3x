@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"fmt"
 	"io/fs"
+	"math"
 	"net/url"
 	"os"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
@@ -1121,6 +1123,23 @@ func userModule(in *input) ([]step, string) {
 	attrs = in.optional(attrs, "shell", "shell")
 	if in.has("system") {
 		attrs = append(attrs, attr{key: "system", val: cty.BoolVal(in.bool("system", false))})
+	}
+	if in.has("password_lock") {
+		attrs = append(attrs, attr{key: "locked", val: cty.BoolVal(in.bool("password_lock", false))})
+	}
+	// expires is seconds since 1970; Ansible compares only the date it
+	// falls on in UTC, and a negative one removes the expiry.
+	if in.has("expires") {
+		e := in.str("expires")
+		f, err := strconv.ParseFloat(e, 64)
+		if in.problem == "" && (err != nil || math.IsNaN(f) || math.IsInf(f, 0)) {
+			return nil, fmt.Sprintf("sets expires %q, which isn't a number of seconds since 1970", e)
+		}
+		date := ""
+		if f >= 0 {
+			date = time.Unix(int64(math.Floor(f)), 0).UTC().Format(time.DateOnly)
+		}
+		attrs = append(attrs, s("expires", date))
 	}
 	// createhome is Ansible's older name for create_home.
 	for _, k := range []string{"create_home", "createhome"} {

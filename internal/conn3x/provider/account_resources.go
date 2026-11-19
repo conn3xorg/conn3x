@@ -47,6 +47,8 @@ func userSchema() providers.Schema {
 					Description: "Write-only: the account's password as a crypt hash, as /etc/shadow holds it, such as one from openssl passwd -6 or mkpasswd. Set as it is with chpasswd -e and never kept in state. Use it instead of password_wo when you only have the hash, as Ansible's password does. Needs root, like password_wo.",
 				},
 				"password_hmac":      {Type: cty.String, Computed: true, Description: "An HMAC of the hash the host should hold for password_wo, keyed outside state. A refresh records the one it finds, so a password changed on the host plans a change."},
+				"locked":             {Type: cty.Bool, Optional: true, Description: "true locks the account's password with usermod -L, false unlocks it with usermod -U, as Ansible's password_lock does. Unset leaves the lock alone. Locking stops password logins only: an SSH key still works. An account with no password can't be unlocked. Needs root, like password_wo."},
+				"expires":            {Type: cty.String, Optional: true, Description: "The account's last day, as YYYY-MM-DD in UTC, set with usermod -e; \"\" for no expiry. Unset leaves it alone. After that day the account can't log in at all, by password or key. Needs root, like password_wo."},
 				"password_on_create": {Type: cty.Bool, Optional: true, Description: "Set password_wo only when the step creates the user, as Ansible's update_password: on_create does, and never change or check it after. Needs password_wo."},
 				"on_remove":          {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the account, \"delete\" removes it and keeps its home directory."},
 			},
@@ -126,6 +128,7 @@ func validateUser(cfg cty.Value) tfdiags.Diagnostics {
 	if err := validateUserPassword(cfg); err != nil {
 		diags = diags.Append(attrError("password_wo", err.Error()))
 	}
+	diags = diags.Append(validateUserLock(cfg))
 	return diags
 }
 
@@ -146,7 +149,10 @@ func readUser(ctx context.Context, req providers.ReadResourceRequest) providers.
 		}
 		state := userState(req.PriorState, u)
 		if u.Exists {
+			var lockWarn tfdiags.Diagnostics
 			state, warn = refreshUserPassword(ctx, host, state)
+			state, lockWarn = refreshUserLock(ctx, host, state)
+			warn = warn.Append(lockWarn)
 		}
 		return state, nil
 	})
@@ -170,6 +176,9 @@ func applyUser(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 			}
 			sum, err := applyUserPassword(ctx, host, req)
 			if err != nil {
+				return cty.NilVal, fmt.Errorf("user %s: %w", spec.Name, err)
+			}
+			if err := applyUserLock(ctx, host, spec.Name, withIgnored(req.Config, req.PlannedState)); err != nil {
 				return cty.NilVal, fmt.Errorf("user %s: %w", spec.Name, err)
 			}
 			vals := userState(req.PlannedState, u).AsValueMap()
