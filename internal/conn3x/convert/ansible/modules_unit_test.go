@@ -39,6 +39,8 @@ func TestConvertModuleArguments(t *testing.T) {
 		"git: { repo: 'https://example.com/r.git', dest: /opt/r, version: v1 }":        {"git {", `ref  = "v1"`},
 		"ansible.posix.mount: { path: /data, src: /dev/sdb1, fstype: xfs, opts: noatime, state: mounted }": {
 			"mount {", `fstype = "xfs"`, `opts   = "noatime"`},
+		"ansible.posix.mount: { path: /data, src: /dev/sdb1, fstype: xfs, dump: 1, passno: 2 }": {
+			"mount {", "dump   = 1", "passno = 2"},
 		"user: { name: app, uid: 1500, group: app, groups: [web, log], home: /srv/app, shell: /bin/sh, system: yes }": {
 			"user {", "uid    = 1500", `groups = ["web", "log"]`, `home   = "/srv/app"`, "system = true"},
 		"group: { name: app, gid: 1500, system: no }":               {"group {", "gid    = 1500", "system = false"},

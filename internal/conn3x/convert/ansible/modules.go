@@ -1548,7 +1548,13 @@ func mountModule(in *input) ([]step, string) {
 	in.state("mounted", "mounted")
 	attrs := []attr{s("path", in.str("path", "name")), s("src", in.str("src")), s("fstype", in.str("fstype"))}
 	attrs = in.optional(attrs, "opts", "opts")
-	in.ignore("dump", "passno")
+	// These are fstab's dump and fsck pass fields, which the step writes as
+	// they are; dropping them left data disks never checked at boot.
+	for _, k := range []string{"dump", "passno"} {
+		if in.has(k) {
+			attrs = append(attrs, in.number(k))
+		}
+	}
 	return one("mount", attrs)
 }
 

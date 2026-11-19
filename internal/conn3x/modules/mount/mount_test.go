@@ -5,6 +5,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -17,6 +18,7 @@ func TestValidate(t *testing.T) {
 		{Path: "/mnt/scratch", Src: "tmpfs", FSType: "tmpfs", Opts: "size=16m,mode=0755"},
 		{Path: "/data", Src: "UUID=0a1b2c3d-1111-2222-3333-444455556666", FSType: "xfs"},
 		{Path: "/srv/nfs", Src: "nfs.example.com:/export", FSType: "nfs4", Opts: "_netdev"},
+		{Path: "/data", Src: "LABEL=data", FSType: "xfs", Dump: 1, PassNo: 2},
 	} {
 		if err := ok.Validate(); err != nil {
 			t.Errorf("rejected %+v: %v", ok, err)
@@ -29,6 +31,9 @@ func TestValidate(t *testing.T) {
 		{Path: "/mnt/a", Src: "", FSType: "tmpfs"},
 		{Path: "/mnt/a", Src: "tmpfs", FSType: "tmp fs"},
 		{Path: "/mnt/a", Src: "tmpfs", FSType: "tmpfs", Opts: "size=1m\n/dev/sda1 / ext4"},
+		{Path: "/mnt/a", Src: "tmpfs", FSType: "tmpfs", Dump: 2},
+		{Path: "/mnt/a", Src: "tmpfs", FSType: "tmpfs", PassNo: 3},
+		{Path: "/mnt/a", Src: "tmpfs", FSType: "tmpfs", PassNo: -1},
 	} {
 		if bad.Validate() == nil {
 			t.Errorf("accepted %+v", bad)
@@ -36,8 +41,33 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// A failure names the fstab field it's about, so the provider can point at
+// that field rather than at path.
+func TestValidateNamesTheField(t *testing.T) {
+	for _, c := range []struct {
+		attr string
+		m    Mount
+	}{
+		{"path", Mount{Path: "relative", Src: "tmpfs", FSType: "tmpfs"}},
+		{"src", Mount{Path: "/mnt/a", Src: "", FSType: "tmpfs"}},
+		{"fstype", Mount{Path: "/mnt/a", Src: "tmpfs", FSType: "tmp fs"}},
+		{"opts", Mount{Path: "/mnt/a", Src: "tmpfs", FSType: "tmpfs", Opts: "a b"}},
+		{"dump", Mount{Path: "/mnt/a", Src: "tmpfs", FSType: "tmpfs", Dump: 2}},
+		{"passno", Mount{Path: "/mnt/a", Src: "tmpfs", FSType: "tmpfs", PassNo: 3}},
+	} {
+		var ve *ValidationError
+		if err := c.m.Validate(); !errors.As(err, &ve) || ve.Attribute != c.attr {
+			t.Errorf("Validate(%+v): want ValidationError on %q, got %v", c.m, c.attr, err)
+		}
+	}
+}
+
 func TestLine(t *testing.T) {
 	if got := (Mount{Path: "/mnt/scratch", Src: "tmpfs", FSType: "tmpfs"}).Line(); got != "tmpfs /mnt/scratch tmpfs defaults 0 0" {
+		t.Fatalf("got %q", got)
+	}
+	// The last two fields are dump's frequency and fsck's pass.
+	if got := (Mount{Path: "/data", Src: "LABEL=data", FSType: "xfs", Dump: 1, PassNo: 2}).Line(); got != "LABEL=data /data xfs defaults 1 2" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -109,6 +139,20 @@ func TestRead(t *testing.T) {
 	h.findmnt = ""
 	if a, err := Read(ctx, h, scratch); err != nil || a.Mounted || a.Entry == "" {
 		t.Fatalf("unmounted: %+v, %v", a, err)
+	}
+}
+
+// An fstab entry with another fsck pass is out of sync, so a change to
+// passno is written by the next apply rather than read as already right.
+func TestReadPassNo(t *testing.T) {
+	h := &host{fstab: "LABEL=data  /data xfs defaults 0 2\n", findmnt: "/dev/vdb1 xfs"}
+	data := Mount{Path: "/data", Src: "LABEL=data", FSType: "xfs", PassNo: 2}
+	if a, err := Read(ctx, h, data); err != nil || !data.InSync(a) {
+		t.Fatalf("passno 2 for an entry with 2: %+v, %v", a, err)
+	}
+	data.PassNo = 0
+	if a, err := Read(ctx, h, data); err != nil || data.InSync(a) {
+		t.Fatalf("passno 0 for an entry with 2: %+v, %v", a, err)
 	}
 }
 

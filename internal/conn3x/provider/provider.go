@@ -92,7 +92,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_container":            {containerSchema, validateWith("name", func(v cty.Value) error { return containerFrom(v).Validate() }), planContainer, readContainer, applyContainer, upgradeWith(containerSchema)},
 	"conn3x_nm_connection":        {nmConnectionSchema, validateNMConnection, planNMConnection, readNMConnection, applyNMConnection, upgradeWith(nmConnectionSchema)},
 	"conn3x_directory_copy":       {dircopySchema, validateDircopy, planDircopy, readDircopy, applyDircopy, upgradeWith(dircopySchema)},
-	"conn3x_mount":                {mountSchema, validateWith("path", func(v cty.Value) error { return mountFrom(v).Validate() }), planMount, readMount, applyMount, upgradeWith(mountSchema)},
+	"conn3x_mount":                {mountSchema, validateMount, planMount, readMount, applyMount, upgradeWith(mountSchema)},
 	"conn3x_script":               {scriptSchema, validateWith("program", validateScript), planScript, readScript, applyScript, upgradeWith(scriptSchema)},
 	"conn3x_swap":                 {swapSchema, validateWith("path", func(v cty.Value) error { return swapFrom(v).Validate() }), planSwap, readSwap, applySwap, upgradeWith(swapSchema)},
 	"conn3x_alternatives":         {alternativesSchema, validateWith("name", func(v cty.Value) error { return alternativeFrom(v).Validate() }), planAlternatives, readAlternatives, applyAlternatives, upgradeWith(alternativesSchema)},

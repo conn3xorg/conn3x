@@ -26,17 +26,33 @@ var fstabWord = regexp.MustCompile(`^[^\s#]+$`)
 type Mount struct {
 	Path, Src, FSType string
 	Opts              string // defaults to "defaults"
+	Dump, PassNo      int    // fstab's dump and fsck pass fields; 0 writes "0 0"
 }
+
+// ValidationError reports which fstab field a Mount's validation failure is
+// about, so the provider can point at that field.
+type ValidationError struct {
+	Attribute string
+	Message   string
+}
+
+func (e *ValidationError) Error() string { return e.Message }
 
 // Validate checks a Mount before anything reaches the host.
 func (m Mount) Validate() error {
 	if !path.IsAbs(m.Path) || path.Clean(m.Path) == "/" || !fstabWord.MatchString(m.Path) {
-		return fmt.Errorf("path %q must be an absolute path other than /, without spaces", m.Path)
+		return &ValidationError{"path", fmt.Sprintf("path %q must be an absolute path other than /, without spaces", m.Path)}
 	}
 	for label, v := range map[string]string{"src": m.Src, "fstype": m.FSType, "opts": m.opts()} {
 		if !fstabWord.MatchString(v) {
-			return fmt.Errorf("%s %q must be one word without spaces", label, v)
+			return &ValidationError{label, fmt.Sprintf("%s %q must be one word without spaces", label, v)}
 		}
+	}
+	if m.Dump != 0 && m.Dump != 1 {
+		return &ValidationError{"dump", fmt.Sprintf("dump %d must be 0 or 1", m.Dump)}
+	}
+	if m.PassNo < 0 || m.PassNo > 2 {
+		return &ValidationError{"passno", fmt.Sprintf("passno %d must be 0, 1 or 2", m.PassNo)}
 	}
 	return nil
 }
@@ -50,7 +66,7 @@ func (m Mount) opts() string {
 
 // Line is the entry Conn3x writes to /etc/fstab.
 func (m Mount) Line() string {
-	return fmt.Sprintf("%s %s %s %s 0 0", m.Src, m.Path, m.FSType, m.opts())
+	return fmt.Sprintf("%s %s %s %s %d %d", m.Src, m.Path, m.FSType, m.opts(), m.Dump, m.PassNo)
 }
 
 // fstabLine returns the entry for mountpoint, with its fields single-spaced.
