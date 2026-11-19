@@ -35,6 +35,8 @@ func TestPortValidate(t *testing.T) {
 		{Port: "65536", Protocol: "tcp", Type: "http_port_t"},
 		{Port: "9000-8000", Protocol: "tcp", Type: "http_port_t"},
 		{Port: "80;id", Protocol: "tcp", Type: "http_port_t"},
+		{Port: "08081", Protocol: "tcp", Type: "http_port_t"},
+		{Port: "8080-08090", Protocol: "tcp", Type: "http_port_t"},
 		{Port: "80", Protocol: "icmp", Type: "http_port_t"},
 		{Port: "80", Protocol: "tcp", Type: "http port"},
 	} {

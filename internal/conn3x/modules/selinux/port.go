@@ -23,13 +23,15 @@ type Port struct {
 	Type     string // such as http_port_t
 }
 
-var portRange = regexp.MustCompile(`^([0-9]{1,5})(?:-([0-9]{1,5}))?$`)
+// No leading zero: semanage stores 08081 as 8081, which would never read
+// back as in sync.
+var portRange = regexp.MustCompile(`^([1-9][0-9]{0,4})(?:-([1-9][0-9]{0,4}))?$`)
 
 // Validate checks a rule before anything reaches the host.
 func (p Port) Validate() error {
 	m := portRange.FindStringSubmatch(p.Port)
 	if m == nil {
-		return fmt.Errorf("port %q must be a number or a range such as 8080-8090", p.Port)
+		return fmt.Errorf("port %q must be a number or a range such as 8080-8090, without leading zeros", p.Port)
 	}
 	lo, _ := strconv.Atoi(m[1])
 	hi := lo
