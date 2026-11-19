@@ -1171,3 +1171,43 @@ func winShareModule(in *input) ([]step, string) {
 	}
 	return one("windows_share", attrs, "win_share also turns on access-based enumeration, sets caching to Manual and turns encryption off on every run; a windows_share step leaves those as the share has them.")
 }
+
+// winDNSRecordModule converts win_dns_record for the five record types
+// windows_dns_record has. Ansible's value is the name's whole set of
+// records of the type, as values is, and its ttl defaults to 3600 too.
+func winDNSRecordModule(in *input) ([]step, string) {
+	if st := in.state("present", "present"); st != "present" {
+		return nil, "has state " + st + ", which removes every record for the name; a windows_dns_record step does that only with on_remove = \"delete\" when it goes"
+	}
+	typ := in.str("type")
+	if !slices.Contains([]string{"A", "AAAA", "CNAME", "PTR", "TXT"}, typ) {
+		return nil, "makes a " + typ + " record; a windows_dns_record step makes A, AAAA, CNAME, PTR and TXT"
+	}
+	for _, key := range []string{"computer_name", "zone_scope"} {
+		if in.has(key) {
+			return nil, "sets " + key + ", and a windows_dns_record step works on the zone of the server it runs on"
+		}
+	}
+	for _, key := range []string{"aging", "allow_update_any"} {
+		if in.bool(key, false) {
+			return nil, "sets " + key + ", which a windows_dns_record step doesn't"
+		}
+	}
+	in.ignore("aging", "allow_update_any")
+	vals := []cty.Value{}
+	key := "value"
+	if !in.has(key) {
+		key = "values" // Ansible's alias
+	}
+	for _, v := range in.list(key) {
+		vals = append(vals, cty.StringVal(v))
+	}
+	if len(vals) == 0 {
+		return nil, "sets no value"
+	}
+	attrs := []attr{s("zone", in.str("zone")), s("name", in.str("name")), s("type", typ), {key: "values", val: cty.ListVal(vals)}}
+	if in.has("ttl") {
+		attrs = append(attrs, in.number("ttl"))
+	}
+	return one("windows_dns_record", attrs)
+}

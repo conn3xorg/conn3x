@@ -46,3 +46,7 @@ Run the step on the DNS server that holds the zone, such as a domain controller 
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the records. `on_remove = "delete"` removes every record of the step's type that the name has.
+
+## From Ansible
+
+`conn3x convert ansible` turns `win_dns_record` tasks, from `ansible.windows` or `community.windows`, into `windows_dns_record` steps for A, AAAA, CNAME, PTR and TXT records. `value`, or its alias `values`, becomes `values`. In Ansible too it's every record the name has of that type, and any other is removed. `ttl` carries over, and defaults to 3600 in both. A task stays a TODO, with the reason, for another record type, such as SRV or NS, for `state: absent`, which removes every record of the name, and for `computer_name`, `zone_scope`, `aging` or `allow_update_any`.
