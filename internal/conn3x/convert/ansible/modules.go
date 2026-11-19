@@ -398,7 +398,8 @@ func (in *input) render(key, s string) string {
 }
 
 // mode turns an Ansible mode into four octal digits. An unquoted 644 is
-// read the way it was obviously meant.
+// read the way it was obviously meant, and a symbolic mode that sets every
+// class with = has exactly one octal result, so it's read too.
 func (in *input) mode(key string) (attr, bool) {
 	m := in.str(key)
 	if m == "" {
@@ -410,10 +411,95 @@ func (in *input) mode(key string) (attr, bool) {
 		m = "0" + m
 	case regexp.MustCompile(`^[0-7]{4}$`).MatchString(m):
 	default:
-		in.fail(fmt.Sprintf("mode %q is not an octal mode", m))
-		return attr{}, false
+		octal, ok := symbolicMode(m)
+		if !ok {
+			in.fail(fmt.Sprintf("mode %q is not an octal mode; write it in octal, such as %q", m, "0644"))
+			return attr{}, false
+		}
+		m = octal
 	}
 	return attr{key: "mode", val: cty.StringVal(m)}, true
+}
+
+// symbolicMode converts a symbolic mode such as u=rw,g=r,o=r to octal when
+// every class is set with =. Such a mode never reads the file's current
+// mode, so it has one octal result; +, -, X, a class copied from another
+// (u=g) or an empty who depend on the file or the umask, so they stay for
+// review.
+func symbolicMode(m string) (string, bool) {
+	const (
+		classU uint = 1 << iota
+		classG
+		classO
+	)
+	var bits, seen uint
+	for _, clause := range strings.Split(m, ",") {
+		eq := strings.IndexByte(clause, '=')
+		if eq <= 0 {
+			return "", false
+		}
+		var classes uint
+		for i := 0; i < eq; i++ {
+			switch clause[i] {
+			case 'a':
+				classes |= classU | classG | classO
+			case 'u':
+				classes |= classU
+			case 'g':
+				classes |= classG
+			case 'o':
+				classes |= classO
+			default:
+				return "", false
+			}
+		}
+		if classes == 0 || classes&seen != 0 {
+			return "", false
+		}
+		seen |= classes
+
+		var perms, special uint
+		for i := eq + 1; i < len(clause); i++ {
+			switch clause[i] {
+			case 'r':
+				perms |= 4
+			case 'w':
+				perms |= 2
+			case 'x':
+				perms |= 1
+			case 's':
+				// chmod sets setuid for u and setgid for g, and ignores s
+				// on o.
+				if classes&classU != 0 {
+					special |= 04000
+				}
+				if classes&classG != 0 {
+					special |= 02000
+				}
+			case 't':
+				// chmod sets the sticky bit only when o is in the who.
+				if classes&classO != 0 {
+					special |= 01000
+				}
+			default:
+				return "", false
+			}
+		}
+		if classes&classU != 0 {
+			bits |= perms << 6
+		}
+		if classes&classG != 0 {
+			bits |= perms << 3
+		}
+		if classes&classO != 0 {
+			bits |= perms
+		}
+		bits |= special
+	}
+	if seen != classU|classG|classO {
+		return "", false
+	}
+	return fmt.Sprintf("%04o", bits), true
 }
 
 // number reads an argument that must be a whole number, such as a uid.
