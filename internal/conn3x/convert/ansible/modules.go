@@ -1602,9 +1602,41 @@ func firewalldModule(in *input) ([]step, string) {
 	return one("firewalld", attrs)
 }
 
+// ufwSettingsModule converts a ufw task that changes ufw itself: state
+// enabled or disabled, and default (or policy) with direction, which
+// Ansible takes as incoming when it's left out.
+func ufwSettingsModule(in *input) ([]step, string) {
+	var attrs []attr
+	switch st := in.str("state"); st {
+	case "":
+	case "enabled", "disabled":
+		attrs = append(attrs, attr{key: "enabled", val: cty.BoolVal(st == "enabled")})
+	default:
+		return nil, fmt.Sprintf("has state %s, which ufw_settings doesn't do; use a command step", st)
+	}
+	if p := in.str("default", "policy"); p != "" {
+		dir := in.str("direction")
+		switch dir {
+		case "", "incoming":
+			dir = "incoming"
+		case "outgoing", "routed":
+		default:
+			return nil, fmt.Sprintf("sets default with direction %s, which Ansible refuses; it takes incoming, outgoing or routed", dir)
+		}
+		attrs = append(attrs, s("default_"+dir, p))
+	}
+	if in.has("logging") {
+		return nil, "sets logging, which ufw_settings doesn't offer yet"
+	}
+	if len(attrs) == 0 {
+		return nil, "changes ufw itself in a way ufw_settings doesn't cover"
+	}
+	return one("ufw_settings", attrs)
+}
+
 func ufwModule(in *input) ([]step, string) {
 	if !in.has("rule") {
-		return nil, "changes ufw itself rather than adding a rule; use a guarded command step"
+		return ufwSettingsModule(in)
 	}
 	port := in.str("port", "to_port")
 	if in.has("proto") {

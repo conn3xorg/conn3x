@@ -62,7 +62,7 @@ step "ssh" {
 
 **Applying.** Conn3x runs `ufw allow 22/tcp`, or `ufw allow from 10.0.0.0/8 to any port 5432 proto tcp` when you set `from`. ufw saves its rules, so they hold across reboots. ufw has no lock of its own, so Conn3x changes one rule at a time on each host and reads the rule back afterwards, failing the step if ufw didn't keep it.
 
-**Enabling ufw.** Conn3x adds rules but doesn't enable ufw. Rules take effect once ufw is enabled. Allow SSH before you enable it, so the firewall doesn't cut off your SSH connection.
+**Enabling ufw.** Rules take effect once ufw is on. Turn it on, and set its default policies, with a [`ufw_settings`](/modules/ufw_settings) step after the rule that allows SSH. That step refuses to turn ufw on while no rule lets SSH in.
 
 **Confirming.** A rule change can lock Conn3x out: a deny on the SSH port, or removing the rule that lets SSH in. With `confirm_after`, the host schedules the commands that take the change back with `systemd-run`, due that long after, before Conn3x makes it. The undo is a timer in the host's own systemd, so it runs even if Conn3x goes away mid-apply. Conn3x then logs in again over a new connection with the circuit's whole `ssh` block, jump hosts and host key check included, and cancels the undo once that works. If the change fails, Conn3x takes it back at once. If the new login doesn't come in time, the host takes the change back by itself, and Conn3x fails the step saying whether the host answers again. The guard covers removing the step too, using the `confirm_after` the step had, and it only takes back what changed. Undoing a removal adds the rule back at the end of ufw's list, not where it was. For an allow on the SSH port that's enough, unless an earlier rule denies the same port, since ufw goes by the first rule that matches. `confirm_after` is between `10s` and `1h` and needs systemd on the host.
 
@@ -76,4 +76,4 @@ When you delete a `ufw` step, `on_remove` decides what happens on the host. The 
 
 ## From Ansible
 
-`conn3x convert ansible` turns `community.general.ufw` tasks that set `rule` into `ufw` steps. `port` or `to_port` becomes `port`, with `proto` added unless it is `any`, and `from_ip`, `from` or `src` becomes `from`. A task without `rule`, which changes ufw itself, stays a TODO, as does a task with any other argument, such as `state`, `direction` or `comment`.
+`conn3x convert ansible` turns `community.general.ufw` tasks that set `rule` into `ufw` steps. `port` or `to_port` becomes `port`, with `proto` added unless it is `any`, and `from_ip`, `from` or `src` becomes `from`. A task without `rule`, which changes ufw itself, becomes a [`ufw_settings`](/modules/ufw_settings) step. A rule task with any other argument, such as `direction` or `comment`, stays a TODO.

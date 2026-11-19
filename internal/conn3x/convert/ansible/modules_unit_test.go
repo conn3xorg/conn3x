@@ -91,7 +91,7 @@ func TestConvertModuleArguments(t *testing.T) {
 		"xml: { path: /a.xml, xpath: /a, pretty_print: yes, value: '1' }":                                "sets pretty_print",
 		"xml: { path: /a.xml, xpath: /a, count: yes }":                                                   "sets count",
 		"xml: { path: /a.xml, xpath: /a/b }":                                                             "sets no value",
-		"ufw: { state: enabled }":                                                                        "changes ufw itself",
+		"ufw: { state: reloaded }":                                                                       "has state reloaded",
 		"seboolean: { name: httpd_can_network_connect, state: yes }":                                     "until reboot only",
 		"get_url: { url: 'https://example.com/a', dest: /tmp/a }":                                        "no sha256 checksum",
 		"unarchive: { src: a.tgz, dest: /opt }":                                                          "from the controller",
