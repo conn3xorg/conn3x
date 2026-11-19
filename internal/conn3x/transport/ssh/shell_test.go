@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -124,23 +125,28 @@ func TestShellFailuresStartAFreshShell(t *testing.T) {
 func TestShellSavesRoundTrips(t *testing.T) {
 	s := sshtest.New(t)
 	s.SetDelay(40 * time.Millisecond)
+	// The fastest of several runs: a busy CI runner only ever adds time, so
+	// the minimum is the round trips with the least scheduling noise on top.
 	timed := func(c *Client) time.Duration {
-		start := time.Now()
-		for range 5 {
+		best := time.Duration(math.MaxInt64)
+		for range 7 {
+			start := time.Now()
 			if _, err := c.Run(context.Background(), "true", nil); err != nil {
 				t.Fatal(err)
 			}
+			best = min(best, time.Since(start))
 		}
-		return time.Since(start) / 5
+		return best
 	}
 	sessions := dial(t, testConfig(t, s))
 	c := shellClient(t, s)
 	perShell := timed(c)
 	t.Setenv("CONN3X_SSH_SHELL", "")
 	perSession := timed(sessions)
-	// About a quarter less here; the AWS benchmark on #983 has a real link.
+	// About half here, one round trip against two and a half; the AWS
+	// benchmark on #983 has a real link.
 	if perShell*20 > perSession*17 {
-		t.Fatalf("a command took %s in a shell and %s in a session, want at least 15%% less", perShell, perSession)
+		t.Fatalf("a command took %s in a shell and %s in a session, want at least 15%% less (fastest of 7 each)", perShell, perSession)
 	}
 	t.Logf("per command: %s in a shell, %s in a session", perShell, perSession)
 }
