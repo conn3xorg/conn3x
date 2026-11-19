@@ -87,7 +87,7 @@ func (b *Become) runPrompted(ctx context.Context, inner string, stdin []byte) (R
 	started := []byte("conn3x-run-" + hex.EncodeToString(nonce[:]) + ":")
 	// sudo's refusals are matched in English.
 	p, err := b.Client.startProcess(ctx, "LC_ALL=C exec sudo -k -S -p "+Quote(string(prompt))+" -- /bin/sh -c "+
-		Quote("printf %s "+Quote(string(started))+" >&2; exec "+inner))
+		LoginQuote("printf %s "+Quote(string(started))+" >&2; exec "+inner))
 	if err != nil {
 		return Result{}, err
 	}

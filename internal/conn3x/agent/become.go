@@ -37,7 +37,7 @@ func startBecome(ctx context.Context, c Host, script string, b *ssh.Become) (*Cl
 	}
 	marker := []byte("conn3x-sudo-" + hex.EncodeToString(nonce[:]) + ":")
 	// sudo's refusals are matched in English.
-	p, err := c.Start(ctx, "LC_ALL=C exec sudo -S -p "+ssh.Quote(string(marker))+" -- /bin/sh -c "+ssh.Quote(script))
+	p, err := c.Start(ctx, "LC_ALL=C exec sudo -S -p "+ssh.Quote(string(marker))+" -- /bin/sh -c "+ssh.LoginQuote(script))
 	if err != nil {
 		return nil, fmt.Errorf("starting the agent as root: %w", err)
 	}

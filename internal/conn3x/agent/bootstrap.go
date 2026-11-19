@@ -271,7 +271,7 @@ func start(ctx context.Context, c Host, dir, name, want string, become *ssh.Beco
 		}
 		return a, err
 	}
-	p, err := c.Start(ctx, "exec /bin/sh -c "+ssh.Quote(script))
+	p, err := c.Start(ctx, "exec /bin/sh -c "+ssh.LoginQuote(script))
 	if err != nil {
 		return nil, fmt.Errorf("starting the agent in %s: %w", dir, err)
 	}
