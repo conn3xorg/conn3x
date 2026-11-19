@@ -92,6 +92,8 @@ type input struct {
 	jsonWhy   string
 	// csrs are the play's openssl_csr tasks, by the path each writes.
 	csrs map[string]map[string]*yaml.Node
+	// env is a command or shell task's environment mapping, if it has one.
+	env *yaml.Node
 	// itemVar names the role default a loop runs over, whose items the
 	// caller sets, so item is held to what a default is held to.
 	itemVar string
@@ -2184,6 +2186,19 @@ func commandModule(in *input) ([]step, string) {
 		attrs = append(attrs, s("stdin_wo", text))
 	}
 	in.ignore("stdin_add_newline")
+	if in.env != nil {
+		env := map[string]cty.Value{}
+		for i := 0; i+1 < len(in.env.Content); i += 2 {
+			k, v := in.env.Content[i].Value, in.env.Content[i+1]
+			if v.Kind != yaml.ScalarNode {
+				return nil, "sets environment " + k + " to something that isn't a string"
+			}
+			env[k] = cty.StringVal(in.render("environment", v.Value))
+		}
+		if len(env) > 0 {
+			attrs = append(attrs, attr{key: "environment", val: cty.MapVal(env)})
+		}
+	}
 	return one("command", attrs)
 }
 

@@ -6,17 +6,22 @@ package provider
 import (
 	"context"
 	"fmt"
+	"maps"
+	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/configs/configschema"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/command"
+	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 	"github.com/opentofu/opentofu/internal/providers"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
 // commandRerun lists the arguments whose change means "run it again".
-var commandRerun = []string{"command", "stdin_hmac", "creates", "removes", "unless", "triggers"}
+var commandRerun = []string{"command", "environment", "stdin_hmac", "creates", "removes", "unless", "triggers"}
 
 func commandSchema() providers.Schema {
 	return providers.Schema{
@@ -26,6 +31,10 @@ func commandSchema() providers.Schema {
 				"id":       {Type: cty.String, Computed: true},
 				"revision": revisionAttr(),
 				"command":  {Type: cty.String, Required: true, Description: "Shell command, run with /bin/sh."},
+				"environment": {
+					Type: cty.Map(cty.String), Optional: true,
+					Description: "Variables exported before command and unless run, such as { PREFIX = \"/usr/local\" }. Kept in state and shown in plans like command, so put secrets in stdin_wo instead.",
+				},
 				"stdin_wo": {
 					Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
 					Description: "Text the command reads on standard input, kept out of state: state records only stdin_hmac, and the text is blanked from output and errors. Use it for secrets, which a command line would show in the host's process list.",
@@ -45,17 +54,46 @@ func commandSchema() providers.Schema {
 }
 
 func commandGuards(v cty.Value) command.Guards {
-	return command.Guards{
+	g := command.Guards{
 		Creates: stringOr(v.GetAttr("creates"), ""),
 		Removes: stringOr(v.GetAttr("removes"), ""),
 		Unless:  stringOr(v.GetAttr("unless"), ""),
 	}
+	if g.Unless != "" {
+		g.Unless = commandExports(v) + g.Unless
+	}
+	return g
+}
+
+// envName is a variable name the shell can export.
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// commandExports is the environment as lines of export K='v', in name
+// order so the same map always gives the same script, or "" without one.
+func commandExports(v cty.Value) string {
+	env := v.GetAttr("environment")
+	if !known(env) {
+		return ""
+	}
+	m := env.AsValueMap()
+	var b strings.Builder
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		fmt.Fprintf(&b, "export %s=%s\n", k, ssh.Quote(stringOr(m[k], "")))
+	}
+	return b.String()
 }
 
 func validateCommand(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
 	if cfg.IsNull() {
 		return diags
+	}
+	if env := cfg.GetAttr("environment"); known(env) {
+		for k := range env.AsValueMap() {
+			if !envName.MatchString(k) {
+				diags = diags.Append(attrError("environment", fmt.Sprintf("%q isn't a variable name the shell can export: letters, digits and _, not starting with a digit", k)))
+			}
+		}
 	}
 	if c := cfg.GetAttr("command"); known(c) && c.AsString() == "" {
 		diags = diags.Append(attrError("command", "command must not be empty"))
@@ -211,7 +249,7 @@ func applyCommand(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		stdout, stderr = req.PriorState.GetAttr("stdout"), req.PriorState.GetAttr("stderr")
 	}
 	if !done {
-		out, err := command.RunWithInput(ctx, host, req.PlannedState.GetAttr("command").AsString(), secret)
+		out, err := command.RunWithInput(ctx, host, commandExports(req.PlannedState)+req.PlannedState.GetAttr("command").AsString(), secret)
 		if err != nil {
 			resp.Diagnostics = resp.Diagnostics.Append(err)
 			return resp

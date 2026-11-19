@@ -1128,6 +1128,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if k == "register" && c.unreadRegister[node] {
 			continue
 		}
+		// A command or shell task's environment becomes the step's own.
+		if k == "environment" && t[k].Kind == yaml.MappingNode {
+			if mod, _ := moduleOf(t); mod == "command" || mod == "shell" {
+				continue
+			}
+		}
 		if keywords[k] && !harmless[k] {
 			c.issue(body, name, node, "uses "+k+", which the converter can't translate yet")
 			return
@@ -1167,6 +1173,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		in.wait = wait
 		in.jsonEdits, in.jsonWhy = c.jsonEdits[node], c.jsonWhy[node]
 		in.csrs = c.csrs
+		in.env = t["environment"]
 		steps, reason := m(in)
 		if reason == "" && items != nil {
 			reason = loopSteps(in.itemUsed)
