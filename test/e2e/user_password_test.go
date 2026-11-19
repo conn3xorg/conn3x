@@ -67,6 +67,25 @@ func TestUserPassword(t *testing.T) {
 				t.Fatal("the apply didn't put the password back")
 			}
 
+			// A locked account stays locked: the plan reads it as in sync,
+			// and a new password is set behind the !.
+			locked := func() bool { return strings.HasPrefix(hash(), "!") }
+			h.exec("", "usermod", "-L", "conn3xpw")
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+				t.Fatalf("a locked account plans a change:\n%s", out)
+			}
+			w.writeAs("main.circuit.hcl", userPasswordVars{h.port, h.keyFile, h.knownHosts, "locked-Pass4", false})
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+			if !locked() {
+				t.Fatal("setting a password unlocked a locked account")
+			}
+			h.exec("", "usermod", "-U", "conn3xpw")
+			if !opens("locked-Pass4") {
+				t.Fatal("the password set while locked doesn't open after unlocking")
+			}
+			w.writeAs("main.circuit.hcl", userPasswordVars{h.port, h.keyFile, h.knownHosts, "first-Pass1", false})
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+
 			// A new password plans a change; with password_on_create it doesn't.
 			w.writeAs("main.circuit.hcl", userPasswordVars{h.port, h.keyFile, h.knownHosts, "second-Pass3", true})
 			w.mustConn3x("apply", "-auto-approve", "-no-color")

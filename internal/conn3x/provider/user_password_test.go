@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/opentofu/opentofu/internal/conn3x/modules/account"
 )
 
 // The hash is the same for one account every time, so a refresh can
@@ -55,6 +57,23 @@ func TestValidateUserPassword(t *testing.T) {
 	} {
 		if err := validateUserPassword(tc.cfg); (err == nil) != tc.ok {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestLocked(t *testing.T) {
+	for in, want := range map[string]struct {
+		hash   string
+		locked bool
+	}{
+		"!$6$s$h": {"$6$s$h", true},
+		"$6$s$h":  {"$6$s$h", false},
+		"!":       {"!", false},
+		"!!":      {"!!", false},
+		"*":       {"*", false},
+	} {
+		if h, l := account.Locked(in); h != want.hash || l != want.locked {
+			t.Errorf("Locked(%q) = %q, %v", in, h, l)
 		}
 	}
 }

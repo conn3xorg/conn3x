@@ -22,8 +22,20 @@ var ErrNeedsRoot = errors.New("reading and setting a user's password needs root:
 const needsRoot = `[ "$(id -u)" = 0 ] || exit 3` + "\n"
 
 // cryptHash is a crypt(3) hash as /etc/shadow holds one, such as
-// $6$salt$hash: what SetPassword writes, so a line break can't reach chpasswd.
-var cryptHash = regexp.MustCompile(`^\$[0-9a-z]+\$[./A-Za-z0-9$=,]+$`)
+// $6$salt$hash, with the ! that locks the account in front if it's locked:
+// what SetPassword writes, so a line break can't reach chpasswd.
+var cryptHash = regexp.MustCompile(`^!?\$[0-9a-z]+\$[./A-Za-z0-9$=,]+$`)
+
+// Locked reports whether a shadow hash has the ! that passwd -l and
+// usermod -L put in front of a password's hash, and returns the hash
+// without it. A ! or !! on its own, as useradd leaves a new account, is no
+// password yet, not a locked one.
+func Locked(hash string) (string, bool) {
+	if rest, ok := strings.CutPrefix(hash, "!"); ok && strings.HasPrefix(rest, "$") {
+		return rest, true
+	}
+	return hash, false
+}
 
 // ReadPasswordHash returns the hash /etc/shadow holds for name: "" when the
 // user has none, and something that isn't a hash, such as ! or *, when the

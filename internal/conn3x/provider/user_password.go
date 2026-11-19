@@ -57,7 +57,9 @@ func validateUserPassword(cfg cty.Value) error {
 	if b := conn.GetAttr("become"); known(b) && b.True() {
 		return nil
 	}
-	if stringOr(conn.GetAttr("user"), "") == "root" {
+	// An unset user may come from ssh_config_file, as User root often does;
+	// ErrNeedsRoot then says what to do at refresh or apply.
+	if u := conn.GetAttr("user"); u.IsNull() || u.AsString() == "root" {
 		return nil
 	}
 	return errors.New("password_wo needs root to read and set /etc/shadow: log in as root, or set become = true in the ssh block")
@@ -79,6 +81,10 @@ func planUserPassword(req providers.PlanResourceChangeRequest, resp *providers.P
 	}
 	vals["password_hmac"] = prior
 	wo := req.Config.GetAttr("password_wo")
+	if wo.IsNull() {
+		// The password is left alone, so nothing is read or compared.
+		vals["password_hmac"] = cty.NullVal(cty.String)
+	}
 	onCreate := known(vals["password_on_create"]) && vals["password_on_create"].True()
 	if !wo.IsNull() && !(onCreate && !req.PriorState.IsNull()) {
 		vals["password_hmac"] = cty.UnknownVal(cty.String)
@@ -117,6 +123,9 @@ func refreshUserPassword(ctx context.Context, h *hostConn, state cty.Value) (cty
 	}
 	name := stringOr(state.GetAttr("name"), "")
 	hash, err := account.ReadPasswordHash(ctx, h, name)
+	// A locked account keeps its hash behind a !: the password is still
+	// the one set, and the lock is someone's choice to keep.
+	hash, _ = account.Locked(hash)
 	if err != nil {
 		// Not knowing isn't in sync: say why, and plan to set it again.
 		diags = diags.Append(tfdiags.SimpleWarning(fmt.Sprintf("user %s: can't check its password: %s", name, err)))
@@ -151,7 +160,14 @@ func applyUserPassword(ctx context.Context, h *hostConn, req providers.ApplyReso
 	if known(planned) && !hmac.Equal([]byte(sum), []byte(planned.AsString())) {
 		return cty.NilVal, errors.New("password_wo isn't the password the plan was made with, or the HMAC key changed; plan again")
 	}
-	if err := account.SetPassword(ctx, h, stringOr(req.PlannedState.GetAttr("name"), ""), hash); err != nil {
+	// Setting a password never unlocks an account someone locked.
+	name := stringOr(req.PlannedState.GetAttr("name"), "")
+	if current, err := account.ReadPasswordHash(ctx, h, name); err != nil {
+		return cty.NilVal, err
+	} else if _, locked := account.Locked(current); locked {
+		hash = "!" + hash
+	}
+	if err := account.SetPassword(ctx, h, name, hash); err != nil {
 		return cty.NilVal, err
 	}
 	return cty.StringVal(sum), nil
