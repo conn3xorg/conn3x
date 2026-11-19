@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -41,6 +42,7 @@ func waitForSchema() providers.Schema {
 			"port":            {Type: cty.Number, Optional: true, Description: "TCP port to wait for a listener on. Set one of path, port and url."},
 			"url":             {Type: cty.String, Optional: true, Description: "An http:// or https:// URL to GET until it answers with one of status_codes, such as http://127.0.0.1:8080/healthz. The request is the host's own: it goes through the SSH connection and leaves from the host, so 127.0.0.1 is the host, and it needs no curl there. Set one of path, port and url."},
 			"status_codes":    {Type: cty.List(cty.Number), Optional: true, Description: "The answers that count for url. Defaults to [200]. Redirects are followed first."},
+			"contains":        {Type: cty.String, Optional: true, Description: "A regular expression the file at path must match before the wait is over, such as \"Started\" for a log line. ^ and $ match at each line. The last MiB of the file is read, once a second."},
 			"body_contains":   {Type: cty.String, Optional: true, Description: "Text the answer's body must hold for url, such as \"ok\". The first MiB is read."},
 			"skip_tls_verify": {Type: cty.Bool, Optional: true, Description: "true accepts any certificate for an https:// url, such as a self-signed one on a new host. Defaults to false."},
 			"timeout":         {Type: cty.String, Optional: true, Description: "How long to wait. Defaults to \"5m\"."},
@@ -51,7 +53,7 @@ func waitForSchema() providers.Schema {
 }
 
 func waitForFrom(v cty.Value) (lifecycle.WaitFor, error) {
-	w := lifecycle.WaitFor{Path: stringOr(v.GetAttr("path"), ""), URL: lifecycle.URLCheck{
+	w := lifecycle.WaitFor{Path: stringOr(v.GetAttr("path"), ""), Contains: stringOr(v.GetAttr("contains"), ""), URL: lifecycle.URLCheck{
 		URL: stringOr(v.GetAttr("url"), ""), BodyContains: stringOr(v.GetAttr("body_contains"), ""),
 		SkipTLSVerify: boolOr(v.GetAttr("skip_tls_verify")),
 	}}
@@ -80,14 +82,18 @@ func validateWaitFor(cfg cty.Value) tfdiags.Diagnostics {
 		err = w.Validate()
 	}
 	if err != nil {
-		diags = diags.Append(attrError("path", err.Error()))
+		at := "path"
+		if strings.HasPrefix(err.Error(), "contains") {
+			at = "contains"
+		}
+		diags = diags.Append(attrError(at, err.Error()))
 	}
 	return diags
 }
 
 func planWaitFor(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	// url and its settings change in place, so existing steps keep their ids.
-	return planSynced(req, "wait_for", []string{"path", "port"}, []string{"url", "status_codes", "body_contains", "skip_tls_verify"})
+	return planSynced(req, "wait_for", []string{"path", "port"}, []string{"contains", "url", "status_codes", "body_contains", "skip_tls_verify"})
 }
 
 func readWaitFor(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

@@ -34,10 +34,23 @@ step "app_healthy" {
   }
 }
 ```
+
+Wait for a line in a log:
+
+```hcl
+step "app_started" {
+  wait_for {
+    path     = "/var/log/app.log"
+    contains = "^Started"
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
 **Waiting.** Conn3x checks on the host once a second until the path exists or something listens on the port, and fails the step if that takes longer than `timeout`. `timeout` takes a duration such as `"90s"` or `"10m"`, and defaults to `"5m"`.
+
+**File contents.** With `contains`, the path has to exist and match that regular expression. Conn3x reads the last MiB of the file once a second, so a line near the end of a busy log is found, and one more than a MiB back isn't. `^` and `$` match at the start and end of each line. The syntax is Go's, the same as `replace`'s `regexp`.
 
 **Ports.** A port counts as ready when any process listens on it over TCP, on IPv4 or IPv6, on any address. Conn3x reads `/proc/net/tcp` and `/proc/net/tcp6`, so the host needs neither `ss` nor `netstat`.
 
@@ -45,7 +58,7 @@ step "app_healthy" {
 
 **Reading.** Every plan checks again. If the path is gone, nothing listens on the port any more, or the URL stops answering as it should, the plan shows the step out of sync and the next apply waits again.
 
-**Validation.** Set exactly one of `path`, `port` and `url`. `path` must be absolute, `port` must be between 1 and 65535, and `url` must start with `http://` or `https://` and name a host. A URL with a user or password in it is refused, since it would land in state. Changing `url` or its settings changes the step in place, and the next apply waits on the new ones.
+**Validation.** Set exactly one of `path`, `port` and `url`. `path` must be absolute, `port` must be between 1 and 65535, and `contains` goes only with `path`, and `url` must start with `http://` or `https://` and name a host. A URL with a user or password in it is refused, since it would land in state. Changing `url` or its settings changes the step in place, and the next apply waits on the new ones.
 
 ## Removal
 
@@ -53,4 +66,4 @@ Deleting a `wait_for` step does nothing on the host.
 
 ## From Ansible
 
-`conn3x convert ansible` turns `wait_for` tasks on the host itself into `wait_for` steps, carrying over `path` and `port`, and turning `timeout` in seconds into a duration such as `"300s"`. `delay` is dropped. A task that waits for another host, or for a state other than `started` or `present`, stays a TODO, as does a `port` that isn't a whole number.
+`conn3x convert ansible` turns `wait_for` tasks on the host itself into `wait_for` steps, carrying over `path` and `port`, `search_regex` with `path` as `contains`, and turning `timeout` in seconds into a duration such as `"300s"`. `delay` is dropped. A task that waits for another host, or for a state other than `started` or `present`, stays a TODO, as does a `port` that isn't a whole number. `search_regex` on a `port`, which reads what the socket sends, stays a TODO, and so does a pattern that might match differently in Go than in Python, as for `replace`.

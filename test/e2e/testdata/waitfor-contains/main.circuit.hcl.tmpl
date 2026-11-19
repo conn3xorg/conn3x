@@ -1,0 +1,24 @@
+circuit "boot" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "slow_start" {
+    command {
+      command = "echo booting > /run/conn3x-app.log; (sleep 3; echo 'Started app' >> /run/conn3x-app.log) >/dev/null 2>&1 &"
+    }
+  }
+
+  step "started" {
+    wait_for {
+      path     = "/run/conn3x-app.log"
+      contains = "^Started"
+      timeout  = "30s"
+    }
+  }
+}

@@ -1959,6 +1959,20 @@ func waitForModule(in *input) ([]step, string) {
 	in.state("started", "started", "present")
 	var attrs []attr
 	attrs = in.optional(attrs, "path", "path")
+	// search_regex on a socket reads a banner, which wait_for can't yet.
+	if in.has("search_regex") {
+		if !in.has("path") {
+			return nil, "sets search_regex on a port, which reads what the socket sends; the converter can't translate that yet"
+		}
+		pattern := in.text("search_regex")
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		if why := unprovableRegexp(pattern); why != "" {
+			return nil, why
+		}
+		attrs = append(attrs, s("contains", pattern))
+	}
 	if in.has("port") {
 		attrs = append(attrs, in.number("port"))
 	}
