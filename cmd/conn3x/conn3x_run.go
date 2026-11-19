@@ -226,7 +226,8 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		if _, err := proxyCommandOf(all.Vars(h)); err != nil {
 			return fail("host %s: %s", h, err)
 		}
-		if _, err := becomeOf(all.Vars(h)); err != nil {
+		// -become decides for every host, so the inventory's setting doesn't matter.
+		if _, err := becomeOf(all.Vars(h)); err != nil && !o.become {
 			return fail("host %s: %s", h, err)
 		}
 	}
@@ -430,10 +431,14 @@ func becomeOf(vars map[string]string) (bool, error) {
 	if vars["conn3x_ssh_become"] == "true" {
 		return true, nil
 	}
-	switch strings.ToLower(vars["ansible_become"]) {
+	switch v := vars["ansible_become"]; strings.ToLower(v) {
 	case "true", "yes", "on", "y", "t", "1":
-	default:
+	case "", "false", "no", "off", "n", "f", "0":
 		return false, nil
+	default:
+		// Such as "{{ use_sudo }}": run doesn't evaluate Jinja, and reading
+		// it as false would run as the login user without a word.
+		return false, fmt.Errorf("ansible_become is %q, which isn't true or false; conn3x run doesn't evaluate templates, so set it to true or false, or pass -become", v)
 	}
 	if u := vars["ansible_become_user"]; u != "" && u != "root" {
 		return false, fmt.Errorf("ansible_become_user is %s, but conn3x run only becomes root", u)
