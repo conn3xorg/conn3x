@@ -953,6 +953,12 @@ func packageModule(in *input) ([]step, string) {
 		if st != "present" {
 			attrs = append(attrs, s("state", st))
 		}
+		// apt's install_recommends and dnf's install_weak_deps are one setting.
+		for _, k := range []string{"install_recommends", "install_weak_deps"} {
+			if in.has(k) {
+				attrs = append(attrs, attr{key: "install_recommends", val: cty.BoolVal(in.bool(k, true))})
+			}
+		}
 		steps = append(steps, step{module: "package", attrs: attrs, notes: notes, suffix: n})
 		notes = nil
 	}

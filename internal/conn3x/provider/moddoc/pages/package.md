@@ -62,4 +62,4 @@ When you delete a `package` step, `on_remove` decides what happens on the host. 
 
 ## From Ansible
 
-`conn3x convert ansible` turns `ansible.builtin.package`, `dnf`, `yum` and `apt` tasks into `package` steps. `state: installed` and `removed` become `present` and `absent`, and `update_cache` is dropped, since Conn3x refreshes the package lists itself when a package isn't found.
+`conn3x convert ansible` turns `ansible.builtin.package`, `dnf`, `yum` and `apt` tasks into `package` steps. `state: installed` and `removed` become `present` and `absent`, and `update_cache` is dropped, since Conn3x refreshes the package lists itself when a package isn't found. apt's `install_recommends` and dnf's `install_weak_deps` both become `install_recommends`, which sets apt's `APT::Install-Recommends` or dnf's `install_weak_deps` for the install.

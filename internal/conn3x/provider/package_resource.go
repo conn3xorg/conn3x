@@ -21,11 +21,15 @@ func packageSchema() providers.Schema {
 		Block: &configschema.Block{
 			Description: "An OS package, installed with dnf on the Red Hat family and apt on Debian and Ubuntu.",
 			Attributes: map[string]*configschema.Attribute{
-				"id":                {Type: cty.String, Computed: true},
-				"revision":          revisionAttr(),
-				"name":              {Type: cty.String, Required: true, Description: "Package name."},
-				"state":             {Type: cty.String, Optional: true, Computed: true, Description: "\"present\" (default), \"latest\" or \"absent\"."},
-				"version":           {Type: cty.String, Optional: true, Description: "Version to install, with state \"present\"."},
+				"id":       {Type: cty.String, Computed: true},
+				"revision": revisionAttr(),
+				"name":     {Type: cty.String, Required: true, Description: "Package name."},
+				"state":    {Type: cty.String, Optional: true, Computed: true, Description: "\"present\" (default), \"latest\" or \"absent\"."},
+				"version":  {Type: cty.String, Optional: true, Description: "Version to install, with state \"present\"."},
+				"install_recommends": {
+					Type: cty.Bool, Optional: true,
+					Description: "Whether an install also brings in what the package recommends: apt's recommended packages, or dnf's weak dependencies. false keeps a server lean. Unset keeps the host's own setting. It only changes how the package is installed, never what's already there.",
+				},
 				"on_remove":         {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the package, \"delete\" uninstalls it."},
 				"installed_version": {Type: cty.String, Computed: true, Description: "Version installed on the host, or null when it isn't installed."},
 				"latest_version":    {Type: cty.String, Computed: true, Description: "Newest available version, read when state is \"latest\"."},
@@ -39,9 +43,10 @@ func packageSchema() providers.Schema {
 
 func desiredPackage(v cty.Value) pkg.Desired {
 	return pkg.Desired{
-		Name:    v.GetAttr("name").AsString(),
-		State:   pkg.State(stringOr(v.GetAttr("state"), string(pkg.Present))),
-		Version: stringOr(v.GetAttr("version"), ""),
+		Name:              v.GetAttr("name").AsString(),
+		State:             pkg.State(stringOr(v.GetAttr("state"), string(pkg.Present))),
+		Version:           stringOr(v.GetAttr("version"), ""),
+		InstallRecommends: optBool(v.GetAttr("install_recommends")),
 	}
 }
 

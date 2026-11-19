@@ -39,6 +39,22 @@ type Desired struct {
 	Name    string
 	State   State
 	Version string // optional, with Present
+	// InstallRecommends, when set, says whether an install also brings in
+	// what the package recommends: apt's recommended packages, dnf's weak
+	// dependencies. Nil keeps the host's own setting.
+	InstallRecommends *bool
+}
+
+// recommends is the option that sets InstallRecommends for a family, or ""
+// to keep the host's setting.
+func (d Desired) recommends(family Family) string {
+	if d.InstallRecommends == nil {
+		return ""
+	}
+	if family == RPM {
+		return map[bool]string{true: " --setopt=install_weak_deps=True", false: " --setopt=install_weak_deps=False"}[*d.InstallRecommends]
+	}
+	return map[bool]string{true: " -o APT::Install-Recommends=yes", false: " -o APT::Install-Recommends=no"}[*d.InstallRecommends]
 }
 
 // Actual describes the package as it is.
@@ -229,12 +245,12 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		case Absent:
 			return Run(ctx, r, "dnf -y remove "+ssh.Quote(d.Name))
 		case Latest:
-			if err := Run(ctx, r, "dnf -y install "+ssh.Quote(d.Name)); err != nil {
+			if err := Run(ctx, r, "dnf -y"+d.recommends(family)+" install "+ssh.Quote(d.Name)); err != nil {
 				return err
 			}
-			return Run(ctx, r, "dnf -y upgrade "+ssh.Quote(d.Name))
+			return Run(ctx, r, "dnf -y"+d.recommends(family)+" upgrade "+ssh.Quote(d.Name))
 		default:
-			return Run(ctx, r, "dnf -y install "+ssh.Quote(spec))
+			return Run(ctx, r, "dnf -y"+d.recommends(family)+" install "+ssh.Quote(spec))
 		}
 	case Deb:
 		spec := d.Name
@@ -244,7 +260,7 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		if d.State == Absent {
 			return Run(ctx, r, exactDeb(d.Name, `dpkg-query -W -f '${Package}\n' --`)+aptGet+" remove "+ssh.Quote(d.Name))
 		}
-		install := exactDeb(d.Name, "apt-cache pkgnames --") + aptGet + " install " + ssh.Quote(spec)
+		install := exactDeb(d.Name, "apt-cache pkgnames --") + aptGet + d.recommends(family) + " install " + ssh.Quote(spec)
 		err := Run(ctx, r, install)
 		if err != nil && staleLists(err) {
 			// Fresh hosts often have no package lists yet, and an image a few
