@@ -21,6 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/container"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/fsobj"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/kmod"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
@@ -526,6 +527,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"blockinfile":        blockModule,
 	"ini_file":           iniFileModule,
 	"replace":            replaceModule,
+	"xml":                xmlModule,
 	"template":           templateModule,
 	"package":            packageModule,
 	"dnf":                packageModule,
@@ -1411,6 +1413,54 @@ func seportModule(in *input) ([]step, string) {
 	in.ignore("reload", "ignore_selinux_state", "local")
 	attrs := []attr{s("port", ports[0]), s("protocol", in.str("proto")), s("setype", in.str("setype"))}
 	return one("selinux_port", attrs, "On a host without SELinux this step does nothing, where seport fails unless ignore_selinux_state is set.")
+}
+
+// xmlModule converts community.general.xml for one element's text or one
+// attribute, set or taken out, as xml_value owns. The xpath must be the
+// part of XPath xml_value reads; namespaces, children, counting and
+// printing go to review.
+func xmlModule(in *input) ([]step, string) {
+	for _, key := range []string{"namespaces", "add_children", "set_children", "content"} {
+		if in.has(key) {
+			return nil, "sets " + key + ", which an xml_value step doesn't do"
+		}
+	}
+	// pretty_print rewrites the whole file, where the step keeps every byte
+	// it doesn't own; the others read or count rather than set.
+	for _, key := range []string{"pretty_print", "count", "print_match", "insertbefore", "insertafter"} {
+		if in.bool(key, false) {
+			return nil, "sets " + key + ", which an xml_value step doesn't do"
+		}
+	}
+	if in.has("create_if_missing") && !in.bool("create_if_missing", true) {
+		return nil, "sets create_if_missing: no, and an xml_value step adds a missing last element"
+	}
+	in.ignore("pretty_print", "count", "print_match", "insertbefore", "insertafter", "create_if_missing", "input_type", "huge_tree", "strip_cdata_tags")
+	xpath := in.str("xpath")
+	st := in.state("present", "present", "absent")
+	attrs := []attr{s("path", in.str("path", "dest", "file"))}
+	if st == "absent" {
+		if in.has("attribute") || in.has("value") {
+			return nil, "sets attribute or value with state: absent"
+		}
+		attrs = append(attrs, s("xpath", xpath), s("state", "absent"))
+	} else {
+		if !in.has("value") {
+			return nil, "sets no value, so it only checks the path is there"
+		}
+		if a := in.str("attribute"); a != "" {
+			xpath += "/@" + a
+		}
+		attrs = append(attrs, s("xpath", xpath), s("value", in.str("value")))
+	}
+	if err := (edit.XMLValue{XPath: xpath, Value: "x", State: edit.State(st)}).Validate(); err != nil {
+		return nil, "has an xpath an xml_value step can't read: " + err.Error()
+	}
+	attrs, why := in.editFileArgs(attrs)
+	if why != "" {
+		return nil, why
+	}
+	return one("xml_value", attrs, "Ansible sets every element the xpath matches; an xml_value step needs exactly one, and an apply that finds several says how to pick one.")
 }
 
 func getURLModule(in *input) ([]step, string) {
