@@ -170,6 +170,36 @@ type Block struct {
 	InsertAfter  string
 	InsertBefore string
 	State        State
+	// Previous, when set, is the block as it was last applied. If its
+	// markers differ from these and only its block is in the file, that
+	// block is replaced in place rather than left behind beside a new one.
+	Previous *Block
+}
+
+// lines are the block's begin and end marker lines.
+func (b Block) lines() (string, string) {
+	marker := b.Marker
+	if marker == "" {
+		marker = DefaultMarker
+	}
+	mb, me := b.marks()
+	return strings.ReplaceAll(marker, "{mark}", mb), strings.ReplaceAll(marker, "{mark}", me)
+}
+
+// find returns where the block from begin to end is in lines, or -1s.
+func find(lines []string, begin, end string) (int, int, error) {
+	start := -1
+	for i, s := range lines {
+		if s == begin && start < 0 {
+			start = i
+		} else if s == end && start >= 0 {
+			return start, i, nil
+		}
+	}
+	if start >= 0 {
+		return -1, -1, fmt.Errorf("found %q without a matching %q; fix the file by hand first", begin, end)
+	}
+	return -1, -1, nil
 }
 
 // Validate checks a Block before anything is edited.
@@ -217,26 +247,25 @@ func ApplyBlock(content string, b Block) (string, error) {
 	if err := b.Validate(); err != nil {
 		return "", err
 	}
-	marker := b.Marker
-	if marker == "" {
-		marker = DefaultMarker
-	}
-	mb, me := b.marks()
-	begin := strings.ReplaceAll(marker, "{mark}", mb)
-	end := strings.ReplaceAll(marker, "{mark}", me)
-
+	begin, end := b.lines()
 	lines, final := split(content)
-	start, stop := -1, -1
-	for i, s := range lines {
-		if s == begin && start < 0 {
-			start = i
-		} else if s == end && start >= 0 {
-			stop = i
-			break
-		}
+	start, stop, err := find(lines, begin, end)
+	if err != nil {
+		return "", err
 	}
-	if start >= 0 && stop < 0 {
-		return "", fmt.Errorf("found %q without a matching %q; fix the file by hand first", begin, end)
+	if p := b.Previous; p != nil {
+		if pb, pe := p.lines(); pb != begin || pe != end {
+			ps, pt, err := find(lines, pb, pe)
+			if err != nil {
+				return "", err
+			}
+			switch {
+			case ps >= 0 && start >= 0:
+				return "", fmt.Errorf("the file has the block under both its old markers, %q, and its new ones, %q; remove one by hand first", pb, begin)
+			case ps >= 0:
+				start, stop = ps, pt
+			}
+		}
 	}
 
 	var block []string

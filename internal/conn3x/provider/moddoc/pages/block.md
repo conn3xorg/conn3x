@@ -45,7 +45,7 @@ step "old_hosts" {
 <!-- reference -->
 ## How it works
 
-**Markers.** Conn3x finds the block by its marker lines: `marker` with `{mark}` replaced by `marker_begin` and `marker_end`, `BEGIN` and `END` unless you set them. The default marker gives `# BEGIN CONN3X MANAGED BLOCK` and `# END CONN3X MANAGED BLOCK`. Set the words for a file where those don't fit, such as `marker_begin = "start"` and `marker_end = "stop"`. They must differ, or the block's end couldn't be found. Each step in the same file needs its own marker. If the file has a begin line with no matching end line, Conn3x stops with an error, so you can fix the file by hand.
+**Markers.** Conn3x finds the block by its marker lines: `marker` with `{mark}` replaced by `marker_begin` and `marker_end`, `BEGIN` and `END` unless you set them. The default marker gives `# BEGIN CONN3X MANAGED BLOCK` and `# END CONN3X MANAGED BLOCK`. Set the words for a file where those don't fit, such as `marker_begin = "start"` and `marker_end = "stop"`. They must differ, or the block's end couldn't be found. Each step in the same file needs its own marker. Change `marker`, `marker_begin` or `marker_end` on a step that has applied and the next apply finds the block under its old markers and rewrites it with the new ones, rather than leaving the old block beside a new one. If the file already has both, the step stops and asks you to remove one by hand. If the file has a begin line with no matching end line, Conn3x stops with an error, so you can fix the file by hand.
 
 **Reading.** Every plan reads the file on the host and applies the edit to a copy of its content. If the result is the same as the file, the step is in sync and nothing is planned. Otherwise the plan shows an update.
 

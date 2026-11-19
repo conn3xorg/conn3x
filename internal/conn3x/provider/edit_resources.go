@@ -35,6 +35,9 @@ type editKind struct {
 	// missingOK says a missing file already satisfies this edit. Removing
 	// the edit then has nothing to do on a missing file either.
 	missingOK func(cty.Value) bool
+	// applyEdit, when set, is the edit an apply makes, which also knows the
+	// prior state; edit stays what a read compares against.
+	applyEdit func(planned, prior cty.Value) func(string) (string, error)
 }
 
 var lineKind = editKind{
@@ -92,6 +95,16 @@ var blockKind = editKind{
 	},
 	edit: func(v cty.Value) func(string) (string, error) {
 		b := blockFrom(v)
+		return func(s string) (string, error) { return edit.ApplyBlock(s, b) }
+	},
+	// The prior markers let a changed marker move the block rather than
+	// leave the old one behind.
+	applyEdit: func(planned, prior cty.Value) func(string) (string, error) {
+		b := blockFrom(planned)
+		if !prior.IsNull() {
+			p := blockFrom(prior)
+			b.Previous = &p
+		}
 		return func(s string) (string, error) { return edit.ApplyBlock(s, b) }
 	},
 	remove: func(v cty.Value) func(string) (string, error) {
@@ -408,7 +421,11 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 			create := planned.GetAttr("create")
 			want := fileAttrs(planned)
 			want.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")
-			backup, err := editFileBackup(ctx, h, target, path, known(create) && create.True(), want, k.edit(planned))
+			fn := k.edit(planned)
+			if k.applyEdit != nil {
+				fn = k.applyEdit(planned, req.PriorState)
+			}
+			backup, err := editFileBackup(ctx, h, target, path, known(create) && create.True(), want, fn)
 			if err != nil {
 				return cty.NilVal, err
 			}

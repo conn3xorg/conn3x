@@ -3,7 +3,10 @@
 
 package edit
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLine(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -327,5 +330,37 @@ func TestBlockMarkerWords(t *testing.T) {
 	}
 	if (Block{Content: "a", MarkerBegin: "END"}).Validate() == nil {
 		t.Error("marker_begin END, the default end, validated")
+	}
+}
+
+// A block whose markers changed since the last apply is found under the
+// old ones and replaced in place, not left behind beside a new block.
+func TestBlockMarkerChangeMovesBlock(t *testing.T) {
+	old := Block{Content: "a\n", Marker: "# {mark} app"}
+	in, err := ApplyBlock("x\ny\n", Block{Content: "a\n", Marker: "# {mark} app", InsertAfter: "^x$"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := Block{Content: "b\n", Marker: "; {mark} app", MarkerBegin: "start", MarkerEnd: "stop", Previous: &old}
+	got, err := ApplyBlock(in, b)
+	if err != nil || got != "x\n; start app\nb\n; stop app\ny\n" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if again, err := ApplyBlock(got, b); err != nil || again != got {
+		t.Errorf("second apply: %q, %v", again, err)
+	}
+	both := in + "; start app\nb\n; stop app\n"
+	if _, err := ApplyBlock(both, b); err == nil || !strings.Contains(err.Error(), "both") {
+		t.Errorf("old and new blocks both there: %v", err)
+	}
+	gone := b
+	gone.State = Absent
+	if got, err := ApplyBlock(in, gone); err != nil || got != "x\ny\n" {
+		t.Errorf("absent with old markers: %q, %v", got, err)
+	}
+	// Without Previous, as before: a second block.
+	b.Previous = nil
+	if got, _ := ApplyBlock(in, b); strings.Count(got, "app") != 4 {
+		t.Errorf("without Previous: %q", got)
 	}
 }
