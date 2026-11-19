@@ -35,6 +35,23 @@ func userSecret(key []byte, id, password string) string {
 	return eos.SecretHash(password, eos.CryptSalt(salt.Sum(nil)))
 }
 
+// userPasswordInput is the step's password: password_hash_wo, a hash to
+// set as it is, or password_wo, hashed here. Null when neither is set.
+func userPasswordInput(cfg cty.Value) (pw cty.Value, isHash bool) {
+	if h := cfg.GetAttr("password_hash_wo"); !h.IsNull() {
+		return h, true
+	}
+	return cfg.GetAttr("password_wo"), false
+}
+
+// userHash is the hash the host should hold for pw.
+func userHash(key []byte, id, pw string, isHash bool) string {
+	if isHash {
+		return pw
+	}
+	return userSecret(key, id, pw)
+}
+
 // userSecretHMAC is what password_hmac records for a host's hash.
 func userSecretHMAC(key []byte, id, hash string) string {
 	return passwordTag + contentHMAC(key, id, "user secret:"+hash)
@@ -44,11 +61,19 @@ func userSecretHMAC(key []byte, id, hash string) string {
 // /etc/shadow, which needs root: a refresh couldn't say whether the host
 // still has the password, and the apply couldn't set it.
 func validateUserPassword(cfg cty.Value) error {
-	if cfg.GetAttr("password_wo").IsNull() {
+	pw, isHash := userPasswordInput(cfg)
+	if pw.IsNull() {
 		if b := cfg.GetAttr("password_on_create"); known(b) && b.True() {
-			return errors.New("password_on_create needs password_wo")
+			return errors.New("password_on_create needs password_wo or password_hash_wo")
 		}
 		return nil
+	}
+	if isHash && !cfg.GetAttr("password_wo").IsNull() {
+		return errors.New("set password_wo or password_hash_wo, not both")
+	}
+	// The value isn't echoed: a password given here by mistake would be.
+	if isHash && pw.IsKnown() && !account.IsHash(pw.AsString()) {
+		return errors.New("password_hash_wo isn't a crypt hash as /etc/shadow holds one, such as $6$… or $y$…; to give the password itself, use password_wo")
 	}
 	conn := cfg.GetAttr("ssh")
 	if conn.IsNull() || !conn.IsWhollyKnown() {
@@ -62,7 +87,7 @@ func validateUserPassword(cfg cty.Value) error {
 	if u := conn.GetAttr("user"); u.IsNull() || u.AsString() == "root" {
 		return nil
 	}
-	return errors.New("password_wo needs root to read and set /etc/shadow: log in as root, or set become = true in the ssh block")
+	return errors.New("a password needs root to read and set /etc/shadow: log in as root, or set become = true in the ssh block")
 }
 
 // planUserPassword plans password_hmac: what the host should hold for
@@ -74,13 +99,13 @@ func planUserPassword(req providers.PlanResourceChangeRequest, resp *providers.P
 		return
 	}
 	vals := resp.PlannedState.AsValueMap()
-	vals["password_wo"] = cty.NullVal(cty.String)
+	vals["password_wo"], vals["password_hash_wo"] = cty.NullVal(cty.String), cty.NullVal(cty.String)
 	prior := cty.NullVal(cty.String)
 	if !req.PriorState.IsNull() {
 		prior = req.PriorState.GetAttr("password_hmac")
 	}
 	vals["password_hmac"] = prior
-	wo := req.Config.GetAttr("password_wo")
+	wo, isHash := userPasswordInput(req.Config)
 	if wo.IsNull() {
 		// The password is left alone, so nothing is read or compared.
 		vals["password_hmac"] = cty.NullVal(cty.String)
@@ -102,7 +127,7 @@ func planUserPassword(req providers.PlanResourceChangeRequest, resp *providers.P
 		planned := cty.ObjectVal(vals)
 		if wo.IsKnown() && known(vals["name"]) && known(planned.GetAttr("ssh").GetAttr("host")) {
 			id := userPasswordID(planned)
-			vals["password_hmac"] = cty.StringVal(userSecretHMAC(key, id, userSecret(key, id, wo.AsString())))
+			vals["password_hmac"] = cty.StringVal(userSecretHMAC(key, id, userHash(key, id, wo.AsString(), isHash)))
 		}
 	}
 	resp.PlannedState = cty.ObjectVal(vals)
@@ -144,7 +169,7 @@ func refreshUserPassword(ctx context.Context, h *hostConn, state cty.Value) (cty
 // returns password_hmac for state, worked out here when the plan didn't
 // know the password yet.
 func applyUserPassword(ctx context.Context, h *hostConn, req providers.ApplyResourceChangeRequest) (cty.Value, error) {
-	wo := req.Config.GetAttr("password_wo")
+	wo, isHash := userPasswordInput(req.Config)
 	planned := req.PlannedState.GetAttr("password_hmac")
 	if wo.IsNull() || (known(planned) && !req.PriorState.IsNull() && req.PriorState.GetAttr("password_hmac").RawEquals(planned)) {
 		return planned, nil
@@ -154,7 +179,7 @@ func applyUserPassword(ctx context.Context, h *hostConn, req providers.ApplyReso
 		return cty.NilVal, err
 	}
 	id := userPasswordID(req.PlannedState)
-	hash := userSecret(key, id, wo.AsString())
+	hash := userHash(key, id, wo.AsString(), isHash)
 	sum := userSecretHMAC(key, id, hash)
 	// A saved plan applied elsewhere must use the key it was made with.
 	if known(planned) && !hmac.Equal([]byte(sum), []byte(planned.AsString())) {

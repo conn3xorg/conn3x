@@ -1039,7 +1039,18 @@ func userModule(in *input) ([]step, string) {
 	if !in.bool("create_home", true) {
 		return nil, "sets create_home: no; Conn3x always creates the home directory"
 	}
-	return one("user", attrs)
+	// Ansible's password is already a crypt hash. It's never read, so it
+	// can't end up in the output.
+	var notes []string
+	if in.has("password") {
+		note := "TODO(convert): Set password_hash_wo from an ephemeral variable holding the task's password, which is a crypt hash. It isn't copied here."
+		if in.str("update_password") == "on_create" {
+			note += " Add password_on_create = true, as the task had update_password: on_create."
+		}
+		notes = append(notes, note)
+	}
+	in.ignore("password", "update_password")
+	return one("user", attrs, notes...)
 }
 
 func groupModule(in *input) ([]step, string) {

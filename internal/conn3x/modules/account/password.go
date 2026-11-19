@@ -26,6 +26,10 @@ const needsRoot = `[ "$(id -u)" = 0 ] || exit 3` + "\n"
 // what SetPassword writes, so a line break can't reach chpasswd.
 var cryptHash = regexp.MustCompile(`^!?\$[0-9a-z]+\$[./A-Za-z0-9$=,]+$`)
 
+// IsHash reports whether s is a crypt(3) hash as /etc/shadow holds one,
+// unlocked, such as $6$salt$hash or $y$j9T$salt$hash.
+func IsHash(s string) bool { return cryptHash.MatchString(s) && !strings.HasPrefix(s, "!") }
+
 // Locked reports whether a shadow hash has the ! that passwd -l and
 // usermod -L put in front of a password's hash, and returns the hash
 // without it. A ! or !! on its own, as useradd leaves a new account, is no

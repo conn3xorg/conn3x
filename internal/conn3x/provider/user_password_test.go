@@ -38,6 +38,7 @@ func TestValidateUserPassword(t *testing.T) {
 		vals := map[string]cty.Value{
 			"password_wo":        cty.StringVal("s3cret"),
 			"password_on_create": cty.NullVal(cty.Bool),
+			"password_hash_wo":   cty.NullVal(cty.String),
 			"ssh":                cty.ObjectVal(map[string]cty.Value{"user": cty.StringVal(user), "become": become}),
 		}
 		for k, v := range extra {
@@ -52,7 +53,7 @@ func TestValidateUserPassword(t *testing.T) {
 		"root":                      {cfg("root", cty.NullVal(cty.Bool), nil), true},
 		"become":                    {cfg("deploy", cty.True, nil), true},
 		"neither":                   {cfg("deploy", cty.False, nil), false},
-		"user from ssh_config_file": {cty.ObjectVal(map[string]cty.Value{"password_wo": cty.StringVal("s3cret"), "password_on_create": cty.NullVal(cty.Bool), "ssh": cty.ObjectVal(map[string]cty.Value{"user": cty.NullVal(cty.String), "become": cty.NullVal(cty.Bool)})}), true},
+		"user from ssh_config_file": {cty.ObjectVal(map[string]cty.Value{"password_wo": cty.StringVal("s3cret"), "password_on_create": cty.NullVal(cty.Bool), "password_hash_wo": cty.NullVal(cty.String), "ssh": cty.ObjectVal(map[string]cty.Value{"user": cty.NullVal(cty.String), "become": cty.NullVal(cty.Bool)})}), true},
 		"no password":               {cfg("deploy", cty.False, map[string]cty.Value{"password_wo": cty.NullVal(cty.String)}), true},
 		"on_create, no password":    {cfg("root", cty.NullVal(cty.Bool), map[string]cty.Value{"password_wo": cty.NullVal(cty.String), "password_on_create": cty.True}), false},
 	} {

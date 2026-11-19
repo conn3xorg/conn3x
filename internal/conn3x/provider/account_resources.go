@@ -41,6 +41,10 @@ func userSchema() providers.Schema {
 					Type: cty.String, Optional: true, Sensitive: true, WriteOnly: true,
 					Description: "Write-only: the account's password, never kept in state. Conn3x makes the $6$ (SHA-512) hash /etc/shadow holds and sets it with chpasswd -e, so the password never reaches the host's process list; a new value plans a change through password_hmac, and so does a password changed on the host. Needs root: log in as root, or set become. Unset leaves the password alone.",
 				},
+				"password_hash_wo": {
+					Type: cty.String, Optional: true, Sensitive: true, WriteOnly: true,
+					Description: "Write-only: the account's password as a crypt hash, as /etc/shadow holds it, such as one from openssl passwd -6 or mkpasswd. Set as it is with chpasswd -e and never kept in state. Use it instead of password_wo when you only have the hash, as Ansible's password does. Needs root, like password_wo.",
+				},
 				"password_hmac":      {Type: cty.String, Computed: true, Description: "An HMAC of the hash the host should hold for password_wo, keyed outside state. A refresh records the one it finds, so a password changed on the host plans a change."},
 				"password_on_create": {Type: cty.Bool, Optional: true, Description: "Set password_wo only when the step creates the user, as Ansible's update_password: on_create does, and never change or check it after. Needs password_wo."},
 				"on_remove":          {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the account, \"delete\" removes it and keeps its home directory."},
@@ -165,7 +169,7 @@ func applyUser(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 				return cty.NilVal, fmt.Errorf("user %s: %w", spec.Name, err)
 			}
 			vals := userState(req.PlannedState, u).AsValueMap()
-			vals["password_wo"], vals["password_hmac"] = cty.NullVal(cty.String), sum
+			vals["password_wo"], vals["password_hash_wo"], vals["password_hmac"] = cty.NullVal(cty.String), cty.NullVal(cty.String), sum
 			return cty.ObjectVal(vals), nil
 		},
 		func(ctx context.Context, host *hostConn, name string) error {

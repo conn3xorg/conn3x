@@ -100,3 +100,38 @@ func TestUserPassword(t *testing.T) {
 		})
 	}
 }
+
+// password_hash_wo sets a hash made elsewhere as it is, plans clean, and a
+// hand change shows in the plan.
+func TestUserPasswordHash(t *testing.T) {
+	h := startHost(t, "debian13")
+	hash := strings.TrimSpace(h.exec("", "perl", "-e", `print crypt("hash-Pass1", '$6$conn3xsalt$')`))
+	if !strings.HasPrefix(hash, "$6$conn3xsalt$") {
+		t.Fatalf("perl made %q", hash)
+	}
+	shadow := func() string { return strings.TrimSpace(h.exec("", "sh", "-c", "getent shadow conn3xpw | cut -d: -f2")) }
+	w := newWorkdir(t, "user-password-hash")
+	w.writeAs("main.circuit.hcl", userPasswordVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Password: hash})
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := shadow(); got != hash {
+		t.Fatalf("shadow holds %q, want the given hash", got)
+	}
+	if got := strings.TrimSpace(h.exec("", "sh", "-c", checkPassword, "sh", "hash-Pass1")); got != "match" {
+		t.Fatalf("the password doesn't open the hash: %s", got)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("plan after apply:\n%s", out)
+	}
+	if strings.Contains(w.mustConn3x("state", "pull"), hash) {
+		t.Fatal("state holds the hash")
+	}
+	h.exec("", "sh", "-c", "echo 'conn3xpw:other-Pass2' | chpasswd")
+	if out := w.mustConn3x("plan", "-no-color"); strings.Contains(out, "No changes.") {
+		t.Fatalf("a hand change plans nothing:\n%s", out)
+	}
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := shadow(); got != hash {
+		t.Fatalf("after putting it back, shadow holds %q", got)
+	}
+}
