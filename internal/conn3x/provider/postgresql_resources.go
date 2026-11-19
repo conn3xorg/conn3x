@@ -421,3 +421,71 @@ func applyPgExtension(ctx context.Context, req providers.ApplyResourceChangeRequ
 			return nil
 		})
 }
+
+func pgSchemaSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "A schema in one database of the PostgreSQL server on the host, managed through psql as the postgres user. An unset owner is left as it is.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
+			"name":      {Type: cty.String, Required: true, Description: "Schema name, such as reporting. Names starting with pg_ are PostgreSQL's own."},
+			"database":  {Type: cty.String, Required: true, Description: "Database to create it in, which has to exist, so make it in an earlier postgresql_database step."},
+			"owner":     {Type: cty.String, Optional: true, Description: "Role that owns it, which has to exist. Unset leaves a new schema owned by postgres and an existing one's owner as it is."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the schema, \"delete\" drops it. The drop fails while the schema holds anything."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the schema matched at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func pgSchemaFrom(v cty.Value) postgresql.Schema {
+	return postgresql.Schema{
+		Name: stringOr(v.GetAttr("name"), ""), Database: stringOr(v.GetAttr("database"), ""),
+		Owner: stringOr(v.GetAttr("owner"), ""),
+	}
+}
+
+func validatePgSchema(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := pgSchemaFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func planPgSchema(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planSynced(req, "postgresql_schema", []string{"name", "database"}, []string{"owner"})
+}
+
+func readPgSchema(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		s := pgSchemaFrom(prior)
+		st, err := postgresql.ReadSchema(ctx, h, s.Database, s.Name)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("postgresql_schema %s: %w", s.Name, err)
+		}
+		return withSync(prior, s.Matches(st)), nil
+	})
+}
+
+func applyPgSchema(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			s := pgSchemaFrom(planned)
+			if err := postgresql.ApplySchema(ctx, h, s); err != nil {
+				return cty.NilVal, fmt.Errorf("postgresql_schema %s: %w", s.Name, err)
+			}
+			return withSync(planned, true), nil
+		},
+		func(ctx context.Context, h *hostConn, prior cty.Value) error {
+			s := pgSchemaFrom(prior)
+			if err := postgresql.DropSchema(ctx, h, s.Database, s.Name); err != nil {
+				return fmt.Errorf("postgresql_schema %s: %w", s.Name, err)
+			}
+			return nil
+		})
+}

@@ -1,0 +1,40 @@
+circuit "db" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "app_db" {
+    postgresql_database {
+      name = "app"
+    }
+  }
+
+  step "app_role" {
+    postgresql_role {
+      name = "app"
+    }
+  }
+
+  step "reporting_schema" {
+    postgresql_schema {
+      name      = "reporting"
+      database  = "app"
+      owner     = "app"
+      on_remove = "delete"
+    }
+  }
+
+  # The roles are forgotten on destroy: PostgreSQL won't drop a role that
+  # still has privileges, and the schema's drop takes its grants with it.
+  step "reporter" {
+    postgresql_role {
+      name          = "reporter"
+      schema_grants = { "app.reporting" = ["USAGE"] }
+    }
+  }
+}

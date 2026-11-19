@@ -650,6 +650,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"postgresql_db":      pgDatabaseModule,
 	"htpasswd":           htpasswdModule,
 	"postgresql_ext":     pgExtensionModule,
+	"postgresql_schema":  pgSchemaModule,
 	"postgresql_user":    pgRoleModule,
 	"postgresql_privs":   pgPrivsModule,
 	"mysql_db":           mysqlDatabaseModule,
@@ -1287,6 +1288,29 @@ func pgExtensionModule(in *input) ([]step, string) {
 		attrs = append(attrs, attr{key: "cascade", val: cty.True})
 	}
 	return one("postgresql_extension", attrs)
+}
+
+// pgSchemaModule converts community.postgresql.postgresql_schema.
+// Ansible's login_db defaults to postgres, so a task without one makes the
+// schema there, and so does the step.
+func pgSchemaModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "" && st != "present" {
+		return nil, fmt.Sprintf("has state %q; postgresql_schema only makes a schema, and drops it only when the step is removed with on_remove = \"delete\"", st)
+	}
+	if in.bool("cascade_drop", false) {
+		return nil, "sets cascade_drop, and postgresql_schema drops a schema only without CASCADE"
+	}
+	if k := in.pgUnmodelled("comment"); k != "" {
+		return nil, "sets " + k + ", which postgresql_schema doesn't offer yet"
+	}
+	in.ignore("trust_input", "cascade_drop")
+	database := in.str("login_db", "db", "database")
+	if database == "" {
+		database = "postgres"
+	}
+	attrs := []attr{s("name", in.str("name", "schema")), s("database", database)}
+	attrs = in.optional(attrs, "owner", "owner")
+	return one("postgresql_schema", attrs)
 }
 
 // pgAttributes are the role attributes postgresql_role's attributes sets
