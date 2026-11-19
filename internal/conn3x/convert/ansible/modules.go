@@ -2006,6 +2006,12 @@ func commandLine(in *input) (string, string) {
 	if in.has("chdir") {
 		cmd = "cd " + shellQuote(in.str("chdir")) + " && " + cmd
 	}
+	// Ansible's shell runs the command with executable -c; a command step
+	// runs /bin/sh, dash on Debian, so another shell is asked for by name.
+	// The command module ignores executable, as Ansible does.
+	if exe := in.str("executable"); in.mod == "shell" && exe != "" && exe != "/bin/sh" && exe != "sh" {
+		cmd = shellQuote(exe) + " -c " + shellQuote(cmd)
+	}
 	in.ignore("executable")
 	return cmd, ""
 }
