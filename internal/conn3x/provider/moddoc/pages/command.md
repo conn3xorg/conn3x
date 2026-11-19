@@ -74,4 +74,6 @@ Deleting a `command` step changes nothing on the host. To undo what a command di
 
 Ansible's `command` module runs a program with plain arguments, and a `command` step runs its text through `/bin/sh`. So a `command` task with `;`, `|`, `$`, `*`, `>`, a backslash or other characters a shell reads stays a TODO: `echo one ; echo two` prints one line in Ansible and would run two commands in a step. A `shell` task already means the shell, and converts as it is.
 
+Ansible's list form, `argv`, converts as well: `command: {argv: [/usr/bin/touch, /tmp/x]}` becomes `command = "'/usr/bin/touch' '/tmp/x'"`, each argument quoted so the step's shell hands the program the words Ansible did. A templated argument is filled in the same way `cmd` is. An `argv` that isn't a list of plain values, an empty one, or one beside `cmd`, which Ansible refuses, stays a TODO.
+
 A play that sets `become_user`, or `remote_user` without `become`, or that has `ansible.cfg`, `group_vars`, `host_vars` or a `vars_files` file beside it setting who its tasks run as, sends these tasks to review with the reason, because a command does what its user can do. A circuit runs as root under `become` and otherwise as its login user.

@@ -1959,6 +1959,9 @@ func containerModule(engine string, keys ...string) func(*input) ([]step, string
 // commandLine is a command or shell task's command as /bin/sh runs it, in
 // its chdir, or why the converter can't read it as one.
 func commandLine(in *input) (string, string) {
+	if in.has("argv") {
+		return commandArgvLine(in)
+	}
 	cmd := in.str("cmd")
 	if n, ok := in.args["_raw"]; ok {
 		for _, f := range strings.Fields(n.Value) {
@@ -1979,6 +1982,36 @@ func commandLine(in *input) (string, string) {
 	}
 	in.ignore("executable")
 	return cmd, ""
+}
+
+// commandArgvLine is a command task's argv as /bin/sh runs it: one argument
+// each, quoted so the shell hands the program the words Ansible did, with no
+// quoting to read.
+func commandArgvLine(in *input) (string, string) {
+	if in.has("cmd") || in.has("_raw") {
+		return "", "sets argv beside cmd, which Ansible refuses; keep one of them"
+	}
+	in.used["argv"] = true
+	n := in.args["argv"]
+	if n.Kind != yaml.SequenceNode {
+		return "", "has an argv that isn't a list of arguments; write one argument on each line"
+	}
+	if len(n.Content) == 0 {
+		return "", "has an empty argv, which runs no program"
+	}
+	words := make([]string, 0, len(n.Content))
+	for _, e := range n.Content {
+		if e.Kind != yaml.ScalarNode {
+			return "", "has an argument in argv that isn't a single value"
+		}
+		words = append(words, shellQuote(in.render("argv", e.Value)))
+	}
+	line := strings.Join(words, " ")
+	if in.has("chdir") {
+		line = "cd " + shellQuote(in.str("chdir")) + " && " + line
+	}
+	in.ignore("executable")
+	return line, ""
 }
 
 func commandModule(in *input) ([]step, string) {
