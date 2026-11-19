@@ -48,7 +48,7 @@ func runCommand() command.Command {
   conn3x run -i inventory.ini all -m package -a 'name=htop' -check
   conn3x run -circuits . web -a uptime
 
-Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, and the group_vars and host_vars beside it. Or, with -circuits DIR, from the circuits in DIR's .tf and .circuit.hcl files: each circuit is a group named after it, and its hosts keep its ssh settings and their own host objects', written out in full. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names, except a "=" term, which is one host by its exact name.
+Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, or the older ansible_ssh_host, ansible_ssh_port, ansible_ssh_user and ansible_private_key_file, and the group_vars and host_vars beside it. Or, with -circuits DIR, from the circuits in DIR's .tf and .circuit.hcl files: each circuit is a group named after it, and its hosts keep its ssh settings and their own host objects', written out in full. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names, except a "=" term, which is one host by its exact name.
 
 -a without -m runs a command through the host's shell. With -m, it's a module a step can use, and -a holds its arguments as NAME=VALUE, quoted as a shell would. -m file takes src=PATH too, a text file on this machine to send as the content, as Ansible's copy does. A module does what it does in a step: on a host that's already in line it changes nothing and says ok. -check stops before changing anything.
 
@@ -438,18 +438,18 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 		return ssh
 	}
 	ssh := map[string]cty.Value{"host": cty.StringVal(host)}
-	if a := vars["ansible_host"]; a != "" && !ansible.Encrypted(a) {
+	if a := lastVar(vars, "ansible_host", "ansible_ssh_host"); a != "" {
 		ssh["host"] = cty.StringVal(a)
 	}
-	str := func(key, inv, flag string) {
-		if v := vars[inv]; v != "" && !ansible.Encrypted(v) {
+	str := func(key, flag string, names ...string) {
+		if v := lastVar(vars, names...); v != "" {
 			ssh[key] = cty.StringVal(v)
 		} else if flag != "" {
 			ssh[key] = cty.StringVal(flag)
 		}
 	}
-	str("user", "ansible_user", o.user)
-	str("private_key_file", "ansible_ssh_private_key_file", o.keyFile)
+	str("user", o.user, "ansible_user", "ansible_ssh_user")
+	str("private_key_file", o.keyFile, "ansible_private_key_file", "ansible_ssh_private_key_file")
 	if o.knownHosts != "" {
 		ssh["known_hosts_file"] = cty.StringVal(o.knownHosts)
 	} else if v := vars["conn3x_ssh_known_hosts_file"]; v != "" {
@@ -471,7 +471,7 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 	if b, _ := becomeOf(vars); b {
 		ssh["become"] = cty.True
 	}
-	if p, err := strconv.Atoi(vars["ansible_port"]); err == nil {
+	if p, err := strconv.Atoi(lastVar(vars, "ansible_port", "ansible_ssh_port")); err == nil {
 		ssh["port"] = cty.NumberIntVal(int64(p))
 	} else if o.port != 0 {
 		ssh["port"] = cty.NumberIntVal(int64(o.port))
@@ -480,6 +480,20 @@ func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.V
 		ssh["become"] = cty.True
 	}
 	return ssh
+}
+
+// lastVar is the value of the last of names a host sets, as the ssh
+// connection plugin reads its vars lists: when an inventory sets both
+// ansible_user and the older ansible_ssh_user, the later name wins. A
+// vault-encrypted value counts as unset, since run can't decrypt it.
+func lastVar(vars map[string]string, names ...string) string {
+	v := ""
+	for _, n := range names {
+		if s := vars[n]; s != "" && !ansible.Encrypted(s) {
+			v = s
+		}
+	}
+	return v
 }
 
 // becomeOf reports whether a host's commands run as root: -circuits'
