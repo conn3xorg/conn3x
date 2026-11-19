@@ -57,3 +57,16 @@ func TestHash(t *testing.T) {
 		}
 	}
 }
+
+func TestRename(t *testing.T) {
+	const file = "alice:A\nadmin:OLD\nbob:B\n"
+	if got := Rename(file, "admin", "ops", "NEW"); got != "alice:A\nops:NEW\nbob:B\n" {
+		t.Errorf("rename in place: %q", got)
+	}
+	if got := Rename(file, "admin", "bob", "NEW"); got != "alice:A\nbob:NEW\n" {
+		t.Errorf("rename onto an existing user: %q", got)
+	}
+	if got := Rename(file, "gone", "ops", "NEW"); got != file+"ops:NEW\n" {
+		t.Errorf("old name missing: %q", got)
+	}
+}

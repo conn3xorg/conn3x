@@ -75,6 +75,13 @@ func applyHtpasswd(ctx context.Context, req providers.ApplyResourceChangeRequest
 			if err != nil {
 				return "", err
 			}
+			// A renamed user's old line goes, so the old name can't still
+			// log in with the old password.
+			if !prior.IsNull() {
+				if old := stringOr(prior.GetAttr("name"), ""); old != "" && old != name {
+					return htpasswd.Rename(s, old, name, hash), nil
+				}
+			}
 			return htpasswd.Set(s, name, hash), nil
 		}
 	}

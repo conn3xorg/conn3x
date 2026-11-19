@@ -75,6 +75,23 @@ func Set(content, name, hash string) string {
 	return joinLines(append(lines, line))
 }
 
+// Rename gives old's line to name, with hash, where old's line is. If name
+// already has a line, old's is taken out and name's is set. If old has no
+// line, it's Set.
+func Rename(content, old, name, hash string) string {
+	if _, ok := Find(content, name); ok {
+		return Set(Remove(content, old), name, hash)
+	}
+	lines := splitLines(content)
+	for i, l := range lines {
+		if n, _, ok := strings.Cut(strings.TrimSuffix(l, "\r"), ":"); ok && n == old {
+			lines[i] = name + ":" + hash
+			return joinLines(lines)
+		}
+	}
+	return Set(content, name, hash)
+}
+
 // Remove takes name's line out.
 func Remove(content, name string) string {
 	var kept []string

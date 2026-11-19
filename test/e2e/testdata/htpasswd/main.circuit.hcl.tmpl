@@ -11,7 +11,7 @@ circuit "web" {
   step "admin" {
     htpasswd {
       path        = "/etc/conn3x-htpasswd"
-      name        = "admin"
+      name        = "{{.Name}}"
       password_wo = "{{.Password}}"
       create      = true
       mode        = "0640"
