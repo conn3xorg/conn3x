@@ -30,6 +30,9 @@ type WaitFor struct {
 	Port     int
 	URL      URLCheck
 	Timeout  time.Duration
+	// Absent waits the other way: until the path is gone or nothing
+	// listens on the port.
+	Absent bool
 }
 
 // tailBytes is how much of the end of a file Contains is matched against.
@@ -46,6 +49,10 @@ func (w WaitFor) Validate() error {
 	switch {
 	case set != 1:
 		return errors.New("set exactly one of path, port or url")
+	case w.Absent && w.URL.URL != "":
+		return errors.New(`state "absent" is for path or port, not url`)
+	case w.Absent && w.Contains != "":
+		return errors.New(`contains can't go with state "absent", which waits for the path to be gone`)
 	case w.Contains != "" && w.Path == "":
 		return errors.New("contains is for path, not port or url; for url, use body_contains")
 	case w.Contains != "":
@@ -65,6 +72,14 @@ func (w WaitFor) Validate() error {
 // condition is a shell test that succeeds once the wait is over. Ports are
 // read from /proc/net, which every Linux host has, with or without ss.
 func (w WaitFor) condition() string {
+	if w.Absent {
+		return "! { " + w.present() + "; }"
+	}
+	return w.present()
+}
+
+// present is the shell test that the path exists or the port is listening.
+func (w WaitFor) present() string {
 	if w.Path != "" {
 		return "test -e " + ssh.Quote(w.Path)
 	}
@@ -72,13 +87,20 @@ func (w WaitFor) condition() string {
 }
 
 func (w WaitFor) String() string {
-	if w.URL.URL != "" {
+	what := fmt.Sprintf("port %d", w.Port)
+	switch {
+	case w.URL.URL != "":
 		return w.URL.URL
+	case w.Path != "":
+		what = w.Path
 	}
-	if w.Path != "" {
-		return w.Path
+	if w.Absent {
+		if w.Path != "" {
+			return what + " to be gone"
+		}
+		return what + " to close"
 	}
-	return fmt.Sprintf("port %d", w.Port)
+	return what
 }
 
 // Ready reports whether the wait is already over.

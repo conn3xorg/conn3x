@@ -45,6 +45,7 @@ func waitForSchema() providers.Schema {
 			"contains":        {Type: cty.String, Optional: true, Description: "A regular expression the file at path must match before the wait is over, such as \"Started\" for a log line. ^ and $ match at each line. The last MiB of the file is read, once a second."},
 			"body_contains":   {Type: cty.String, Optional: true, Description: "Text the answer's body must hold for url, such as \"ok\". The first MiB is read."},
 			"skip_tls_verify": {Type: cty.Bool, Optional: true, Description: "true accepts any certificate for an https:// url, such as a self-signed one on a new host. Defaults to false."},
+			"state":           {Type: cty.String, Optional: true, Description: "\"present\" (default) waits for path to exist or port to listen. \"absent\" waits the other way: for path to be gone, such as a lock file, or for nothing to listen on port, such as before an upgrade."},
 			"timeout":         {Type: cty.String, Optional: true, Description: "How long to wait. Defaults to \"5m\"."},
 			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether it was ready at the last refresh."},
 		},
@@ -67,6 +68,13 @@ func waitForFrom(v cty.Value) (lifecycle.WaitFor, error) {
 		n, _ := p.AsBigFloat().Int64()
 		w.Port = int(n)
 	}
+	switch st := stringOr(v.GetAttr("state"), "present"); st {
+	case "present":
+	case "absent":
+		w.Absent = true
+	default:
+		return w, fmt.Errorf(`state must be "present" or "absent", not %q`, st)
+	}
 	var err error
 	w.Timeout, err = durationOr(v.GetAttr("timeout"), lifecycle.DefaultWait)
 	return w, err
@@ -83,8 +91,11 @@ func validateWaitFor(cfg cty.Value) tfdiags.Diagnostics {
 	}
 	if err != nil {
 		at := "path"
-		if strings.HasPrefix(err.Error(), "contains") {
+		switch msg := err.Error(); {
+		case strings.HasPrefix(msg, "contains"):
 			at = "contains"
+		case strings.HasPrefix(msg, "state"):
+			at = "state"
 		}
 		diags = diags.Append(attrError(at, err.Error()))
 	}
@@ -93,7 +104,7 @@ func validateWaitFor(cfg cty.Value) tfdiags.Diagnostics {
 
 func planWaitFor(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	// url and its settings change in place, so existing steps keep their ids.
-	return planSynced(req, "wait_for", []string{"path", "port"}, []string{"contains", "url", "status_codes", "body_contains", "skip_tls_verify"})
+	return planSynced(req, "wait_for", []string{"path", "port"}, []string{"state", "contains", "url", "status_codes", "body_contains", "skip_tls_verify"})
 }
 
 func readWaitFor(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

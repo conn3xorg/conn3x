@@ -2059,9 +2059,16 @@ func waitForModule(in *input) ([]step, string) {
 	if h := in.str("host"); h != "" && h != "localhost" && h != "127.0.0.1" {
 		return nil, "waits for another host, which the converter can't translate yet"
 	}
-	in.state("started", "started", "present")
+	st := in.str("state")
+	if st == "drained" {
+		return nil, "waits for a port's open connections to finish, which wait_for can't do yet"
+	}
+	in.state("started", "started", "present", "stopped", "absent")
 	var attrs []attr
 	attrs = in.optional(attrs, "path", "path")
+	if st == "stopped" || st == "absent" {
+		attrs = append(attrs, s("state", "absent"))
+	}
 	// search_regex on a socket reads a banner, which wait_for can't yet.
 	if in.has("search_regex") {
 		if !in.has("path") {
