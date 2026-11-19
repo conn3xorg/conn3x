@@ -86,7 +86,7 @@ func planUserPassword(req providers.PlanResourceChangeRequest, resp *providers.P
 		vals["password_hmac"] = cty.NullVal(cty.String)
 	}
 	onCreate := known(vals["password_on_create"]) && vals["password_on_create"].True()
-	if !wo.IsNull() && !(onCreate && !req.PriorState.IsNull()) {
+	if !wo.IsNull() && (!onCreate || req.PriorState.IsNull()) {
 		vals["password_hmac"] = cty.UnknownVal(cty.String)
 		key, err := hmacKey(true)
 		if err == nil && known(prior) {
