@@ -167,16 +167,16 @@ func TestReplace(t *testing.T) {
 		spec Replace
 		want string
 	}{
-		"every match":          {"foo bar foo\nfoo\n", Replace{`foo`, "baz"}, "baz bar baz\nbaz\n"},
-		"no match":             {"a\n", Replace{`foo`, "baz"}, "a\n"},
-		"anchors at each line": {"a=1\nb=2\na=3\n", Replace{`^a=.*$`, "a=0"}, "a=0\nb=2\na=0\n"},
-		"dot stops at a line":  {"ab\ncd\n", Replace{`a.*`, "z"}, "z\ncd\n"},
-		"across lines":         {"a\nb\n", Replace{`a\nb`, "c"}, "c\n"},
-		"group":                {"port 80\n", Replace{`port (\d+)`, "listen ${1}0"}, "listen 800\n"},
-		"named group":          {"k=v\n", Replace{`(?P<key>\w+)=v`, "${key}:v"}, "k:v\n"},
-		"dollar":               {"cost\n", Replace{`cost`, "$$5"}, "$5\n"},
-		"deletes":              {"a#b\n", Replace{`#.*`, ""}, "a\n"},
-		"final newline kept":   {"foo", Replace{`foo`, "bar"}, "bar"},
+		"every match":          {"foo bar foo\nfoo\n", Replace{Regexp: `foo`, With: "baz"}, "baz bar baz\nbaz\n"},
+		"no match":             {"a\n", Replace{Regexp: `foo`, With: "baz"}, "a\n"},
+		"anchors at each line": {"a=1\nb=2\na=3\n", Replace{Regexp: `^a=.*$`, With: "a=0"}, "a=0\nb=2\na=0\n"},
+		"dot stops at a line":  {"ab\ncd\n", Replace{Regexp: `a.*`, With: "z"}, "z\ncd\n"},
+		"across lines":         {"a\nb\n", Replace{Regexp: `a\nb`, With: "c"}, "c\n"},
+		"group":                {"port 80\n", Replace{Regexp: `port (\d+)`, With: "listen ${1}0"}, "listen 800\n"},
+		"named group":          {"k=v\n", Replace{Regexp: `(?P<key>\w+)=v`, With: "${key}:v"}, "k:v\n"},
+		"dollar":               {"cost\n", Replace{Regexp: `cost`, With: "$$5"}, "$5\n"},
+		"deletes":              {"a#b\n", Replace{Regexp: `#.*`, With: ""}, "a\n"},
+		"final newline kept":   {"foo", Replace{Regexp: `foo`, With: "bar"}, "bar"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := ApplyReplace(tc.in, tc.spec)
@@ -197,22 +197,22 @@ func TestReplace(t *testing.T) {
 // plan, so it's stopped: at validate when the text is fixed, otherwise when
 // the file shows it, and in both cases before anything is written.
 func TestReplaceThatNeverSettles(t *testing.T) {
-	for _, r := range []Replace{{`foo`, "foofoo"}, {`foo`, "foobar"}, {`^a`, "ab"}, {`x*`, "y"}} {
+	for _, r := range []Replace{{Regexp: `foo`, With: "foofoo"}, {Regexp: `foo`, With: "foobar"}, {Regexp: `^a`, With: "ab"}, {Regexp: `x*`, With: "y"}} {
 		if r.Validate() == nil {
 			t.Errorf("Validate(%+v) accepted", r)
 		}
 	}
-	if err := (Replace{`(foo)`, "$1$1"}).Validate(); err != nil {
+	if err := (Replace{Regexp: `(foo)`, With: "$1$1"}).Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ApplyReplace("foo\n", Replace{`(foo)`, "$1$1"}); err == nil {
+	if _, err := ApplyReplace("foo\n", Replace{Regexp: `(foo)`, With: "$1$1"}); err == nil {
 		t.Error("a growing backreference was applied")
 	}
-	if got, err := ApplyReplace("bar\n", Replace{`(foo)`, "$1$1"}); err != nil || got != "bar\n" {
+	if got, err := ApplyReplace("bar\n", Replace{Regexp: `(foo)`, With: "$1$1"}); err != nil || got != "bar\n" {
 		t.Errorf("no match: %q, %v", got, err)
 	}
 	// These match their own output but leave it alone, so they settle.
-	for _, r := range []Replace{{`a+`, "a"}, {`^foo$`, "foo"}, {`foo$`, "foo bar"}} {
+	for _, r := range []Replace{{Regexp: `a+`, With: "a"}, {Regexp: `^foo$`, With: "foo"}, {Regexp: `foo$`, With: "foo bar"}} {
 		if err := r.Validate(); err != nil {
 			t.Errorf("Validate(%+v): %v", r, err)
 		}
@@ -220,7 +220,7 @@ func TestReplaceThatNeverSettles(t *testing.T) {
 }
 
 func TestReplaceRefusesBadInput(t *testing.T) {
-	for _, r := range []Replace{{"", "x"}, {"(", "x"}, {`(a)`, "$2"}, {`(a)`, "$1x"}, {`(a)`, "${nope}"}} {
+	for _, r := range []Replace{{Regexp: "", With: "x"}, {Regexp: "(", With: "x"}, {Regexp: `(a)`, With: "$2"}, {Regexp: `(a)`, With: "$1x"}, {Regexp: `(a)`, With: "${nope}"}} {
 		if r.Validate() == nil {
 			t.Errorf("Validate(%+v) accepted", r)
 		}

@@ -401,8 +401,6 @@ func TestRefusesIniAndReplaceItCantProve(t *testing.T) {
 		"replace: {path: /a, replace: x}":                                            "no regexp",
 		"replace: {path: /a, regexp: 1.5, replace: x}":                               "may read",
 		"replace: {path: /a, regexp: a, replace: yes}":                               "may read",
-		rep + "a, after: b}":                                                         "sets after",
-		rep + "a, before: b}":                                                        "sets before",
 		rep + "a, encoding: latin-1}":                                                "encoding",
 		rep + "a, validate: 'x %s'}":                                                 "sets validate",
 		rep + "a, mode: '0600'}":                                                     "sets mode",

@@ -16,6 +16,34 @@ import (
 type Replace struct {
 	Regexp string
 	With   string
+	// After and Before, when set, limit the edit to one section of the
+	// file, as Ansible's replace does: from the first match of After to
+	// the nearest match of Before after it, or to the end of the file, or
+	// from the start to the last match of Before. . matches a line break
+	// in them.
+	After, Before string
+}
+
+// sectionGroup names the section in the pattern After and Before make.
+const sectionGroup = "conn3xsection"
+
+// sectionRegexp is the pattern that finds the section, or nil without
+// After or Before.
+func (r Replace) sectionRegexp() (*regexp.Regexp, error) {
+	if r.After == "" && r.Before == "" {
+		return nil, nil
+	}
+	for arg, p := range map[string]string{"after": r.After, "before": r.Before} {
+		if _, err := regexp.Compile(p); err != nil {
+			return nil, fmt.Errorf("%s: %w", arg, err)
+		}
+	}
+	// With one marker, the section runs as far as it can, as in Ansible.
+	body := "(?P<" + sectionGroup + ">.*?)"
+	if r.After == "" || r.Before == "" {
+		body = "(?P<" + sectionGroup + ">.*)"
+	}
+	return regexp.Compile("(?s)(?:" + r.After + ")" + body + "(?:" + r.Before + ")")
 }
 
 var templateRef = regexp.MustCompile(`\$(?:\$|([A-Za-z0-9_]+)|\{([A-Za-z0-9_]+)\})`)
@@ -63,6 +91,9 @@ func (r Replace) Validate() error {
 	if err != nil {
 		return err
 	}
+	if _, err := r.sectionRegexp(); err != nil {
+		return err
+	}
 	literal, err := checkRefs(re, r.With, "replace")
 	if err != nil {
 		return err
@@ -87,8 +118,24 @@ func ApplyReplace(content string, r Replace) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	edited := re.ReplaceAllString(content, r.With)
-	if re.ReplaceAllString(edited, r.With) != edited {
+	section, err := r.sectionRegexp()
+	if err != nil {
+		return "", err
+	}
+	once := func(s string) string {
+		if section == nil {
+			return re.ReplaceAllString(s, r.With)
+		}
+		// Markers that don't match leave the file alone, as in Ansible.
+		m := section.FindStringSubmatchIndex(s)
+		if m == nil {
+			return s
+		}
+		i := 2 * section.SubexpIndex(sectionGroup)
+		return s[:m[i]] + re.ReplaceAllString(s[m[i]:m[i+1]], r.With) + s[m[i+1]:]
+	}
+	edited := once(content)
+	if once(edited) != edited {
 		return "", r.neverSettles()
 	}
 	return edited, nil

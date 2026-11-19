@@ -261,6 +261,8 @@ var replaceKind = editKind{
 	attrs: map[string]*configschema.Attribute{
 		"regexp":  {Type: cty.String, Required: true, Description: "What to look for. ^ and $ match at each line, and . doesn't match a line break."},
 		"replace": {Type: cty.String, Required: true, Description: "What to put in its place, which can use $1, ${1} and ${name}. Write $$ for a dollar sign. An empty string deletes each match."},
+		"after":   {Type: cty.String, Optional: true, Description: "A regexp marking where the section to edit starts, such as \"^<VirtualHost\". Only the text after its first match is edited, up to before if that's set. . matches a line break here. If it doesn't match, the file is left alone."},
+		"before":  {Type: cty.String, Optional: true, Description: "A regexp marking where the section to edit ends. With after, the section ends at its first match after after's; alone, at its last match in the file. . matches a line break here. If it doesn't match, the file is left alone."},
 	},
 	edit: func(v cty.Value) func(string) (string, error) {
 		r := replaceFrom(v)
@@ -282,7 +284,10 @@ var replaceKind = editKind{
 }
 
 func replaceFrom(v cty.Value) edit.Replace {
-	return edit.Replace{Regexp: stringOr(v.GetAttr("regexp"), ""), With: stringOr(v.GetAttr("replace"), "")}
+	return edit.Replace{
+		Regexp: stringOr(v.GetAttr("regexp"), ""), With: stringOr(v.GetAttr("replace"), ""),
+		After: stringOr(v.GetAttr("after"), ""), Before: stringOr(v.GetAttr("before"), ""),
+	}
 }
 
 func (k editKind) schema() providers.Schema {

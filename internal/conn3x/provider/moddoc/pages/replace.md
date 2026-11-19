@@ -55,6 +55,7 @@ step "no_comments" {
 **Secrets.** `regexp` and `replace` are stored in state and shown in plans, like the text of a [`line`](/modules/line) step. The file's content isn't stored.
 
 **Conflicts.** If another step in the same circuit writes the whole file with `file` or `template`, `conn3x validate` warns you, because each apply would undo the other.
+**Sections.** `after` and `before` limit the edit to one part of the file, such as one `<VirtualHost>` block. With both, the section runs from the first match of `after` to the nearest match of `before` after it. With `after` alone it runs to the end of the file, and with `before` alone from the start of the file to the last match of `before`. The markers themselves aren't edited, and `.` matches a line break in them. If they don't match, the file is left as it is and the step is in sync. `^` and `$` in `regexp` also match where the section starts and ends.
 
 ## Removal
 
@@ -62,7 +63,7 @@ When you delete a `replace` step, the file stays as it is. `on_remove = "delete"
 
 ## From Ansible
 
-`conn3x convert ansible` turns `ansible.builtin.replace` tasks into `replace` steps when it can prove the pattern means the same in Go as in Python, and rewrites backreferences: `\1` and `\g<1>` become `${1}`, `\g<name>` becomes `${name}`, and a `$` becomes `$$`. A reference to a group that doesn't exist stays a TODO, as Ansible would fail on it.
+`conn3x convert ansible` turns `ansible.builtin.replace` tasks into `replace` steps when it can prove the pattern means the same in Go as in Python, and rewrites backreferences: `\1` and `\g<1>` become `${1}`, `\g<name>` becomes `${name}`, and a `$` becomes `$$`. `after` and `before` carry over, checked the same way. A reference to a group that doesn't exist stays a TODO, as Ansible would fail on it.
 
 These stay a TODO with the reason:
 
@@ -71,6 +72,7 @@ These stay a TODO with the reason:
 - `[[:alpha:]]`, which is a class in Go and plain characters in Python, and `a{,3}`, which is a repeat in Python and plain text in Go.
 - A pattern that can match nothing, like `x*` or `^.*$`, because Python and Go replace different empty matches.
 - A replacement the pattern would match again, which never settles.
-- `after`, `before`, `backup`, `validate`, `mode`, `owner`, `group`, an `encoding` other than UTF-8, tasks written as `key=value` text, loops, and unquoted values that YAML could read as something else, such as `yes` or `1.5`.
+- An `after` or `before` with a `|` in it. Ansible pastes the two around the section's own pattern, so a `|` reaches across the whole thing, and Conn3x keeps each marker whole instead.
+- `backup`, `validate`, `mode`, `owner`, `group`, an `encoding` other than UTF-8, tasks written as `key=value` text, loops, and unquoted values that YAML could read as something else, such as `yes` or `1.5`.
 
 Ansible leaves a growing replacement to you: it would append again on every play. A step with a group that grows, like `(foo)` and `\1\1`, converts, then fails at plan or apply with the reason instead.

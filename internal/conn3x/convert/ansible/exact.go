@@ -147,10 +147,35 @@ func replaceModule(in *input) ([]step, string) {
 	if e := strings.ToLower(in.str("encoding")); in.has("encoding") && e != "utf-8" && e != "utf8" {
 		return nil, fmt.Sprintf("sets encoding %q; Conn3x edits files as UTF-8", e)
 	}
-	if err := (edit.Replace{Regexp: pattern, With: tmpl}).Validate(); err != nil {
+	// Ansible pastes after and before around the section's group, so a |
+	// in one would reach past it; Conn3x keeps each marker whole.
+	markers := map[string]string{}
+	for _, k := range []string{"after", "before"} {
+		if !in.has(k) {
+			continue
+		}
+		m := in.text(k)
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		if strings.Contains(m, "|") {
+			return nil, "has a | in " + k + ", which Ansible's replace reads across the whole section pattern; rewrite it without one"
+		}
+		if why := unprovableRegexp(m); why != "" {
+			return nil, why
+		}
+		markers[k] = m
+	}
+	r := edit.Replace{Regexp: pattern, With: tmpl, After: markers["after"], Before: markers["before"]}
+	if err := r.Validate(); err != nil {
 		return nil, "never settles or can't be a replace step: " + err.Error()
 	}
 	attrs := []attr{s("path", in.str("path", "dest", "destfile", "name")), s("regexp", pattern), s("replace", tmpl)}
+	for _, k := range []string{"after", "before"} {
+		if m, ok := markers[k]; ok {
+			attrs = append(attrs, s(k, m))
+		}
+	}
 	if in.bool("backup", false) {
 		attrs = append(attrs, attr{key: "backup", val: cty.True})
 	}
