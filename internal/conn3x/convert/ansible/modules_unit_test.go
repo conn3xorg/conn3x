@@ -33,7 +33,7 @@ func TestConvertModuleArguments(t *testing.T) {
 		"sefcontext: { target: '/srv/www(/.*)?', setype: httpd_sys_content_t }":                                                             {"selinux_fcontext {", `setype = "httpd_sys_content_t"`},
 		"community.general.parted: { device: /dev/sdb, number: 1, state: present, part_start: 1MiB }":                                       {"partition {", `start  = "1MiB"`, `end    = "100%"`, `label  = "msdos"`},
 		"parted: { device: /dev/sdb, number: 2, state: present, part_start: 1GiB, part_end: 20GiB, label: gpt, flags: [lvm], resize: yes }": {`label  = "gpt"`, `flags  = ["lvm"]`, "resize = true"},
-		"community.windows.win_dns_record: { name: web, type: A, value: 10.0.0.5, zone: example.com }":                                      {"windows_dns_record {", `values = ["10.0.0.5"]`, `zone   = "example.com"`},
+		"community.windows.win_dns_record: { name: web, type: A, value: 10.0.0.5, zone: example.com }":                                      {"windows_dns_record {", `values = ["10.0.0.5"]`, `zone   = "example.com"`, "doesn't look at aging"},
 		"win_dns_record: { name: web, type: A, values: [10.0.0.5, 10.0.0.6], zone: example.com, ttl: 600 }":                                 {`values = ["10.0.0.5", "10.0.0.6"]`, "ttl    = 600"},
 		"get_url: { url: 'https://example.com/a.tgz', dest: /tmp/a.tgz, checksum: 'sha256:abc', mode: '0644' }": {
 			"download {", `sha256 = "abc"`, `mode   = "0644"`},

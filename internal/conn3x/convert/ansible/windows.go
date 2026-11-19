@@ -1209,5 +1209,5 @@ func winDNSRecordModule(in *input) ([]step, string) {
 	if in.has("ttl") {
 		attrs = append(attrs, in.number("ttl"))
 	}
-	return one("windows_dns_record", attrs)
+	return one("windows_dns_record", attrs, "win_dns_record also removes a record whose aging differs from its aging setting, off unless set; a windows_dns_record step doesn't look at aging, so an aged record stays.")
 }
