@@ -1676,15 +1676,25 @@ func kernelBlacklistModule(in *input) ([]step, string) {
 	attrs := []attr{
 		s("path", path),
 		s("line", "blacklist "+name),
-		// The module matches ^blacklist\s+<name>$, so a name with a . or a +
-		// is escaped here and matches only itself.
-		s("regexp", `^blacklist\s+`+regexp.QuoteMeta(name)+`$`),
+		s("regexp", kernelBlacklistRegexp(name)),
 		{key: "create", val: cty.True},
 	}
 	if in.state("present", "present", "absent") == "absent" {
 		attrs = append(attrs, s("state", "absent"))
 	}
 	return one("line", attrs)
+}
+
+// kernelBlacklistRegexp is the pattern a kernel_blacklist task's line step
+// matches: blacklist, whitespace, then the name, and nothing else on the line.
+// The module strips a line before matching it, so a hand-written "  blacklist
+// nouveau " counts as blacklisted for Ansible; the leading and trailing \s*
+// keep the step seeing the same lines, which is what state: absent needs to
+// remove one the module would have removed. A leading # is still not matched,
+// since # isn't whitespace. The name is escaped so a . or a + matches only
+// itself.
+func kernelBlacklistRegexp(name string) string {
+	return `^\s*blacklist\s+` + regexp.QuoteMeta(name) + `\s*$`
 }
 
 // dpkgSelectionsModule turns hold and install into a package_hold step.

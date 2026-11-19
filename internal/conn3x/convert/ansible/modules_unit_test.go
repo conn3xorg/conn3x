@@ -4,6 +4,7 @@
 package ansible
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,11 @@ func TestConvertModuleArguments(t *testing.T) {
 			"user {", "uid    = 1500", `groups = ["web", "log"]`, `home   = "/srv/app"`, "system = true"},
 		"group: { name: app, gid: 1500, system: no }":               {"group {", "gid    = 1500", "system = false"},
 		"sysctl: { name: vm.swappiness, value: '10', reload: yes }": {"sysctl {", `value = "10"`},
+		"community.general.kernel_blacklist: { name: nouveau }": {
+			"line {", `path   = "/etc/modprobe.d/blacklist-ansible.conf"`, `line   = "blacklist nouveau"`, `regexp = "^\\s*blacklist\\s+nouveau\\s*$"`, "create = true"},
+		"kernel_blacklist: { name: pcspkr, blacklist_file: /etc/modprobe.d/blacklist-local.conf, state: absent }": {
+			`path   = "/etc/modprobe.d/blacklist-local.conf"`, `line   = "blacklist pcspkr"`, "create = true", `state  = "absent"`},
+		"kernel_blacklist: { name: 'foo.bar+baz' }": {`regexp = "^\\s*blacklist\\s+foo\\.bar\\+baz\\s*$"`},
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		hcl := string(res.HCL)
@@ -124,6 +130,37 @@ func TestConvertTaskRefusals(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s: review %+v, want %q", task, res.Review, reason)
+		}
+	}
+}
+
+// TestKernelBlacklistRegexp holds the step's pattern to what the module
+// matches. community.general.kernel_blacklist strips each line before matching
+// it, skips a line that starts with #, and matches ^blacklist\s+<name>$. So a
+// hand-written "  blacklist nouveau " is blacklisted for Ansible, and state:
+// absent has to remove it rather than report it removed and leave it.
+func TestKernelBlacklistRegexp(t *testing.T) {
+	re := regexp.MustCompile(kernelBlacklistRegexp("nouveau"))
+	for _, line := range []string{
+		"blacklist nouveau",
+		"  blacklist nouveau",
+		"blacklist nouveau ",
+		"\tblacklist\tnouveau\t",
+	} {
+		if !re.MatchString(line) {
+			t.Errorf("%q: does not match, though the module leaves it blacklisted", line)
+		}
+	}
+	for _, line := range []string{
+		"# blacklist nouveau",
+		"#blacklist nouveau",
+		"#  blacklist nouveau",
+		"blacklist nouveau_extra",
+		"blacklist nouveau.conf",
+		"blacklist",
+	} {
+		if re.MatchString(line) {
+			t.Errorf("%q: matches, though the module leaves it alone", line)
 		}
 	}
 }
