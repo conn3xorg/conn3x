@@ -22,7 +22,7 @@ func unitHost(t *testing.T, answer func(script string) (string, int)) map[string
 	t.Helper()
 	s := sshtest.New(t)
 	s.SetExec(func(cmd string, _ []byte) (string, int) {
-		return answer(strings.ReplaceAll(cmd, `'\''`, "'"))
+		return answer(strings.ReplaceAll(strings.NewReplacer(`'"'"'`, "'", `'"\\"'`, `\`).Replace(cmd), `'\''`, "'"))
 	})
 	return map[string]cty.Value{
 		"host":             cty.StringVal(s.Host),

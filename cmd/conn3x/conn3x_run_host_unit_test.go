@@ -27,7 +27,7 @@ type brMarker struct {
 func (m *brMarker) answer(cmd string, _ []byte) (string, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cmd = strings.ReplaceAll(cmd, `'\''`, "'")
+	cmd = strings.ReplaceAll(strings.NewReplacer(`'"'"'`, "'", `'"\\"'`, `\`).Replace(cmd), `'\''`, "'")
 	switch {
 	case strings.Contains(cmd, "[ -e '/done' ]"):
 		if m.done {
