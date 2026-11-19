@@ -59,3 +59,7 @@ Use a stable name for the disk where you can, such as `/dev/disk/by-id/...`: `/d
 ## Removal
 
 A `partition` step has no `on_remove`, like the other storage steps. Taking it out of a circuit leaves the partition and its data as they are.
+
+## From Ansible
+
+`conn3x convert ansible` turns `community.general.parted` tasks with `state: present` into `partition` steps, with `device`, `number`, `part_start` as `start`, `part_end` as `end` (`100%` when unset, as in Ansible), `flags`, `resize` and `label`. Ansible's `label` defaults to `msdos`, and this step's to `gpt`, so a task without `label` gets `label = "msdos"`. A task stays a TODO, with the reason, when it sets no `part_start`, since Ansible's default of `0%` isn't a size this step takes, when its start or end isn't one this step takes, or when it sets `name`, `fs_type`, a `part_type` other than `primary` or an `align` other than `optimal`. `state: absent` and Ansible's default `state: info` stay TODOs too.

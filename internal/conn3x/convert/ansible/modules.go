@@ -4,6 +4,7 @@
 package ansible
 
 import (
+	"cmp"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -572,6 +573,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"modprobe":           modprobeModule,
 	"sudoers":            sudoersModule,
 	"filesystem":         filesystemModule,
+	"parted":             partedModule,
 	"lvg":                lvgModule,
 	"lvol":               lvolModule,
 	"docker_container":   containerModule("docker", "published_ports", "ports", "volumes"),
@@ -1461,6 +1463,57 @@ func xmlModule(in *input) ([]step, string) {
 		return nil, why
 	}
 	return one("xml_value", attrs, "Ansible sets every element the xpath matches; an xml_value step needs exactly one, and an apply that finds several says how to pick one.")
+}
+
+// partedModule converts community.general.parted for one partition made
+// or kept. Ansible's label defaults to msdos, where the step's is gpt, so
+// the step is told; its default start, 0%, isn't a size the step takes.
+func partedModule(in *input) ([]step, string) {
+	if st := in.state("info", "present"); st != "present" {
+		return nil, "has state " + st + ", and only state: present makes a partition step"
+	}
+	if !in.has("number") {
+		return nil, "names no partition number, which a partition step needs"
+	}
+	for _, key := range []string{"name", "fs_type"} {
+		if in.has(key) {
+			return nil, "sets " + key + ", which a partition step doesn't"
+		}
+	}
+	if t := in.str("part_type"); t != "" && t != "primary" {
+		return nil, "makes a " + t + " partition; a partition step makes primary ones"
+	}
+	if a := in.str("align"); a != "" && a != "optimal" {
+		return nil, "sets align " + a + ", and a partition step aligns optimally"
+	}
+	if !in.has("part_start") {
+		return nil, "sets no part_start, so Ansible starts at 0%; a partition step needs a start in MiB, GiB or TiB, such as 1MiB"
+	}
+	in.ignore("unit", "unit_preserve_case")
+	n, err := strconv.Atoi(in.str("number"))
+	if err != nil {
+		return nil, "has a number that isn't a whole number"
+	}
+	p := storage.Partition{Device: in.str("device"), Number: n, Start: in.str("part_start"), End: cmp.Or(in.str("part_end"), "100%"), Label: cmp.Or(in.str("label"), "msdos")}
+	if err := p.Validate(); err != nil {
+		return nil, "can't be a partition step: " + err.Error()
+	}
+	attrs := []attr{s("device", p.Device), {key: "number", val: cty.NumberIntVal(int64(n))}, s("start", p.Start), s("end", p.End), s("label", p.Label)}
+	if in.has("flags") {
+		vals := []cty.Value{}
+		for _, f := range in.list("flags") {
+			vals = append(vals, cty.StringVal(f))
+		}
+		v := cty.ListValEmpty(cty.String)
+		if len(vals) > 0 {
+			v = cty.ListVal(vals)
+		}
+		attrs = append(attrs, attr{key: "flags", val: v})
+	}
+	if in.bool("resize", false) {
+		attrs = append(attrs, attr{key: "resize", val: cty.True})
+	}
+	return one("partition", attrs)
 }
 
 func getURLModule(in *input) ([]step, string) {
