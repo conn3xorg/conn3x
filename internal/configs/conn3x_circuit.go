@@ -89,6 +89,7 @@ var circuitModules = map[string]string{
 	"xml_value":            "conn3x_xml_value",
 	"json_value":           "conn3x_json_value",
 	"replace":              "conn3x_replace",
+	"htpasswd":             "conn3x_htpasswd",
 	"file":                 "conn3x_file",
 	"directory_copy":       "conn3x_directory_copy",
 	"package":              "conn3x_package",

@@ -1,0 +1,21 @@
+circuit "web" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "admin" {
+    htpasswd {
+      path        = "/etc/conn3x-htpasswd"
+      name        = "admin"
+      password_wo = "{{.Password}}"
+      create      = true
+      mode        = "0640"
+      on_remove   = "delete"
+    }
+  }
+}

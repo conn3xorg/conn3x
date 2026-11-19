@@ -554,6 +554,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"openssh_keypair":    sshKeypairModule,
 	"openssl_csr":        csrModule,
 	"postgresql_db":      pgDatabaseModule,
+	"htpasswd":           htpasswdModule,
 	"postgresql_user":    pgRoleModule,
 	"postgresql_privs":   pgPrivsModule,
 	"mysql_db":           mysqlDatabaseModule,
@@ -1064,6 +1065,34 @@ func sysctlModule(in *input) ([]step, string) {
 	}
 	in.ignore("reload", "sysctl_set")
 	return one("sysctl", []attr{s("name", in.str("name")), s("value", in.str("value"))})
+}
+
+// htpasswdModule converts community.general.htpasswd. The password is never
+// read, so it can't end up in the output.
+func htpasswdModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "" && st != "present" {
+		return nil, fmt.Sprintf("has state %q; the htpasswd step takes its line out only when the step is removed with on_remove = \"delete\"", st)
+	}
+	attrs := []attr{s("path", in.str("path", "dest", "destfile")), s("name", in.str("name", "username"))}
+	// Ansible creates a missing file unless create is false.
+	if in.bool("create", true) {
+		attrs = append(attrs, attr{key: "create", val: cty.True})
+	}
+	if m, ok := in.mode("mode"); ok {
+		attrs = append(attrs, m)
+	}
+	attrs = in.optional(attrs, "owner", "owner")
+	attrs = in.optional(attrs, "group", "group")
+	scheme := in.str("hash_scheme", "crypt_scheme")
+	if scheme == "" {
+		scheme = "apr_md5_crypt"
+	}
+	notes := []string{"TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here."}
+	if scheme != "bcrypt" {
+		notes = append(notes, "Conn3x hashes the password with bcrypt, where the task used "+scheme+". Apache reads bcrypt; check that anything else reading this file does too.")
+	}
+	in.ignore("password")
+	return one("htpasswd", attrs, notes...)
 }
 
 // pgDatabaseModule converts community.postgresql.postgresql_db. The step
