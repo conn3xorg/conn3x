@@ -1,6 +1,10 @@
 # Ubuntu 24.04 with systemd and sshd, used as a managed host in end-to-end tests.
 FROM docker.io/library/ubuntu:24.04
 
+# A fetch that stalls fails after 20s and is tried again, rather than
+# holding apt, and the test that called it, until the test's own timeout.
+RUN printf 'Acquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Retries "3";\n' > /etc/apt/apt.conf.d/80conn3x-e2e-timeouts
+
 # amd64 images fetch from archive.ubuntu.com, whose stalls have run whole e2e
 # shards out of time (#1087). Azure's public mirror, the one GitHub's runners
 # use, carries the same archive and security pockets. arm64 images use
