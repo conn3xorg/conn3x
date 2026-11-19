@@ -230,8 +230,16 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 			return fail("host %s: %s", h, err)
 		}
 		// -become decides for every host, so the inventory's setting doesn't matter.
-		if _, err := becomeOf(all.Vars(h)); err != nil && !o.become {
+		b, err := becomeOf(all.Vars(h))
+		if err != nil && !o.become {
 			return fail("host %s: %s", h, err)
+		}
+		conn, err := connectionOf(all.Vars(h))
+		if err != nil {
+			return fail("host %s: %s", h, err)
+		}
+		if conn == "controller" && (b || o.become) {
+			return fail("host %s uses ansible_connection=local, which conn3x run runs as you, on this machine, so it can't become root; leave it out of the pattern, or give it an address and a user", h)
 		}
 	}
 	hostsFor := func(p *hostpattern.Pattern) []*runHost {
@@ -377,9 +385,55 @@ func (o runOptions) report(stdout io.Writer, run string, hosts []*runHost, isTas
 	return code
 }
 
+// connectionOf reads a host's ansible_connection: "" for SSH, "controller"
+// for local, or the engine that reaches a container.
+func connectionOf(vars map[string]string) (string, error) {
+	switch c := vars["ansible_connection"]; c {
+	case "", "ssh", "ansible.builtin.ssh", "smart":
+		return "", nil
+	case "local", "ansible.builtin.local":
+		return "controller", nil
+	case "docker", "community.docker.docker":
+		return "docker", nil
+	case "podman", "containers.podman.podman":
+		return "podman", nil
+	default:
+		return "", fmt.Errorf("ansible_connection=%s isn't one conn3x run can use: it reaches hosts over SSH, local, docker or podman", c)
+	}
+}
+
 // sshFor is a host's ssh block: the inventory's settings for it, then the
 // flags.
 func (o runOptions) sshFor(host string, vars map[string]string) map[string]cty.Value {
+	switch conn, _ := connectionOf(vars); conn {
+	case "controller":
+		return map[string]cty.Value{"host": cty.StringVal(host), "controller": cty.True}
+	case "docker", "podman":
+		// As the connection plugins read them, the later name winning.
+		name := host
+		for _, k := range []string{"ansible_host", "ansible_" + conn + "_host"} {
+			if v := vars[k]; v != "" && !ansible.Encrypted(v) {
+				name = v
+			}
+		}
+		ssh := map[string]cty.Value{"host": cty.StringVal(host), "container": cty.StringVal(name), "container_engine": cty.StringVal(conn)}
+		users := []string{"ansible_user"}
+		if conn == "docker" {
+			users = append(users, "ansible_docker_user")
+		}
+		for _, k := range users {
+			if v := vars[k]; v != "" && !ansible.Encrypted(v) {
+				ssh["user"] = cty.StringVal(v)
+			}
+		}
+		if _, ok := ssh["user"]; !ok && o.user != "" {
+			ssh["user"] = cty.StringVal(o.user)
+		}
+		if b, _ := becomeOf(vars); b || o.become {
+			ssh["become"] = cty.True
+		}
+		return ssh
+	}
 	ssh := map[string]cty.Value{"host": cty.StringVal(host)}
 	if a := vars["ansible_host"]; a != "" && !ansible.Encrypted(a) {
 		ssh["host"] = cty.StringVal(a)
