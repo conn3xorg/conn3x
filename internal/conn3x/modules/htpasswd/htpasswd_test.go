@@ -66,6 +66,9 @@ func TestRename(t *testing.T) {
 	if got := Rename(file, "admin", "bob", "NEW"); got != "alice:A\nbob:NEW\n" {
 		t.Errorf("rename onto an existing user: %q", got)
 	}
+	if got := Rename("admin:OLD\nalice:A\nadmin:OLDER\n", "admin", "ops", "NEW"); got != "ops:NEW\nalice:A\n" {
+		t.Errorf("rename with a duplicate old line: %q", got)
+	}
 	if got := Rename(file, "gone", "ops", "NEW"); got != file+"ops:NEW\n" {
 		t.Errorf("old name missing: %q", got)
 	}
