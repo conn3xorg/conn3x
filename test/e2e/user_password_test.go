@@ -109,7 +109,9 @@ func TestUserPasswordHash(t *testing.T) {
 	if !strings.HasPrefix(hash, "$6$conn3xsalt$") {
 		t.Fatalf("perl made %q", hash)
 	}
-	shadow := func() string { return strings.TrimSpace(h.exec("", "sh", "-c", "getent shadow conn3xpw | cut -d: -f2")) }
+	shadow := func() string {
+		return strings.TrimSpace(h.exec("", "sh", "-c", "getent shadow conn3xpw | cut -d: -f2"))
+	}
 	w := newWorkdir(t, "user-password-hash")
 	w.writeAs("main.circuit.hcl", userPasswordVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Password: hash})
 	w.mustConn3x("init", "-no-color")
