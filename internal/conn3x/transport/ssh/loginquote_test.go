@@ -16,25 +16,33 @@ func TestLoginQuote(t *testing.T) {
 		"plain",
 		"it's",
 		`back\slash`,
+		`a\\b`,
+		`a\'b`,
+		`end\`,
 		`\'`,
 		`\\`,
 		"two\nlines",
 		`case ${SUDO_UID:-} in '' | *[!0-9]*) l=0 ;; esac`,
 		"sudo -n -- /bin/sh -c " + Quote("printf '%s\\n' \"$x\" 'a\\'b'"),
 	}
-	for _, sh := range []string{"sh", "fish"} {
+	for _, sh := range []string{"sh", "fish", "tcsh"} {
 		if _, err := exec.LookPath(sh); err != nil {
 			t.Logf("%s not installed", sh)
 			continue
 		}
 		for _, s := range cases {
+			// tcsh refuses a line break inside quotes whatever the
+			// quoting, and some versions expand ! even there (#1126).
+			if sh == "tcsh" && strings.ContainsAny(s, "\n!") {
+				continue
+			}
 			out, err := exec.Command(sh, "-c", "printf %s "+LoginQuote(s)).Output()
 			if err != nil || string(out) != s {
 				t.Errorf("%s read %q as %q (%v)", sh, s, out, err)
 			}
 		}
 	}
-	if q := LoginQuote(`a'b\c`); strings.Contains(strings.ReplaceAll(q, `"\\"`, ""), `\`) {
-		t.Errorf("a backslash outside double quotes: %s", q)
+	if q := LoginQuote(`a'b\c`); q != `'a'\''b'\\'c'` {
+		t.Errorf("a quote and a backslash: %s", q)
 	}
 }

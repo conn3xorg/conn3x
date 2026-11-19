@@ -27,7 +27,7 @@ func brGenHost(t *testing.T, answer func(cmd string) (string, int), windows any)
 			b, _ := json.Marshal(map[string]any{"ok": true, "value": windows})
 			return "conn3x-result:" + base64.StdEncoding.EncodeToString(b) + "\r\n", 0
 		}
-		return answer(strings.ReplaceAll(strings.NewReplacer(`'"'"'`, "'", `'"\\"'`, `\`).Replace(cmd), `'\''`, "'"))
+		return answer(strings.ReplaceAll(strings.ReplaceAll(cmd, `'\\'`, `\`), `'\''`, "'"))
 	})
 	return generateOptions{host: s.Host, port: s.Port, user: "root", keyFile: s.KeyFile(t), knownHosts: s.KnownHosts(t)}
 }

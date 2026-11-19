@@ -94,7 +94,7 @@ func brHomesHost(t *testing.T, b *brHomes) (map[string]cty.Value, string) {
 	t.Helper()
 	s := sshtest.New(t)
 	s.SetExec(func(cmd string, stdin []byte) (string, int) {
-		return b.answer(strings.ReplaceAll(strings.NewReplacer(`'"'"'`, "'", `'"\\"'`, `\`).Replace(cmd), `'\''`, "'"), stdin)
+		return b.answer(strings.ReplaceAll(strings.ReplaceAll(cmd, `'\\'`, `\`), `'\''`, "'"), stdin)
 	})
 	keyFile := s.KeyFile(t)
 	raw, err := os.ReadFile(keyFile)
