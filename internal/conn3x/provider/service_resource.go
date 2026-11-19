@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zclconf/go-cty/cty"
@@ -67,9 +68,20 @@ func validateService(cfg cty.Value) tfdiags.Diagnostics {
 	}
 	diags = diags.Append(validateOnRemove(cfg))
 	if err := desiredService(cfg).Validate(); err != nil {
-		diags = diags.Append(attrError("name", err.Error()))
+		diags = diags.Append(attrError(serviceField(err), err.Error()))
 	}
 	return diags
+}
+
+// serviceField names the attribute a Desired's Validate error is about. An
+// error from somewhere unexpected stays on name, where it was reported
+// before, so nothing goes unattributed.
+func serviceField(err error) string {
+	var fe *service.FieldError
+	if errors.As(err, &fe) {
+		return fe.Attribute
+	}
+	return "name"
 }
 
 func planService(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {

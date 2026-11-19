@@ -4,11 +4,13 @@
 package provider
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/opentofu/opentofu/internal/providers"
+	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
 func serviceObj(attrs map[string]cty.Value) cty.Value {
@@ -82,5 +84,46 @@ func TestServiceValidate(t *testing.T) {
 	}
 	if !validateService(serviceObj(map[string]cty.Value{"name": cty.StringVal("web; reboot")})).HasErrors() {
 		t.Error("bad name accepted")
+	}
+}
+
+func TestServiceValidateAttributesTheError(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  map[string]cty.Value
+		attr string
+	}{
+		{"bad name", map[string]cty.Value{"name": cty.StringVal("web; reboot")}, "name"},
+		{"bad state", map[string]cty.Value{"name": cty.StringVal("web"), "state": cty.StringVal("running")}, "state"},
+		{"restarted", map[string]cty.Value{"name": cty.StringVal("web"), "state": cty.StringVal("restarted")}, "state"},
+		{"masked and started", map[string]cty.Value{"name": cty.StringVal("web"), "state": cty.StringVal("started"), "masked": cty.True}, "masked"},
+		{"masked and enabled", map[string]cty.Value{"name": cty.StringVal("web"), "enabled": cty.True, "masked": cty.True}, "masked"},
+	}
+	for _, c := range cases {
+		diags := validateService(serviceObj(c.cfg))
+		if !diags.HasErrors() {
+			t.Fatalf("%s: accepted", c.name)
+		}
+		path := tfdiags.GetAttribute(diags[0])
+		if len(path) != 1 {
+			t.Fatalf("%s: attributed to %v, want one attribute", c.name, path)
+		}
+		step, ok := path[0].(cty.GetAttrStep)
+		if !ok || step.Name != c.attr {
+			t.Errorf("%s: attributed to %v, want %q", c.name, path, c.attr)
+		}
+	}
+}
+
+func TestServiceValidateRestartedSaysWhatToDo(t *testing.T) {
+	diags := validateService(serviceObj(map[string]cty.Value{"name": cty.StringVal("web"), "state": cty.StringVal("restarted")}))
+	if !diags.HasErrors() {
+		t.Fatal("restarted accepted")
+	}
+	msg := diags[0].Description().Detail
+	for _, want := range []string{"notify a handler", "conn3x run"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q does not mention %q", msg, want)
+		}
 	}
 }

@@ -54,18 +54,32 @@ func Unit(name string) string {
 	return name + ".service"
 }
 
+// FieldError is a validation failure about one attribute of a Desired, so a
+// caller can attach the message to the right line of the config rather than
+// to the unit name.
+type FieldError struct {
+	Attribute string
+	Err       error
+}
+
+func (e *FieldError) Error() string { return e.Err.Error() }
+
+func (e *FieldError) Unwrap() error { return e.Err }
+
 // Validate checks a Desired before anything runs on a host.
 func (d Desired) Validate() error {
 	if !unitPattern.MatchString(d.Name) {
-		return fmt.Errorf("unit name %q is not valid", d.Name)
+		return &FieldError{Attribute: "name", Err: fmt.Errorf("unit name %q is not valid", d.Name)}
 	}
 	switch d.State {
 	case "", Started, Stopped:
+	case "restarted", "reloaded":
+		return &FieldError{Attribute: "state", Err: fmt.Errorf("state must be %q or %q, not %q: a step can't restart on every apply, so notify a handler from the step that changes the config, or use conn3x run", Started, Stopped, d.State)}
 	default:
-		return fmt.Errorf("state must be %q or %q, not %q", Started, Stopped, d.State)
+		return &FieldError{Attribute: "state", Err: fmt.Errorf("state must be %q or %q, not %q", Started, Stopped, d.State)}
 	}
 	if d.Masked != nil && *d.Masked && (d.State == Started || d.Enabled != nil && *d.Enabled) {
-		return errors.New("a masked unit can't be started or enabled")
+		return &FieldError{Attribute: "masked", Err: errors.New("a masked unit can't be started or enabled")}
 	}
 	return nil
 }

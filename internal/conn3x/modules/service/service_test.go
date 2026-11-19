@@ -149,6 +149,26 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateNamesTheAttribute(t *testing.T) {
+	yes := true
+	cases := []struct {
+		d    Desired
+		attr string
+	}{
+		{Desired{Name: "a b"}, "name"},
+		{Desired{Name: "a", State: "running"}, "state"},
+		{Desired{Name: "a", State: "restarted"}, "state"},
+		{Desired{Name: "a", State: Started, Masked: &yes}, "masked"},
+		{Desired{Name: "a", Enabled: &yes, Masked: &yes}, "masked"},
+	}
+	for _, c := range cases {
+		var fe *FieldError
+		if err := c.d.Validate(); !errors.As(err, &fe) || fe.Attribute != c.attr {
+			t.Errorf("Validate(%+v) = %v, want a FieldError on %q", c.d, err, c.attr)
+		}
+	}
+}
+
 // fastHost answers ReadUnit with props or err.
 type fastHost struct {
 	host
