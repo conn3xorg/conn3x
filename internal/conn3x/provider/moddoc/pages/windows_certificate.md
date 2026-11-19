@@ -44,3 +44,7 @@ Put the file on the host first, with a [`windows_file`](/modules/windows_file) s
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the certificate in the store. `on_remove = "delete"` takes it out by its thumbprint. The file stays either way.
+
+## From Ansible
+
+`conn3x convert ansible` turns `ansible.windows.win_certificate_store` tasks that import a file, or take one out with `state: absent`, into `windows_certificate` steps, with `path`, `store_name` (`My` when unset, as in Ansible) and `store_location`. A task with `password` gets a note to set `password_wo` from an ephemeral variable, and the password itself isn't copied into the output. Ansible marks a PFX's private key exportable unless `key_exportable` is `no`, and this step imports it not exportable, so a converted PFX task says so in a note. A task stays a TODO, with the reason, when it names only a `thumbprint`, has `state: exported`, or uses a `service` store or a `key_storage` other than `default`.

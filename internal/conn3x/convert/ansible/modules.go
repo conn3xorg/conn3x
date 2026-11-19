@@ -622,6 +622,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_service":           winServiceModule,
 	"win_share":             winShareModule,
 	"win_dns_record":        winDNSRecordModule,
+	"win_certificate_store": winCertificateStoreModule,
 	"win_shell":             winShellModule,
 	"win_template":          winTemplateModule,
 	"win_user":              winUserModule,

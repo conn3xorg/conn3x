@@ -4,7 +4,9 @@
 package ansible
 
 import (
+	"cmp"
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -1210,4 +1212,38 @@ func winDNSRecordModule(in *input) ([]step, string) {
 		attrs = append(attrs, in.number("ttl"))
 	}
 	return one("windows_dns_record", attrs, "win_dns_record also removes a record whose aging differs from its aging setting, off unless set; a windows_dns_record step doesn't look at aging, so an aged record stays.")
+}
+
+// winCertificateStoreModule converts win_certificate_store for a file
+// imported into a store, or taken out of it, as windows_certificate does.
+// The password never reaches the output: a note says to set password_wo
+// from an ephemeral variable, as for database passwords.
+func winCertificateStoreModule(in *input) ([]step, string) {
+	st := in.state("present", "present", "absent")
+	if !in.has("path") {
+		return nil, "names no path, only a thumbprint; a windows_certificate step works from the certificate's file"
+	}
+	if t := in.str("store_type"); t != "" && t != "system" {
+		return nil, "uses a " + t + " store; a windows_certificate step uses the system stores"
+	}
+	if k := in.str("key_storage"); k != "" && k != "default" {
+		return nil, "sets key_storage " + k + ", which a windows_certificate step doesn't"
+	}
+	in.ignore("thumbprint", "file_type", "store_type", "key_storage")
+	attrs := []attr{s("path", in.str("path")), s("store_name", cmp.Or(in.str("store_name"), "My"))}
+	attrs = in.optional(attrs, "store_location", "store_location")
+	var notes []string
+	if st == "absent" {
+		attrs = append(attrs, s("state", "absent"))
+	}
+	if in.has("password") {
+		in.ignore("password")
+		notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable. The task's password isn't copied here.")
+	}
+	ext := strings.ToLower(path.Ext(strings.ReplaceAll(in.str("path"), `\`, "/")))
+	if (ext == ".pfx" || ext == ".p12") && in.bool("key_exportable", true) && st == "present" {
+		notes = append(notes, "Ansible marks a PFX's private key exportable unless key_exportable is no; a windows_certificate step imports it not exportable.")
+	}
+	in.ignore("key_exportable")
+	return one("windows_certificate", attrs, notes...)
 }
