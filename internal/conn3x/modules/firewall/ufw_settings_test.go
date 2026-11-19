@@ -4,6 +4,7 @@
 package firewall
 
 import (
+	"net"
 	"slices"
 	"testing"
 )
@@ -62,28 +63,55 @@ func TestUFWLocksOut(t *testing.T) {
 		added string
 		ports []int
 		want  bool
+		peer  *SSHPeer // nil: a remote client, 198.51.100.7
 	}{
-		{"no rules", enable, off, "", []int{22}, true},
-		{"22/tcp", enable, off, "ufw allow 22/tcp\n", []int{22}, false},
-		{"22", enable, off, "ufw allow 22\n", []int{22}, false},
-		{"limit", enable, off, "ufw limit 22/tcp\n", []int{22}, false},
-		{"from a network", enable, off, "ufw allow from 10.0.0.0/8 to any port 22 proto tcp\n", []int{22}, false},
-		{"OpenSSH", enable, off, "ufw allow OpenSSH\n", []int{22}, false},
-		{"OpenSSH, another port", enable, off, "ufw allow OpenSSH\n", []int{2222}, true},
-		{"a range", enable, off, "ufw allow 2000:3000/tcp\n", []int{2222}, false},
-		{"udp only", enable, off, "ufw allow 22/udp\n", []int{22}, true},
-		{"deny", enable, off, "ufw deny 22/tcp\n", []int{22}, true},
-		{"out", enable, off, "ufw allow out 22/tcp\n", []int{22}, true},
-		{"udp from", enable, off, "ufw allow from 10.0.0.1 to any port 22 proto udp\n", []int{22}, true},
-		{"either port", enable, off, "ufw allow 2222/tcp\n", []int{22, 2222}, false},
-		{"incoming allowed", UFWSettings{Enabled: on(true), Incoming: "allow"}, off, "", []int{22}, false},
-		{"turning off", UFWSettings{Enabled: on(false)}, UFWState{Active: true, Incoming: "deny"}, "", []int{22}, false},
-		{"deny while on", UFWSettings{Incoming: "deny"}, UFWState{Active: true, Incoming: "allow"}, "", []int{22}, true},
-		{"already on and denying", UFWSettings{Outgoing: "deny"}, UFWState{Active: true, Incoming: "deny"}, "", []int{22}, false},
-		{"deny while off", UFWSettings{Incoming: "deny"}, UFWState{Incoming: "allow"}, "", []int{22}, false},
+		{"no rules", enable, off, "", []int{22}, true, nil},
+		{"22/tcp", enable, off, "ufw allow 22/tcp\n", []int{22}, false, nil},
+		{"22", enable, off, "ufw allow 22\n", []int{22}, false, nil},
+		{"limit", enable, off, "ufw limit 22/tcp\n", []int{22}, false, nil},
+		{"from a network that has the client", enable, off, "ufw allow from 198.51.100.0/24 to any port 22 proto tcp\n", []int{22}, false, nil},
+		{"from one address, the client's", enable, off, "ufw allow from 198.51.100.7 to any port 22\n", []int{22}, false, nil},
+		{"from a network without the client", enable, off, "ufw allow from 10.0.0.0/8 to any port 22 proto tcp\n", []int{22}, true, nil},
+		{"from another network, over loopback", enable, off, "ufw allow from 203.0.113.0/24 to any port 22 proto tcp\n", []int{22}, false, &SSHPeer{Client: net.ParseIP("10.0.2.100"), Local: true}},
+		{"from a network, client unknown", enable, off, "ufw allow from 198.51.100.0/24 to any port 22 proto tcp\n", []int{22}, true, &SSHPeer{}},
+		{"no from, client unknown", enable, off, "ufw allow 22/tcp\n", []int{22}, false, &SSHPeer{}},
+		{"from any", enable, off, "ufw allow from any to any port 22 proto tcp\n", []int{22}, false, nil},
+		{"OpenSSH", enable, off, "ufw allow OpenSSH\n", []int{22}, false, nil},
+		{"OpenSSH, another port", enable, off, "ufw allow OpenSSH\n", []int{2222}, true, nil},
+		{"a range", enable, off, "ufw allow 2000:3000/tcp\n", []int{2222}, false, nil},
+		{"udp only", enable, off, "ufw allow 22/udp\n", []int{22}, true, nil},
+		{"deny", enable, off, "ufw deny 22/tcp\n", []int{22}, true, nil},
+		{"out", enable, off, "ufw allow out 22/tcp\n", []int{22}, true, nil},
+		{"udp from", enable, off, "ufw allow from 10.0.0.1 to any port 22 proto udp\n", []int{22}, true, nil},
+		{"either port", enable, off, "ufw allow 2222/tcp\n", []int{22, 2222}, false, nil},
+		{"incoming allowed", UFWSettings{Enabled: on(true), Incoming: "allow"}, off, "", []int{22}, false, nil},
+		{"turning off", UFWSettings{Enabled: on(false)}, UFWState{Active: true, Incoming: "deny"}, "", []int{22}, false, nil},
+		{"deny while on", UFWSettings{Incoming: "deny"}, UFWState{Active: true, Incoming: "allow"}, "", []int{22}, true, nil},
+		{"already on and denying", UFWSettings{Outgoing: "deny"}, UFWState{Active: true, Incoming: "deny"}, "", []int{22}, false, nil},
+		{"deny while off", UFWSettings{Incoming: "deny"}, UFWState{Incoming: "allow"}, "", []int{22}, false, nil},
 	} {
-		if got := c.s.LocksOut(c.st, c.added, c.ports); got != c.want {
+		peer := SSHPeer{Client: net.ParseIP("198.51.100.7")}
+		if c.peer != nil {
+			peer = *c.peer
+		}
+		if got := c.s.LocksOut(c.st, c.added, c.ports, peer); got != c.want {
 			t.Errorf("%s: %t, want %t", c.name, got, c.want)
+		}
+	}
+}
+
+func TestParseSSHConnection(t *testing.T) {
+	for v, want := range map[string]SSHPeer{
+		"198.51.100.7 51000 203.0.113.5 22": {Client: net.ParseIP("198.51.100.7")},
+		"10.0.2.100 54778 10.0.2.100 22":    {Client: net.ParseIP("10.0.2.100"), Local: true},
+		"::1 40000 ::1 22":                  {Client: net.ParseIP("::1"), Local: true},
+		"":                                  {},
+		"nonsense":                          {},
+		"x 1 y 22":                          {},
+	} {
+		got := ParseSSHConnection(v)
+		if !got.Client.Equal(want.Client) || got.Local != want.Local {
+			t.Errorf("%q: %+v, want %+v", v, got, want)
 		}
 	}
 }

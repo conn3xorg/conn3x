@@ -5,7 +5,7 @@ package provider
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -45,6 +45,16 @@ func ufwSettingsFrom(v cty.Value) firewall.UFWSettings {
 		s.Enabled = &on
 	}
 	return s
+}
+
+// sshPeer reads $SSH_CONNECTION as the login user, without sudo or the
+// agent, whose environments don't have it.
+func sshPeer(ctx context.Context, h *hostConn) firewall.SSHPeer {
+	res, err := h.client.Run(ctx, `printf '%s' "${SSH_CONNECTION:-}"`, nil)
+	if err != nil || res.ExitCode != 0 {
+		return firewall.SSHPeer{}
+	}
+	return firewall.ParseSSHConnection(string(res.Stdout))
 }
 
 func validateUFWSettings(cfg cty.Value) tfdiags.Diagnostics {
@@ -90,8 +100,13 @@ func applyUFWSettings(ctx context.Context, req providers.ApplyResourceChangeRequ
 				if err != nil {
 					return cty.NilVal, err
 				}
-				if s.LocksOut(st, added, firewall.SSHPorts(ctx, h)) {
-					return cty.NilVal, errors.New("ufw would refuse incoming SSH, and no ufw rule lets in sshd's port, so the next login would be shut out. Add a ufw step that allows it, such as ufw { action = \"allow\", port = \"22/tcp\" }, before this one, or set confirm_after so the host takes the change back if Conn3x can't log in again")
+				peer := sshPeer(ctx, h)
+				if s.LocksOut(st, added, firewall.SSHPorts(ctx, h), peer) {
+					from := "Conn3x's address can't be read here, so a rule with from doesn't count"
+					if peer.Client != nil {
+						from = "a rule with from counts only when it covers " + peer.Client.String() + ", where Conn3x logs in from"
+					}
+					return cty.NilVal, fmt.Errorf("ufw would refuse incoming SSH, and no ufw rule lets this connection in to sshd's port, so the next login would be shut out (%s). Add a ufw step that allows it, such as ufw { action = \"allow\", port = \"22/tcp\" }, before this one, or set confirm_after so the host takes the change back if Conn3x can't log in again", from)
 				}
 			}
 			apply := func() error { return firewall.ApplyUFWSettings(ctx, h, s, do) }

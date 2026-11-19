@@ -11,8 +11,8 @@ import (
 )
 
 type ufwSettingsVars struct {
-	Port, KeyFile, KnownHosts string
-	AllowSSH                  bool
+	Port, KeyFile, KnownHosts, From string
+	AllowSSH                        bool
 }
 
 // ufw_settings turns ufw on with incoming denied, but only once a rule lets
@@ -20,19 +20,22 @@ type ufwSettingsVars struct {
 func TestUFWSettings(t *testing.T) {
 	h := startHostWith(t, "debian13", "--privileged")
 	w := newWorkdir(t, "ufw_settings")
-	vars := ufwSettingsVars{h.port, h.keyFile, h.knownHosts, false}
+	vars := ufwSettingsVars{h.port, h.keyFile, h.knownHosts, "", false}
 	w.writeAs("main.circuit.hcl", vars)
 	w.mustConn3x("init", "-no-color")
 
 	out, code := w.conn3x("apply", "-auto-approve", "-no-color")
-	if code == 0 || !strings.Contains(out, "no ufw rule lets in sshd's port") {
+	if code == 0 || !strings.Contains(out, "no ufw rule lets this connection in") {
 		t.Fatalf("enabling without an SSH rule: exit %d:\n%s", code, out)
 	}
 	if got := h.exec("", "ufw", "status"); !strings.Contains(got, "inactive") {
 		t.Fatalf("ufw changed anyway: %s", got)
 	}
 
-	vars.AllowSSH = true
+	// A rule only from a network Conn3x isn't on counts here, because
+	// this login arrives over loopback, which ufw always lets in. That it
+	// counts shows the step read where the login comes from.
+	vars.AllowSSH, vars.From = true, "203.0.113.0/24"
 	w.writeAs("main.circuit.hcl", vars)
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	got := h.exec("", "ufw", "status", "verbose")

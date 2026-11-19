@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,10 +124,32 @@ func (s UFWSettings) Commands(st UFWState) (do, undo []string) {
 	return do, undo
 }
 
+// SSHPeer is where the SSH connection Conn3x is using comes from, as sshd
+// puts it in $SSH_CONNECTION: a nil Client when that can't be read.
+type SSHPeer struct {
+	Client net.IP
+	Local  bool // over loopback, which ufw always lets in
+}
+
+// ParseSSHConnection reads $SSH_CONNECTION: client address and port, then
+// server address and port. A client at the server's own address arrives
+// over loopback, as a forwarded port in a container does.
+func ParseSSHConnection(v string) SSHPeer {
+	f := strings.Fields(v)
+	if len(f) != 4 {
+		return SSHPeer{}
+	}
+	client, server := net.ParseIP(f[0]), net.ParseIP(f[2])
+	if client == nil {
+		return SSHPeer{}
+	}
+	return SSHPeer{Client: client, Local: client.IsLoopback() || client.Equal(server)}
+}
+
 // LocksOut reports whether applying s to st would leave ufw running with
 // incoming traffic refused, by a change s makes, while no ufw rule lets
-// in sshd's port: the next login would never arrive.
-func (s UFWSettings) LocksOut(st UFWState, added string, sshPorts []int) bool {
+// this connection in to sshd's port: the next login would never arrive.
+func (s UFWSettings) LocksOut(st UFWState, added string, sshPorts []int, peer SSHPeer) bool {
 	active := st.Active
 	if s.Enabled != nil {
 		active = *s.Enabled
@@ -139,13 +162,14 @@ func (s UFWSettings) LocksOut(st UFWState, added string, sshPorts []int) bool {
 	if !active || incoming == "allow" || !changes {
 		return false
 	}
-	return !slices.ContainsFunc(sshPorts, func(p int) bool { return ufwLetsIn(added, p) })
+	return !slices.ContainsFunc(sshPorts, func(p int) bool { return ufwLetsIn(added, p, peer) })
 }
 
 // ufwLetsIn reports whether a rule in "ufw show added" allows or limits
-// TCP to port, from anywhere or from somewhere: one with a from is the
-// author's call about where they log in from.
-func ufwLetsIn(added string, port int) bool {
+// TCP to port for peer. A rule with a from counts only when it covers the
+// peer, or the peer is local, since SSH allowed from an admin network
+// while Conn3x runs from somewhere else is how people get shut out.
+func ufwLetsIn(added string, port int, peer SSHPeer) bool {
 	for _, line := range strings.Split(added, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 3 || f[0] != "ufw" || (f[1] != "allow" && f[1] != "limit") {
@@ -156,6 +180,9 @@ func ufwLetsIn(added string, port int) bool {
 			f = f[1:]
 		}
 		if len(f) == 0 || f[0] == "out" {
+			continue
+		}
+		if i := slices.Index(f, "from"); i >= 0 && i+1 < len(f) && f[i+1] != "any" && !peer.Local && !covers(f[i+1], peer.Client) {
 			continue
 		}
 		spec := f[0]
@@ -170,6 +197,18 @@ func ufwLetsIn(added string, port int) bool {
 		}
 	}
 	return false
+}
+
+// covers reports whether a ufw from, an address or a network, takes ip.
+func covers(from string, ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if _, n, err := net.ParseCIDR(from); err == nil {
+		return n.Contains(ip)
+	}
+	a := net.ParseIP(from)
+	return a != nil && a.Equal(ip)
 }
 
 // portIn reports whether a ufw port spec such as 22, 22/tcp or

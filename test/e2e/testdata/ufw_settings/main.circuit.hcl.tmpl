@@ -18,6 +18,9 @@ circuit "box" {
     ufw {
       action = "allow"
       port   = "22/tcp"
+{{- if .From}}
+      from   = "{{.From}}"
+{{- end}}
     }
   }
 {{end}}
