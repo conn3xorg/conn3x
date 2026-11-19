@@ -4,6 +4,7 @@
 package main
 
 import (
+	"github.com/opentofu/opentofu/internal/configs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -217,5 +218,20 @@ func TestRunAnsibleBecome(t *testing.T) {
 	}
 	if b, err := becomeOf(map[string]string{"ansible_become_user": "postgres"}); err != nil || b {
 		t.Errorf("a become user without ansible_become: %v, %v", b, err)
+	}
+}
+
+// An Ansible module name -m doesn't know gets a hint, not a silent alias,
+// and none of the hints shadows a real module.
+func TestRunAnsibleModuleHints(t *testing.T) {
+	for name := range ansibleModuleHints {
+		if _, ok := configs.Conn3xStepModules()[name]; ok {
+			t.Errorf("%q is a Conn3x module, so its hint would never show", name)
+		}
+	}
+	for _, want := range []string{"package", "service", "line", "file"} {
+		if _, ok := configs.Conn3xStepModules()[want]; !ok {
+			t.Errorf("a hint points at -m %s, which isn't a module", want)
+		}
 	}
 }

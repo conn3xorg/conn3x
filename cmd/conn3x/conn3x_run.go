@@ -185,7 +185,10 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		var ok bool
 		typ, ok = configs.Conn3xStepModules()[module]
 		if !ok {
-			return fail("%q isn't a module conn3x run can run", module)
+			if hint, ok := ansibleModuleHints[module]; ok {
+				return fail("%q is Ansible's name; in conn3x run, %s", module, hint)
+			}
+			return fail("%q isn't a module conn3x run can run; -m takes the step modules listed under Modules at https://docs.conn3x.org", module)
 		}
 		if strings.HasPrefix(typ, "conn3x_eos_") {
 			return fail("%q only runs in a circuit, which commits a switch's EOS steps together", module)
@@ -525,6 +528,22 @@ func taskParams(raw string) (map[string]cty.Value, error) {
 
 // runArgs reads -a: the command itself, or a module's NAME=VALUE pairs,
 // split as a shell would split them.
+// ansibleModuleHints answers the Ansible module names people type first
+// with what does the job here. They aren't aliases: the arguments differ,
+// and an alias would take Ansible arguments that mean something else.
+var ansibleModuleHints = map[string]string{
+	"shell":           "leave out -m and give the command with -a",
+	"raw":             "leave out -m and give the command with -a",
+	"copy":            "it's -m file -a 'path=... src=...'",
+	"apt":             "it's -m package",
+	"dnf":             "it's -m package",
+	"yum":             "it's -m package",
+	"systemd":         "it's -m service",
+	"systemd_service": "it's -m service",
+	"lineinfile":      "it's -m line",
+	"ping":            "run -a true, which checks the login and, with -become, sudo",
+}
+
 func runArgs(ctx context.Context, module, typ, raw string, asCommand bool) (map[string]cty.Value, error) {
 	if asCommand {
 		return map[string]cty.Value{"command": cty.StringVal(raw)}, nil
