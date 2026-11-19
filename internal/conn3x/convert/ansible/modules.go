@@ -994,16 +994,16 @@ func userModule(in *input) ([]step, string) {
 	}
 	attrs = in.optional(attrs, "group", "group")
 	if in.has("groups") {
-		if in.bool("append", false) {
-			return nil, "appends to the user's groups; Conn3x sets the full list"
-		}
-		in.ignore("append")
+		appendGroups := in.bool("append", false)
 		var vals []cty.Value
 		for _, g := range in.list("groups") {
 			vals = append(vals, cty.StringVal(g))
 		}
 		if len(vals) > 0 {
 			attrs = append(attrs, attr{key: "groups", val: cty.ListVal(vals)})
+			if appendGroups {
+				attrs = append(attrs, attr{key: "append", val: cty.True})
+			}
 		}
 	}
 	attrs = in.optional(attrs, "home", "home")

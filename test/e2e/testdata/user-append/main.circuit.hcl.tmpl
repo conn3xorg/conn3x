@@ -1,0 +1,32 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "grp_a" {
+    group {
+      name = "conn3xa"
+    }
+  }
+
+  step "grp_b" {
+    group {
+      name = "conn3xb"
+    }
+  }
+
+  step "deploy" {
+    user {
+      name   = "conn3xapp"
+      groups = [{{.Groups}}]
+{{- if .Append}}
+      append = true
+{{- end}}
+    }
+  }
+}

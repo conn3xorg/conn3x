@@ -26,9 +26,23 @@ type UserSpec struct {
 	UID    *int
 	Group  *string   // primary group
 	Groups *[]string // supplementary groups, the complete list
-	Home   *string
-	Shell  *string
-	System bool // only used when creating
+	// AppendGroups makes Groups ones the user must be in, not the
+	// complete list: other groups it's in are left alone.
+	AppendGroups bool
+	Home         *string
+	Shell        *string
+	System       bool // only used when creating
+}
+
+// missingGroups is what of s.Groups the user isn't in yet.
+func (s UserSpec) missingGroups(u User) []string {
+	var missing []string
+	for _, g := range *s.Groups {
+		if !slices.Contains(u.Groups, g) && !slices.Contains(missing, g) {
+			missing = append(missing, g)
+		}
+	}
+	return missing
 }
 
 // User is a user as it is.
@@ -125,6 +139,9 @@ func UserNeedsChange(s UserSpec, u User) bool {
 		s.Shell != nil && *s.Shell != u.Shell {
 		return true
 	}
+	if s.Groups != nil && s.AppendGroups {
+		return len(s.missingGroups(u)) > 0
+	}
 	if s.Groups != nil {
 		want := slices.Clone(*s.Groups)
 		slices.Sort(want)
@@ -150,7 +167,12 @@ func ApplyUser(ctx context.Context, r modules.Runner, s UserSpec) error {
 	if s.Group != nil {
 		args = append(args, "-g", ssh.Quote(*s.Group))
 	}
-	if s.Groups != nil {
+	switch {
+	case s.Groups != nil && s.AppendGroups && u.Exists:
+		if missing := s.missingGroups(u); len(missing) > 0 {
+			args = append(args, "-a", "-G", ssh.Quote(strings.Join(missing, ",")))
+		}
+	case s.Groups != nil:
 		args = append(args, "-G", ssh.Quote(strings.Join(*s.Groups, ",")))
 	}
 	if s.Home != nil {

@@ -86,7 +86,6 @@ func TestRefusesWhatItCantProve(t *testing.T) {
 		"uses when":               "package: {name: vim}\n      when: ansible_os_family == 'Debian'",
 		"uses register":           "command: {cmd: id, creates: /x}\n      register: out",
 		"Jinja template":          "template: {src: a.j2, dest: /etc/a}",
-		"appends to the user's":   "user: {name: bob, groups: wheel, append: true}",
 		"permanent and immediate": "firewalld: {service: http, permanent: true, state: enabled}",
 		"mode on a link":          "file: {src: /opt/a, dest: /usr/local/bin/a, state: link, owner: root}",
 		"uses connection":         "command: ./deploy.sh\n      args: {creates: /tmp/done}\n      connection: local",

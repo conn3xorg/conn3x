@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"slices"
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
@@ -31,7 +32,8 @@ func userSchema() providers.Schema {
 				"name":     {Type: cty.String, Required: true, Description: "Login name."},
 				"uid":      {Type: cty.Number, Optional: true, Computed: true, Description: "User ID."},
 				"group":    {Type: cty.String, Optional: true, Computed: true, Description: "Primary group."},
-				"groups":   {Type: cty.Set(cty.String), Optional: true, Computed: true, Description: "Supplementary groups: the complete list."},
+				"groups":   {Type: cty.Set(cty.String), Optional: true, Computed: true, Description: "Supplementary groups: the complete list, unless append is true."},
+				"append":   {Type: cty.Bool, Optional: true, Description: "true makes groups the ones the user must be in, adding any it's missing with usermod -a, and leaves the other groups it's in alone. Defaults to false, where groups is the complete list."},
 				"home":     {Type: cty.String, Optional: true, Computed: true, Description: "Home directory. Created with the user."},
 				"shell":    {Type: cty.String, Optional: true, Computed: true, Description: "Login shell."},
 				"system":   {Type: cty.Bool, Optional: true, Description: "Create as a system account."},
@@ -73,6 +75,9 @@ func userSpec(cfg cty.Value) account.UserSpec {
 	if v := cfg.GetAttr("system"); known(v) {
 		s.System = v.True()
 	}
+	if v := cfg.GetAttr("append"); known(v) {
+		s.AppendGroups = v.True()
+	}
 	return s
 }
 
@@ -106,6 +111,9 @@ func validateUser(cfg cty.Value) tfdiags.Diagnostics {
 	diags = diags.Append(validateOnRemove(cfg))
 	if err := userSpec(cfg).Validate(); err != nil {
 		diags = diags.Append(attrError("name", err.Error()))
+	}
+	if a := cfg.GetAttr("append"); known(a) && a.True() && cfg.GetAttr("groups").IsNull() {
+		diags = diags.Append(attrError("append", "append needs groups: the groups to add the user to"))
 	}
 	if err := validateUserPassword(cfg); err != nil {
 		diags = diags.Append(attrError("password_wo", err.Error()))
@@ -177,6 +185,17 @@ func userState(base cty.Value, u account.User) cty.Value {
 	vals["group"] = cty.StringVal(u.Group)
 	vals["home"] = cty.StringVal(u.Home)
 	vals["shell"] = cty.StringVal(u.Shell)
+	// With append, state keeps the listed groups the user is in, so the
+	// groups it's in besides those never show as a change.
+	if a, listed := vals["append"], vals["groups"]; known(a) && a.True() && known(listed) {
+		var in []string
+		for it := listed.ElementIterator(); it.Next(); {
+			if _, g := it.Element(); slices.Contains(u.Groups, g.AsString()) {
+				in = append(in, g.AsString())
+			}
+		}
+		u.Groups = in
+	}
 	if len(u.Groups) == 0 {
 		vals["groups"] = cty.SetValEmpty(cty.String)
 	} else {
