@@ -18,7 +18,7 @@ func TestConvertCommandEnvironment(t *testing.T) {
 	}
 	for playbook, reason := range map[string]string{
 		"- hosts: all\n  tasks:\n    - package: {name: htop}\n      environment: {http_proxy: http://p:3128}\n": "uses environment",
-		"- hosts: all\n  tasks:\n    - command: {cmd: x, creates: /x}\n      environment: '{{ proxy_env }}'\n":   "uses environment",
+		"- hosts: all\n  tasks:\n    - command: {cmd: x, creates: /x}\n      environment: '{{ proxy_env }}'\n":  "uses environment",
 	} {
 		res := convertString(t, playbook)
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
