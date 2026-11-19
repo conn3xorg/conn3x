@@ -16,7 +16,7 @@ func TestConvertReplaceAfterBefore(t *testing.T) {
 		t.Errorf("converted %d:\n%s", res.Converted, hcl)
 	}
 	for task, reason := range map[string]string{
-		"replace: {path: /etc/a, regexp: 'x', replace: 'y', after: 'a|b'}":         "has a | in after",
+		"replace: {path: /etc/a, regexp: 'x', replace: 'y', after: 'a|b'}":      "has a | in after",
 		`replace: {path: /etc/a, regexp: 'x', replace: 'y', before: '\d+ end'}`: "regexp using",
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
