@@ -103,3 +103,29 @@ func unguarded(typeName string, args map[string]cty.Value) bool {
 	}
 	return true
 }
+
+// HostFacts reads what a conn3x_host data source reads, for conn3x run -m
+// facts: ssh holds the ssh block's values, and anything left out is null.
+// Windows hosts are allowed, since nothing is written for Linux here.
+func HostFacts(ctx context.Context, ssh map[string]cty.Value) (cty.Value, error) {
+	block := hostDataSchema().Block
+	vals := block.EmptyValue().AsValueMap()
+	sshVals := block.BlockTypes["ssh"].Block.EmptyValue().AsValueMap()
+	for k, v := range ssh {
+		sshVals[k] = v
+	}
+	vals["ssh"] = cty.ObjectVal(sshVals)
+	vals["allow_windows"] = cty.True
+	cfg, err := block.CoerceValue(cty.ObjectVal(vals))
+	if err != nil {
+		return cty.NilVal, err
+	}
+	if err := validateSSH(cfg).Err(); err != nil {
+		return cty.NilVal, err
+	}
+	read := readHostData(ctx, providers.ReadDataSourceRequest{TypeName: "conn3x_host", Config: cfg})
+	if err := read.Diagnostics.Err(); err != nil {
+		return cty.NilVal, err
+	}
+	return read.State, nil
+}

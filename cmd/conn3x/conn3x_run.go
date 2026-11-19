@@ -34,6 +34,7 @@ type runOptions struct {
 	port, forks, maxFailures                                                            int
 	become, check, json, listHosts                                                      bool
 	pattern                                                                             string
+	factFilter                                                                          []string // -m facts -a 'filter=...'
 }
 
 func runCommand() command.Command {
@@ -50,7 +51,7 @@ func runCommand() command.Command {
 
 Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, or the older ansible_ssh_host, ansible_ssh_port, ansible_ssh_user and ansible_private_key_file, and the group_vars and host_vars beside it. Or, with -circuits DIR, from the circuits in DIR's .tf and .circuit.hcl files: each circuit is a group named after it, and its hosts keep its ssh settings and their own host objects', written out in full. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names, except a "=" term, which is one host by its exact name. -list-hosts prints the hosts it matches, as ansible --list-hosts does, and connects to none of them.
 
--a without -m runs a command through the host's shell. With -m, it's a module a step can use, and -a holds its arguments as NAME=VALUE, quoted as a shell would. -m file takes src=PATH too, a text file on this machine to send as the content, as Ansible's copy does. A module does what it does in a step: on a host that's already in line it changes nothing and says ok. -check stops before changing anything.
+-m facts reads each host's facts, the ones a conn3x_host data source reads, as ansible -m setup does, and prints them on one line per host; -a 'filter=os_*,arch' keeps the ones matching those globs. -a without -m runs a command through the host's shell. With -m, it's a module a step can use, and -a holds its arguments as NAME=VALUE, quoted as a shell would. -m file takes src=PATH too, a text file on this machine to send as the content, as Ansible's copy does. A module does what it does in a step: on a host that's already in line it changes nothing and says ok. -check stops before changing anything.
 
 -task runs a task file instead: named steps, in order, on each host, stopping a host at its first failure. -a then holds the task's params as NAME=VALUE.
 
@@ -120,6 +121,7 @@ type runHost struct {
 	result  provider.RunResult
 	vars    map[string]string
 	steps   []taskResult // with -task
+	facts   []fact       // with -m facts
 }
 
 func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
@@ -176,6 +178,11 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 			return fail("%s", err)
 		}
 		if params, err = paramValues("task "+task.name, task.params, given); err != nil {
+			return fail("%s", err)
+		}
+	} else if o.module == factsModule {
+		typ = factsModule
+		if o.factFilter, err = factFilter(o.args); err != nil {
 			return fail("%s", err)
 		}
 	} else {
@@ -321,6 +328,16 @@ func (o runOptions) runBatch(ctx context.Context, hosts []*runHost, task *runTas
 				h.status, h.steps = runTaskOn(ctx, task, params, h.name, h.vars, h.ssh, o.check)
 				return
 			}
+			if typ == factsModule {
+				// Reading facts changes nothing, so -check reads them too.
+				state, err := provider.HostFacts(ctx, h.ssh)
+				if err != nil {
+					h.status, h.message = "failed", err.Error()
+					return
+				}
+				h.status, h.facts = "ok", hostFacts(state, o.factFilter)
+				return
+			}
 			res, err := provider.RunOnce(ctx, typ, args, h.ssh, o.check)
 			h.result = res
 			switch {
@@ -348,6 +365,9 @@ func (o runOptions) report(stdout io.Writer, run string, hosts []*runHost, isTas
 		}
 		if o.json {
 			obj := map[string]any{"host": h.name, "status": h.status, "error": h.message, "stdout": h.result.Stdout, "stderr": h.result.Stderr}
+			if o.module == factsModule && h.status == "ok" {
+				obj = map[string]any{"host": h.name, "status": h.status, "facts": factMap(h.facts)}
+			}
 			if isTask {
 				obj = map[string]any{"host": h.name, "status": h.status, "steps": h.steps}
 			}
@@ -381,6 +401,9 @@ func (o runOptions) report(stdout io.Writer, run string, hosts []*runHost, isTas
 		head := h.name + " | " + h.status
 		if h.message != "" {
 			head += ": " + h.message
+		}
+		if o.module == factsModule && h.status == "ok" {
+			head = h.name + " | " + factLine(h.facts)
 		}
 		fmt.Fprintln(stdout, termsafe.Escape(head))
 		for _, out := range []string{h.result.Stdout, h.result.Stderr} {
@@ -605,6 +628,8 @@ func taskParams(raw string) (map[string]cty.Value, error) {
 // with what does the job here. They aren't aliases: the arguments differ,
 // and an alias would take Ansible arguments that mean something else.
 var ansibleModuleHints = map[string]string{
+	"setup":           "it's -m facts, with -a 'filter=os_*' to narrow them",
+	"gather_facts":    "it's -m facts, with -a 'filter=os_*' to narrow them",
 	"shell":           "leave out -m and give the command with -a",
 	"raw":             "leave out -m and give the command with -a",
 	"copy":            "it's -m file -a 'path=... src=...'",
