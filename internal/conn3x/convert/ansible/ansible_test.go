@@ -105,6 +105,8 @@ func TestRefusesWhatItCantProve(t *testing.T) {
 		"syntax, which Ansible p": "copy: {dest: /etc/a, content: x, validate: \"visudo -cf %s\\r\"}",
 		"data: crash":             "ping: {data: crash}",
 		"data from a template":    "ping: {data: '{{ ping_data }}'}",
+		"data: crash, which":      "win_ping: {data: crash}",
+		"from a template, which":  "win_ping: {data: '{{ ping_data }}'}",
 	} {
 		res := convertString(t, "- hosts: all\n  vars: {name: x}\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
@@ -717,6 +719,9 @@ func TestPingIsDropped(t *testing.T) {
 		"ping:",
 		"ansible.builtin.ping:",
 		"ping: {data: pong}",
+		"win_ping:",
+		"ansible.windows.win_ping:",
+		"win_ping: {data: pong}",
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 1 || len(res.Review) != 0 {

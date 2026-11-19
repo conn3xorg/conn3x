@@ -695,6 +695,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_acl":               winACLModule,
 	"win_acl_inheritance":   winACLInheritanceModule,
 	"win_command":           winCommandModule,
+	"win_ping":              pingModule, // checks the same as ping, and data: crash fails the same way
 	"win_copy":              winCopyModule,
 	"win_dns_client":        winDNSClientModule,
 	"win_domain":            winDomainModule,
