@@ -43,6 +43,11 @@ func (w WaitFor) Validate() error {
 			set++
 		}
 	}
+	// Before the switch, so no case that returns early, such as contains,
+	// can let a relative path through.
+	if w.Path != "" && (!path.IsAbs(w.Path) || strings.ContainsAny(w.Path, "\r\n")) {
+		return fmt.Errorf("path %q must be an absolute path", w.Path)
+	}
 	switch {
 	case set != 1:
 		return errors.New("set exactly one of path, port or url")
@@ -54,8 +59,6 @@ func (w WaitFor) Validate() error {
 		}
 	case w.URL.URL != "":
 		return w.URL.Validate()
-	case w.Path != "" && (!path.IsAbs(w.Path) || strings.ContainsAny(w.Path, "\r\n")):
-		return fmt.Errorf("path %q must be an absolute path", w.Path)
 	case w.Path == "" && (w.Port < 1 || w.Port > 65535):
 		return fmt.Errorf("port %d is out of range 1 to 65535", w.Port)
 	}

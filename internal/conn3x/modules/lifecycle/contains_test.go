@@ -51,6 +51,9 @@ func TestWaitForContainsValidate(t *testing.T) {
 		{WaitFor{Port: 80, Contains: "x"}, "contains is for path"},
 		{WaitFor{URL: URLCheck{URL: "http://h"}, Contains: "x"}, "contains is for path"},
 		{WaitFor{Path: "/x", Contains: "("}, "isn't a regular expression"},
+		// The path checks hold with contains too.
+		{WaitFor{Path: "relative.log", Contains: "Started"}, "must be an absolute path"},
+		{WaitFor{Path: "/var/log/a\nb.log", Contains: "Started"}, "must be an absolute path"},
 	} {
 		if err := c.w.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: %v, want %q", c.w, err, c.want)
