@@ -61,6 +61,8 @@ func TestConvertModuleOptions(t *testing.T) {
 		"command: { argv: [touch, '/tmp/a b'], creates: /tmp/x }":                  {`command = "'touch' '/tmp/a b'"`},
 		"command: { argv: [touch, '/tmp/a\"b'], creates: /tmp/x }":                 {`command = "'touch' '/tmp/a\"b'"`},
 		"shell: { argv: [sh, -c, 'echo hi'], creates: /tmp/x }":                    {`command = "'sh' '-c' 'echo hi'"`},
+		"command: { argv: [echo, $HOME], expand_argument_vars: no, creates: /x }":  {`command = "'echo' '$HOME'"`},
+		"command: { argv: [awk, '{print $1}'], creates: /x }":                      {`command = "'awk' '{print $1}'"`},
 		"file: { path: /srv, state: directory, mode: '0755' }":                     {"directory {", `mode = "0755"`},
 		"file: { path: /srv/l, src: /srv/t, state: link }":                         {"link {", `target = "/srv/t"`},
 	} {
@@ -172,6 +174,8 @@ func TestConvertModuleOptionRefusals(t *testing.T) {
 		"command: { argv: [a], cmd: b, creates: /x }":                                     "sets argv beside cmd",
 		"command: { argv: /bin/true, creates: /x }":                                       "has an argv that isn't a list",
 		"command: { argv: [], creates: /x }":                                              "has an empty argv",
+		"command: { argv: [echo, $HOME], creates: /x }":                                   "which Ansible expands before running",
+		"command: { argv: [ls, ~/x], creates: /x }":                                       "which Ansible expands before running",
 		"command: 'ls | wc'\n      args: { creates: /x }":                                 "uses characters a shell reads",
 		"command: make\n      args: { creates: '/out/*.o' }":                              "creates is a glob pattern",
 		"uri: { url: 'http://x' }":                                                        "makes a request; only a uri task that retries",
