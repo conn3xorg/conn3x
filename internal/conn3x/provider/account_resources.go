@@ -26,16 +26,22 @@ func userSchema() providers.Schema {
 		Block: &configschema.Block{
 			Description: "A local user account.",
 			Attributes: map[string]*configschema.Attribute{
-				"id":        {Type: cty.String, Computed: true},
-				"revision":  revisionAttr(),
-				"name":      {Type: cty.String, Required: true, Description: "Login name."},
-				"uid":       {Type: cty.Number, Optional: true, Computed: true, Description: "User ID."},
-				"group":     {Type: cty.String, Optional: true, Computed: true, Description: "Primary group."},
-				"groups":    {Type: cty.Set(cty.String), Optional: true, Computed: true, Description: "Supplementary groups: the complete list."},
-				"home":      {Type: cty.String, Optional: true, Computed: true, Description: "Home directory. Created with the user."},
-				"shell":     {Type: cty.String, Optional: true, Computed: true, Description: "Login shell."},
-				"system":    {Type: cty.Bool, Optional: true, Description: "Create as a system account."},
-				"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the account, \"delete\" removes it and keeps its home directory."},
+				"id":       {Type: cty.String, Computed: true},
+				"revision": revisionAttr(),
+				"name":     {Type: cty.String, Required: true, Description: "Login name."},
+				"uid":      {Type: cty.Number, Optional: true, Computed: true, Description: "User ID."},
+				"group":    {Type: cty.String, Optional: true, Computed: true, Description: "Primary group."},
+				"groups":   {Type: cty.Set(cty.String), Optional: true, Computed: true, Description: "Supplementary groups: the complete list."},
+				"home":     {Type: cty.String, Optional: true, Computed: true, Description: "Home directory. Created with the user."},
+				"shell":    {Type: cty.String, Optional: true, Computed: true, Description: "Login shell."},
+				"system":   {Type: cty.Bool, Optional: true, Description: "Create as a system account."},
+				"password_wo": {
+					Type: cty.String, Optional: true, Sensitive: true, WriteOnly: true,
+					Description: "Write-only: the account's password, never kept in state. Conn3x makes the $6$ (SHA-512) hash /etc/shadow holds and sets it with chpasswd -e, so the password never reaches the host's process list; a new value plans a change through password_hmac, and so does a password changed on the host. Needs root: log in as root, or set become. Unset leaves the password alone.",
+				},
+				"password_hmac":      {Type: cty.String, Computed: true, Description: "An HMAC of the hash the host should hold for password_wo, keyed outside state. A refresh records the one it finds, so a password changed on the host plans a change."},
+				"password_on_create": {Type: cty.Bool, Optional: true, Description: "Set password_wo only when the step creates the user, as Ansible's update_password: on_create does, and never change or check it after. Needs password_wo."},
+				"on_remove":          {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the account, \"delete\" removes it and keeps its home directory."},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 		},
@@ -101,23 +107,35 @@ func validateUser(cfg cty.Value) tfdiags.Diagnostics {
 	if err := userSpec(cfg).Validate(); err != nil {
 		diags = diags.Append(attrError("name", err.Error()))
 	}
+	if err := validateUserPassword(cfg); err != nil {
+		diags = diags.Append(attrError("password_wo", err.Error()))
+	}
 	return diags
 }
 
 func planUser(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planAccount(req, "user", userObserved, func() bool {
+	resp := planAccount(req, "user", userObserved, func() bool {
 		return account.UserNeedsChange(userSpec(req.Config), observedUser(req.PriorState))
 	})
+	planUserPassword(req, &resp)
+	return resp
 }
 
 func readUser(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
-	return readAccount(ctx, req, func(ctx context.Context, host *hostConn, name string) (cty.Value, error) {
+	var warn tfdiags.Diagnostics
+	resp := readAccount(ctx, req, func(ctx context.Context, host *hostConn, name string) (cty.Value, error) {
 		u, err := account.ReadUser(ctx, host, name)
 		if err != nil {
 			return cty.NilVal, err
 		}
-		return userState(req.PriorState, u), nil
+		state := userState(req.PriorState, u)
+		if u.Exists {
+			state, warn = refreshUserPassword(ctx, host, state)
+		}
+		return state, nil
 	})
+	resp.Diagnostics = resp.Diagnostics.Append(warn)
+	return resp
 }
 
 func applyUser(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
@@ -134,7 +152,13 @@ func applyUser(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 			if account.UserNeedsChange(spec, u) {
 				return cty.NilVal, fmt.Errorf("user %s does not match the configuration after applying", spec.Name)
 			}
-			return userState(req.PlannedState, u), nil
+			sum, err := applyUserPassword(ctx, host, req)
+			if err != nil {
+				return cty.NilVal, fmt.Errorf("user %s: %w", spec.Name, err)
+			}
+			vals := userState(req.PlannedState, u).AsValueMap()
+			vals["password_wo"], vals["password_hmac"] = cty.NullVal(cty.String), sum
+			return cty.ObjectVal(vals), nil
 		},
 		func(ctx context.Context, host *hostConn, name string) error {
 			return account.DeleteUser(ctx, host, name)

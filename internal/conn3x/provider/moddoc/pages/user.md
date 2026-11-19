@@ -61,6 +61,8 @@ step "team" {
 
 **Groups.** `groups` is the complete list of supplementary groups, not an addition: Conn3x removes the user from any group you leave out. The groups have to exist already, so create them with [`group`](/modules/group) steps first; steps run in the order written.
 
+**Passwords.** `password_wo` is write-only: it never reaches the plan or state, which keep only `password_hmac`, an HMAC keyed outside state, as for [`windows_user`](/modules/windows_user). Conn3x makes the `$6$` SHA-512 hash `/etc/shadow` holds and sets it with `chpasswd -e` on standard input, so the password never appears in the host's process list. The hash's salt comes from the HMAC key, the host and the user name: the same password always gives the same hash for one account, so a refresh can compare, and different hashes for every other account, so one `/etc/shadow` doesn't show who else shares a password. Every refresh reads the account's hash, so a password changed on the host plans a change, and the next apply puts it back. With `password_on_create = true`, the password is set only when the step creates the user, and never checked or changed after, as Ansible's `update_password: on_create` does. Reading `/etc/shadow` and running `chpasswd` need root, so a step with `password_wo` must log in as root or set `become` in its `ssh` block. Leave `password_wo` out and the password is left alone.
+
 **Names.** User and group names start with a lowercase letter or `_`, followed by up to 31 lowercase letters, digits, `-` or `_`. `home` and `shell` must be absolute paths. Conn3x checks these before connecting to the host.
 
 ## Removal
@@ -69,4 +71,4 @@ When you delete a `user` step, `on_remove` decides what happens on the host. The
 
 ## From Ansible
 
-`conn3x convert ansible` turns `user` tasks into `user` steps, carrying over `uid`, `group`, `groups`, `home`, `shell` and `system`. Conn3x always creates a home directory for a new user, so a task with `create_home: no` stays a TODO. So does one with `append: true`, because `groups` in Conn3x is the full list, and so does one with `state: absent`, or a `uid` that isn't a whole number.
+`conn3x convert ansible` turns `user` tasks into `user` steps, carrying over `uid`, `group`, `groups`, `home`, `shell` and `system`. Conn3x always creates a home directory for a new user, so a task with `create_home: no` stays a TODO. So does one with `append: true`, because `groups` in Conn3x is the full list, and so does one with `state: absent`, or a `uid` that isn't a whole number. A task with `password` stays a TODO too: Ansible's is already a hash, and `password_wo` takes the password itself.
