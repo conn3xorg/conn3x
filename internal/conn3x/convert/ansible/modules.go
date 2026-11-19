@@ -846,6 +846,9 @@ func editTarget(in *input) []attr {
 
 func lineModule(in *input) ([]step, string) {
 	attrs := editTarget(in)
+	if in.has("search_string") && (in.has("regexp") || in.has("regex") || in.bool("backrefs", false)) {
+		return nil, "sets both search_string and regexp or backrefs, which the lineinfile module refuses"
+	}
 	if in.bool("backrefs", false) {
 		key := "regexp"
 		if !in.has(key) {
@@ -868,7 +871,21 @@ func lineModule(in *input) ([]step, string) {
 		attrs = append(attrs, s("line", tmpl), s("regexp", pattern), attr{key: "backrefs", val: cty.True})
 	} else {
 		attrs = in.optional(attrs, "line", "line")
-		attrs = in.optional(attrs, "regexp", "regexp", "regex")
+		if in.has("search_string") {
+			text := in.text("search_string")
+			if in.problem != "" {
+				return nil, in.problem
+			}
+			if text == "" {
+				return nil, "sets an empty search_string, which matches every line"
+			}
+			if strings.ContainsAny(text, "\n\r") {
+				return nil, "sets a search_string with a line break, which no line of the file can contain"
+			}
+			attrs = append(attrs, s("regexp", regexp.QuoteMeta(text)))
+		} else {
+			attrs = in.optional(attrs, "regexp", "regexp", "regex")
+		}
 	}
 	in.ignore("backrefs")
 	attrs, why := in.editFileArgs(attrs)
