@@ -1145,3 +1145,14 @@ func TestEditBackupConverts(t *testing.T) {
 		}
 	}
 }
+
+// ping and win_ping check the connection and nothing else, so a play's
+// become_user changes nothing about them.
+func TestPingUnderPlayBecomeUser(t *testing.T) {
+	for _, task := range []string{"ping:", "win_ping:"} {
+		res := convertString(t, "- hosts: all\n  become: true\n  become_user: svc\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%q: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}
