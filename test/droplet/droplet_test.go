@@ -73,6 +73,7 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 		`conn3x_mount.web__scratch["web1"] will be created`,
 		`conn3x_selinux_boolean.web__proxy["web1"] will be created`,
 		`conn3x_selinux_fcontext.web__content_label["web1"] will be created`,
+		`conn3x_selinux_port.web__alt_port["web1"] will be created`,
 		`conn3x_ufw_rule.edge__http["edge1"] will be created`,
 		`conn3x_reboot.edge__reboot["edge1"] will be created`,
 		"host             = (known after apply)",
@@ -135,6 +136,9 @@ func TestDropletAndCircuitInOnePlan(t *testing.T) {
 	}
 	if got := run("stat -c %C /srv/conn3x"); !strings.Contains(got, ":httpd_sys_content_t:") {
 		t.Fatalf("/srv/conn3x label = %q", got)
+	}
+	if got := run("semanage port -l -C | awk '$1 == \"http_port_t\" && $2 == \"tcp\"'"); !strings.Contains(got, "8081") {
+		t.Fatalf("local http_port_t rules = %q, want 8081", got)
 	}
 	if got := run("findmnt -n -M /mnt/conn3x-scratch -o FSTYPE,OPTIONS; grep ' /mnt/conn3x-scratch ' /etc/fstab"); !strings.Contains(got, "size=16384k") || !strings.Contains(got, "tmpfs /mnt/conn3x-scratch tmpfs size=16m,mode=0755 0 0") {
 		t.Fatalf("scratch mount:\n%s", got)

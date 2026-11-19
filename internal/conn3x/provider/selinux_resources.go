@@ -180,3 +180,69 @@ func applySELinuxMode(ctx context.Context, req providers.ApplyResourceChangeRequ
 			return withSync(withReboot(planned, reboot), true), nil
 		}, nil)
 }
+
+func selinuxPortSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "A local SELinux port rule: the type a port has, so a service of that type may listen on it. On a host without SELinux it reads in sync and does nothing.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
+			"port":      {Type: cty.String, Required: true, Description: "A port, such as 8080, or a range, such as \"8443-8450\"."},
+			"protocol":  {Type: cty.String, Optional: true, Computed: true, Description: "\"tcp\" (default), \"udp\", \"dccp\" or \"sctp\"."},
+			"setype":    {Type: cty.String, Required: true, Description: "SELinux port type, such as http_port_t."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) keeps the rule, \"delete\" removes it, leaving what the policy gives the port."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the host has the rule, or has no SELinux."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func portFrom(v cty.Value) selinux.Port {
+	return selinux.Port{Port: v.GetAttr("port").AsString(), Protocol: stringOr(v.GetAttr("protocol"), "tcp"), Type: v.GetAttr("setype").AsString()}
+}
+
+func validateSELinuxPort(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := portFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("port", err.Error()))
+	}
+	return diags
+}
+
+func planSELinuxPort(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	if !req.ProposedNewState.IsNull() && req.ProposedNewState.GetAttr("protocol").IsNull() {
+		vals := req.ProposedNewState.AsValueMap()
+		vals["protocol"] = cty.StringVal("tcp")
+		req.ProposedNewState = cty.ObjectVal(vals)
+	}
+	return planSynced(req, "selinux_port", []string{"port", "protocol"}, []string{"setype"})
+}
+
+func readSELinuxPort(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		p := portFrom(prior)
+		on, ty, err := selinux.ReadPort(ctx, h, p)
+		if err != nil {
+			return cty.NilVal, err
+		}
+		return withSync(prior, !on || ty == p.Type), nil
+	})
+}
+
+func applySELinuxPort(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			p := portFrom(planned)
+			if err := selinux.ApplyPort(ctx, h, p); err != nil {
+				return cty.NilVal, fmt.Errorf("selinux_port %s/%s: %w", p.Protocol, p.Port, err)
+			}
+			return withSync(planned, true), nil
+		},
+		func(ctx context.Context, h *hostConn, prior cty.Value) error {
+			return selinux.DeletePort(ctx, h, portFrom(prior))
+		})
+}

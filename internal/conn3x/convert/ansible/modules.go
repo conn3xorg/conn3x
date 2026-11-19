@@ -562,6 +562,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"ufw":                ufwModule,
 	"seboolean":          sebooleanModule,
 	"sefcontext":         sefcontextModule,
+	"seport":             seportModule,
 	"get_url":            getURLModule,
 	"unarchive":          unarchiveModule,
 	"git":                gitModule,
@@ -1394,6 +1395,22 @@ func sefcontextModule(in *input) ([]step, string) {
 	in.state("present", "present")
 	in.ignore("reload")
 	return one("selinux_fcontext", []attr{s("target", in.str("target")), s("setype", in.str("setype"))})
+}
+
+// seportModule converts community.general.seport for one port or range.
+// seport fails on a host without SELinux unless ignore_selinux_state is
+// set, where selinux_port does nothing; that and the rest get a note.
+func seportModule(in *input) ([]step, string) {
+	in.state("present", "present")
+	ports := in.list("ports")
+	if len(ports) != 1 {
+		return nil, "names " + strconv.Itoa(len(ports)) + " ports; a selinux_port step takes one port or range, so give each its own step"
+	}
+	// local: true reads local rules only, as the step does; without it,
+	// seport also counts the policy's, which here means one local rule.
+	in.ignore("reload", "ignore_selinux_state", "local")
+	attrs := []attr{s("port", ports[0]), s("protocol", in.str("proto")), s("setype", in.str("setype"))}
+	return one("selinux_port", attrs, "On a host without SELinux this step does nothing, where seport fails unless ignore_selinux_state is set.")
 }
 
 func getURLModule(in *input) ([]step, string) {

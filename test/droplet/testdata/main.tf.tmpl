@@ -138,6 +138,14 @@ circuit "web" {
     }
   }
 
+  # 8081 isn't http_port_t in the policy, so the rule has to add it.
+  step "alt_port" {
+    selinux_port {
+      port   = 8081
+      setype = "http_port_t"
+    }
+  }
+
   step "scratch" {
     mount {
       path   = "/mnt/conn3x-scratch"
