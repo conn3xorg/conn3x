@@ -23,9 +23,7 @@ step "shared_buffers" {
   }
   notify = [handler.restart_postgresql]
 }
-```
 
-```hcl
 handler "restart_postgresql" {
   service {
     name = "postgresql"
@@ -33,7 +31,7 @@ handler "restart_postgresql" {
 }
 ```
 
-A list:
+A list. It waits for a restart too, so give it the `notify` above:
 
 ```hcl
 step "preload" {
@@ -41,7 +39,6 @@ step "preload" {
     name  = "shared_preload_libraries"
     value = "pg_stat_statements, auto_explain"
   }
-  notify = [handler.restart_postgresql]
 }
 ```
 <!-- reference -->
