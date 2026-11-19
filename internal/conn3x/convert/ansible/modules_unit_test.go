@@ -90,6 +90,7 @@ func TestConvertModuleArguments(t *testing.T) {
 		"user: { name: app, groups: [web], append: yes }":                                                "appends to the user's groups",
 		"user: { name: app, create_home: no }":                                                           "create_home: no",
 		"sysctl: { name: vm.swappiness, value: '10', sysctl_file: /etc/sysctl.d/x.conf }":                "named sysctl_file",
+		"kernel_blacklist: { blacklist_file: /etc/modprobe.d/x.conf }":                                   "has no name",
 		"cron: { name: x, job: /bin/true, cron_file: x }":                                                "named cron_file",
 		"parted: { device: /dev/sdb, number: 1, state: present }":                                        "sets no part_start",
 		"parted: { device: /dev/sdb, number: 1, state: present, part_start: '0%' }":                      "must be a size in MiB, GiB or TiB",

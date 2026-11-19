@@ -44,4 +44,4 @@ When you delete a `modprobe` step, `on_remove` decides what happens on the host.
 
 ## From Ansible
 
-`conn3x convert ansible` turns `community.general.modprobe` tasks into `modprobe` steps, splitting `params` into words. Ansible's `persistent` defaults to `disabled`, which leaves the boot files alone, so a task that doesn't set it gets `persistent = false`. `persistent: present` with `state: present`, and `persistent: absent` with `state: absent`, map to the default. Any other mix stays a TODO.
+`conn3x convert ansible` turns `community.general.modprobe` tasks into `modprobe` steps, splitting `params` into words. Ansible's `persistent` defaults to `disabled`, which leaves the boot files alone, so a task that doesn't set it gets `persistent = false`. `persistent: present` with `state: present`, and `persistent: absent` with `state: absent`, map to the default. Any other mix stays a TODO. A `community.general.kernel_blacklist` task becomes a [`line`](/modules/line) step on its `blacklist_file`, which defaults to `/etc/modprobe.d/blacklist-ansible.conf`, because that file holds one `blacklist <name>` line.

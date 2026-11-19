@@ -573,6 +573,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"git":                gitModule,
 	"mount":              mountModule,
 	"modprobe":           modprobeModule,
+	"kernel_blacklist":   kernelBlacklistModule,
 	"sudoers":            sudoersModule,
 	"filesystem":         filesystemModule,
 	"parted":             partedModule,
@@ -1644,6 +1645,46 @@ func modprobeModule(in *input) ([]step, string) {
 		attrs = append(attrs, attr{key: "persistent", val: cty.False})
 	}
 	return one("modprobe", attrs)
+}
+
+// kernelBlacklistModule converts community.general.kernel_blacklist, which
+// keeps one "blacklist <name>" line in a file under modprobe.d. A line step
+// does exactly that, so the task becomes one, in the module's default file
+// unless blacklist_file names another. The module writes the file when it's
+// missing, which create covers.
+func kernelBlacklistModule(in *input) ([]step, string) {
+	name := in.str("name")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if name == "" {
+		return nil, "has no name"
+	}
+	if strings.ContainsAny(name, "\n\r") {
+		return nil, fmt.Sprintf("has the name %q, which is not one line", name)
+	}
+	path := "/etc/modprobe.d/blacklist-ansible.conf"
+	if in.has("blacklist_file") {
+		path = in.str("blacklist_file")
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		if path == "" {
+			return nil, "sets an empty blacklist_file"
+		}
+	}
+	attrs := []attr{
+		s("path", path),
+		s("line", "blacklist "+name),
+		// The module matches ^blacklist\s+<name>$, so a name with a . or a +
+		// is escaped here and matches only itself.
+		s("regexp", `^blacklist\s+`+regexp.QuoteMeta(name)+`$`),
+		{key: "create", val: cty.True},
+	}
+	if in.state("present", "present", "absent") == "absent" {
+		attrs = append(attrs, s("state", "absent"))
+	}
+	return one("line", attrs)
 }
 
 // dpkgSelectionsModule turns hold and install into a package_hold step.
