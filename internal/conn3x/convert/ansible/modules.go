@@ -570,6 +570,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"ufw":                ufwModule,
 	"seboolean":          sebooleanModule,
 	"sefcontext":         sefcontextModule,
+	"nmcli":              nmcliModule,
 	"seport":             seportModule,
 	"get_url":            getURLModule,
 	"unarchive":          unarchiveModule,

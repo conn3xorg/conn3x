@@ -71,3 +71,9 @@ step "vlan10" {
 ## Removal
 
 When you delete an `nm_connection` step, `on_remove` decides what happens on the host. The default, `"forget"`, leaves the profile and the connection as they are. `"delete"` removes the profile with `nmcli connection delete`, which takes the connection down. Removal isn't guarded, so don't delete the connection Conn3x logs in over.
+
+## From Ansible
+
+`conn3x convert ansible` turns `community.general.nmcli` tasks with `state: present` into `nm_connection` steps, for ethernet, bond, VLAN and bond port profiles. `conn_name` becomes `name`, and `ifname` defaults to it, as in Ansible. A `bond-slave`, or an ethernet profile with `master` and `slave_type: bond`, becomes a port with `controller`. `ip4` and `ip6` carry over, `method4` or `method6` of `auto` or `disabled` becomes `["auto"]` or `["disabled"]`, and `gw4`, `gw6`, `dns4`, `dns6`, `mtu`, `autoconnect`, `mode` as `bond_mode`, `vlanid` as `vlan_id` and `vlandev` as `vlan_parent` map one to one. `dns4_search` and `dns6_search` become `dns_search` when they agree.
+
+Ansible's `nmcli` changes only the settings a task names and leaves the rest of the profile as it is. This step writes the whole keyfile, so a setting made outside the task goes on the first apply, and the converted step says so in a note. A task stays a TODO, with the reason, for another connection type, a bridge or team port, addresses on a bond port, a method other than `auto`, `disabled` or `manual`, static addresses alongside `auto`, `state` other than `present`, and anything the step doesn't have, such as `routes4` or `zone`.
