@@ -139,3 +139,59 @@ func sshKeypairModule(in *input) ([]step, string) {
 	in.ignore("force", "backend")
 	return one("ssh_keypair", in.owners(attrs))
 }
+
+// x509Module converts community.crypto.x509_certificate with provider:
+// selfsigned. Ansible reads the subject and the alternative names from the
+// CSR at csr_path, so they come from the play's openssl_csr task that
+// writes it, converted as that task is. Its validity defaults to +3650d,
+// where the step's is 365 days, so the step is told.
+func x509Module(in *input) ([]step, string) {
+	in.state("present", "present")
+	if p := in.str("provider"); p != "selfsigned" {
+		return nil, "uses provider " + cmp.Or(p, "(none)") + "; only provider: selfsigned becomes a tls_self_signed_cert step"
+	}
+	if in.has("privatekey_passphrase") {
+		return nil, "sets privatekey_passphrase, and a tls_self_signed_cert step signs with a key that has none"
+	}
+	if b := in.str("selfsigned_not_before"); b != "" && b != "+0s" && b != "0" {
+		return nil, "sets selfsigned_not_before " + b + ", and a tls_self_signed_cert step is valid from when it's made"
+	}
+	if in.bool("force", false) {
+		return nil, "sets force, so Ansible makes a new certificate on every run; a tls_self_signed_cert step renews only before it expires"
+	}
+	if d := in.str("selfsigned_digest"); d != "" && d != "sha256" {
+		return nil, "sets selfsigned_digest " + d + ", and a tls_self_signed_cert step uses openssl's default digest, sha256 on current openssl"
+	}
+	days := 3650
+	if a := in.str("selfsigned_not_after"); a != "" {
+		n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(a, "+"), "d"))
+		if err != nil || !strings.HasPrefix(a, "+") || !strings.HasSuffix(a, "d") || n < 1 || n > 3650 {
+			return nil, "sets selfsigned_not_after " + a + "; a tls_self_signed_cert step takes a number of days, from 1 to 3650, as +Nd"
+		}
+		days = n
+	}
+	csrPath := in.str("csr_path")
+	args, ok := in.csrs[csrPath]
+	if !ok {
+		return nil, "takes its names from the CSR at " + cmp.Or(csrPath, "csr_path") + ", and no openssl_csr task in this play writes it"
+	}
+	csr := &input{mod: "openssl_csr", role: in.role, args: args, vars: in.vars, dir: in.dir, used: map[string]bool{}}
+	steps, why := csrModule(csr)
+	if why == "" {
+		why = csr.problem
+	}
+	if why != "" {
+		return nil, "takes its names from a CSR whose openssl_csr task can't convert: it " + why
+	}
+	attrs := []attr{s("path", in.str("path")), s("key_path", in.str("privatekey_path")), {key: "days", val: cty.NumberIntVal(int64(days))}}
+	for _, a := range steps[0].attrs {
+		if a.key == "common_name" || a.key == "dns_names" || a.key == "ip_addresses" {
+			attrs = append(attrs, a)
+		}
+	}
+	if m, ok := in.mode("mode"); ok {
+		attrs = append(attrs, m)
+	}
+	in.ignore("csr_path", "provider", "selfsigned_digest", "selfsigned_version", "selfsigned_create_subject_key_identifier", "return_content", "backup", "select_crypto_backend", "force", "ignore_timestamps")
+	return one("tls_self_signed_cert", in.owners(attrs))
+}

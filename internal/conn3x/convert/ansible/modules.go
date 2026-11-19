@@ -90,6 +90,8 @@ type input struct {
 	// jsonWhy why that chain can't convert.
 	jsonEdits []jsonEdit
 	jsonWhy   string
+	// csrs are the play's openssl_csr tasks, by the path each writes.
+	csrs map[string]map[string]*yaml.Node
 	// itemVar names the role default a loop runs over, whose items the
 	// caller sets, so item is held to what a default is held to.
 	itemVar string
@@ -554,6 +556,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"openssl_privatekey": privateKeyModule,
 	"openssh_keypair":    sshKeypairModule,
 	"openssl_csr":        csrModule,
+	"x509_certificate":   x509Module,
 	"postgresql_db":      pgDatabaseModule,
 	"htpasswd":           htpasswdModule,
 	"postgresql_ext":     pgExtensionModule,

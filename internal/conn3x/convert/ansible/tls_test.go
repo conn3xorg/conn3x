@@ -42,3 +42,44 @@ func TestConvertTLS(t *testing.T) {
 		}
 	}
 }
+
+// A self-signed x509_certificate takes its names from the play's
+// openssl_csr task for its csr_path, and Ansible's +3650d default.
+func TestConvertX509SelfSigned(t *testing.T) {
+	const csr = "    - community.crypto.openssl_csr: {path: /etc/ssl/a.csr, privatekey_path: /etc/ssl/a.key, common_name: web1, subject_alt_name: ['DNS:web1', 'IP:10.0.0.5']}\n"
+	cert := func(extra string) string {
+		return "    - community.crypto.x509_certificate: {path: /etc/ssl/a.crt, privatekey_path: /etc/ssl/a.key, csr_path: /etc/ssl/a.csr" + extra + "}\n"
+	}
+	const play = "- hosts: all\n  tasks:\n"
+
+	res := convertString(t, play+csr+cert(", provider: selfsigned"))
+	hcl := string(res.HCL)
+	if res.Converted != 2 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	for _, want := range []string{"tls_self_signed_cert {", `common_name  = "web1"`, `dns_names    = ["web1"]`, `ip_addresses = ["10.0.0.5"]`, "days         = 3650"} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %q:\n%s", want, hcl)
+		}
+	}
+	if res := convertString(t, play+csr+cert(", provider: selfsigned, selfsigned_not_after: '+90d'")); !strings.Contains(string(res.HCL), "days         = 90") {
+		t.Errorf("+90d:\n%s", res.HCL)
+	}
+
+	for playbook, reason := range map[string]string{
+		play + cert(", provider: selfsigned"):                                      "no openssl_csr task in this play writes it",
+		play + csr + cert(", provider: acme"):                                      "provider acme",
+		play + csr + cert(", provider: selfsigned, force: yes"):                    "sets force",
+		play + csr + cert(", provider: selfsigned, selfsigned_not_after: '+1y'"):   "takes a number of days",
+		play + csr + cert(", provider: selfsigned, privatekey_passphrase: s3cret"): "privatekey_passphrase",
+		play + csr + cert(", provider: selfsigned, selfsigned_not_before: '-1d'"):  "selfsigned_not_before",
+	} {
+		var got string
+		for _, r := range convertString(t, playbook).Review {
+			got += r.Reason
+		}
+		if !strings.Contains(got, reason) {
+			t.Errorf("review %q, want %q, for:\n%s", got, reason, playbook)
+		}
+	}
+}

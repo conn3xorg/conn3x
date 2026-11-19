@@ -64,4 +64,4 @@ When you delete a `tls_self_signed_cert` step, `on_remove` decides what happens 
 
 ## From Ansible
 
-This is `community.crypto.x509_certificate` with `provider: selfsigned`. `conn3x convert ansible` doesn't translate it yet.
+This is `community.crypto.x509_certificate` with `provider: selfsigned`. `conn3x convert ansible` translates it, taking `common_name` and the alternative names from the play's `openssl_csr` task that writes the task's `csr_path`, since Ansible reads them from that CSR. Ansible's validity defaults to `+3650d`, so a task without `selfsigned_not_after` gets `days = 3650`, and `+Nd` becomes `days = N`. A task stays a TODO, with the reason, when no `openssl_csr` task in its play writes its CSR, when that task can't convert, or when it uses another `provider`, `force`, a passphrase, a `selfsigned_not_before` other than now, or a digest other than `sha256`.

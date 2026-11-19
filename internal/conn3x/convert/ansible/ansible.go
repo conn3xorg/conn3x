@@ -90,8 +90,11 @@ type converter struct {
 	jsonRead  map[*yaml.Node]string
 	jsonEdits map[*yaml.Node][]jsonEdit
 	jsonWhy   map[*yaml.Node]string
-	inv       *Inventory
-	role      *role // set while converting a role
+	// csrs are the play's openssl_csr tasks' arguments, by the path each
+	// writes, for an x509_certificate that names it as its csr_path.
+	csrs map[string]map[string]*yaml.Node
+	inv  *Inventory
+	role *role // set while converting a role
 	// roleCalls is Options.Roles. roles are those converted so far, by
 	// their path, roleDirs and modules the names used, and callWhy why a
 	// role call couldn't convert, for flatten to leave it for review.
@@ -435,6 +438,12 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	}
 	used := map[string]int{}
 	c.jsonPairs(tasks)
+	c.csrs = map[string]map[string]*yaml.Node{}
+	for _, t := range tasks {
+		if mod, args := moduleOf(mapping(t.node)); mod == "openssl_csr" && scalar(args["path"]) != "" {
+			c.csrs[scalar(args["path"])] = args
+		}
+	}
 	c.findProbes(tasks, vars)
 	c.findUnreadRegisters(tasks)
 	for _, t := range tasks {
@@ -1157,6 +1166,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		in.factsLater = c.factsAfter[node]
 		in.wait = wait
 		in.jsonEdits, in.jsonWhy = c.jsonEdits[node], c.jsonWhy[node]
+		in.csrs = c.csrs
 		steps, reason := m(in)
 		if reason == "" && items != nil {
 			reason = loopSteps(in.itemUsed)
