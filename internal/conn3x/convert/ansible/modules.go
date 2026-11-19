@@ -1944,6 +1944,20 @@ func commandModule(in *input) ([]step, string) {
 	if !in.has("creates") && !in.has("removes") {
 		return nil, "runs on every play; give it a creates, removes or unless guard, or triggers, so Conn3x knows when it's done"
 	}
+	// Ansible adds a newline to stdin unless stdin_add_newline is false.
+	// stdin_wo keeps it out of state, and stdin_hmac plans a change when it
+	// changes.
+	if in.has("stdin") {
+		text := in.str("stdin")
+		if in.bool("stdin_add_newline", true) {
+			text += "\n"
+		}
+		if text == "" {
+			return nil, "sets an empty stdin with stdin_add_newline: no, so the command reads nothing; leave stdin out"
+		}
+		attrs = append(attrs, s("stdin_wo", text))
+	}
+	in.ignore("stdin_add_newline")
 	return one("command", attrs)
 }
 

@@ -70,7 +70,7 @@ Deleting a `command` step changes nothing on the host. To undo what a command di
 
 ## From Ansible
 
-`conn3x convert ansible` turns `command` and `shell` tasks into `command` steps, carrying over `creates` and `removes`. `chdir` becomes `cd <dir> && ` in front of the command, and `executable` is dropped. Conn3x tests `creates` and `removes` as plain paths, so one with a glob such as `*` stays a TODO, as does a free-form command with `chdir=` or `creates=` written inline. A task with neither `creates` nor `removes` stays a TODO, since Ansible runs it on every play: add a guard or `triggers` so Conn3x knows when it's done.
+`conn3x convert ansible` turns `command` and `shell` tasks into `command` steps, carrying over `creates` and `removes`. `chdir` becomes `cd <dir> && ` in front of the command, and `executable` is dropped. `stdin` becomes `stdin_wo`, with the newline Ansible adds unless `stdin_add_newline` is `false`. It's kept out of state, and `stdin_hmac` plans a change when the text changes. Conn3x tests `creates` and `removes` as plain paths, so one with a glob such as `*` stays a TODO, as does a free-form command with `chdir=` or `creates=` written inline. A task with neither `creates` nor `removes` stays a TODO, since Ansible runs it on every play: add a guard or `triggers` so Conn3x knows when it's done.
 
 Ansible's `command` module runs a program with plain arguments, and a `command` step runs its text through `/bin/sh`. So a `command` task with `;`, `|`, `$`, `*`, `>`, a backslash or other characters a shell reads stays a TODO: `echo one ; echo two` prints one line in Ansible and would run two commands in a step. A `shell` task already means the shell, and converts as it is.
 
