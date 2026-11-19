@@ -556,6 +556,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"openssl_csr":        csrModule,
 	"postgresql_db":      pgDatabaseModule,
 	"htpasswd":           htpasswdModule,
+	"postgresql_ext":     pgExtensionModule,
 	"postgresql_user":    pgRoleModule,
 	"postgresql_privs":   pgPrivsModule,
 	"mysql_db":           mysqlDatabaseModule,
@@ -1111,6 +1112,27 @@ func pgDatabaseModule(in *input) ([]step, string) {
 	attrs = in.optional(attrs, "owner", "owner")
 	attrs = in.optional(attrs, "encoding", "encoding")
 	return one("postgresql_database", attrs)
+}
+
+// pgExtensionModule converts community.postgresql.postgresql_ext.
+func pgExtensionModule(in *input) ([]step, string) {
+	if st := in.str("state"); st != "" && st != "present" {
+		return nil, fmt.Sprintf("has state %q; postgresql_extension only makes an extension, and drops it only when the step is removed with on_remove = \"delete\"", st)
+	}
+	if in.str("version") == "latest" {
+		return nil, "has version latest, which postgresql_extension doesn't offer yet; give the version to install"
+	}
+	if k := in.pgUnmodelled("comment"); k != "" {
+		return nil, "sets " + k + ", which postgresql_extension doesn't offer yet"
+	}
+	in.ignore("trust_input")
+	attrs := []attr{s("name", in.str("ext", "name")), s("database", in.str("login_db", "db"))}
+	attrs = in.optional(attrs, "schema", "schema")
+	attrs = in.optional(attrs, "version", "version")
+	if in.bool("cascade", false) {
+		attrs = append(attrs, attr{key: "cascade", val: cty.True})
+	}
+	return one("postgresql_extension", attrs)
 }
 
 // pgAttributes are the role attributes postgresql_role's attributes sets

@@ -1,0 +1,24 @@
+circuit "db" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "app_db" {
+    postgresql_database {
+      name = "app"
+    }
+  }
+
+  step "app_crypto" {
+    postgresql_extension {
+      name      = "pgcrypto"
+      database  = "app"
+      on_remove = "delete"
+    }
+  }
+}

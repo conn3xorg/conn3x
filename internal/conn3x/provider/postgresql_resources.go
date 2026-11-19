@@ -350,3 +350,74 @@ func applyPgRole(ctx context.Context, req providers.ApplyResourceChangeRequest) 
 	resp.NewState = cty.ObjectVal(vals)
 	return resp
 }
+
+func pgExtensionSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "An extension, such as pgcrypto or postgis, in one database of the PostgreSQL server on the host, managed through psql as the postgres user. Settings left unset are left as they are.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
+			"name":      {Type: cty.String, Required: true, Description: "Extension name, as CREATE EXTENSION takes it. Its files have to be on the host: some ship with the server, and others, like postgis, come in their own package."},
+			"database":  {Type: cty.String, Required: true, Description: "Database to create it in, which has to exist, so make it in an earlier postgresql_database step."},
+			"schema":    {Type: cty.String, Optional: true, Description: "Schema for its objects. Unset leaves a new extension in the server's default and an existing one where it is. A different schema moves it, if the extension allows that."},
+			"version":   {Type: cty.String, Optional: true, Description: "Version to install, such as \"1.3\". A different version on the server is updated to it. Unset leaves a new extension at its default version and an existing one where it is."},
+			"cascade":   {Type: cty.Bool, Optional: true, Description: "true also creates the extensions this one needs. Defaults to false."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the extension, \"delete\" drops it. The drop fails while anything depends on it."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the extension matched at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func pgExtensionFrom(v cty.Value) postgresql.Extension {
+	return postgresql.Extension{
+		Name: stringOr(v.GetAttr("name"), ""), Database: stringOr(v.GetAttr("database"), ""),
+		Schema: stringOr(v.GetAttr("schema"), ""), Version: stringOr(v.GetAttr("version"), ""),
+		Cascade: boolOr(v.GetAttr("cascade")),
+	}
+}
+
+func validatePgExtension(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := pgExtensionFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func planPgExtension(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planSynced(req, "postgresql_extension", []string{"name", "database"}, []string{"schema", "version", "cascade"})
+}
+
+func readPgExtension(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		e := pgExtensionFrom(prior)
+		s, err := postgresql.ReadExtension(ctx, h, e.Database, e.Name)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("postgresql_extension %s: %w", e.Name, err)
+		}
+		return withSync(prior, e.Matches(s)), nil
+	})
+}
+
+func applyPgExtension(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			e := pgExtensionFrom(planned)
+			if err := postgresql.ApplyExtension(ctx, h, e); err != nil {
+				return cty.NilVal, fmt.Errorf("postgresql_extension %s: %w", e.Name, err)
+			}
+			return withSync(planned, true), nil
+		},
+		func(ctx context.Context, h *hostConn, prior cty.Value) error {
+			e := pgExtensionFrom(prior)
+			if err := postgresql.DropExtension(ctx, h, e.Database, e.Name); err != nil {
+				return fmt.Errorf("postgresql_extension %s: %w", e.Name, err)
+			}
+			return nil
+		})
+}
