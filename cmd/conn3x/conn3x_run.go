@@ -32,7 +32,7 @@ import (
 type runOptions struct {
 	inventory, circuits, module, task, plan, args, user, keyFile, knownHosts, batchSize string
 	port, forks, maxFailures                                                            int
-	become, check, json                                                                 bool
+	become, check, json, listHosts                                                      bool
 	pattern                                                                             string
 }
 
@@ -48,7 +48,7 @@ func runCommand() command.Command {
   conn3x run -i inventory.ini all -m package -a 'name=htop' -check
   conn3x run -circuits . web -a uptime
 
-Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, or the older ansible_ssh_host, ansible_ssh_port, ansible_ssh_user and ansible_private_key_file, and the group_vars and host_vars beside it. Or, with -circuits DIR, from the circuits in DIR's .tf and .circuit.hcl files: each circuit is a group named after it, and its hosts keep its ssh settings and their own host objects', written out in full. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names, except a "=" term, which is one host by its exact name.
+Hosts come from an INI or YAML Ansible inventory, with ansible_host, ansible_port, ansible_user and ansible_ssh_private_key_file, or the older ansible_ssh_host, ansible_ssh_port, ansible_ssh_user and ansible_private_key_file, and the group_vars and host_vars beside it. Or, with -circuits DIR, from the circuits in DIR's .tf and .circuit.hcl files: each circuit is a group named after it, and its hosts keep its ssh settings and their own host objects', written out in full. The pattern is -limit's: names and globs split by "," or ":", "!" to leave out, "&" to narrow, "~" for a regular expression, and it matches group names as well as host names, except a "=" term, which is one host by its exact name. -list-hosts prints the hosts it matches, as ansible --list-hosts does, and connects to none of them.
 
 -a without -m runs a command through the host's shell. With -m, it's a module a step can use, and -a holds its arguments as NAME=VALUE, quoted as a shell would. -m file takes src=PATH too, a text file on this machine to send as the content, as Ansible's copy does. A module does what it does in a step: on a host that's already in line it changes nothing and says ok. -check stops before changing anything.
 
@@ -103,6 +103,7 @@ Each host is checked against known_hosts, as a plan checks it. Exits 0 when ever
 	c.CommandLine.BoolVar(&o.become, "become", false, "Run as root through sudo.")
 	c.CommandLine.BoolVar(&o.check, "check", false, "Say what would change, and change nothing.")
 	c.CommandLine.BoolVar(&o.json, "json", false, "Print one JSON object per host instead of lines for people.")
+	c.CommandLine.BoolVar(&o.listHosts, "list-hosts", false, "Print the hosts the pattern matches, or with -plan each run's hosts, and run nothing. With -json, a JSON array of names.")
 	c.CommandLine.IntVar(&o.forks, "forks", 10, "How many hosts to run on at once.")
 	c.CommandLine.StringVar(&o.batchSize, "batch-size", "", "Run on this many hosts at a time, or a percentage such as 20%, starting the next batch only once a batch is done.")
 	c.CommandLine.IntVar(&o.maxFailures, "max-failures", 0, "With -batch-size, how many hosts may fail before no more batches start.")
@@ -132,7 +133,7 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 	case o.inventory != "" && o.circuits != "":
 		return fail("give -i or -circuits, not both")
 	}
-	if o.args == "" && o.module == "" && o.task == "" && o.plan == "" {
+	if !o.listHosts && o.args == "" && o.module == "" && o.task == "" && o.plan == "" {
 		return fail("give -a with a command, -m with a module, -task with a task file, or -plan with a plan file")
 	}
 	if n := len(slices.DeleteFunc([]string{o.module, o.task, o.plan}, func(s string) bool { return s == "" })); n > 1 {
@@ -259,6 +260,9 @@ func runRun(ctx context.Context, o runOptions, stdout, stderr io.Writer) int {
 		return o.runPlanOn(ctx, plan, params, inv, hostsFor, stdout, stderr)
 	}
 	hosts := hostsFor(nil)
+	if o.listHosts {
+		return o.listHostsOf(stdout, hosts)
+	}
 	if len(hosts) == 0 {
 		return fail("%q matches no host in %s", o.pattern, source)
 	}

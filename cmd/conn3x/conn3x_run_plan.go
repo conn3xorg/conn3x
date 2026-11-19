@@ -171,6 +171,9 @@ func (o runOptions) runPlanOn(ctx context.Context, plan *taskPlan, params cty.Va
 		}
 		steps = append(steps, planStep{run: r, hosts: hostsFor(pat), params: tp})
 	}
+	if o.listHosts {
+		return o.listPlanHosts(stdout, steps)
+	}
 
 	done := map[string]cty.Value{}
 	for i, s := range steps {
