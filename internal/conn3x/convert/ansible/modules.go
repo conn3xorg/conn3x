@@ -1182,13 +1182,39 @@ func groupModule(in *input) ([]step, string) {
 
 func authorizedKeyModule(in *input) ([]step, string) {
 	in.state("present", "present")
-	attrs := []attr{s("user", in.str("user")), s("key", in.str("key"))}
+	key := s("key", in.str("key"))
+	exclusive := in.has("exclusive") && in.bool("exclusive", false)
+	// key_options go in front of every key, as Ansible puts them, which
+	// the step reads as the key line's options.
+	if in.has("key_options") {
+		if exclusive {
+			return nil, "sets key_options with exclusive, which the converter can't translate yet"
+		}
+		key = keyWithOptions(in.str("key_options"), key.val.AsString())
+	}
+	attrs := []attr{s("user", in.str("user")), key}
 	// exclusive keeps only this task's keys, which key may hold one per
 	// line, as Ansible reads it.
-	if in.has("exclusive") && in.bool("exclusive", false) {
+	if exclusive {
 		attrs = append(attrs, attr{key: "exclusive", val: cty.True})
 	}
 	return one("authorized_key", attrs)
+}
+
+// keyWithOptions puts opts in front of each line of key. A key from a
+// variable may hold any number of lines, so that's an expression that
+// splits it; a written one is done here.
+func keyWithOptions(opts, key string) attr {
+	if !strings.Contains(key, "\x00") {
+		lines := strings.Split(key, "\n")
+		for i, l := range lines {
+			if strings.TrimSpace(l) != "" {
+				lines[i] = opts + " " + l
+			}
+		}
+		return s("key", strings.Join(lines, "\n"))
+	}
+	return attr{key: "key", raw: fmt.Sprintf(`join("\n", [for k in split("\n", %s) : trimspace(k) == "" ? k : "%s ${k}"])`, markTemplate(key), quoted(opts))}
 }
 
 var cronName = regexp.MustCompile(`[^A-Za-z0-9_-]+`)

@@ -91,4 +91,4 @@ An exclusive step defaults to `"forget"` and can't be set to `"delete"`: removin
 
 ## From Ansible
 
-`conn3x convert ansible` turns `authorized_key` tasks into `authorized_key` steps with `user` and `key`. `exclusive: true` carries over as it is: like Ansible's, it keeps only that one task's keys, which `key` may hold one per line. A task with `state: absent`, or with other options such as `key_options`, stays a TODO.
+`conn3x convert ansible` turns `authorized_key` tasks into `authorized_key` steps with `user` and `key`. `exclusive: true` carries over as it is: like Ansible's, it keeps only that one task's keys, which `key` may hold one per line. `key_options` goes in front of every key, as Ansible puts it: written into `key` for keys in the playbook, and through an expression that splits the lines for a key from a variable, which may hold any number. With `exclusive` it stays a TODO for now. So does a task with `state: absent`, or with other options.
