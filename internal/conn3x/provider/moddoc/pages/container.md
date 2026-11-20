@@ -8,7 +8,7 @@ Run nginx with a published port and a read-only site directory:
 step "web" {
   container {
     name    = "web"
-    image   = "docker.io/library/nginx:1.27"
+    image   = "docker.io/library/nginx:1.30"
     ports   = ["8080:80"]
     volumes = ["/srv/site:/usr/share/nginx/html:ro"]
     restart = "unless-stopped"
@@ -36,7 +36,7 @@ step "worker" {
 
 **Reading.** On every plan, Conn3x runs `docker container inspect`, or Podman's, and compares the container with the step: its image, published ports, mounts, restart policy, the `command` if you set one, and the `env` you set. `inspect` also lists variables the image sets itself, so only the keys in `env` are compared. `in_sync` is true when all of those match and the container is running.
 
-**Images.** Write the image in full, such as `docker.io/library/nginx:1.27`. Docker keeps a short name as written, Podman stores the full reference, and Conn3x compares the two as the same when the short name means Docker Hub. A short name that Podman resolves to another registry shows as a difference on every plan. A tag that now points at a newer image doesn't change anything: the image as written is what's compared. To roll forward, change the tag.
+**Images.** Write the image in full, such as `docker.io/library/nginx:1.30`. Docker keeps a short name as written, Podman stores the full reference, and Conn3x compares the two as the same when the short name means Docker Hub. A short name that Podman resolves to another registry shows as a difference on every plan. A tag that now points at a newer image doesn't change anything: the image as written is what's compared. To roll forward, change the tag.
 
 **Applying.** A container's settings can't change while it exists, so any difference means Conn3x removes the container and runs it again under the same name. Named volumes and host directories keep their data. If the image isn't on the host yet, Conn3x pulls it first. A container that's only stopped is started, not recreated.
 

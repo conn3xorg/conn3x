@@ -58,7 +58,7 @@ func (c Container) Validate() error {
 		return fmt.Errorf("name %q must start with a letter or digit, and hold only letters, digits and _ . -", c.Name)
 	}
 	if !imageRe.MatchString(c.Image) {
-		return fmt.Errorf("image %q must be an image reference, such as docker.io/library/nginx:1.27", c.Image)
+		return fmt.Errorf("image %q must be an image reference, such as docker.io/library/nginx:1.30", c.Image)
 	}
 	for _, p := range c.Ports {
 		if !portRe.MatchString(p) {
