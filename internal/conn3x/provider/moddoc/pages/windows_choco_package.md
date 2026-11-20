@@ -30,7 +30,7 @@ step "no_7zip" {
 
 Package IDs ignore case, so `git` matches a package installed as `Git`. Versions compare as NuGet versions, so `version = "1.2"` matches `1.2.0`.
 
-**Applying.** Apply runs `choco.exe` from Chocolatey's folder, with each value as its own argument. A missing package, or one at another version, is installed with `choco upgrade --version <version> --allow-downgrade`, which installs, upgrades or downgrades to exactly that version. Without a `version`, an installed package is left at whatever version it has, and a missing one gets the feed's newest. Chocolatey doesn't upgrade a pinned package, so the pin is taken off first and put back after, unless `pinned = false`. With `pinned` unset, the pin is left as it was.
+**Applying.** Apply runs `choco.exe` from Chocolatey's folder, with each value as its own argument. A missing package, or one at another version, is installed with `choco upgrade --version <version> --allow-downgrade`, which installs, upgrades or downgrades to exactly that version. Without a `version`, an installed package is left at whatever version it has, and a missing one gets the feed's newest. Chocolatey neither upgrades nor removes a pinned package, and reports success all the same, so the pin is taken off first: before an upgrade it's put back after, unless `pinned = false`. With `pinned` unset, the pin is left as it was.
 
 **Rebooting.** It never reboots. `reboot_required` is true when `choco` exited 3010 or 1641, which it passes on from the package's installer whether or not enhanced exit codes are on. Follow it with `windows_reboot` and `only_if_pending`.
 
