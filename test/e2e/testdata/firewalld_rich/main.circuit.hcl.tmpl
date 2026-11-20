@@ -1,0 +1,24 @@
+circuit "box" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tool" {
+    package {
+      name = "firewalld"
+    }
+  }
+{{if .Rule}}
+  step "postgres" {
+    firewalld {
+      zone      = "public"
+      rich_rule = "rule family=ipv4 source address=10.0.0.0/8 port port=5432 protocol=tcp accept"
+    }
+  }
+{{end}}
+}

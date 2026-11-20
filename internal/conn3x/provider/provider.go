@@ -73,7 +73,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_hostname":             {hostnameSchema, validateHostname, planHostname, readHostname, applyHostname, upgradeWith(hostnameSchema)},
 	"conn3x_timezone":             {timezoneSchema, validateTimezone, planTimezone, readTimezone, applyTimezone, upgradeWith(timezoneSchema)},
 	"conn3x_locale":               {localeSchema, validateLocale, planLocale, readLocale, applyLocale, upgradeWith(localeSchema)},
-	"conn3x_firewalld":            {firewalldSchema, validateFirewalld, planRule("firewalld", []string{"zone", "service", "port"}), readFirewalld, applyFirewalld, upgradeWith(firewalldSchema)},
+	"conn3x_firewalld":            {firewalldSchema, validateFirewalld, planRule("firewalld", []string{"zone", "service", "port", "rich_rule"}), readFirewalld, applyFirewalld, upgradeWith(firewalldSchema)},
 	"conn3x_ufw_settings":         {ufwSettingsSchema, validateUFWSettings, planUFWSettings, readUFWSettings, applyUFWSettings, upgradeWith(ufwSettingsSchema)},
 	"conn3x_ufw_rule":             {ufwRuleSchema, validateUFWRule, planRule("ufw", []string{"action", "port", "from"}), readUFWRule, applyUFWRule, upgradeWith(ufwRuleSchema)},
 	"conn3x_nftables":             {nftablesSchema, validateNftables, planNftables, readNftables, applyNftables, upgradeWith(nftablesSchema)},

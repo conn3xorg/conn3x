@@ -16,6 +16,8 @@ func TestFirewalldValidate(t *testing.T) {
 		{Service: "http"},
 		{Zone: "internal", Port: "8080/tcp"},
 		{Port: "60000-61000/udp"},
+		{RichRule: "rule family=ipv4 source address=10.0.0.0/8 port port=5432 protocol=tcp accept"},
+		{Zone: "internal", RichRule: "  rule family=\"ipv6\" service name=\"ssh\" accept"},
 	} {
 		if err := ok.Validate(); err != nil {
 			t.Errorf("rejected %+v: %v", ok, err)
@@ -30,6 +32,9 @@ func TestFirewalldValidate(t *testing.T) {
 		{Port: "2000-1000/tcp"},
 		{Port: "80/icmp"},
 		{Zone: "pub lic", Service: "http"},
+		{Service: "http", RichRule: "rule service name=http accept"},
+		{RichRule: "family=ipv4 accept"},
+		{RichRule: "rule family=ipv4 accept\nrule family=ipv6 accept"},
 	} {
 		if bad.Validate() == nil {
 			t.Errorf("accepted %+v", bad)
@@ -42,6 +47,10 @@ func TestFirewalldOption(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 	if got := (Firewalld{Zone: "dmz", Port: "8443/tcp"}).option("query"); got != "--zone='dmz' --query-port='8443/tcp'" {
+		t.Fatalf("got %s", got)
+	}
+	// A rich rule goes in as one quoted word, quotes and all.
+	if got := (Firewalld{RichRule: `rule family="ipv4" source address="10.0.0.0/8" accept`}).option("remove"); got != `--remove-rich-rule='rule family="ipv4" source address="10.0.0.0/8" accept'` {
 		t.Fatalf("got %s", got)
 	}
 }

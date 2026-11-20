@@ -19,12 +19,13 @@ import (
 
 var word = regexp.MustCompile(`^[A-Za-z0-9_.+-]+$`)
 
-// Firewalld is one service or port allowed in a firewalld zone, both in the
-// running firewall and in its permanent configuration.
+// Firewalld is one service, port or rich rule in a firewalld zone, both in
+// the running firewall and in its permanent configuration.
 type Firewalld struct {
-	Zone    string // empty means firewalld's default zone
-	Service string
-	Port    string // such as 8080/tcp or 60000-61000/udp
+	Zone     string // empty means firewalld's default zone
+	Service  string
+	Port     string // such as 8080/tcp or 60000-61000/udp
+	RichRule string // such as rule family=ipv4 source address=10.0.0.0/8 accept
 }
 
 var firewalldPort = regexp.MustCompile(`^(\d+)(?:-(\d+))?/(tcp|udp|sctp|dccp)$`)
@@ -34,9 +35,19 @@ func (f Firewalld) Validate() error {
 	if f.Zone != "" && !word.MatchString(f.Zone) {
 		return fmt.Errorf("zone %q is not a firewalld zone name", f.Zone)
 	}
+	set := 0
+	for _, v := range []string{f.Service, f.Port, f.RichRule} {
+		if v != "" {
+			set++
+		}
+	}
 	switch {
-	case (f.Service == "") == (f.Port == ""):
-		return errors.New("set exactly one of service or port")
+	case set != 1:
+		return errors.New("set exactly one of service, port or rich_rule")
+	case f.RichRule != "" && !strings.HasPrefix(strings.TrimSpace(f.RichRule), "rule "):
+		return fmt.Errorf("rich_rule %q must start with rule, as firewalld's rich language does", f.RichRule)
+	case strings.ContainsAny(f.RichRule, "\x00\r\n"):
+		return errors.New("rich_rule has a line break or NUL")
 	case f.Service != "" && !word.MatchString(f.Service):
 		return fmt.Errorf("service %q is not a firewalld service name", f.Service)
 	case f.Port != "":
@@ -64,8 +75,13 @@ func portRange(spec, lo, hi string) error {
 // option renders firewall-cmd's flags for verb: add, remove or query.
 func (f Firewalld) option(verb string) string {
 	opt := fmt.Sprintf("--%s-service=%s", verb, ssh.Quote(f.Service))
-	if f.Port != "" {
+	switch {
+	case f.Port != "":
 		opt = fmt.Sprintf("--%s-port=%s", verb, ssh.Quote(f.Port))
+	case f.RichRule != "":
+		// firewalld normalises a rich rule's text, and --query-rich-rule
+		// matches it however it's spelled, so it's compared by query.
+		opt = fmt.Sprintf("--%s-rich-rule=%s", verb, ssh.Quote(f.RichRule))
 	}
 	if f.Zone != "" {
 		opt = "--zone=" + ssh.Quote(f.Zone) + " " + opt
