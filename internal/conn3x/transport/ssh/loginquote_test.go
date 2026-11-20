@@ -46,3 +46,34 @@ func TestLoginQuote(t *testing.T) {
 		t.Errorf("a quote and a backslash: %s", q)
 	}
 }
+
+// csh and tcsh refuse the LC_ALL=C every Run starts with, and that reads
+// as a csh login shell, not as the command failing.
+func TestCshRefused(t *testing.T) {
+	for _, s := range []string{"LC_ALL=C: Command not found.\n", "  LC_ALL=C: Command not found.", "Unmatched '''.\nUnmatched '''.\n"} {
+		if !cshRefused([]byte(s)) {
+			t.Errorf("%q not read as csh", s)
+		}
+	}
+	for _, s := range []string{"", "sh: 1: foo: not found", "make: LC_ALL=C: Command not found."} {
+		if cshRefused([]byte(s)) {
+			t.Errorf("%q read as csh", s)
+		}
+	}
+	if _, err := exec.LookPath("tcsh"); err != nil {
+		t.Skip("tcsh not installed")
+	}
+	cmd := exec.Command("tcsh", "-c", "LC_ALL=C exec /bin/sh -c "+LoginQuote(Prelude+"true"))
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil || !cshRefused([]byte(stderr.String())) {
+		t.Errorf("tcsh's own refusal, %v: %q", err, stderr.String())
+	}
+	// A script with a line break fails before LC_ALL=C is reached.
+	cmd = exec.Command("tcsh", "-c", "LC_ALL=C exec /bin/sh -c "+LoginQuote(Prelude+"true\ntrue"))
+	stderr.Reset()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil || !cshRefused([]byte(stderr.String())) {
+		t.Errorf("tcsh's refusal of a line break, %v: %q", err, stderr.String())
+	}
+}
