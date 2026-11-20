@@ -144,6 +144,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_domain_membership":    {winMembershipSchema, validateWinMembership, planWinMembership, readWinMembership, applyWinMembership, upgradeWith(winMembershipSchema)},
 	"conn3x_windows_dns_client":           {winDNSClientSchema, validateWinDNSClient, planWinDNSClient, readWinDNSClient, applyWinDNSClient, upgradeWith(winDNSClientSchema)},
 	"conn3x_windows_feature":              {winFeatureSchema, validateWinFeature, planWinFeature, readWinFeature, applyWinFeature, upgradeWith(winFeatureSchema)},
+	"conn3x_windows_firewall_profile":     {winFirewallProfileSchema, validateWinFirewallProfile, planWinFirewallProfile, readWinFirewallProfile, applyWinFirewallProfile, upgradeWith(winFirewallProfileSchema)},
 	"conn3x_windows_hostname":             {winHostnameSchema, validateWinHostname, planWinHostname, readWinHostname, applyWinHostname, upgradeWith(winHostnameSchema)},
 	"conn3x_windows_file":                 {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
 	"conn3x_windows_group":                {winGroupSchema, validateWinGroup, planWinGroup, readWinGroup, applyWinGroup, upgradeWith(winGroupSchema)},

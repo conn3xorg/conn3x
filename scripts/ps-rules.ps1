@@ -14,10 +14,13 @@
 param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Files)
 
 $readCommands = 'Get-Acl', 'Get-ADDomain', 'Get-ADGroup', 'Get-ADObject', 'Get-ADOrganizationalUnit', 'Get-ADUser', 'Get-CimInstance', 'Get-DnsClientServerAddress', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Get-NetIPAddress', 'Get-NetRoute', 'Get-WindowsFeature',
-  'Get-LocalGroup', 'Get-LocalGroupMember', 'Get-LocalUser', 'Get-NetFirewallAddressFilter', 'Get-NetFirewallPortFilter', 'Get-NetFirewallRule',
+  'Get-LocalGroup', 'Get-LocalGroupMember', 'Get-LocalUser', 'Get-NetFirewallAddressFilter', 'Get-NetFirewallPortFilter', 'Get-NetFirewallRule', 'Get-NetFirewallProfile', 'Get-NetFirewallApplicationFilter', 'Get-NetFirewallServiceFilter', 'Get-NetConnectionProfile',
   'Get-NetTCPConnection', 'Get-ScheduledTask', 'Get-Service', 'Get-SmbShare', 'Get-SmbShareAccess', 'Get-DnsServerZone', 'Get-DnsServerResourceRecord', 'Import-Module', 'Select-Object', 'Sort-Object', 'Start-Sleep', 'Test-Path', 'Where-Object', 'ForEach-Object'
 # Start-Sleep only waits: read_pending_reboot.ps1 waits out Windows servicing.
-$readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity', 'NetTCPIP', 'ScheduledTasks', 'ServerManager'
+# The firewall profile, filter and connection-profile commands only read: read_firewall_profile.ps1
+# lists the rules in force for the lockout check, and ExpandEnvironmentVariables only expands a
+# rule's program path to compare it with sshd's.
+$readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'NetConnection', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity', 'NetTCPIP', 'ScheduledTasks', 'ServerManager'
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
 # DirectorySearcher only searches; read_ad_group.ps1 pages through a big
@@ -25,7 +28,7 @@ $readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'Microsoft.PowerShe
 # it makes. NTAccount only names an account: Translate asks LSA for its SID.
 $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter::ToUInt32', 'BitConverter::ToUInt64', 'Convert::ToBase64String',
   'DirectoryServices.DirectorySearcher::new',
-  'IO.File::ReadAllBytes', 'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
+  'Environment::ExpandEnvironmentVariables', 'IO.File::ReadAllBytes', 'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
   'Security.Cryptography.SHA256::Create', 'Security.Principal.NTAccount::new', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
   'string::Join'
 $readInstance = 'Close', 'ComputeHash', 'CreateUpdateSearcher', 'Dispose', 'FindAll', 'Search', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',

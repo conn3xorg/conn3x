@@ -714,6 +714,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_hostname":          winHostnameModule,
 	"win_file":              winFileModule,
 	"win_firewall_rule":     winFirewallRuleModule,
+	"win_firewall":          winFirewallModule,
 	"win_group":             winGroupModule,
 	"win_group_membership":  winGroupMembershipModule,
 	"win_iis_webapppool":    winIISAppPoolModule,
