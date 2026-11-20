@@ -49,7 +49,8 @@ func NewTextFile() TextFile { return TextFile{CRLF: true} }
 
 // DecodeText reads b as a text file: UTF-8, with or without a byte order
 // mark, or UTF-16 LE with one. Its line endings are "\r\n" if it has any,
-// and each is read as "\n". Anything else is refused, not guessed at.
+// or none at all, and each is read as "\n". Anything else is refused, not
+// guessed at.
 func DecodeText(b []byte) (TextFile, error) {
 	f := TextFile{Exists: true}
 	orig := b
@@ -82,15 +83,18 @@ func DecodeText(b []byte) (TextFile, error) {
 	if strings.ContainsRune(s, 0) {
 		return TextFile{}, errors.New("it has a NUL, so it isn't text")
 	}
-	f.CRLF = strings.Contains(s, "\r\n")
+	// A file with no line ending yet gets \r\n, as a file create makes
+	// does, and as Windows tools expect.
+	f.CRLF = strings.Contains(s, "\r\n") || !strings.Contains(s, "\n")
 	f.Text = strings.ReplaceAll(s, "\r\n", "\n")
 	// What's read has to write back as it was, or an edit would change lines
 	// it never meant to touch.
 	if !bytes.Equal(f.Encode(), orig) {
+		crlf := strings.Count(s, "\r\n")
 		switch {
-		case f.CRLF && strings.Contains(f.Text, "\r"):
+		case strings.Count(s, "\r") != crlf:
 			return TextFile{}, errors.New("it has a carriage return that isn't part of a line ending, which wouldn't be written back as it was")
-		case f.CRLF:
+		case crlf > 0 && strings.Count(s, "\n") != crlf:
 			return TextFile{}, errors.New("it mixes \\r\\n and \\n line endings, which wouldn't be written back as they were; give it one kind first")
 		case f.Encoding == UTF16LEBOM:
 			return TextFile{}, errors.New("it has a UTF-16 surrogate without its pair, which wouldn't be written back as it was")

@@ -30,7 +30,9 @@ func TestDecodeTextRoundTrips(t *testing.T) {
 		"utf-8 with BOM":       {append([]byte{0xEF, 0xBB, 0xBF}, "é=1\r\n"...), UTF8BOM, true, "é=1\n"},
 		"utf-16 LE, CRLF":      {utf16le("key=valué\r\nx=y\r\n"), UTF16LEBOM, true, "key=valué\nx=y\n"},
 		"no final line ending": {[]byte("a=1\r\nb=2"), UTF8, true, "a=1\nb=2"},
-		"empty":                {[]byte{}, UTF8, false, ""},
+		// No line ending yet: new lines get \r\n, as a created file's do.
+		"empty":                {[]byte{}, UTF8, true, ""},
+		"one line, no newline": {[]byte("a=1"), UTF8, true, "a=1"},
 	} {
 		f, err := DecodeText(c.in)
 		if err != nil || f.Encoding != c.enc || f.CRLF != c.crlf || f.Text != c.text || !f.Exists {
@@ -47,6 +49,12 @@ func TestDecodeTextRoundTrips(t *testing.T) {
 	f.Text += "b=2\n"
 	if got, want := f.Encode(), utf16le("a=1\r\nb=2\r\n"); !bytes.Equal(got, want) {
 		t.Errorf("edited UTF-16: %x, want %x", got, want)
+	}
+	// A line added to a one-line file with no newline ends in \r\n.
+	f, _ = DecodeText([]byte("a=1"))
+	f.Text += "\nb=2\n"
+	if got := string(f.Encode()); got != "a=1\r\nb=2\r\n" {
+		t.Errorf("a line added to a file with none: %q", got)
 	}
 	if got := NewTextFile(); got.Encoding != UTF8 || !got.CRLF || got.Exists {
 		t.Errorf("a new file: %+v", got)

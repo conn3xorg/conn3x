@@ -34,7 +34,7 @@ step "debug_off" {
 
 The patterns are Go regular expressions.
 
-**Encoding and line endings.** Conn3x reads the file's bytes and decodes them as UTF-8, with or without a byte order mark, or UTF-16 LE with one, as Notepad's "Unicode" writes. It edits the text, and writes it back the same way. A file with `\r\n` line endings keeps them, including the new line, and a file with `\n` keeps those. So an edit changes only the lines it's about.
+**Encoding and line endings.** Conn3x reads the file's bytes and decodes them as UTF-8, with or without a byte order mark, or UTF-16 LE with one, as Notepad's "Unicode" writes. It edits the text, and writes it back the same way. A file with `\r\n` line endings keeps them, including the new line, and a file with `\n` keeps those. A file with no line ending yet, empty or a single line, gets `\r\n`, as one it creates does. So an edit changes only the lines it's about.
 
 A file in another encoding (UTF-16 big-endian, a legacy code page) is refused rather than guessed at. So is one that couldn't be written back byte for byte, such as one mixing `\r\n` and `\n` endings. A file Conn3x creates, with `create = true`, is UTF-8 without a byte order mark, with `\r\n` endings.
 
