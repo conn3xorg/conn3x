@@ -13,10 +13,11 @@
 # and exits 1 if any rule is broken.
 param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Files)
 
-$readCommands = 'Get-Acl', 'Get-ADDomain', 'Get-ADGroup', 'Get-ADObject', 'Get-ADOrganizationalUnit', 'Get-ADUser', 'Get-CimInstance', 'Get-DnsClientServerAddress', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Get-NetIPAddress', 'Get-NetRoute', 'Get-WindowsFeature', 'Get-WindowsOptionalFeature',
+$readCommands = 'Get-Acl', 'Get-ADDomain', 'Get-ADGroup', 'Get-ADObject', 'Get-ADOrganizationalUnit', 'Get-ADUser', 'Get-CimInstance', 'Get-DnsClientServerAddress', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Get-NetIPAddress', 'Get-NetRoute', 'Get-WindowsFeature', 'Get-WindowsOptionalFeature', 'Get-TimeZone',
   'Get-LocalGroup', 'Get-LocalGroupMember', 'Get-LocalUser', 'Get-NetFirewallAddressFilter', 'Get-NetFirewallPortFilter', 'Get-NetFirewallRule',
   'Get-NetTCPConnection', 'Get-ScheduledTask', 'Get-Service', 'Get-SmbShare', 'Get-SmbShareAccess', 'Get-DnsServerZone', 'Get-DnsServerResourceRecord', 'Import-Module', 'Select-Object', 'Sort-Object', 'Start-Sleep', 'Test-Path', 'Where-Object', 'ForEach-Object'
 # Start-Sleep only waits: read_pending_reboot.ps1 waits out Windows servicing.
+# Get-TimeZone only reads: read_timezone.ps1 lists the zones with -ListAvailable.
 # Get-WindowsOptionalFeature only reads DISM's list of features.
 $readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity', 'NetTCPIP', 'ScheduledTasks', 'ServerManager'
 # Types and methods together: a name alone would pass [IO.File]::Replace for
