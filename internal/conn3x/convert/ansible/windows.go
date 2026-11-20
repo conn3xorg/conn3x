@@ -314,6 +314,36 @@ func winHostnameModule(in *input) ([]step, string) {
 	return one("windows_hostname", []attr{s("name", name)})
 }
 
+// winOptionalFeatureModule converts ansible.windows.win_optional_feature,
+// with a step for each name in its list.
+func winOptionalFeatureModule(in *input) ([]step, string) {
+	names := in.list("name")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if len(names) == 0 {
+		return nil, "has no name"
+	}
+	var attrs []attr
+	if in.state("present", "present", "absent") == "absent" {
+		attrs = append(attrs, s("state", "absent"))
+	} else {
+		if in.bool("include_parent", false) {
+			attrs = append(attrs, attr{key: "include_parent", val: cty.True})
+		}
+		attrs = in.optional(attrs, "source", "source")
+	}
+	in.ignore("include_parent", "source")
+	var steps []step
+	for _, n := range names {
+		steps = append(steps, step{module: "windows_optional_feature", attrs: append([]attr{s("name", n)}, attrs...), suffix: n})
+	}
+	if len(steps) == 1 {
+		steps[0].suffix = ""
+	}
+	return steps, ""
+}
+
 func winUserModule(in *input) ([]step, string) {
 	if in.state("present", "present", "absent") == "absent" {
 		return nil, "removes a user; Conn3x deletes a windows_user with on_remove = \"delete\" when its step goes, so there's nothing to convert this to yet"

@@ -733,3 +733,130 @@ func applyWinHostname(ctx context.Context, req providers.ApplyResourceChangeRequ
 	resp.NewState = withHostname(req.PlannedState, st)
 	return resp
 }
+
+func winOptionalFeatureSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "A Windows optional feature, as DISM names it, such as TelnetClient or Microsoft-Windows-Subsystem-Linux. It never reboots: reboot_required says whether Windows wants one, and windows_reboot does it.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":              {Type: cty.String, Computed: true},
+			"revision":        revisionAttr(),
+			"name":            {Type: cty.String, Required: true, Description: "Feature name, as Get-WindowsOptionalFeature -Online lists it, such as TelnetClient."},
+			"state":           {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\"."},
+			"include_parent":  {Type: cty.Bool, Optional: true, Description: "Also enable the features this one sits under, as -All does."},
+			"source":          {Type: cty.String, Optional: true, Description: "Where DISM finds the feature's files when Windows doesn't have them, such as D:\\sources\\sxs or a share."},
+			"timeout":         {Type: cty.String, Optional: true, Description: "How long to allow. Defaults to \"30m\"."},
+			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether Windows reported wanting a reboot after the last change."},
+			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether the feature matched at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func winOptionalFeatureFrom(v cty.Value) windows.OptionalFeature {
+	x := v.GetAttr("include_parent")
+	return windows.OptionalFeature{
+		Name: stringOr(v.GetAttr("name"), ""), Absent: isAbsent(v),
+		IncludeParent: known(x) && x.True(), Source: stringOr(v.GetAttr("source"), ""),
+	}
+}
+
+func validateWinOptionalFeature(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() {
+		return diags
+	}
+	diags = diags.Append(validateState(cfg, "include_parent", "source"))
+	if t := cfg.GetAttr("timeout"); t.IsKnown() {
+		if _, err := durationOr(t, defaultFeatureTimeout); err != nil {
+			diags = diags.Append(attrError("timeout", err.Error()))
+		}
+	}
+	if cfg.GetAttr("name").IsKnown() && cfg.GetAttr("source").IsKnown() {
+		if err := winOptionalFeatureFrom(cfg).Validate(); err != nil {
+			diags = diags.Append(attrError("name", err.Error()))
+		}
+	}
+	return diags
+}
+
+func planWinOptionalFeature(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	resp := planSynced(req, "windows_optional_feature", []string{"name"}, []string{"state", "include_parent", "source"})
+	if resp.PlannedState.IsNull() {
+		return resp
+	}
+	vals := resp.PlannedState.AsValueMap()
+	if vals["in_sync"].IsKnown() {
+		vals["reboot_required"] = req.PriorState.GetAttr("reboot_required")
+	} else {
+		vals["reboot_required"] = cty.UnknownVal(cty.Bool)
+	}
+	resp.PlannedState = cty.ObjectVal(vals)
+	return resp
+}
+
+func readWinOptionalFeature(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	resp := providers.ReadResourceResponse{NewState: req.PriorState}
+	if req.PriorState.IsNull() {
+		return resp
+	}
+	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	ok, _, err := windows.OptionalFeatureInSync(ctx, h.raw(), winOptionalFeatureFrom(req.PriorState))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_optional_feature: %w", err))
+		return resp
+	}
+	resp.NewState = withSync(req.PriorState, ok)
+	return resp
+}
+
+func applyWinOptionalFeature(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	var resp providers.ApplyResourceChangeResponse
+	// Removing the step leaves the feature as it is.
+	if req.PlannedState.IsNull() {
+		resp.NewState = req.PlannedState
+		return resp
+	}
+	fail := func(err error) providers.ApplyResourceChangeResponse {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_optional_feature: %w", err))
+		return resp
+	}
+	f := winOptionalFeatureFrom(req.PlannedState)
+	if err := f.Validate(); err != nil {
+		return fail(err)
+	}
+	timeout, err := durationOr(req.PlannedState.GetAttr("timeout"), defaultFeatureTimeout)
+	if err != nil {
+		return fail(err)
+	}
+	h, err := winHost(ctx, req.PlannedState.GetAttr("ssh"))
+	if err != nil {
+		return fail(err)
+	}
+	// Windows servicing takes one change at a time, features and optional
+	// features alike.
+	defer lockHost(h, "windows_feature")()
+	ok, pending, err := windows.OptionalFeatureInSync(ctx, h.raw(), f)
+	if err != nil {
+		return fail(err)
+	}
+	restart := pending
+	if !ok {
+		if restart, err = windows.ApplyOptionalFeature(ctx, h.raw(), f, timeout); err != nil {
+			return fail(fmt.Errorf("changing %s: %w", f.Name, err))
+		}
+		if ok, _, err = windows.OptionalFeatureInSync(ctx, h.raw(), f); err != nil {
+			return fail(err)
+		}
+		if !ok {
+			return fail(fmt.Errorf("%s doesn't match what was asked after the change", f.Name))
+		}
+	}
+	vals := withSync(req.PlannedState, true).AsValueMap()
+	vals["reboot_required"] = cty.BoolVal(restart)
+	resp.NewState = cty.ObjectVal(vals)
+	return resp
+}
