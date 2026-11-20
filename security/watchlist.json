@@ -2082,7 +2082,9 @@
         "circuit-mysql"
       ],
       "packages": [
-        "mysql-community-server"
+        "mysql-community-server",
+        "mysql-8.0",
+        "mysql8.4"
       ],
       "osv": [],
       "github": [
