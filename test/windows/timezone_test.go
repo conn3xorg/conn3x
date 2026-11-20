@@ -40,7 +40,7 @@ func TestTimezoneFlow(t *testing.T) {
       name = "Tokyo Standrad Time"
     }
   }`)
-	out := f.expect(1, "plan")
+	out := f.expect(1, "apply", "-auto-approve")
 	if !strings.Contains(out, `Windows has no time zone "Tokyo Standrad Time"`) || !strings.Contains(out, `"Tokyo Standard Time"`) {
 		t.Errorf("a misspelt zone:\n%s", out)
 	}
