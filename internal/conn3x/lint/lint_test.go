@@ -76,6 +76,13 @@ func TestCommandSystemctl(t *testing.T) {
 		`systemctl is-active --quiet app || exit 1`:                  "",
 		`systemctl show -p ActiveState app`:                          "",
 		`echo systemctl-restart-later`:                               "",
+		`systemctl enable --now app`:                                 "enable --now",
+		`systemctl --now disable app`:                                "disable --now",
+		`systemctl mask --now app`:                                   "mask --now",
+		`systemctl enable app`:                                       "",
+		`systemctl try-reload-or-restart app`:                        "try-reload-or-restart",
+		`systemctl reload-or-try-restart app`:                        "reload-or-try-restart",
+		`sudo systemctl restart app`:                                 "restart",
 	} {
 		src := "circuit \"c\" {\n  step \"s\" {\n    command {\n      command = \"" + strings.ReplaceAll(cmd, `"`, `\"`) + "\"\n      creates = \"/x\"\n    }\n  }\n}\n"
 		var got []Finding
