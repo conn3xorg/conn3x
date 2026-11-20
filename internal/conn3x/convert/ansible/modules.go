@@ -32,6 +32,8 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/storage"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sudoers"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 const (
@@ -1182,15 +1184,40 @@ func groupModule(in *input) ([]step, string) {
 
 func authorizedKeyModule(in *input) ([]step, string) {
 	in.state("present", "present")
-	key := s("key", in.str("key"))
+	raw := in.str("key")
 	exclusive := in.has("exclusive") && in.bool("exclusive", false)
-	// key_options go in front of every key, as Ansible puts them, which
-	// the step reads as the key line's options.
-	if in.has("key_options") {
-		if exclusive {
-			return nil, "sets key_options with exclusive, which the converter can't translate yet"
+	opts, hasOpts := in.str("key_options"), in.has("key_options")
+	if hasOpts && exclusive {
+		return nil, "sets key_options with exclusive, which the converter can't translate yet"
+	}
+	key := s("key", raw)
+	switch {
+	case !strings.Contains(raw, "\x00"):
+		// Ansible drops blank lines and # comments from key first.
+		var lines []string
+		for _, l := range strings.Split(raw, "\n") {
+			if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
+				lines = append(lines, l)
+			}
 		}
-		key = keyWithOptions(in.str("key_options"), key.val.AsString())
+		if len(lines) > 1 && !exclusive {
+			return nil, fmt.Sprintf("gives %d keys without exclusive, and an authorized_key step takes one; make a task for each key", len(lines))
+		}
+		if hasOpts {
+			for i, l := range lines {
+				line, err := keyWithOptions(opts, l)
+				if err != nil {
+					return nil, err.Error()
+				}
+				lines[i] = line
+			}
+			key = s("key", strings.Join(lines, "\n"))
+		}
+	case hasOpts:
+		// A key from a variable may hold any number of lines, so the
+		// options go on each through an expression that skips blank and #
+		// lines, as Ansible does. Options already on such a key stay.
+		key = keyOptionsExpr(opts, raw)
 	}
 	attrs := []attr{s("user", in.str("user")), key}
 	// exclusive keeps only this task's keys, which key may hold one per
@@ -1201,20 +1228,25 @@ func authorizedKeyModule(in *input) ([]step, string) {
 	return one("authorized_key", attrs)
 }
 
-// keyWithOptions puts opts in front of each line of key. A key from a
-// variable may hold any number of lines, so that's an expression that
-// splits it; a written one is done here.
-func keyWithOptions(opts, key string) attr {
-	if !strings.Contains(key, "\x00") {
-		lines := strings.Split(key, "\n")
-		for i, l := range lines {
-			if strings.TrimSpace(l) != "" {
-				lines[i] = opts + " " + l
-			}
-		}
-		return s("key", strings.Join(lines, "\n"))
+// keyOptionsExpr puts opts on each key line of a key from a variable,
+// skipping blank and # lines.
+func keyOptionsExpr(opts, raw string) attr {
+	return attr{key: "key", raw: fmt.Sprintf(`join("\n", [for k in split("\n", %s) : "%s ${trimspace(k)}" if trimspace(k) != "" && !startswith(trimspace(k), "#")])`, markTemplate(raw), quoted(opts))}
+}
+
+// keyWithOptions is a key line with opts in place of any options it had:
+// Ansible's key_options replaces them rather than adding to them, and two
+// option fields aren't a key line.
+func keyWithOptions(opts, line string) (string, error) {
+	pub, comment, _, _, err := gossh.ParseAuthorizedKey([]byte(line))
+	if err != nil {
+		return "", fmt.Errorf("sets key_options, and key %q isn't a public key the converter can read", line)
 	}
-	return attr{key: "key", raw: fmt.Sprintf(`join("\n", [for k in split("\n", %s) : trimspace(k) == "" ? k : "%s ${k}"])`, markTemplate(key), quoted(opts))}
+	out := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(pub)))
+	if comment != "" {
+		out += " " + comment
+	}
+	return opts + " " + out, nil
 }
 
 var cronName = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
