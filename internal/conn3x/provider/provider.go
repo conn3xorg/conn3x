@@ -145,6 +145,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_dns_client":           {winDNSClientSchema, validateWinDNSClient, planWinDNSClient, readWinDNSClient, applyWinDNSClient, upgradeWith(winDNSClientSchema)},
 	"conn3x_windows_feature":              {winFeatureSchema, validateWinFeature, planWinFeature, readWinFeature, applyWinFeature, upgradeWith(winFeatureSchema)},
 	"conn3x_windows_timezone":             {winTimezoneSchema, validateWinTimezone, planWinTimezone, readWinTimezone, applyWinTimezone, upgradeWith(winTimezoneSchema)},
+	"conn3x_windows_download":             {winDownloadSchema, validateWinDownload, planWinDownload, readWinDownload, applyWinDownload, upgradeWith(winDownloadSchema)},
 	"conn3x_windows_hostname":             {winHostnameSchema, validateWinHostname, planWinHostname, readWinHostname, applyWinHostname, upgradeWith(winHostnameSchema)},
 	"conn3x_windows_optional_feature":     {winOptionalFeatureSchema, validateWinOptionalFeature, planWinOptionalFeature, readWinOptionalFeature, applyWinOptionalFeature, upgradeWith(winOptionalFeatureSchema)},
 	"conn3x_windows_file":                 {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},

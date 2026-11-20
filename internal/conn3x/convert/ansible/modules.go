@@ -712,6 +712,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_domain_user":       winADUserModule,
 	"win_feature":           winFeatureModule,
 	"win_timezone":          winTimezoneModule,
+	"win_get_url":           winGetURLModule,
 	"win_hostname":          winHostnameModule,
 	"win_optional_feature":  winOptionalFeatureModule,
 	"win_file":              winFileModule,

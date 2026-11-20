@@ -163,3 +163,123 @@ func applyWinPackage(ctx context.Context, req providers.ApplyResourceChangeReque
 	resp.NewState = cty.ObjectVal(vals)
 	return resp
 }
+
+const defaultDownloadTimeout = 30 * time.Minute
+
+func winDownloadSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "A file downloaded to a Windows host, kept only when it has the configured SHA-256. It's written beside dest and renamed into place, never following a link.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":          {Type: cty.String, Computed: true},
+			"revision":    revisionAttr(),
+			"url":         {Type: cty.String, Required: true, Description: "https address to download from, or http with allow_http. Redirects are followed, up to five, and none may drop to http unless allow_http is set."},
+			"dest":        {Type: cty.String, Required: true, Description: "Full path to save it to, such as C:\\Tools\\tool.zip. Its folder has to exist."},
+			"sha256":      {Type: cty.String, Required: true, Description: "The file's SHA-256, as 64 hex characters. A download with another one is refused, and dest is left as it was."},
+			"allow_http":  {Type: cty.Bool, Optional: true, Description: "Allow url, or a redirect, to use plain http. sha256 still has to match."},
+			"max_size_mb": {Type: cty.Number, Optional: true, Description: "Largest download, in MiB. Defaults to 2048."},
+			"timeout":     {Type: cty.String, Optional: true, Description: "How long to allow. Defaults to \"30m\"."},
+			"on_remove":   {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it, or a link in its place but not what it points to."},
+			"in_sync":     {Type: cty.Bool, Computed: true, Description: "Whether dest was a file with the configured SHA-256 at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func winDownloadFrom(v cty.Value) windows.Download {
+	d := windows.Download{URL: stringOr(v.GetAttr("url"), ""), Dest: stringOr(v.GetAttr("dest"), ""), SHA256: stringOr(v.GetAttr("sha256"), "")}
+	if a := v.GetAttr("allow_http"); known(a) && a.True() {
+		d.AllowHTTP = true
+	}
+	if m := v.GetAttr("max_size_mb"); known(m) {
+		n, _ := m.AsBigFloat().Int64()
+		d.MaxSizeMB = int(n)
+	}
+	return d
+}
+
+func validateWinDownload(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if t := cfg.GetAttr("timeout"); !t.IsNull() {
+		if _, err := durationOr(t, defaultDownloadTimeout); err != nil {
+			diags = diags.Append(attrError("timeout", err.Error()))
+		}
+	}
+	if err := winDownloadFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("url", err.Error()))
+	}
+	return diags
+}
+
+func planWinDownload(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	// A new url with the same sha256 is the same file, so it plans no
+	// download if dest already has it.
+	return planSynced(req, "windows_download", []string{"dest"}, []string{"url", "sha256"})
+}
+
+func readWinDownload(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	resp := providers.ReadResourceResponse{NewState: req.PriorState}
+	if req.PriorState.IsNull() {
+		return resp
+	}
+	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	ok, err := windows.DownloadInSync(ctx, h.raw(), winDownloadFrom(req.PriorState))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_download: %w", err))
+		return resp
+	}
+	resp.NewState = withSync(req.PriorState, ok)
+	return resp
+}
+
+func applyWinDownload(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	var resp providers.ApplyResourceChangeResponse
+	fail := func(err error) providers.ApplyResourceChangeResponse {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_download: %w", err))
+		return resp
+	}
+	if req.PlannedState.IsNull() {
+		resp.NewState = req.PlannedState
+		if req.PriorState.IsNull() || req.PriorState.GetAttr("on_remove").AsString() != onRemoveDelete {
+			return resp
+		}
+		h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
+		if err != nil {
+			return fail(err)
+		}
+		if err := windows.ApplyFileRemove(ctx, h.raw(), winDownloadFrom(req.PriorState).Dest); err != nil {
+			return fail(err)
+		}
+		return resp
+	}
+	d := winDownloadFrom(req.PlannedState)
+	if err := d.Validate(); err != nil {
+		return fail(err)
+	}
+	timeout, err := durationOr(req.PlannedState.GetAttr("timeout"), defaultDownloadTimeout)
+	if err != nil {
+		return fail(err)
+	}
+	h, err := winHost(ctx, req.PlannedState.GetAttr("ssh"))
+	if err != nil {
+		return fail(err)
+	}
+	ok, err := windows.DownloadInSync(ctx, h.raw(), d)
+	if err != nil {
+		return fail(err)
+	}
+	if !ok {
+		if err := windows.ApplyDownload(ctx, h.raw(), d, timeout); err != nil {
+			return fail(fmt.Errorf("downloading %s: %w", d.Dest, err))
+		}
+	}
+	resp.NewState = withSync(req.PlannedState, true)
+	return resp
+}

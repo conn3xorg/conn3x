@@ -318,6 +318,25 @@ func winTimezoneModule(in *input) ([]step, string) {
 	return one("windows_timezone", []attr{s("name", zone)})
 }
 
+// winGetURLModule converts ansible.windows.win_get_url when the task gives
+// a SHA-256: checksum with checksum_algorithm sha256, since the algorithm
+// defaults to sha1. force is dropped: the step downloads whenever dest's
+// hash isn't the checksum, which is what force decides for Ansible.
+func winGetURLModule(in *input) ([]step, string) {
+	algo, sum := strings.ToLower(in.str("checksum_algorithm")), strings.ToLower(in.str("checksum"))
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if algo != "sha256" || !sha256HexRe.MatchString(sum) {
+		return nil, "has no sha256 checksum (checksum with checksum_algorithm: sha256); windows_download only keeps what it can verify"
+	}
+	in.ignore("force")
+	return one("windows_download", []attr{s("url", in.str("url")), s("dest", in.str("dest")), s("sha256", sum)})
+}
+
+// sha256HexRe is a SHA-256 written as hex.
+var sha256HexRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 // winHostnameModule converts ansible.windows.win_hostname. Ansible doesn't
 // reboot either; it returns reboot_required, which the step has too.
 func winHostnameModule(in *input) ([]step, string) {
