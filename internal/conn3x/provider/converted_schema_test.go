@@ -30,6 +30,9 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
     - ansible.builtin.lineinfile: {path: /etc/app.conf, line: "a=1", regexp: "^a=", insertbefore: "^b="}
     - ansible.windows.win_hostname: {name: WEB01}
     - ansible.windows.win_optional_feature: {name: TelnetClient}
+    - community.windows.win_timezone: {timezone: UTC}
+    - ansible.windows.win_get_url: {url: 'https://example.com/a.msi', dest: 'C:/Installers/a.msi', checksum: ec6af1ea0367d16dde6639a89a080a524cebc4d4bedfe00ed0cac4b865a918d8, checksum_algorithm: sha256}
+    - community.windows.win_firewall: {profiles: [public], state: enabled, inbound_action: block, outbound_action: allow}
 `
 	path := filepath.Join(t.TempDir(), "play.yml")
 	if err := os.WriteFile(path, []byte(playbook), 0o644); err != nil {
@@ -69,7 +72,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
 		}
 	}
 	walk(f.Body.(*hclsyntax.Body))
-	if checked < 7 {
+	if checked < 10 {
 		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
 	}
 }
