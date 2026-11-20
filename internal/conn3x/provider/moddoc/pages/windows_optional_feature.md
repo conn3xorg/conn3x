@@ -34,7 +34,7 @@ step "restart_if_needed" {
 
 **Reading.** On every plan, Conn3x reads the feature with `Get-WindowsOptionalFeature -Online`. With `state = "present"`, `in_sync` is true when it's `Enabled`, or `EnablePending`, waiting for a reboot. With `"absent"`, it's true when it's `Disabled`, `DisablePending` or `DisabledWithPayloadRemoved`. So a change waiting for a reboot plans clean the second time. A name Windows doesn't list fails the plan.
 
-**Applying.** Conn3x runs `Enable-WindowsOptionalFeature`, with `-All` when `include_parent` is true and `-Source` when `source` is set, or `Disable-WindowsOptionalFeature`. It always passes `-NoRestart`, then reads the feature back. Windows servicing takes one change at a time, so Conn3x runs one `windows_feature` or `windows_optional_feature` change per host at a time. `timeout` defaults to `30m`.
+**Applying.** Conn3x runs `Enable-WindowsOptionalFeature`, with `-All` when `include_parent` is true and `-Source` when `source` is set, or `Disable-WindowsOptionalFeature`. A `source` folder or share that isn't there fails before DISM runs, saying so. A `wim:` or `esd:` source, which names an image and its index, such as `wim:D:\sources\install.wim:1`, goes to DISM as it is. It always passes `-NoRestart`, then reads the feature back. Windows servicing takes one change at a time, so Conn3x runs one `windows_feature` or `windows_optional_feature` change per host at a time. `timeout` defaults to `30m`.
 
 **Reboots.** The step never reboots. `reboot_required` is true when Windows said the change needs one. A [`windows_reboot`](/modules/windows_reboot) step with `only_if_pending = true` after it reboots only then.
 
