@@ -2,26 +2,25 @@ param($A)
 # Copyright (c) The Conn3x Authors
 # SPDX-License-Identifier: MPL-2.0
 # Reads Chocolatey's files and runs nothing, so a plan runs no package code.
-# lib, .chocolatey and the package's folders are refused if they're links,
-# so a planted one can't point the read at another file. Of the package's
-# folder in .chocolatey, only .pin is looked at: .arguments beside it holds
-# the install arguments, which can carry secrets.
+# lib, .chocolatey and the package's folders and files are refused if
+# they're links, before anything in them is read, so a planted one can't
+# point the read at another file. Of the package's folder in .chocolatey,
+# only .pin is looked at: .arguments beside it holds the install
+# arguments, which can carry secrets.
 $out = @{ chocolatey = $false; installed = $false; version = ''; pinned = $false }
 $root = [Environment]::GetEnvironmentVariable('ChocolateyInstall', 'Machine')
 if (-not $root -or -not (Test-Path -LiteralPath ($root + '\choco.exe') -PathType Leaf)) { return $out }
 $out.chocolatey = $true
-function Get-Plain($path) {
-  $i = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-  if ($i -and ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "$path is a link, and Conn3x doesn't follow links in Chocolatey's folders" }
-  $i
-}
-$lib = Get-Plain ($root + '\lib')
+$lib = Get-Item -LiteralPath ($root + '\lib') -Force -ErrorAction SilentlyContinue
 if (-not $lib) { return $out }
 # NTFS finds the folder whatever case the name is in, and it has the
 # package's own case.
-$pkg = Get-Plain ($lib.FullName + '\' + $A.name)
+$pkg = Get-Item -LiteralPath ($lib.FullName + '\' + $A.name) -Force -ErrorAction SilentlyContinue
 if (-not $pkg -or -not $pkg.PSIsContainer) { return $out }
-$nuspec = Get-Plain ($pkg.FullName + '\' + $pkg.Name + '.nuspec')
+$nuspec = Get-Item -LiteralPath ($pkg.FullName + '\' + $pkg.Name + '.nuspec') -Force -ErrorAction SilentlyContinue
+foreach ($i in @($lib, $pkg, $nuspec) | Where-Object { $_ }) {
+  if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "$($i.FullName) is a link, and Conn3x doesn't follow links in Chocolatey's folders" }
+}
 if (-not $nuspec) { return $out }
 # A package's own XML: no DTD, and nothing fetched.
 $settings = [Xml.XmlReaderSettings]@{ DtdProcessing = [Xml.DtdProcessing]::Prohibit; XmlResolver = $null }
@@ -31,9 +30,11 @@ try {
 } finally { $reader.Dispose() }
 if (-not $out.version) { throw "$($nuspec.FullName) has no version" }
 $out.installed = $true
-$state = Get-Plain ($root + '\.chocolatey')
-if ($state) {
-  $dir = Get-Plain ($state.FullName + '\' + $pkg.Name + '.' + $out.version)
-  if ($dir) { $out.pinned = [bool](Get-Plain ($dir.FullName + '\.pin')) }
+$state = Get-Item -LiteralPath ($root + '\.chocolatey') -Force -ErrorAction SilentlyContinue
+$dir = if ($state) { Get-Item -LiteralPath ($state.FullName + '\' + $pkg.Name + '.' + $out.version) -Force -ErrorAction SilentlyContinue }
+$pin = if ($dir) { Get-Item -LiteralPath ($dir.FullName + '\.pin') -Force -ErrorAction SilentlyContinue }
+foreach ($i in @($state, $dir, $pin) | Where-Object { $_ }) {
+  if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "$($i.FullName) is a link, and Conn3x doesn't follow links in Chocolatey's folders" }
 }
+$out.pinned = [bool]$pin
 $out
