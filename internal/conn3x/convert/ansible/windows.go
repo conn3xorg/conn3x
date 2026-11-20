@@ -490,6 +490,55 @@ func winUserRightModule(in *input) ([]step, string) {
 	return one("windows_user_right", attrs)
 }
 
+// winChocolateyModule converts win_chocolatey, a step for each name.
+// latest and upgrade would have the plan follow the feed, which a read
+// can't ask, so they stay a TODO saying to pin a version.
+func winChocolateyModule(in *input) ([]step, string) {
+	st := "present"
+	if in.has("state") {
+		st = in.str("state")
+	}
+	switch st {
+	case "present", "absent":
+	case "downgrade":
+		// Installing an exact version downgrades too.
+		if !in.has("version") {
+			return nil, "has state downgrade without a version"
+		}
+		st = "present"
+	case "latest", "upgrade":
+		return nil, fmt.Sprintf("has state %s, which follows the feed; give windows_choco_package an exact version instead", st)
+	default:
+		return nil, fmt.Sprintf("state %q has no Conn3x equivalent", st)
+	}
+	names := in.list("name")
+	if len(names) == 0 {
+		return nil, "has no name"
+	}
+	var attrs []attr
+	if st == "absent" {
+		attrs = append(attrs, s("state", "absent"))
+	} else {
+		attrs = in.optional(attrs, "version", "version")
+		attrs = in.optional(attrs, "source", "source")
+		if in.has("pinned") {
+			attrs = append(attrs, attr{key: "pinned", val: cty.BoolVal(in.bool("pinned", false))})
+		}
+	}
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	var steps []step
+	for _, n := range names {
+		st := step{module: "windows_choco_package", attrs: append([]attr{s("name", n)}, attrs...)}
+		if len(names) > 1 {
+			st.suffix = n
+		}
+		steps = append(steps, st)
+	}
+	return steps, ""
+}
+
 var firewallRuleID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,127}$`)
 
 // winFirewallModule converts community.windows.win_firewall, with a step

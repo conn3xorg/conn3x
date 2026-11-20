@@ -158,7 +158,6 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"resets DNS to DHCP":            `win_dns_client: {adapter_names: Ethernet, dns_servers: []}`,
 		"the domain module":             `community.example.domain: {dns_domain_name: lab.test}`,
 		"uses the domain module":        `domain: {dns_domain_name: lab.test}`,
-		"win_chocolatey module":         `win_chocolatey: {name: git}`,
 		"win_dsc module":                `win_dsc: {resource_name: x}`,
 		"removes a task":                `win_scheduled_task: {name: a, state: absent}`,
 		"other than one action":         `win_scheduled_task: {name: a, username: SYSTEM, actions: [{path: 'C:\a.exe'}, {path: 'C:\b.exe'}]}`,

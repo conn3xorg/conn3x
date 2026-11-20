@@ -700,6 +700,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"yum_versionlock":         versionlockModule,
 
 	"win_acl":               winACLModule,
+	"win_chocolatey":        winChocolateyModule,
 	"win_acl_inheritance":   winACLInheritanceModule,
 	"win_command":           winCommandModule,
 	"win_ping":              pingModule, // checks the same as ping, and data: crash fails the same way

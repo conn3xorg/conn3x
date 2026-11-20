@@ -34,6 +34,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
     - ansible.windows.win_get_url: {url: 'https://example.com/a.msi', dest: 'C:/Installers/a.msi', checksum: ec6af1ea0367d16dde6639a89a080a524cebc4d4bedfe00ed0cac4b865a918d8, checksum_algorithm: sha256}
     - community.windows.win_firewall: {profiles: [public], state: enabled, inbound_action: block, outbound_action: allow}
     - ansible.windows.win_user_right: {name: SeServiceLogonRight, users: [svc_app], action: add}
+    - chocolatey.chocolatey.win_chocolatey: {name: git, version: 2.44.0, source: 'https://nuget.example.com/v3/index.json', pinned: true}
     - ansible.windows.win_lineinfile: {path: 'C:/app/app.ini', line: 'a=1', regexp: '^a=', insertbefore: '^b='}
 `
 	path := filepath.Join(t.TempDir(), "play.yml")
@@ -74,7 +75,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
 		}
 	}
 	walk(f.Body.(*hclsyntax.Body))
-	if checked < 12 {
+	if checked < 13 {
 		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
 	}
 }
