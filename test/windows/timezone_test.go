@@ -20,19 +20,19 @@ func TestTimezoneFlow(t *testing.T) {
 	orig := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text)
 	t.Cleanup(func() {
 		run(t, c, `param($A) Set-TimeZone -Id $A.id`, map[string]any{"id": orig})
-		// For a minute or more after a time zone change, each new SSH
-		// session on the runner takes about 20 s to start, so the tests
-		// after this one wait for that to pass rather than crawl through it.
+		// After a time zone change, each new SSH session on the runner takes
+		// about 20 s to start, and new sessions seem to keep it that way, so
+		// this waits without opening any, then checks once, until one is
+		// quick, rather than leave the tests after it to crawl.
 		start := time.Now()
-		for time.Since(start) < 4*time.Minute {
+		quick := false
+		for !quick && time.Since(start) < 8*time.Minute {
+			time.Sleep(90 * time.Second)
 			call := time.Now()
 			run(t, c, `1`, nil)
-			if time.Since(call) < 5*time.Second {
-				break
-			}
-			time.Sleep(20 * time.Second)
+			quick = time.Since(call) < 5*time.Second
 		}
-		t.Logf("sessions were quick again %v after the time zone was put back", time.Since(start).Round(time.Second))
+		t.Logf("sessions quick again: %v, %v after the time zone was put back", quick, time.Since(start).Round(time.Second))
 	})
 	want, other := "Tokyo Standard Time", "Cape Verde Standard Time"
 	if strings.EqualFold(orig, want) {
