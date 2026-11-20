@@ -293,7 +293,9 @@
       ],
       "packages": [
         "certbot",
-        "python3-certbot-nginx"
+        "python3-certbot-nginx",
+        "python-certbot",
+        "python-certbot-nginx"
       ],
       "osv": [
         {
@@ -449,7 +451,8 @@
         "circuit-microshift"
       ],
       "packages": [
-        "containernetworking-plugins"
+        "containernetworking-plugins",
+        "golang-github-containernetworking-plugins"
       ],
       "osv": [
         {
@@ -702,7 +705,8 @@
       ],
       "packages": [
         "dnf-automatic",
-        "dnf5-plugin-automatic"
+        "dnf5-plugin-automatic",
+        "dnf"
       ],
       "osv": [],
       "github": [
@@ -863,7 +867,8 @@
       "packages": [
         "fail2ban",
         "fail2ban-server",
-        "python3-systemd"
+        "python3-systemd",
+        "python-systemd"
       ],
       "osv": [],
       "github": [
@@ -1089,7 +1094,9 @@
         "freeipa-server-dns",
         "ipa-client",
         "ipa-server",
-        "ipa-server-dns"
+        "ipa-server-dns",
+        "freeipa",
+        "ipa"
       ],
       "osv": [],
       "github": [
@@ -1118,7 +1125,9 @@
         "libatomic",
         "libatomic1",
         "libstdc++",
-        "libstdc++6"
+        "libstdc++6",
+        "gcc-14",
+        "gcc-defaults"
       ],
       "osv": [],
       "github": [],
@@ -1224,7 +1233,8 @@
       ],
       "packages": [
         "glibc-devel",
-        "libc6-dev"
+        "libc6-dev",
+        "glibc"
       ],
       "osv": [],
       "github": [],
@@ -1794,7 +1804,8 @@
       ],
       "packages": [
         "krb5-libs",
-        "libgssapi-krb5-2"
+        "libgssapi-krb5-2",
+        "krb5"
       ],
       "osv": [],
       "github": [],
@@ -1809,7 +1820,8 @@
       "packages": [
         "kubeadm",
         "kubectl",
-        "kubelet"
+        "kubelet",
+        "kubernetes"
       ],
       "osv": [
         {
@@ -1858,7 +1870,9 @@
       ],
       "packages": [
         "gd-devel",
-        "libgd-dev"
+        "libgd-dev",
+        "gd",
+        "libgd2"
       ],
       "osv": [],
       "github": [
@@ -1875,7 +1889,8 @@
       ],
       "packages": [
         "libicu",
-        "libicu-dev"
+        "libicu-dev",
+        "icu"
       ],
       "osv": [],
       "github": [
@@ -1939,7 +1954,8 @@
         "circuit-ruby"
       ],
       "packages": [
-        "make"
+        "make",
+        "make-dfsg"
       ],
       "osv": [],
       "github": [],
@@ -1954,7 +1970,9 @@
         "circuit-passbolt"
       ],
       "packages": [
-        "mariadb-server"
+        "mariadb-server",
+        "mariadb",
+        "mariadb10.11"
       ],
       "osv": [],
       "github": [
@@ -2033,7 +2051,8 @@
         "nagios-plugins-ssh",
         "nagios-plugins-swap",
         "nagios-plugins-tcp",
-        "nagios-plugins-users"
+        "nagios-plugins-users",
+        "nagios-plugins"
       ],
       "osv": [],
       "github": [
@@ -2113,7 +2132,8 @@
         "nagios",
         "nagios-selinux",
         "nagios4-cgi",
-        "nagios4-core"
+        "nagios4-core",
+        "nagios4"
       ],
       "osv": [],
       "github": [
@@ -2262,7 +2282,8 @@
         "circuit-nodejs"
       ],
       "packages": [
-        "nodejs"
+        "nodejs",
+        "nodejs22"
       ],
       "osv": [],
       "github": [
@@ -2408,7 +2429,9 @@
         "java-25-openjdk-devel",
         "java-25-openjdk-headless",
         "openjdk-25-jdk-headless",
-        "openjdk-25-jre-headless"
+        "openjdk-25-jre-headless",
+        "java-25-openjdk",
+        "openjdk-25"
       ],
       "osv": [],
       "github": [
@@ -2442,7 +2465,9 @@
         "ldap-utils",
         "openldap-clients",
         "openldap-servers",
-        "slapd"
+        "slapd",
+        "openldap",
+        "openldap-epel"
       ],
       "osv": [],
       "github": [
@@ -2457,7 +2482,8 @@
         "circuit-openscap"
       ],
       "packages": [
-        "openscap-scanner"
+        "openscap-scanner",
+        "openscap"
       ],
       "osv": [],
       "github": [
@@ -2516,7 +2542,8 @@
       ],
       "packages": [
         "openssh-client",
-        "openssh-clients"
+        "openssh-clients",
+        "openssh"
       ],
       "osv": [],
       "github": [
@@ -2711,7 +2738,10 @@
         "php8.3-cli",
         "php8.3-fpm",
         "php8.4-cli",
-        "php8.4-fpm"
+        "php8.4-fpm",
+        "php-defaults",
+        "php8.3",
+        "php8.4"
       ],
       "osv": [],
       "github": [
@@ -2757,7 +2787,8 @@
         "circuit-zap"
       ],
       "packages": [
-        "podman"
+        "podman",
+        "libpod"
       ],
       "osv": [
         {
@@ -2784,7 +2815,9 @@
         "circuit-valkey"
       ],
       "packages": [
-        "policycoreutils-python-utils"
+        "policycoreutils-python-utils",
+        "policycoreutils",
+        "selinux-python"
       ],
       "osv": [],
       "github": [],
@@ -2844,7 +2877,10 @@
         "postgresql",
         "postgresql-18",
         "postgresql-client",
-        "postgresql18-server"
+        "postgresql18-server",
+        "postgresql-common",
+        "postgresql16",
+        "postgresql18"
       ],
       "osv": [],
       "github": [
@@ -2962,7 +2998,9 @@
       "packages": [
         "python3",
         "python3-venv",
-        "python3.13"
+        "python3.13",
+        "python3-defaults",
+        "python3.12"
       ],
       "osv": [],
       "github": [
@@ -3073,7 +3111,8 @@
         "circuit-agentbox"
       ],
       "packages": [
-        "ripgrep"
+        "ripgrep",
+        "rust-ripgrep"
       ],
       "osv": [
         {
@@ -3097,7 +3136,8 @@
         "ruby-dev",
         "ruby-devel",
         "ruby-rubygems",
-        "rubygems"
+        "rubygems",
+        "ruby-defaults"
       ],
       "osv": [],
       "github": [
@@ -3114,7 +3154,8 @@
         "circuit-microshift"
       ],
       "packages": [
-        "runc"
+        "runc",
+        "runc-app"
       ],
       "osv": [
         {
@@ -3690,7 +3731,8 @@
         "circuit-wireguard"
       ],
       "packages": [
-        "wireguard-tools"
+        "wireguard-tools",
+        "wireguard"
       ],
       "osv": [],
       "github": [
@@ -3728,7 +3770,8 @@
         "zabbix-selinux-policy",
         "zabbix-server-pgsql",
         "zabbix-sql-scripts",
-        "zabbix-web-pgsql"
+        "zabbix-web-pgsql",
+        "zabbix"
       ],
       "osv": [],
       "github": [
@@ -3792,7 +3835,8 @@
         "circuit-ollama"
       ],
       "packages": [
-        "zstd"
+        "zstd",
+        "libzstd"
       ],
       "osv": [],
       "github": [

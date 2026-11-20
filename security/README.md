@@ -22,7 +22,10 @@ workflows make sure that someone hears about it.
 ## Keeping the watchlist current
 
 When a circuit starts installing something new, add it to `watchlist.json`
-in the same change: its package names, OSV packages, upstream GitHub
+in the same change: its package names, binary and source both (OSV's
+Debian, Ubuntu and Rocky feeds go by the source package, such as
+`openjdk-25` for `openjdk-25-jre-headless`; `apt-cache show` gives it as
+`Source:`, and `dnf repoquery --qf '%{sourcerpm}'` as the SRPM), OSV packages, upstream GitHub
 repository, images, and any version the circuit pins by default. An entry
 looks like this:
 
