@@ -66,11 +66,11 @@ func (v Variable) mode() string {
 func (v Variable) Matches(st VariableState) bool {
 	switch v.mode() {
 	case "global":
-		return sameValue(v.Value, st.Running)
+		return sameValue(v.Name, v.Value, st.Running)
 	case "persist_only":
-		return st.HasPersisted && sameValue(v.Value, st.Persisted)
+		return st.HasPersisted && sameValue(v.Name, v.Value, st.Persisted)
 	}
-	return sameValue(v.Value, st.Running) && st.HasPersisted && sameValue(v.Value, st.Persisted)
+	return sameValue(v.Name, v.Value, st.Running) && st.HasPersisted && sameValue(v.Name, v.Value, st.Persisted)
 }
 
 var sizeSuffix = regexp.MustCompile(`^(?i)(\d+)([KMGT])$`)
@@ -92,10 +92,10 @@ var onOff = map[string]string{"1": "ON", "on": "ON", "true": "ON", "yes": "ON", 
 // sameValue compares a wanted value with the server's as MySQL means them:
 // a boolean the server shows as ON or OFF in any of its spellings, numbers
 // as numbers (10 and 10.000000 alike), and words without case.
-func sameValue(want, have string) bool {
+func sameValue(name, want, have string) bool {
 	w, h := plain(want), strings.TrimSpace(have)
-	if strings.Contains(w, ",") || strings.Contains(h, ",") {
-		return sameSet(w, h)
+	if n := strings.ToLower(name); setVariables[n] || flagSetVariables[n] {
+		return sameSet(n, w, h)
 	}
 	if h == "ON" || h == "OFF" {
 		if b, ok := onOff[strings.ToLower(w)]; ok {
@@ -109,6 +109,24 @@ func sameValue(want, have string) bool {
 	}
 	return strings.EqualFold(w, h)
 }
+
+// setVariables are the system variables whose value is a set, which the
+// server keeps in its own order: MariaDB 11.8's, as its own
+// information_schema.SYSTEM_VARIABLES gives them (VARIABLE_TYPE SET), and
+// MySQL 8's from its manual. Any other variable, such as init_connect,
+// whose value can hold commas too, is compared exactly.
+var setVariables = map[string]bool{
+	"sql_mode": true, "log_output": true, "slave_type_conversions": true, "replica_type_conversions": true,
+	"aria_recover_options": true, "default_regex_flags": true, "log_disabled_statements": true,
+	"log_slow_disabled_statements": true, "log_slow_filter": true, "log_slow_verbosity": true,
+	"myisam_recover_options": true, "new_mode": true, "note_verbosity": true, "old_mode": true,
+	"tls_version": true, "wsrep_mode": true,
+}
+
+// flagSetVariables are sets of key=value flags, which the server lists in
+// full whatever SET named: MariaDB's FLAGSET variables, and MySQL's
+// optimizer_trace_features.
+var flagSetVariables = map[string]bool{"optimizer_switch": true, "optimizer_trace": true, "optimizer_trace_features": true}
 
 // combinationModes are the sql_mode modes MySQL and MariaDB expand into
 // others, listing the combination itself among them too. NO_AUTO_CREATE_USER
@@ -134,18 +152,14 @@ func members(v string) map[string]bool {
 }
 
 // sameSet compares a set-valued variable, such as sql_mode, which the
-// server keeps in its own order. Members given as key=value, as in
-// optimizer_switch, need only be among the server's, since it lists every
-// flag and SET changes only the ones named. Otherwise the two have to hold
-// the same members, where a combination mode such as ANSI also stands for
-// the modes it expands to.
-func sameSet(want, have string) bool {
+// server keeps in its own order. A flag set's members, such as
+// optimizer_switch's key=value flags, need only be among the server's,
+// since it lists every flag and SET changes only the ones named. Otherwise
+// the two have to hold the same members, where a combination mode such as
+// ANSI also stands for the modes it expands to.
+func sameSet(name, want, have string) bool {
 	w, h := members(want), members(have)
-	keyed := len(w) > 0
-	for m := range w {
-		keyed = keyed && strings.Contains(m, "=")
-	}
-	if keyed {
+	if flagSetVariables[name] {
 		for m := range w {
 			if !h[m] {
 				return false
