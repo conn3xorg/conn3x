@@ -197,7 +197,7 @@ func (f *jsonRun) run(dir string, args ...string) ([]byte, int, error) {
 		f.sawJSON = true
 		f.mu.Unlock()
 		if f.codes[dir] == 2 {
-			f.fakeRun.run(dir, args...)
+			_, _, _ = f.fakeRun.run(dir, args...) // records the call
 			return []byte(`{"@level":"info","@message":"Plan: 1 to add, 2 to change, 0 to destroy.","type":"change_summary","changes":{"add":1,"change":2,"import":0,"remove":0,"forget":0,"operation":"plan"}}` + "\n"), 2, nil
 		}
 	}
