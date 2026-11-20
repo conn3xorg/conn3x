@@ -16,10 +16,17 @@ RUN printf 'Acquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire
 # A mirror can still answer an error, a 520 from archive.ubuntu.com on
 # 20 Nov, and apt-get update then fails as a whole, so it's tried up to
 # five times, as the package step does (#1154).
+# The base image lags the archive. An upgrade during an apply that brings a
+# new libc6, as installing postgresql-18 from pgdg does through locales,
+# runs its postinst's systemctl daemon-reexec and cuts off any systemctl
+# still waiting on a job ("D-Bus connection terminated", circuit-litellm's
+# ubuntu2404 e2e, 20 Nov). So the image is brought up to date first, as a
+# patched host is.
 RUN sed -i -e 's#^URIs: http://archive.ubuntu.com/ubuntu/#URIs: http://archive.ubuntu.com/ubuntu/ http://mirrors.edge.kernel.org/ubuntu/#' \
            -e 's#^URIs: http://security.ubuntu.com/ubuntu/#URIs: http://security.ubuntu.com/ubuntu/ http://mirrors.edge.kernel.org/ubuntu/#' \
            /etc/apt/sources.list.d/ubuntu.sources \
  && { for wait in 1 2 4 8 -; do apt-get update && break; [ "$wait" = - ] && exit 100; sleep "$wait"; done; } \
+ && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd systemd-sysv dbus openssh-server sudo ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && systemctl enable ssh \

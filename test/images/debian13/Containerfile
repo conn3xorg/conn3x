@@ -1,7 +1,14 @@
 # Debian 13 with systemd and sshd, used as a managed host in end-to-end tests.
 FROM docker.io/library/debian:trixie
 
+# The base image lags the archive. An upgrade during an apply that brings a
+# new libc6, as installing postgresql-18 from pgdg does through locales,
+# runs its postinst's systemctl daemon-reexec and cuts off any systemctl
+# still waiting on a job ("D-Bus connection terminated", circuit-litellm's
+# ubuntu2404 e2e, 20 Nov). So the image is brought up to date first, as a
+# patched host is.
 RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd systemd-sysv dbus openssh-server sudo ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && systemctl enable ssh \
