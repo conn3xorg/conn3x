@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"regexp"
 	"strings"
 	"time"
@@ -267,7 +268,7 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			// weeks old has lists naming versions the mirror has since dropped.
 			// A first-boot apt-get update can also replace the lists while this
 			// install runs. Taking the lists lock here waits that one out too.
-			if err := Run(ctx, r, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err != nil {
+			if err := UpdateLists(ctx, r); err != nil {
 				return err
 			}
 			err = Run(ctx, r, install)
@@ -287,6 +288,37 @@ func exactDeb(name, list string) string {
 	}
 	q := ssh.Quote(name)
 	return fmt.Sprintf("%s %s 2>/dev/null | cut -f1 | grep -qxF -- %s || { echo %s >&2; exit 100; }\n", list, q, q, ssh.Quote("E: Unable to locate package "+name))
+}
+
+// updateTries and updateMaxWait are Ansible's apt update_cache_retries and
+// update_cache_retry_max_delay defaults. A mirror can fail a fetch for a
+// moment, with a timeout, a 403 or a 520, and apt-get update then fails
+// as a whole, even with another mirror listed.
+var updateTries, updateMaxWait, updateJitter = 5, 12 * time.Second, time.Second
+
+// UpdateLists runs apt-get update, trying again when a fetch failed, after
+// 1, 2, 4 and 8 seconds, at most updateMaxWait, each with up to a second
+// more at random so hosts updating together don't all retry at once, as
+// Ansible's apt does.
+func UpdateLists(ctx context.Context, r modules.Runner) error {
+	var err error
+	for try := 0; try < updateTries; try++ {
+		if try > 0 {
+			wait := min(time.Duration(1<<(try-1))*time.Second, updateMaxWait)
+			if updateJitter > 0 {
+				wait += time.Duration(rand.Int64N(int64(updateJitter)))
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+		if err = Run(ctx, r, "apt-get -q -o DPkg::Lock::Timeout=300 update"); err == nil || !strings.Contains(err.Error(), "Failed to fetch") {
+			return err
+		}
+	}
+	return fmt.Errorf("apt-get update failed %d times: %w", updateTries, err)
 }
 
 // staleLists reports whether apt failed because its package lists are
