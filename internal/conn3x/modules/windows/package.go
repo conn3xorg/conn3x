@@ -69,9 +69,8 @@ func (p Package) Validate() error {
 		}
 	}
 	if p.URL != "" {
-		u, err := url.Parse(p.URL)
-		if err != nil || (u.Scheme != "https" && (u.Scheme != "http" || !p.AllowHTTP)) || u.Host == "" || strings.ContainsFunc(p.URL, func(r rune) bool { return r < 0x21 || r == 0x7f }) {
-			return fmt.Errorf("url %q must be an https address, or http with allow_http = true", p.URL)
+		if err := validDownloadURL(p.URL, p.AllowHTTP); err != nil {
+			return err
 		}
 	}
 	if p.MaxSizeMB < 0 {
@@ -82,6 +81,17 @@ func (p Package) Validate() error {
 	}
 	_, err := msiProperties(p.Properties)
 	return err
+}
+
+// validDownloadURL checks a URL a download starts from: https, or http
+// with allowHTTP, with a host and nothing a command line could split on.
+// Save-Download checks each redirect against the same rule on the host.
+func validDownloadURL(raw string, allowHTTP bool) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && (u.Scheme != "http" || !allowHTTP)) || u.Host == "" || strings.ContainsFunc(raw, func(r rune) bool { return r < 0x21 || r == 0x7f }) {
+		return fmt.Errorf("url %q must be an https address, or http with allow_http = true", raw)
+	}
+	return nil
 }
 
 // msiProperties renders properties the way msiexec reads them: NAME="value",
