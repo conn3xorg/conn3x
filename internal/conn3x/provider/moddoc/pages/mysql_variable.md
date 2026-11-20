@@ -54,6 +54,9 @@ Both persist modes need MySQL 8.0 or later. MariaDB has no `SET PERSIST`, so on 
 - A boolean compares in any spelling, so `1`, `on` and `true` are all `ON`.
 - A number compares as a number, so `10` and `10.000000` are the same.
 - A size suffix, `K`, `M`, `G` or `T`, is turned into bytes before anything else, since `SET` doesn't take one, unlike `my.cnf`. So `32M` is `33554432`.
+- A set-valued variable, such as `sql_mode`, `log_output` or `tls_version`, compares as a set, since the server keeps its members in its own order. So `NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES` matches the server's `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`. Any other variable's value compares as a whole, commas and all, so a reordered `init_connect` is a change.
+- `ANSI` and `TRADITIONAL` in `sql_mode` stand for the modes the server expands them into, so `TRADITIONAL` matches its full list. A mode added by hand beyond those is still a change. MariaDB's other combination modes (`DB2`, `MAXDB`, `MSSQL`, `ORACLE`, `POSTGRESQL`, `MYSQL323`, `MYSQL40`) expand differently between versions, so they're refused at validate. Give the modes they stand for instead.
+- In a flag set, `optimizer_switch`, `optimizer_trace` or `optimizer_trace_features`, the `key=value` flags given only have to be among the server's, since it lists every flag and `SET` changes only the ones named.
 - Other values compare without case.
 
 **Applying.** Conn3x runs the mode's `SET`, then reads the variable back. A number or `ON`/`OFF` goes in bare, and anything else as a quoted string. MySQL rounds or caps some values, such as `innodb_buffer_pool_size` to a multiple of its chunk size. Then the step fails and names the value the server chose, so you can set that, rather than plan a change forever.

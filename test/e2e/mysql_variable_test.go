@@ -13,6 +13,7 @@ import (
 type mysqlVariableVars struct {
 	Port, KeyFile, KnownHosts string
 	Persist                   bool
+	SQLMode                   string
 }
 
 // TestMySQLVariable sets max_connections in every image's server; plans
@@ -40,7 +41,7 @@ func TestMySQLVariable(t *testing.T) {
 			}
 
 			w := newWorkdir(t, "mysql_variable")
-			w.writeAs("main.circuit.hcl", mysqlVariableVars{h.port, h.keyFile, h.knownHosts, mysql8})
+			w.writeAs("main.circuit.hcl", mysqlVariableVars{h.port, h.keyFile, h.knownHosts, mysql8, ""})
 			w.mustConn3x("init", "-no-color")
 			w.mustConn3x("apply", "-auto-approve", "-no-color")
 			if got := sql("select @@global.max_connections"); got != "500" {
@@ -72,6 +73,18 @@ func TestMySQLVariable(t *testing.T) {
 				t.Fatalf("max_connections after the second apply: %q", got)
 			}
 
+			// sql_mode in another order than the server keeps it, then a
+			// combination mode the server expands: both plan clean (#1150).
+			for _, mode := range []string{"NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES", "TRADITIONAL"} {
+				w.writeAs("main.circuit.hcl", mysqlVariableVars{h.port, h.keyFile, h.knownHosts, mysql8, mode})
+				w.mustConn3x("apply", "-auto-approve", "-no-color")
+				if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+					t.Fatalf("plan after sql_mode %s (server has %q):\n%s", mode, sql("select @@global.sql_mode"), out)
+				}
+			}
+			t.Logf("TRADITIONAL on this server: %s", sql("select @@global.sql_mode"))
+			w.writeAs("main.circuit.hcl", mysqlVariableVars{h.port, h.keyFile, h.knownHosts, mysql8, ""})
+
 			w.mustConn3x("destroy", "-auto-approve", "-no-color")
 			if got := sql("select @@global.max_connections"); got != "151" {
 				t.Fatalf("max_connections after destroy: %q, want the default 151", got)
@@ -79,7 +92,7 @@ func TestMySQLVariable(t *testing.T) {
 
 			if !mysql8 {
 				m := newWorkdir(t, "mysql_variable")
-				m.writeAs("main.circuit.hcl", mysqlVariableVars{h.port, h.keyFile, h.knownHosts, true})
+				m.writeAs("main.circuit.hcl", mysqlVariableVars{h.port, h.keyFile, h.knownHosts, true, ""})
 				m.mustConn3x("init", "-no-color")
 				out, code := m.conn3x("apply", "-auto-approve", "-no-color")
 				if code == 0 || !strings.Contains(out, "MariaDB has no SET PERSIST") {

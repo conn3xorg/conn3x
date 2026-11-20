@@ -9,6 +9,43 @@ import (
 	"testing"
 )
 
+func TestVariableSets(t *testing.T) {
+	for _, c := range []struct {
+		name, want, have string
+		same             bool
+	}{
+		// #1150: the server keeps a set's members in its own order.
+		{"sql_mode", "NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", true},
+		{"SQL_MODE", "no_engine_substitution, strict_trans_tables", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", true},
+		{"sql_mode", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", "STRICT_TRANS_TABLES", false},
+		{"sql_mode", "STRICT_TRANS_TABLES", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", false},
+		// A combination mode stands for what it expands to, and is listed too.
+		{"sql_mode", "ANSI", "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI", true},
+		{"sql_mode", "TRADITIONAL", "STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,TRADITIONAL,NO_ENGINE_SUBSTITUTION", true},
+		{"sql_mode", "ANSI,NO_BACKSLASH_ESCAPES", "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,NO_BACKSLASH_ESCAPES,ANSI", true},
+		// A mode added by hand is still drift, and so is an empty sql_mode.
+		{"sql_mode", "ANSI", "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI,STRICT_ALL_TABLES", false},
+		{"sql_mode", "ANSI", "", false},
+		{"sql_mode", "ANSI", "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY", false},
+		// Other sets, from MariaDB's own list of them.
+		{"log_output", "TABLE,FILE", "FILE,TABLE", true},
+		{"tls_version", "TLSv1.3,TLSv1.2", "TLSv1.2,TLSv1.3", true},
+		// A flag set lists every flag; only the ones named are set.
+		{"optimizer_switch", "mrr=on,index_merge=off", "index_merge=off,index_merge_union=on,mrr=on,mrr_cost_based=on", true},
+		{"optimizer_switch", "mrr=off", "index_merge=off,mrr=on", false},
+		// A string with commas in it is compared as a whole, not as a set:
+		// a reordered init_connect is a different statement, and one with
+		// more in it than asked for isn't the one asked for.
+		{"init_connect", "SET autocommit=0, sql_mode='STRICT_ALL_TABLES'", "SET autocommit=0, sql_mode='STRICT_ALL_TABLES'", true},
+		{"init_connect", "SET autocommit=0, sql_mode='STRICT_ALL_TABLES'", "SET sql_mode='STRICT_ALL_TABLES', autocommit=0", false},
+		{"init_connect", "SET autocommit=0", "SET autocommit=0, sql_mode='ANSI'", false},
+	} {
+		if got := sameValue(c.name, c.want, c.have); got != c.same {
+			t.Errorf("sameValue(%q, %q, %q) = %v", c.name, c.want, c.have, got)
+		}
+	}
+}
+
 func TestVariableValues(t *testing.T) {
 	for _, c := range []struct {
 		want, have string
@@ -26,7 +63,7 @@ func TestVariableValues(t *testing.T) {
 		{"2G", "1073741824", false},
 		{"STRICT_TRANS_TABLES", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", false},
 	} {
-		if got := sameValue(c.want, c.have); got != c.same {
+		if got := sameValue("max_connections", c.want, c.have); got != c.same {
 			t.Errorf("sameValue(%q, %q) = %v", c.want, c.have, got)
 		}
 	}
@@ -46,6 +83,7 @@ func TestVariableValues(t *testing.T) {
 	for _, v := range []Variable{
 		{Name: "", Value: "1"}, {Name: "max connections", Value: "1"}, {Name: "a;drop", Value: "1"},
 		{Name: "x", Value: "1", Mode: "session"}, {Name: "x", Value: "a\nb"}, {Name: strings.Repeat("x", 65), Value: "1"},
+		{Name: "sql_mode", Value: "ORACLE"}, {Name: "SQL_MODE", Value: "postgresql,STRICT_TRANS_TABLES"},
 	} {
 		if v.Validate() == nil {
 			t.Errorf("%+v: no error", v)

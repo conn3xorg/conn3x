@@ -20,7 +20,7 @@ func containerSchema() providers.Schema {
 			"id":        {Type: cty.String, Computed: true},
 			"revision":  revisionAttr(),
 			"name":      {Type: cty.String, Required: true, Description: "The container's name."},
-			"image":     {Type: cty.String, Required: true, Description: "The image, such as docker.io/library/nginx:1.27. Write it in full: a new tag recreates the container, and a new digest behind the same tag doesn't."},
+			"image":     {Type: cty.String, Required: true, Description: "The image, such as docker.io/library/nginx:1.30. Write it in full: a new tag recreates the container, and a new digest behind the same tag doesn't."},
 			"ports":     {Type: cty.List(cty.String), Optional: true, Description: "Published ports, each host:container, such as 8080:80, optionally with an address in front and /tcp, /udp or /sctp after."},
 			"volumes":   {Type: cty.List(cty.String), Optional: true, Description: "Mounts, each source:destination[:options], with an absolute host path or a volume name as the source. Options are ro, rw, z and Z."},
 			"env":       {Type: cty.Map(cty.String), Optional: true, Sensitive: true, Description: "Environment variables. Passed on standard input, not the command line, so they don't show in the host's process list. Only the ones you set are compared."},
