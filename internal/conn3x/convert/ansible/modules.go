@@ -1620,6 +1620,7 @@ func firewalldModule(in *input) ([]step, string) {
 	attrs = in.optional(attrs, "service", "service")
 	attrs = in.optional(attrs, "port", "port")
 	attrs = in.optional(attrs, "rich_rule", "rich_rule")
+	attrs = in.optional(attrs, "source", "source")
 	return one("firewalld", attrs)
 }
 

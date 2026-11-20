@@ -1,0 +1,24 @@
+circuit "box" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tool" {
+    package {
+      name = "firewalld"
+    }
+  }
+{{if .Rule}}
+  step "pods" {
+    firewalld {
+      zone   = "trusted"
+      source = "10.42.0.0/16"
+    }
+  }
+{{end}}
+}

@@ -75,7 +75,7 @@ func deleteByDefault(req providers.PlanResourceChangeRequest) providers.PlanReso
 
 func firewalldSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "A service, port or rich rule in firewalld, now and after reboots.",
+		Description: "A service, port, rich rule or source in firewalld, now and after reboots.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":            {Type: cty.String, Computed: true},
 			"revision":      revisionAttr(),
@@ -83,6 +83,7 @@ func firewalldSchema() providers.Schema {
 			"service":       {Type: cty.String, Optional: true, Description: "firewalld service name, such as http. Set this or port, or use rich_rule instead."},
 			"port":          {Type: cty.String, Optional: true, Description: "Port and protocol, such as 8080/tcp or 60000-61000/udp. Set this or service, or use rich_rule instead."},
 			"rich_rule":     {Type: cty.String, Optional: true, Description: "A rule in firewalld's rich language, such as rule family=ipv4 source address=10.0.0.0/8 port port=5432 protocol=tcp accept, for a port open to one network only. Set it instead of service or port. It's checked with --query-rich-rule, which matches it however firewalld spells it back."},
+			"source":        {Type: cty.String, Optional: true, Description: "An address or network, such as 10.42.0.0/16, to bind to zone, so traffic from it is handled by that zone's rules: how a cluster's pods, a management VLAN or a VPN are let in. Use it instead of service, port or rich_rule. A network is written as its own address. A source bound to another zone fails the step rather than being moved."},
 			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: ruleOnRemove},
 			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the running and permanent firewall both allow it."},
 			"confirm_after": ruleConfirmAfter(),
@@ -92,7 +93,7 @@ func firewalldSchema() providers.Schema {
 }
 
 func firewalldFrom(v cty.Value) firewall.Firewalld {
-	return firewall.Firewalld{Zone: stringOr(v.GetAttr("zone"), ""), Service: stringOr(v.GetAttr("service"), ""), Port: stringOr(v.GetAttr("port"), ""), RichRule: stringOr(v.GetAttr("rich_rule"), "")}
+	return firewall.Firewalld{Zone: stringOr(v.GetAttr("zone"), ""), Service: stringOr(v.GetAttr("service"), ""), Port: stringOr(v.GetAttr("port"), ""), RichRule: stringOr(v.GetAttr("rich_rule"), ""), Source: stringOr(v.GetAttr("source"), "")}
 }
 
 func validateFirewalld(cfg cty.Value) tfdiags.Diagnostics {
@@ -127,7 +128,7 @@ func applyFirewalld(ctx context.Context, req providers.ApplyResourceChangeReques
 				return f.Undo(present, runtime, permanent), err
 			}
 			if err := guardRule(ctx, h, v, undo, func() error { return firewall.ApplyFirewalld(ctx, h, f, present) }); err != nil {
-				return fmt.Errorf("firewalld %s%s%s: %w", f.Service, f.Port, f.RichRule, err)
+				return fmt.Errorf("firewalld %s%s%s%s: %w", f.Service, f.Port, f.RichRule, f.Source, err)
 			}
 			return nil
 		}

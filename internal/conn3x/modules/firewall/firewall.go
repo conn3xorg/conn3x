@@ -26,6 +26,7 @@ type Firewalld struct {
 	Service  string
 	Port     string // such as 8080/tcp or 60000-61000/udp
 	RichRule string // such as rule family=ipv4 source address=10.0.0.0/8 accept
+	Source   string // an address or network bound to the zone, such as 10.42.0.0/16
 }
 
 var firewalldPort = regexp.MustCompile(`^(\d+)(?:-(\d+))?/(tcp|udp|sctp|dccp)$`)
@@ -36,14 +37,16 @@ func (f Firewalld) Validate() error {
 		return fmt.Errorf("zone %q is not a firewalld zone name", f.Zone)
 	}
 	set := 0
-	for _, v := range []string{f.Service, f.Port, f.RichRule} {
+	for _, v := range []string{f.Service, f.Port, f.RichRule, f.Source} {
 		if v != "" {
 			set++
 		}
 	}
 	switch {
 	case set != 1:
-		return errors.New("set exactly one of service, port or rich_rule")
+		return errors.New("set exactly one of service, port, rich_rule or source")
+	case f.Source != "":
+		return validSource(f.Source)
 	case f.RichRule != "" && !strings.HasPrefix(strings.TrimSpace(f.RichRule), "rule "):
 		return fmt.Errorf("rich_rule %q must start with rule, as firewalld's rich language does", f.RichRule)
 	case strings.ContainsAny(f.RichRule, "\x00\r\n"):
@@ -78,6 +81,8 @@ func (f Firewalld) option(verb string) string {
 	switch {
 	case f.Port != "":
 		opt = fmt.Sprintf("--%s-port=%s", verb, ssh.Quote(f.Port))
+	case f.Source != "":
+		opt = fmt.Sprintf("--%s-source=%s", verb, ssh.Quote(f.Source))
 	case f.RichRule != "":
 		// firewalld normalises a rich rule's text, and --query-rich-rule
 		// matches it however it's spelled, so it's compared by query.
@@ -116,9 +121,56 @@ func ApplyFirewalld(ctx context.Context, r modules.Runner, f Firewalld, present 
 	if present {
 		verb = "add"
 	}
+	if present && f.Source != "" {
+		if err := sourceFree(ctx, r, f); err != nil {
+			return err
+		}
+	}
 	o := f.option(verb)
 	res, err := r.Run(ctx, fmt.Sprintf("%s\nfirewall-cmd %s >/dev/null && firewall-cmd --permanent %s >/dev/null", firewalldRunning, o, o), nil)
 	return check(res, err)
+}
+
+// validSource takes an address, or a network written as its own address,
+// as firewalld keeps a source as given: 10.43.0.1/16 would be stored as
+// that, and --query-source=10.43.0.0/16 would say no.
+func validSource(s string) error {
+	if net.ParseIP(s) != nil {
+		return nil
+	}
+	ip, n, err := net.ParseCIDR(s)
+	if err != nil {
+		return fmt.Errorf("source %q is not an address or CIDR", s)
+	}
+	if !ip.Equal(n.IP) {
+		return fmt.Errorf("source %q isn't the network's own address; write it as %s", s, n)
+	}
+	return nil
+}
+
+// sourceFree fails when the source is bound to another zone, running or
+// permanent: a source belongs to one zone, firewalld refuses a second with
+// a ZONE_CONFLICT that doesn't say which, and moving it is the author's
+// call to make, not the step's.
+func sourceFree(ctx context.Context, r modules.Runner, f Firewalld) error {
+	src := ssh.Quote(f.Source)
+	zone := "$(firewall-cmd --get-default-zone)"
+	if f.Zone != "" {
+		zone = ssh.Quote(f.Zone)
+	}
+	res, err := r.Run(ctx, fmt.Sprintf(`%s
+want=%s
+for p in '' --permanent; do
+  z=$(firewall-cmd $p --get-zone-of-source=%s 2>/dev/null) || continue
+  [ "$z" = "$want" ] || { echo "$z"; exit 0; }
+done`, firewalldRunning, zone, src), nil)
+	if err := check(res, err); err != nil {
+		return err
+	}
+	if other := strings.TrimSpace(string(res.Stdout)); other != "" {
+		return fmt.Errorf("source %s is already bound to zone %s, and firewalld puts a source in one zone only; remove it there first, such as with firewall-cmd --zone=%s --remove-source=%s and --permanent", f.Source, other, other, f.Source)
+	}
+	return nil
 }
 
 // Undo is what takes back ApplyFirewalld(f, present), given whether the

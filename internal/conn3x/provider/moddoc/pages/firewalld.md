@@ -54,10 +54,20 @@ step "postgres" {
   }
 }
 ```
+Let a cluster's pod network in, by binding it to the trusted zone:
+
+```hcl
+step "pods" {
+  firewalld {
+    zone   = "trusted"
+    source = "10.42.0.0/16"
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
-**Reading.** On every plan, Conn3x asks `firewall-cmd` whether the zone allows the service or port, once for the running firewall and once with `--permanent`. `in_sync` is true only when both allow it. A rich rule is asked about with `--query-rich-rule`, which matches it however firewalld spells it back: `firewall-cmd --list-rich-rules` adds quotes, for one, so the text isn't compared. firewalld must be running: if it isn't, the step fails and asks you to install and start it in an earlier step.
+**Reading.** On every plan, Conn3x asks `firewall-cmd` whether the zone allows the service or port, once for the running firewall and once with `--permanent`. `in_sync` is true only when both allow it. A source is asked about with `--query-source`. firewalld keeps a source as written, so a network has to be written as its own address: `10.42.0.0/16`, not `10.42.0.1/16`. A source belongs to one zone only, so adding one that's already bound to another zone, running or permanent, fails the step and names that zone, rather than moving it. A rich rule is asked about with `--query-rich-rule`, which matches it however firewalld spells it back: `firewall-cmd --list-rich-rules` adds quotes, for one, so the text isn't compared. firewalld must be running: if it isn't, the step fails and asks you to install and start it in an earlier step.
 
 **Applying.** Conn3x runs `firewall-cmd --add-service` or `--add-port`, then the same with `--permanent`, so the rule takes effect now and survives a reload or a reboot. Without `zone`, both go to firewalld's default zone.
 
@@ -73,4 +83,4 @@ When you delete a `firewalld` step, `on_remove` decides what happens on the host
 
 ## From Ansible
 
-`conn3x convert ansible` turns `ansible.posix.firewalld` tasks that set `service`, `port` or `rich_rule` into `firewalld` steps. A task must set both `permanent: true` and `immediate: true`, since Conn3x always changes both; one that doesn't stays a TODO, as does a task with a `state` other than `enabled` or with any other argument, such as `source` or `interface`.
+`conn3x convert ansible` turns `ansible.posix.firewalld` tasks that set `service`, `port`, `rich_rule` or `source` into `firewalld` steps. A task must set both `permanent: true` and `immediate: true`, since Conn3x always changes both; one that doesn't stays a TODO, as does a task with a `state` other than `enabled` or with any other argument, such as `interface`.
