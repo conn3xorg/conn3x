@@ -57,7 +57,7 @@ step "team" {
 
 **Creating.** A new user is created with `useradd -m`, which also creates its home directory. `system = true` adds `-r` for a system account, and only matters when the account is created. `create_home = false` creates it with `useradd -M` instead, without a home directory, as a service account usually is. It also only matters at creation: a home directory that's already there is left alone, and changing it later changes nothing on the host.
 
-**Comment.** `comment` is the account's comment, or GECOS, field: a full name or a description such as "Deploy user". It's read from `/etc/passwd`, so one changed by hand plans a change back, and it's set with `useradd -c` or `usermod -c`. It can't hold a colon or a line break, since `/etc/passwd` splits its fields on them. Leave it out and the field is left alone.
+**Comment.** `comment` is the account's comment, or GECOS, field: a full name or a description such as "Deploy user". It's read from `/etc/passwd`, so one changed by hand plans a change back, and it's set with `useradd -c` or `usermod -c`. It can't hold a colon or a line break, since `/etc/passwd` splits its fields on them. The whole field is compared, as Ansible compares it. So a user Debian's `adduser` made, whose field is `Deploy user,,,` (room, phones and so on left empty), plans one change against `comment = "Deploy user"`, and `usermod -c` drops the commas. Leave it out and the field is left alone.
 
 **Changing.** When an existing account differs, Conn3x runs `usermod` with the attributes you set. Changing `home` this way updates the account but doesn't move the old directory's files.
 
