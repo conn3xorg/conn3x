@@ -144,6 +144,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_domain_membership":    {winMembershipSchema, validateWinMembership, planWinMembership, readWinMembership, applyWinMembership, upgradeWith(winMembershipSchema)},
 	"conn3x_windows_dns_client":           {winDNSClientSchema, validateWinDNSClient, planWinDNSClient, readWinDNSClient, applyWinDNSClient, upgradeWith(winDNSClientSchema)},
 	"conn3x_windows_feature":              {winFeatureSchema, validateWinFeature, planWinFeature, readWinFeature, applyWinFeature, upgradeWith(winFeatureSchema)},
+	"conn3x_windows_download":             {winDownloadSchema, validateWinDownload, planWinDownload, readWinDownload, applyWinDownload, upgradeWith(winDownloadSchema)},
 	"conn3x_windows_file":                 {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
 	"conn3x_windows_group":                {winGroupSchema, validateWinGroup, planWinGroup, readWinGroup, applyWinGroup, upgradeWith(winGroupSchema)},
 	"conn3x_windows_iis_app_pool":         {winAppPoolSchema, validateWinAppPool, planWinAppPool, readWinAppPool, applyWinAppPool, upgradeWith(winAppPoolSchema)},
