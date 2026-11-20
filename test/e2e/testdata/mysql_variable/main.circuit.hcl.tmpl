@@ -1,0 +1,38 @@
+circuit "db" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # The running value only; on_remove = "delete" puts the default back.
+  step "max_connections" {
+    mysql_variable {
+      name      = "max_connections"
+      value     = "500"
+      on_remove = "delete"
+    }
+  }
+{{if .Persist}}
+  # A boolean, given as 1, which the server shows as ON.
+  step "slow_query_log" {
+    mysql_variable {
+      name  = "slow_query_log"
+      value = "1"
+      mode  = "persist"
+    }
+  }
+
+  # Read only at startup: written to mysqld-auto.cnf alone, in bytes.
+  step "innodb_log_buffer_size" {
+    mysql_variable {
+      name  = "innodb_log_buffer_size"
+      value = "32M"
+      mode  = "persist_only"
+    }
+  }
+{{end}}
+}

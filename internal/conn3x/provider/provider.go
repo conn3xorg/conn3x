@@ -150,6 +150,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_iis_site":             {winSiteSchema, validateWinSite, planWinSite, readWinSite, applyWinSite, upgradeWith(winSiteSchema)},
 	"conn3x_windows_firewall_rule":        {winFirewallRuleSchema, validateWinFirewallRule, planWinFirewallRule, readWinFirewallRule, applyWinFirewallRule, upgradeWith(winFirewallRuleSchema)},
 	"conn3x_mysql_database":               {mysqlDatabaseSchema, validateMysqlDatabase, planMysqlDatabase, readMysqlDatabase, applyMysqlDatabase, upgradeWith(mysqlDatabaseSchema)},
+	"conn3x_mysql_variable":               {mysqlVariableSchema, validateMysqlVariable, planMysqlVariable, readMysqlVariable, applyMysqlVariable, upgradeWith(mysqlVariableSchema)},
 	"conn3x_mysql_user":                   {mysqlUserSchema, validateMysqlUser, planMysqlUser, readMysqlUser, applyMysqlUser, upgradeWith(mysqlUserSchema)},
 	"conn3x_postgresql_database":          {pgDatabaseSchema, validatePgDatabase, planPgDatabase, readPgDatabase, applyPgDatabase, upgradeWith(pgDatabaseSchema)},
 	"conn3x_postgresql_extension":         {pgExtensionSchema, validatePgExtension, planPgExtension, readPgExtension, applyPgExtension, upgradeWith(pgExtensionSchema)},

@@ -658,6 +658,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"postgresql_privs":        pgPrivsModule,
 	"mysql_db":                mysqlDatabaseModule,
 	"mysql_user":              mysqlUserModule,
+	"mysql_variables":         mysqlVariableModule,
 	"hostname":                nameOnly("hostname"),
 	"timezone":                nameOnly("timezone"),
 	"firewalld":               firewalldModule,
@@ -1508,6 +1509,37 @@ func mysqlDatabaseModule(in *input) ([]step, string) {
 
 // mysqlUserModule converts community.mysql.mysql_user. Only database-level
 // privileges convert, since those are what the step's grants holds.
+// mysqlVariableModule converts mysql_variables, from community.mysql or
+// ansible.mysql: variable, value and mode.
+func mysqlVariableModule(in *input) ([]step, string) {
+	if k := in.mysqlUnmodelled(); k != "" {
+		return nil, "sets " + k + ", which mysql_variable doesn't offer yet"
+	}
+	if !in.has("value") {
+		return nil, "has no value, so Ansible only reads the variable"
+	}
+	name, value := in.str("variable"), in.str("value")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	attrs := []attr{s("name", name), s("value", value)}
+	switch mode := in.str("mode"); mode {
+	case "", "global":
+	case "persist", "persist_only":
+		attrs = append(attrs, s("mode", mode))
+	default:
+		return nil, fmt.Sprintf("has mode %q, which Ansible refuses", mode)
+	}
+	var notes []string
+	if sizeSuffixed.MatchString(strings.TrimSpace(value)) {
+		notes = append(notes, "Ansible sends "+value+" to SET as a string, which MySQL refuses for a number; mysql_variable turns the suffix into bytes, so this step sets it where the task failed.")
+	}
+	return one("mysql_variable", attrs, notes...)
+}
+
+// sizeSuffixed is a value with a K, M, G or T suffix, as my.cnf takes it.
+var sizeSuffixed = regexp.MustCompile(`^(?i)\d+[KMGT]$`)
+
 func mysqlUserModule(in *input) ([]step, string) {
 	if st := in.str("state"); st != "" && st != "present" {
 		return nil, fmt.Sprintf("has state %q; mysql_user only makes a user, and drops it only when the step is removed with on_remove = \"delete\"", st)
