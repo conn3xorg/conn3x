@@ -1126,6 +1126,7 @@ func userModule(in *input) ([]step, string) {
 	}
 	attrs = in.optional(attrs, "home", "home")
 	attrs = in.optional(attrs, "shell", "shell")
+	attrs = in.optional(attrs, "comment", "comment")
 	if in.has("system") {
 		attrs = append(attrs, attr{key: "system", val: cty.BoolVal(in.bool("system", false))})
 	}

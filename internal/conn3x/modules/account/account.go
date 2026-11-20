@@ -31,7 +31,8 @@ type UserSpec struct {
 	AppendGroups bool
 	Home         *string
 	Shell        *string
-	System       bool // only used when creating
+	Comment      *string // the GECOS field, such as a full name
+	System       bool    // only used when creating
 	// NoHome creates the user without a home directory (useradd -M), as a
 	// service account usually is. Only used when creating.
 	NoHome bool
@@ -50,12 +51,13 @@ func (s UserSpec) missingGroups(u User) []string {
 
 // User is a user as it is.
 type User struct {
-	Exists bool
-	UID    int
-	Group  string
-	Groups []string
-	Home   string
-	Shell  string
+	Exists  bool
+	UID     int
+	Group   string
+	Groups  []string
+	Home    string
+	Shell   string
+	Comment string
 }
 
 // Validate checks a UserSpec before anything runs on a host.
@@ -81,6 +83,10 @@ func (s UserSpec) Validate() error {
 	if s.UID != nil && *s.UID < 0 {
 		return fmt.Errorf("uid must not be negative")
 	}
+	// /etc/passwd is one line per user, fields split by colons.
+	if s.Comment != nil && strings.ContainsAny(*s.Comment, ":\x00\r\n") {
+		return fmt.Errorf("comment %q can't hold a colon or a line break: /etc/passwd splits its fields on them", *s.Comment)
+	}
 	return nil
 }
 
@@ -105,7 +111,7 @@ func ReadUser(ctx context.Context, r modules.Runner, name string) (User, error) 
 		return User{}, fmt.Errorf("getent passwd %s: unexpected output %q", name, res.Stdout)
 	}
 	uid, _ := strconv.Atoi(fields[2])
-	u := User{Exists: true, UID: uid, Home: fields[5], Shell: fields[6]}
+	u := User{Exists: true, UID: uid, Comment: fields[4], Home: fields[5], Shell: fields[6]}
 
 	gres, err := r.Run(ctx, "getent group -- "+ssh.Quote(fields[3]), nil)
 	if err != nil {
@@ -139,7 +145,8 @@ func UserNeedsChange(s UserSpec, u User) bool {
 	if s.UID != nil && *s.UID != u.UID ||
 		s.Group != nil && *s.Group != u.Group ||
 		s.Home != nil && *s.Home != u.Home ||
-		s.Shell != nil && *s.Shell != u.Shell {
+		s.Shell != nil && *s.Shell != u.Shell ||
+		s.Comment != nil && *s.Comment != u.Comment {
 		return true
 	}
 	if s.Groups != nil && s.AppendGroups {
@@ -180,6 +187,9 @@ func ApplyUser(ctx context.Context, r modules.Runner, s UserSpec) error {
 	}
 	if s.Home != nil {
 		args = append(args, "-d", ssh.Quote(*s.Home))
+	}
+	if s.Comment != nil {
+		args = append(args, "-c", ssh.Quote(*s.Comment))
 	}
 	if s.Shell != nil {
 		args = append(args, "-s", ssh.Quote(*s.Shell))

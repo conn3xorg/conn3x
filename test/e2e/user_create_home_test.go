@@ -33,6 +33,9 @@ func TestUserCreateHome(t *testing.T) {
 	if hasHome() {
 		t.Fatal("create_home = false made /home/conn3xsvc")
 	}
+	if got := strings.Split(strings.TrimSpace(h.exec("", "getent", "passwd", "conn3xsvc")), ":")[4]; got != "Conn3x service, test" {
+		t.Fatalf("comment = %q", got)
+	}
 	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 		t.Fatalf("plan after apply:\n%s", out)
 	}

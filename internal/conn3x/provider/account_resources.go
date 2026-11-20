@@ -20,7 +20,7 @@ import (
 
 // Attributes the configuration may leave unset; the host's values are then
 // recorded and left alone.
-var userObserved = []string{"uid", "group", "groups", "home", "shell"}
+var userObserved = []string{"uid", "group", "groups", "home", "shell", "comment"}
 
 func userSchema() providers.Schema {
 	return providers.Schema{
@@ -36,6 +36,7 @@ func userSchema() providers.Schema {
 				"append":      {Type: cty.Bool, Optional: true, Description: "true makes groups the ones the user must be in, adding any it's missing with usermod -a, and leaves the other groups it's in alone. Defaults to false, where groups is the complete list."},
 				"home":        {Type: cty.String, Optional: true, Computed: true, Description: "Home directory. Created with the user."},
 				"shell":       {Type: cty.String, Optional: true, Computed: true, Description: "Login shell."},
+				"comment":     {Type: cty.String, Optional: true, Computed: true, Description: "The account's comment, or GECOS, field, such as a full name or \"Deploy user\", set with -c. It can't hold a colon or a line break."},
 				"system":      {Type: cty.Bool, Optional: true, Description: "Create as a system account."},
 				"create_home": {Type: cty.Bool, Optional: true, Description: "false creates the user without a home directory, with useradd -M, as a service account usually is. Defaults to true. Like system, it only matters when the user is created, and a home directory that's already there is left alone."},
 				"password_wo": {
@@ -65,7 +66,7 @@ func userSpec(cfg cty.Value) account.UserSpec {
 		i := int(n)
 		s.UID = &i
 	}
-	for attr, dst := range map[string]**string{"group": &s.Group, "home": &s.Home, "shell": &s.Shell} {
+	for attr, dst := range map[string]**string{"group": &s.Group, "home": &s.Home, "shell": &s.Shell, "comment": &s.Comment} {
 		if v := cfg.GetAttr(attr); known(v) {
 			str := v.AsString()
 			*dst = &str
@@ -102,6 +103,7 @@ func observedUser(state cty.Value) account.User {
 	u.Group = stringOr(state.GetAttr("group"), "")
 	u.Home = stringOr(state.GetAttr("home"), "")
 	u.Shell = stringOr(state.GetAttr("shell"), "")
+	u.Comment = stringOr(state.GetAttr("comment"), "")
 	if v := state.GetAttr("groups"); known(v) {
 		for it := v.ElementIterator(); it.Next(); {
 			_, e := it.Element()
@@ -202,6 +204,7 @@ func userState(base cty.Value, u account.User) cty.Value {
 	vals["group"] = cty.StringVal(u.Group)
 	vals["home"] = cty.StringVal(u.Home)
 	vals["shell"] = cty.StringVal(u.Shell)
+	vals["comment"] = cty.StringVal(u.Comment)
 	// With append, state keeps the listed groups the user is in, so the
 	// groups it's in besides those never show as a change.
 	if a, listed := vals["append"], vals["groups"]; known(a) && a.True() && known(listed) {

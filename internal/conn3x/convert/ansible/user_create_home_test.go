@@ -24,3 +24,10 @@ func TestConvertUserCreateHome(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertUserComment(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  tasks:\n    - user: {name: deploy, comment: Deploy user, shell: /bin/bash}\n")
+	if hcl := strings.Join(strings.Fields(string(res.HCL)), " "); res.Converted != 1 || len(res.Review) != 0 || !strings.Contains(hcl, `comment = "Deploy user"`) {
+		t.Errorf("converted %d, review %+v:\n%s", res.Converted, res.Review, res.HCL)
+	}
+}

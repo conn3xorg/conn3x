@@ -159,3 +159,27 @@ func TestApplyUserCreateNoHome(t *testing.T) {
 		t.Errorf("useradd for a user without a home: %s", last)
 	}
 }
+
+// A comment is the passwd file's fifth field: read from it, set with -c.
+func TestUserComment(t *testing.T) {
+	h := &host{answers: map[string]string{"getent passwd": "deploy:x:1001:1001:Old name:/home/deploy:/bin/bash\n", "getent group": "deploy:x:1001:\n", "id -Gn": "deploy\n"}}
+	u, err := ReadUser(ctx, h, "deploy")
+	if err != nil || u.Comment != "Old name" {
+		t.Fatalf("read %+v, %v", u, err)
+	}
+	s := UserSpec{Name: "deploy", Comment: ptr("Deploy user, ops")}
+	if !UserNeedsChange(s, u) || UserNeedsChange(UserSpec{Name: "deploy", Comment: ptr("Old name")}, u) || UserNeedsChange(UserSpec{Name: "deploy"}, u) {
+		t.Error("UserNeedsChange on the comment")
+	}
+	if err := ApplyUser(ctx, h, s); err != nil {
+		t.Fatal(err)
+	}
+	if last := h.ran[len(h.ran)-1]; !strings.Contains(last, "usermod -c 'Deploy user, ops' -- 'deploy'") {
+		t.Errorf("usermod: %s", last)
+	}
+	for _, bad := range []string{"a:b", "two\nlines"} {
+		if (UserSpec{Name: "deploy", Comment: ptr(bad)}).Validate() == nil {
+			t.Errorf("comment %q passed", bad)
+		}
+	}
+}
