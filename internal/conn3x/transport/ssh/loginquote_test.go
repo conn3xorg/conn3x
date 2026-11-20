@@ -50,12 +50,17 @@ func TestLoginQuote(t *testing.T) {
 // csh and tcsh refuse the LC_ALL=C every Run starts with, and that reads
 // as a csh login shell, not as the command failing.
 func TestCshRefused(t *testing.T) {
-	for _, s := range []string{"LC_ALL=C: Command not found.\n", "  LC_ALL=C: Command not found.", "Unmatched '''.\nUnmatched '''.\n"} {
+	for _, s := range []string{
+		"LC_ALL=C: Command not found.\n", "  LC_ALL=C: Command not found.", "Unmatched '''.\nUnmatched '''.\n", "Unmatched '''.\r\n\nUnmatched '''.\r\n", "Unmatched '''.\nUnmatched '''.\na: Undefined variable.\n",
+		// tcsh's translations, as Foothills read them from tcsh 6.24.
+		"LC_ALL=C: Befehl nicht gefunden.", "LC_ALL=C: Commande introuvable.", "LC_ALL=C: Comando no encontrado.", "LC_ALL=C: コマンドが見つかりません.",
+		"Überflüssiges '''.", "''' sans correspondance.", "No se ha hallado correspondencia con '''.", "''' が対応しません.",
+	} {
 		if !cshRefused([]byte(s)) {
 			t.Errorf("%q not read as csh", s)
 		}
 	}
-	for _, s := range []string{"", "sh: 1: foo: not found", "make: LC_ALL=C: Command not found."} {
+	for _, s := range []string{"", "sh: 1: foo: not found", "make: LC_ALL=C: Command not found.", "echo '''\nother output", "other output\nUnmatched '''."} {
 		if cshRefused([]byte(s)) {
 			t.Errorf("%q read as csh", s)
 		}

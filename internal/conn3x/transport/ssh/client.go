@@ -845,10 +845,19 @@ var ErrCshLoginShell = errors.New("the SSH user's login shell is csh or tcsh, wh
 // cshRefused reports whether stderr is csh or tcsh refusing a command:
 // the LC_ALL=C prefix every Run starts with, or, for a script with a line
 // break, the quote around it, which they reject before running anything.
-// sh says "Unterminated quoted string" for the latter, so this is theirs.
+// tcsh translates both, so this matches what every translation keeps: the
+// prefix's name, which no POSIX shell or fish prints since they take it,
+// and, on the first line, three single quotes in a row, its quoting of the
+// quote it couldn't match, in a sentence ending in a full stop. Lines
+// after it can be other complaints about the same script.
 func cshRefused(stderr []byte) bool {
 	s := bytes.TrimSpace(stderr)
-	return bytes.HasPrefix(s, []byte("LC_ALL=C: Command not found.")) || bytes.HasPrefix(s, []byte("Unmatched '"))
+	if bytes.HasPrefix(s, []byte("LC_ALL=C: ")) {
+		return true
+	}
+	first, _, _ := bytes.Cut(s, []byte("\n"))
+	first = bytes.TrimSpace(first)
+	return bytes.Contains(first, []byte("'''")) && bytes.HasSuffix(first, []byte("."))
 }
 
 // windowsShellRefused reports whether stderr is a Windows shell refusing the
