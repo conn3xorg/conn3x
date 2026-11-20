@@ -12,9 +12,10 @@ $running = [string](Get-ItemProperty -LiteralPath "$names\ActiveComputerName").C
 if ($running -eq $A.name) {
   # Asking for the name the host runs under undoes a rename waiting for its
   # reboot. Rename-Computer refuses that ("the new name is the same as the
-  # current name"), so the two values it set for the next boot go back.
-  Set-ItemProperty -LiteralPath "$names\ComputerName" -Name ComputerName -Value $running -ErrorAction Stop
-  Set-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' -Name 'NV Hostname' -Value $A.name -ErrorAction Stop
+  # current name"), so it goes through Win32_ComputerSystem.Rename, Windows'
+  # own rename, which sets everything a rename sets for the next boot.
+  $r = Invoke-CimMethod -InputObject (Get-CimInstance Win32_ComputerSystem) -MethodName Rename -Arguments @{ Name = $A.name } -ErrorAction Stop
+  if ($r.ReturnValue -ne 0) { throw "Win32_ComputerSystem.Rename returned $($r.ReturnValue)" }
 } else {
   # Never -Restart: reboots are their own step, so they show in the plan.
   Rename-Computer -NewName $A.name -Force -ErrorAction Stop -WarningAction SilentlyContinue

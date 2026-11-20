@@ -26,7 +26,7 @@ step "restart_if_needed" {
 
 **Reading.** On every plan, Conn3x reads the name the host is running under and the one it will have after a reboot, from `ActiveComputerName` and `ComputerName` under `HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName`. `in_sync` is true when the name for the next boot is `name`, so the plan after a rename is clean even before the reboot. `reboot_required` is true while the two differ.
 
-**Applying.** Conn3x runs `Rename-Computer -NewName` without `-Restart`, then reads the name back. Asking for the name the host is running under, while another one waits for the reboot, undoes that rename: `Rename-Computer` refuses it, so Conn3x puts back the two values it set, `ComputerName` and the TCP/IP `NV Hostname`.
+**Applying.** Conn3x runs `Rename-Computer -NewName` without `-Restart`, then reads the name back. Asking for the name the host is running under, while another one waits for the reboot, undoes that rename: `Rename-Computer` refuses it as the name the host already has, so Conn3x renames through `Win32_ComputerSystem.Rename` instead, Windows' own rename, which sets everything for the next boot that a rename does.
 
 **Reboots.** The step never reboots. The new name takes effect at the next one, which a [`windows_reboot`](/modules/windows_reboot) step with `only_if_pending = true` does when Windows has one pending.
 
