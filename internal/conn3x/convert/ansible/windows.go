@@ -344,6 +344,33 @@ func winOptionalFeatureModule(in *input) ([]step, string) {
 	return steps, ""
 }
 
+// winLineinfileModule converts community.windows.win_lineinfile the way
+// lineModule converts lineinfile, as a windows_line step. That step keeps the
+// file's encoding and line endings, where Ansible's newline rewrites every
+// line ending, so the default carries a note and anything else stays a TODO.
+func winLineinfileModule(in *input) ([]step, string) {
+	if in.has("validate") {
+		return nil, "sets validate, which windows_line doesn't offer"
+	}
+	if in.bool("backup", false) {
+		return nil, "sets backup, which windows_line doesn't offer"
+	}
+	if e := strings.ToLower(in.str("encoding")); e != "" && e != "auto" {
+		return nil, fmt.Sprintf("sets encoding %q; windows_line keeps the file's own encoding, UTF-8 or UTF-16 LE", e)
+	}
+	if n := strings.ToLower(in.str("newline")); n != "" && n != "windows" {
+		return nil, fmt.Sprintf("sets newline %q, which rewrites every line ending; windows_line keeps the file's own", n)
+	}
+	in.ignore("encoding", "newline", "backup")
+	steps, why := lineModule(in)
+	if why != "" {
+		return nil, why
+	}
+	steps[0].module = "windows_line"
+	steps[0].notes = append(steps[0].notes, "Ansible's newline rewrote every line ending in the file to \\r\\n; windows_line keeps the endings the file has, and writes \\r\\n only in a file it creates.")
+	return steps, ""
+}
+
 func winUserModule(in *input) ([]step, string) {
 	if in.state("present", "present", "absent") == "absent" {
 		return nil, "removes a user; Conn3x deletes a windows_user with on_remove = \"delete\" when its step goes, so there's nothing to convert this to yet"

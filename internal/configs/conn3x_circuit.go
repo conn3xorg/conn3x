@@ -133,6 +133,7 @@ var circuitModules = map[string]string{
 	"windows_dns_client":           "conn3x_windows_dns_client",
 	"windows_domain_membership":    "conn3x_windows_domain_membership",
 	"windows_feature":              "conn3x_windows_feature",
+	"windows_line":                 "conn3x_windows_line",
 	"windows_hostname":             "conn3x_windows_hostname",
 	"windows_optional_feature":     "conn3x_windows_optional_feature",
 	"windows_file":                 "conn3x_windows_file",
