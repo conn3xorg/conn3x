@@ -25,6 +25,21 @@ func TestVariableValues(t *testing.T) {
 		{"utc", "UTC", true},
 		{"2G", "1073741824", false},
 		{"STRICT_TRANS_TABLES", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", false},
+		// #1150: the server keeps a set's members in its own order.
+		{"NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", true},
+		{"no_engine_substitution, strict_trans_tables", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", true},
+		{"STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", "STRICT_TRANS_TABLES", false},
+		// A combination mode stands for what it expands to, and is listed too.
+		{"ANSI", "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI", true},
+		{"TRADITIONAL", "STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,TRADITIONAL,NO_ENGINE_SUBSTITUTION", true},
+		{"ANSI,NO_BACKSLASH_ESCAPES", "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,NO_BACKSLASH_ESCAPES,ANSI", true},
+		// A mode added by hand is still drift, and so is an empty sql_mode.
+		{"ANSI", "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI,STRICT_ALL_TABLES", false},
+		{"ANSI", "", false},
+		{"ANSI", "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY", false},
+		// optimizer_switch lists every flag; only the ones named are set.
+		{"mrr=on,index_merge=off", "index_merge=off,index_merge_union=on,mrr=on,mrr_cost_based=on", true},
+		{"mrr=off", "index_merge=off,mrr=on", false},
 	} {
 		if got := sameValue(c.want, c.have); got != c.same {
 			t.Errorf("sameValue(%q, %q) = %v", c.want, c.have, got)
@@ -46,6 +61,7 @@ func TestVariableValues(t *testing.T) {
 	for _, v := range []Variable{
 		{Name: "", Value: "1"}, {Name: "max connections", Value: "1"}, {Name: "a;drop", Value: "1"},
 		{Name: "x", Value: "1", Mode: "session"}, {Name: "x", Value: "a\nb"}, {Name: strings.Repeat("x", 65), Value: "1"},
+		{Name: "sql_mode", Value: "ORACLE"}, {Name: "SQL_MODE", Value: "postgresql,STRICT_TRANS_TABLES"},
 	} {
 		if v.Validate() == nil {
 			t.Errorf("%+v: no error", v)

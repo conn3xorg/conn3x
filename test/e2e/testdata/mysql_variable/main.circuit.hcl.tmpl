@@ -16,6 +16,15 @@ circuit "db" {
       on_remove = "delete"
     }
   }
+{{if .SQLMode}}
+  # A set-valued variable, which the server keeps in its own order (#1150).
+  step "sql_mode" {
+    mysql_variable {
+      name  = "sql_mode"
+      value = "{{.SQLMode}}"
+    }
+  }
+{{end}}
 {{if .Persist}}
   # A boolean, given as 1, which the server shows as ON.
   step "slow_query_log" {

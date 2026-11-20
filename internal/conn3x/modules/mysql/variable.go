@@ -43,6 +43,13 @@ func (v Variable) Validate() error {
 	if strings.ContainsAny(v.Value, "\x00\r\n") {
 		return fmt.Errorf("value for %s has a line break or NUL", v.Name)
 	}
+	if strings.EqualFold(v.Name, "sql_mode") {
+		for m := range members(v.Value) {
+			if unexpandedModes[m] {
+				return fmt.Errorf("sql_mode %s is a combination mode whose members differ between server versions; give the modes it stands for instead, as SELECT @@sql_mode shows them after SET sql_mode = '%s'", m, m)
+			}
+		}
+	}
 	return nil
 }
 
@@ -87,6 +94,9 @@ var onOff = map[string]string{"1": "ON", "on": "ON", "true": "ON", "yes": "ON", 
 // as numbers (10 and 10.000000 alike), and words without case.
 func sameValue(want, have string) bool {
 	w, h := plain(want), strings.TrimSpace(have)
+	if strings.Contains(w, ",") || strings.Contains(h, ",") {
+		return sameSet(w, h)
+	}
 	if h == "ON" || h == "OFF" {
 		if b, ok := onOff[strings.ToLower(w)]; ok {
 			return b == h
@@ -98,6 +108,67 @@ func sameValue(want, have string) bool {
 		return wf == hf
 	}
 	return strings.EqualFold(w, h)
+}
+
+// combinationModes are the sql_mode modes MySQL and MariaDB expand into
+// others, listing the combination itself among them too. NO_AUTO_CREATE_USER
+// is MariaDB's and older MySQL's; a server without it just never lists it.
+var combinationModes = map[string][]string{
+	"ANSI":        {"REAL_AS_FLOAT", "PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "ONLY_FULL_GROUP_BY"},
+	"TRADITIONAL": {"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_IN_DATE", "NO_ZERO_DATE", "ERROR_FOR_DIVISION_BY_ZERO", "NO_AUTO_CREATE_USER", "NO_ENGINE_SUBSTITUTION"},
+}
+
+// unexpandedModes are MariaDB's other combination modes, whose expansions
+// differ between versions; Validate asks for the modes themselves instead.
+var unexpandedModes = map[string]bool{"DB2": true, "MAXDB": true, "MSSQL": true, "MYSQL323": true, "MYSQL40": true, "ORACLE": true, "POSTGRESQL": true}
+
+// members is a comma list as a set: trimmed, upper-cased, empty ones gone.
+func members(v string) map[string]bool {
+	m := map[string]bool{}
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.ToUpper(strings.TrimSpace(part)); part != "" {
+			m[part] = true
+		}
+	}
+	return m
+}
+
+// sameSet compares a set-valued variable, such as sql_mode, which the
+// server keeps in its own order. Members given as key=value, as in
+// optimizer_switch, need only be among the server's, since it lists every
+// flag and SET changes only the ones named. Otherwise the two have to hold
+// the same members, where a combination mode such as ANSI also stands for
+// the modes it expands to.
+func sameSet(want, have string) bool {
+	w, h := members(want), members(have)
+	keyed := len(w) > 0
+	for m := range w {
+		keyed = keyed && strings.Contains(m, "=")
+	}
+	if keyed {
+		for m := range w {
+			if !h[m] {
+				return false
+			}
+		}
+		return true
+	}
+	allowed := map[string]bool{}
+	for m := range w {
+		if !h[m] {
+			return false
+		}
+		allowed[m] = true
+		for _, x := range combinationModes[m] {
+			allowed[x] = true
+		}
+	}
+	for m := range h {
+		if !allowed[m] {
+			return false
+		}
+	}
+	return true
 }
 
 // sqlValue is v as SET's right-hand side: a number or ON/OFF bare, and
