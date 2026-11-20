@@ -132,6 +132,7 @@ var circuitModules = map[string]string{
 	"windows_dns_client":           "conn3x_windows_dns_client",
 	"windows_domain_membership":    "conn3x_windows_domain_membership",
 	"windows_feature":              "conn3x_windows_feature",
+	"windows_timezone":             "conn3x_windows_timezone",
 	"windows_file":                 "conn3x_windows_file",
 	"windows_group":                "conn3x_windows_group",
 	"windows_iis_app_pool":         "conn3x_windows_iis_app_pool",

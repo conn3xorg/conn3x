@@ -301,6 +301,23 @@ func winFeatureModule(in *input) ([]step, string) {
 	return []step{feature}, ""
 }
 
+// winTimezoneModule converts community.windows.win_timezone. A zone with
+// _dstoff, which turns daylight saving off, has no windows_timezone
+// setting yet.
+func winTimezoneModule(in *input) ([]step, string) {
+	zone := in.str("timezone")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if zone == "" {
+		return nil, "has no timezone"
+	}
+	if strings.HasSuffix(strings.ToLower(zone), "_dstoff") {
+		return nil, "turns daylight saving off with _dstoff, which windows_timezone doesn't do yet"
+	}
+	return one("windows_timezone", []attr{s("name", zone)})
+}
+
 func winUserModule(in *input) ([]step, string) {
 	if in.state("present", "present", "absent") == "absent" {
 		return nil, "removes a user; Conn3x deletes a windows_user with on_remove = \"delete\" when its step goes, so there's nothing to convert this to yet"

@@ -626,3 +626,86 @@ func stringListVal(s []string) cty.Value {
 	}
 	return cty.ListVal(vals)
 }
+
+func winTimezoneSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "The Windows host's time zone, set with Set-TimeZone. One per host.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":       {Type: cty.String, Computed: true},
+			"revision": revisionAttr(),
+			"name":     {Type: cty.String, Required: true, Description: "Windows time zone ID, as Get-TimeZone -ListAvailable lists it, such as \"W. Europe Standard Time\" or \"UTC\". Not an IANA name such as Europe/Berlin. Case doesn't matter."},
+			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the time zone matched at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateWinTimezone(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() {
+		return diags
+	}
+	if n := cfg.GetAttr("name"); known(n) {
+		if err := windows.ValidateTimeZone(n.AsString()); err != nil {
+			diags = diags.Append(attrError("name", err.Error()))
+		}
+	}
+	return diags
+}
+
+func planWinTimezone(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planSyncedFold(req, "windows_timezone", nil, []string{"name"})
+}
+
+func readWinTimezone(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	resp := providers.ReadResourceResponse{NewState: req.PriorState}
+	if req.PriorState.IsNull() {
+		return resp
+	}
+	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	ok, err := windows.ReadTimeZone(ctx, h.raw(), req.PriorState.GetAttr("name").AsString())
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_timezone: %w", err))
+		return resp
+	}
+	resp.NewState = withSync(req.PriorState, ok)
+	return resp
+}
+
+func applyWinTimezone(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	var resp providers.ApplyResourceChangeResponse
+	// Removing the step leaves the time zone as it is.
+	if req.PlannedState.IsNull() {
+		resp.NewState = req.PlannedState
+		return resp
+	}
+	fail := func(err error) providers.ApplyResourceChangeResponse {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_timezone: %w", err))
+		return resp
+	}
+	name := req.PlannedState.GetAttr("name").AsString()
+	if err := windows.ValidateTimeZone(name); err != nil {
+		return fail(err)
+	}
+	h, err := winHost(ctx, req.PlannedState.GetAttr("ssh"))
+	if err != nil {
+		return fail(err)
+	}
+	// Reading first refuses a zone the host doesn't know, with the closest
+	// ones it does, before anything changes.
+	ok, err := windows.ReadTimeZone(ctx, h.raw(), name)
+	if err != nil {
+		return fail(err)
+	}
+	if !ok {
+		if err := windows.ApplyTimeZone(ctx, h.raw(), name); err != nil {
+			return fail(fmt.Errorf("setting %s: %w", name, err))
+		}
+	}
+	resp.NewState = withSync(req.PlannedState, true)
+	return resp
+}
