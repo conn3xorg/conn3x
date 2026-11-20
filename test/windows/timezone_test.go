@@ -8,6 +8,7 @@ package windowshost
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // The runner's time zone is set to one it isn't in, drifted by hand and put
@@ -19,6 +20,19 @@ func TestTimezoneFlow(t *testing.T) {
 	orig := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text)
 	t.Cleanup(func() {
 		run(t, c, `param($A) Set-TimeZone -Id $A.id`, map[string]any{"id": orig})
+		// For a minute or more after a time zone change, each new SSH
+		// session on the runner takes about 20 s to start, so the tests
+		// after this one wait for that to pass rather than crawl through it.
+		start := time.Now()
+		for time.Since(start) < 4*time.Minute {
+			call := time.Now()
+			run(t, c, `1`, nil)
+			if time.Since(call) < 5*time.Second {
+				break
+			}
+			time.Sleep(20 * time.Second)
+		}
+		t.Logf("sessions were quick again %v after the time zone was put back", time.Since(start).Round(time.Second))
 	})
 	want, other := "Tokyo Standard Time", "Cape Verde Standard Time"
 	if strings.EqualFold(orig, want) {
@@ -31,7 +45,8 @@ func TestTimezoneFlow(t *testing.T) {
   }`, func() {
 		run(t, c, `param($A) Set-TimeZone -Id $A.id`, map[string]any{"id": other})
 	})
-	if got := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text); got != want {
+	// Windows keeps the ID in the case it was set with.
+	if got := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text); !strings.EqualFold(got, want) {
 		t.Errorf("time zone after the last apply: %s", got)
 	}
 

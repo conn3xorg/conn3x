@@ -24,7 +24,7 @@ step "utc" {
 
 **Reading.** On every plan, Conn3x reads the zone with `Get-TimeZone`. `in_sync` is true when its ID is `name`. A `name` the host doesn't list fails the plan and names the three closest IDs it does, so a typo such as `Mountian Standard Time` points at `Mountain Standard Time`.
 
-**Applying.** Conn3x runs `Set-TimeZone -Id`, then reads the zone back and fails if it isn't `name`. The change takes effect at once, with no reboot.
+**Applying.** Conn3x runs `Set-TimeZone -Id`, then reads the zone back and fails if it isn't `name`. The change takes effect at once, with no reboot. Windows keeps the ID in the case you give it, which doesn't matter to it or to Conn3x. On GitHub's Windows Server runners, each new SSH session took about 20 seconds to start for a minute or more after a time zone change, then went back to well under a second. So the steps right after this one on a host can be slower.
 
 ## Removal
 
