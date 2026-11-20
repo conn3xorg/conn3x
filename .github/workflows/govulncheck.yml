@@ -1,0 +1,57 @@
+name: govulncheck
+
+# Fails when conn3x, conn3x-agent or a package they build in calls code that
+# has a known vulnerability, in a dependency or in the Go standard library
+# (GO-2026-6859 sat in a release for days before anyone looked). The daily
+# run catches advisories published after the last change, and opens an
+# issue when it fails so nobody has to read the Actions tab.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: govulncheck-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Pinned, and fetched through the Go module proxy, which verifies it
+      # against the Go checksum database.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./cmd/conn3x/... ./cmd/conn3x-agent/...
+
+  report:
+    needs: govulncheck
+    if: failure() && github.event_name == 'schedule' && github.repository == 'conn3xorg/conn3x'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue unless one is open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          open=$(gh issue list -R "$GITHUB_REPOSITORY" --label upstream-advisory --state open --search 'in:title govulncheck' --json number --jq length)
+          if [ "$open" = 0 ]; then
+            gh issue create -R "$GITHUB_REPOSITORY" --label upstream-advisory --label security --assignee jamesconwaydev \
+              --title "govulncheck: Conn3x reaches a known vulnerability" \
+              --body "The daily govulncheck run failed: $RUN. Its log names each vulnerability, the code that reaches it and the version that fixes it. Update the module, or the Go version in go.mod for the standard library, and close this when the run passes."
+          fi

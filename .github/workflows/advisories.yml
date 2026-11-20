@@ -1,0 +1,41 @@
+name: Upstream advisories
+
+# Opens an issue for each new security advisory about software a circuit
+# installs, from OSV (distro packages for every distro the circuits support,
+# and Go, PyPI or npm packages) and from upstream projects' GitHub advisories.
+# security/watchlist.json says what to watch. The script only reads public
+# data and creates issues here.
+on:
+  schedule:
+    - cron: "41 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Look back this many days
+        default: "7"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: advisories
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    # A fork has none of the credentials this needs.
+    if: github.repository == 'conn3xorg/conn3x'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Look for new advisories
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DAYS: ${{ inputs.days || '7' }}
+        run: python3 scripts/advisory_watch.py --days "$DAYS"

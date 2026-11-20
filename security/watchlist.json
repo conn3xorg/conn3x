@@ -1,0 +1,3884 @@
+{
+  "generated": "2026-11-20T17:36:13Z",
+  "ecosystems": [
+    "Debian:13",
+    "Ubuntu:24.04:LTS",
+    "Rocky Linux:10"
+  ],
+  "entries": [
+    {
+      "name": "adguardhome",
+      "circuits": [
+        "circuit-adguardhome"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/AdguardTeam/AdGuardHome"
+        }
+      ],
+      "github": [
+        "AdguardTeam/AdGuardHome"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-adguardhome",
+          "variable": "adguardhome_version",
+          "default": "0.107.79"
+        }
+      ]
+    },
+    {
+      "name": "alpine",
+      "circuits": [
+        "circuit-gitlab-runner"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [],
+      "images": [
+        "docker.io/library/alpine"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-gitlab-runner",
+          "variable": "docker_image",
+          "default": "alpine:3.24"
+        }
+      ]
+    },
+    {
+      "name": "apache-httpd",
+      "circuits": [
+        "circuit-adguardhome",
+        "circuit-apache",
+        "circuit-nagios"
+      ],
+      "packages": [
+        "apache2",
+        "apache2-utils",
+        "httpd",
+        "httpd-tools"
+      ],
+      "osv": [],
+      "github": [
+        "apache/httpd"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "audit",
+      "circuits": [
+        "circuit-auditd"
+      ],
+      "packages": [
+        "audit",
+        "auditd"
+      ],
+      "osv": [],
+      "github": [
+        "linux-audit/audit-userspace"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "authentik",
+      "circuits": [
+        "circuit-authentik",
+        "circuit-lempa-homelab"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "goauthentik.io"
+        }
+      ],
+      "github": [
+        "goauthentik/authentik"
+      ],
+      "images": [
+        "ghcr.io/goauthentik/server"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-authentik",
+          "variable": "authentik_version",
+          "default": "2026.8.5"
+        }
+      ]
+    },
+    {
+      "name": "bind9",
+      "circuits": [
+        "circuit-bind",
+        "circuit-lempa-homelab"
+      ],
+      "packages": [
+        "bind",
+        "bind9"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "bun",
+      "circuits": [
+        "circuit-bun"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "npm",
+          "name": "bun"
+        }
+      ],
+      "github": [
+        "oven-sh/bun"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-bun",
+          "variable": "bun_version",
+          "default": "1.4.4"
+        }
+      ]
+    },
+    {
+      "name": "bzip2",
+      "circuits": [
+        "circuit-restic"
+      ],
+      "packages": [
+        "bzip2"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "ca-certificates",
+      "circuits": [
+        "circuit-adguardhome",
+        "circuit-agentbox",
+        "circuit-cloudflared",
+        "circuit-dotnet",
+        "circuit-teleport",
+        "circuit-unbound"
+      ],
+      "packages": [
+        "ca-certificates"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "caddy",
+      "circuits": [
+        "circuit-caddy"
+      ],
+      "packages": [
+        "caddy"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/caddyserver/caddy/v2"
+        }
+      ],
+      "github": [
+        "caddyserver/caddy"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-caddy",
+          "variable": "local.version",
+          "default": "2.11.7"
+        }
+      ]
+    },
+    {
+      "name": "cadvisor",
+      "circuits": [
+        "circuit-monitoring"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/google/cadvisor"
+        }
+      ],
+      "github": [
+        "google/cadvisor"
+      ],
+      "images": [
+        "ghcr.io/google/cadvisor"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-monitoring",
+          "variable": "cadvisor_version",
+          "default": "v0.60.6"
+        }
+      ]
+    },
+    {
+      "name": "cassandra",
+      "circuits": [
+        "circuit-cassandra"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.apache.cassandra:cassandra-all"
+        }
+      ],
+      "github": [
+        "apache/cassandra"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-cassandra",
+          "variable": "cassandra_version",
+          "default": "5.0.9"
+        }
+      ]
+    },
+    {
+      "name": "cert-manager",
+      "circuits": [
+        "circuit-rancher"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/cert-manager/cert-manager"
+        }
+      ],
+      "github": [
+        "cert-manager/cert-manager"
+      ],
+      "images": [
+        "quay.io/jetstack/cert-manager-cainjector",
+        "quay.io/jetstack/cert-manager-controller",
+        "quay.io/jetstack/cert-manager-webhook"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-rancher",
+          "variable": "cert_manager_version",
+          "default": "v1.21.3"
+        }
+      ]
+    },
+    {
+      "name": "certbot",
+      "circuits": [
+        "circuit-certbot"
+      ],
+      "packages": [
+        "certbot",
+        "python3-certbot-nginx"
+      ],
+      "osv": [
+        {
+          "ecosystem": "PyPI",
+          "name": "certbot"
+        },
+        {
+          "ecosystem": "PyPI",
+          "name": "certbot-nginx"
+        }
+      ],
+      "github": [
+        "certbot/certbot"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "checkov",
+      "circuits": [
+        "circuit-checkov"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "PyPI",
+          "name": "checkov"
+        }
+      ],
+      "github": [
+        "bridgecrewio/checkov"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-checkov",
+          "variable": "checkov_version",
+          "default": "3.4.3"
+        }
+      ]
+    },
+    {
+      "name": "chrony",
+      "circuits": [
+        "circuit-baseline",
+        "circuit-proxmox"
+      ],
+      "packages": [
+        "chrony"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "cinc-client",
+      "circuits": [
+        "circuit-cinc"
+      ],
+      "packages": [
+        "cinc"
+      ],
+      "osv": [
+        {
+          "ecosystem": "RubyGems",
+          "name": "chef"
+        }
+      ],
+      "github": [
+        "chef/chef"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-cinc",
+          "variable": "cinc_version",
+          "default": "19.4.46"
+        }
+      ]
+    },
+    {
+      "name": "ciso-assistant",
+      "circuits": [
+        "circuit-ciso-assistant"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "intuitem/ciso-assistant-community"
+      ],
+      "images": [
+        "ghcr.io/intuitem/ciso-assistant-community/backend",
+        "ghcr.io/intuitem/ciso-assistant-community/frontend"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-ciso-assistant",
+          "variable": "ciso_assistant_version",
+          "default": "v4.1.5"
+        }
+      ]
+    },
+    {
+      "name": "clickhouse",
+      "circuits": [
+        "circuit-langfuse"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "ClickHouse/ClickHouse"
+      ],
+      "images": [
+        "docker.io/clickhouse/clickhouse-server"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-langfuse",
+          "variable": "clickhouse_version",
+          "default": "26.8.36.3"
+        }
+      ]
+    },
+    {
+      "name": "cloudflared",
+      "circuits": [
+        "circuit-cloudflared"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/cloudflare/cloudflared"
+        }
+      ],
+      "github": [
+        "cloudflare/cloudflared"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-cloudflared",
+          "variable": "cloudflared_version",
+          "default": "2026.10.6"
+        }
+      ]
+    },
+    {
+      "name": "cni-plugins",
+      "circuits": [
+        "circuit-containerd",
+        "circuit-microshift"
+      ],
+      "packages": [
+        "containernetworking-plugins"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/containernetworking/plugins"
+        }
+      ],
+      "github": [
+        "containernetworking/plugins"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-containerd",
+          "variable": "cni_version",
+          "default": "1.9.1"
+        }
+      ]
+    },
+    {
+      "name": "cockpit",
+      "circuits": [
+        "circuit-cockpit"
+      ],
+      "packages": [
+        "cockpit"
+      ],
+      "osv": [],
+      "github": [
+        "cockpit-project/cockpit"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "composer",
+      "circuits": [
+        "circuit-php"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Packagist",
+          "name": "composer/composer"
+        }
+      ],
+      "github": [
+        "composer/composer"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-php",
+          "variable": "composer_version",
+          "default": "2.11.0"
+        }
+      ]
+    },
+    {
+      "name": "containerd",
+      "circuits": [
+        "circuit-containerd",
+        "circuit-docker",
+        "circuit-kubeadm"
+      ],
+      "packages": [
+        "containerd.io"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/containerd/containerd"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "github.com/containerd/containerd/v2"
+        }
+      ],
+      "github": [
+        "containerd/containerd"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-containerd",
+          "variable": "containerd_version",
+          "default": "2.4.2"
+        }
+      ]
+    },
+    {
+      "name": "cosign",
+      "circuits": [
+        "circuit-cosign"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/sigstore/cosign/v2"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "github.com/sigstore/cosign/v3"
+        }
+      ],
+      "github": [
+        "sigstore/cosign"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-cosign",
+          "variable": "cosign_version",
+          "default": "3.1.4"
+        }
+      ]
+    },
+    {
+      "name": "couchdb",
+      "circuits": [
+        "circuit-couchdb"
+      ],
+      "packages": [
+        "couchdb"
+      ],
+      "osv": [],
+      "github": [
+        "apache/couchdb"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-couchdb",
+          "variable": "couchdb_version",
+          "default": "3.5.3"
+        }
+      ]
+    },
+    {
+      "name": "cpanminus",
+      "circuits": [
+        "circuit-perl"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "miyagawa/cpanminus"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-perl",
+          "variable": "local.cpanm_version",
+          "default": "1.7049"
+        }
+      ]
+    },
+    {
+      "name": "cri-o",
+      "circuits": [
+        "circuit-microshift"
+      ],
+      "packages": [
+        "cri-o",
+        "cri-tools"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/cri-o/cri-o"
+        }
+      ],
+      "github": [
+        "cri-o/cri-o",
+        "kubernetes-sigs/cri-tools"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "curl",
+      "circuits": [
+        "circuit-adguardhome",
+        "circuit-bun",
+        "circuit-cassandra",
+        "circuit-cinc",
+        "circuit-cloudflared",
+        "circuit-conn3x-ui",
+        "circuit-containerd",
+        "circuit-cosign",
+        "circuit-couchdb",
+        "circuit-dotnet",
+        "circuit-fleet",
+        "circuit-forgejo",
+        "circuit-github-runner",
+        "circuit-go",
+        "circuit-grafana",
+        "circuit-helm",
+        "circuit-influxdb",
+        "circuit-istio",
+        "circuit-jellyfin",
+        "circuit-jenkins",
+        "circuit-k3s",
+        "circuit-k6",
+        "circuit-keycloak",
+        "circuit-kotlin",
+        "circuit-kubeadm",
+        "circuit-lldap",
+        "circuit-matrix",
+        "circuit-nagios",
+        "circuit-node-exporter",
+        "circuit-nodejs",
+        "circuit-nomad",
+        "circuit-ollama",
+        "circuit-openbao",
+        "circuit-openscap",
+        "circuit-opensearch",
+        "circuit-openvox",
+        "circuit-oracle-free",
+        "circuit-otelcol",
+        "circuit-perl",
+        "circuit-php",
+        "circuit-prometheus",
+        "circuit-qdrant",
+        "circuit-restic",
+        "circuit-rust",
+        "circuit-teleport",
+        "circuit-traefik",
+        "circuit-trivy",
+        "circuit-trufflehog",
+        "circuit-velociraptor",
+        "circuit-wazuh",
+        "circuit-zabbix"
+      ],
+      "packages": [
+        "curl"
+      ],
+      "osv": [],
+      "github": [
+        "curl/curl"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "dnf-automatic",
+      "circuits": [
+        "circuit-auto-updates"
+      ],
+      "packages": [
+        "dnf-automatic",
+        "dnf5-plugin-automatic"
+      ],
+      "osv": [],
+      "github": [
+        "rpm-software-management/dnf"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "docker-buildx",
+      "circuits": [
+        "circuit-docker"
+      ],
+      "packages": [
+        "docker-buildx-plugin"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/docker/buildx"
+        }
+      ],
+      "github": [
+        "docker/buildx"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "docker-compose",
+      "circuits": [
+        "circuit-docker"
+      ],
+      "packages": [
+        "docker-compose-plugin"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/docker/compose/v2"
+        }
+      ],
+      "github": [
+        "docker/compose"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "docker-engine",
+      "circuits": [
+        "circuit-docker"
+      ],
+      "packages": [
+        "docker-ce",
+        "docker-ce-cli"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/docker/docker"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "github.com/moby/moby"
+        }
+      ],
+      "github": [
+        "docker/cli",
+        "moby/moby"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "dockge",
+      "circuits": [
+        "circuit-dockge",
+        "circuit-lempa-homelab"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "louislam/dockge"
+      ],
+      "images": [
+        "docker.io/louislam/dockge"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-dockge",
+          "variable": "dockge_version",
+          "default": "1.5.0"
+        }
+      ]
+    },
+    {
+      "name": "dotnet",
+      "circuits": [
+        "circuit-dotnet"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "NuGet",
+          "name": "Microsoft.AspNetCore.App.Runtime.linux-x64"
+        },
+        {
+          "ecosystem": "NuGet",
+          "name": "Microsoft.NETCore.App.Runtime.linux-x64"
+        }
+      ],
+      "github": [
+        "dotnet/aspnetcore",
+        "dotnet/runtime",
+        "dotnet/sdk"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-dotnet",
+          "variable": "sdk_version",
+          "default": "10.0.403"
+        }
+      ]
+    },
+    {
+      "name": "eclipse-temurin",
+      "circuits": [
+        "circuit-cassandra",
+        "circuit-java"
+      ],
+      "packages": [
+        "temurin-17-jre",
+        "temurin-17-jre-headless",
+        "temurin-25-jdk",
+        "temurin-25-jre",
+        "temurin-25-jre-headless"
+      ],
+      "osv": [],
+      "github": [
+        "adoptium/temurin-build"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-java",
+          "variable": "java_version",
+          "default": "25"
+        }
+      ]
+    },
+    {
+      "name": "fail2ban",
+      "circuits": [
+        "circuit-fail2ban"
+      ],
+      "packages": [
+        "fail2ban",
+        "fail2ban-server",
+        "python3-systemd"
+      ],
+      "osv": [],
+      "github": [
+        "fail2ban/fail2ban"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "falco",
+      "circuits": [
+        "circuit-falco"
+      ],
+      "packages": [
+        "falco"
+      ],
+      "osv": [],
+      "github": [
+        "falcosecurity/falco"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-falco",
+          "variable": "falco_version",
+          "default": "0.45.2"
+        }
+      ]
+    },
+    {
+      "name": "filebeat",
+      "circuits": [
+        "circuit-wazuh"
+      ],
+      "packages": [
+        "filebeat"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/elastic/beats/v7"
+        }
+      ],
+      "github": [
+        "elastic/beats"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-wazuh",
+          "variable": "local.filebeat_version",
+          "default": "7.10.2-2"
+        }
+      ]
+    },
+    {
+      "name": "findutils",
+      "circuits": [
+        "circuit-openvox"
+      ],
+      "packages": [
+        "findutils"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "firewalld",
+      "circuits": [
+        "circuit-firewall",
+        "circuit-nginx"
+      ],
+      "packages": [
+        "firewalld"
+      ],
+      "osv": [],
+      "github": [
+        "firewalld/firewalld"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "flannel",
+      "circuits": [
+        "circuit-kubeadm"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/flannel-io/flannel"
+        }
+      ],
+      "github": [
+        "flannel-io/flannel"
+      ],
+      "images": [
+        "ghcr.io/flannel-io/flannel",
+        "ghcr.io/flannel-io/flannel-cni-plugin"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-kubeadm",
+          "variable": "cni_manifest_url",
+          "default": "https://github.com/flannel-io/flannel/releases/download/v0.28.10/kube-flannel.yml"
+        }
+      ]
+    },
+    {
+      "name": "fleet",
+      "circuits": [
+        "circuit-fleet"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/fleetdm/fleet/v4"
+        }
+      ],
+      "github": [
+        "fleetdm/fleet"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-fleet",
+          "variable": "fleet_version",
+          "default": "4.94.0"
+        }
+      ]
+    },
+    {
+      "name": "flux",
+      "circuits": [
+        "circuit-flux"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/fluxcd/flux2/v2"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "github.com/fluxcd/helm-controller"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "github.com/fluxcd/kustomize-controller"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "github.com/fluxcd/notification-controller"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "github.com/fluxcd/source-controller"
+        }
+      ],
+      "github": [
+        "fluxcd/flux2",
+        "fluxcd/helm-controller",
+        "fluxcd/kustomize-controller",
+        "fluxcd/notification-controller",
+        "fluxcd/source-controller"
+      ],
+      "images": [
+        "ghcr.io/fluxcd/helm-controller",
+        "ghcr.io/fluxcd/kustomize-controller",
+        "ghcr.io/fluxcd/notification-controller",
+        "ghcr.io/fluxcd/source-controller"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-flux",
+          "variable": "flux_version",
+          "default": "v2.10.0"
+        }
+      ]
+    },
+    {
+      "name": "fontconfig",
+      "circuits": [
+        "circuit-jenkins"
+      ],
+      "packages": [
+        "fontconfig"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "forgejo",
+      "circuits": [
+        "circuit-forgejo"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-forgejo",
+          "variable": "forgejo_version",
+          "default": "17.0.1"
+        }
+      ]
+    },
+    {
+      "name": "freeipa",
+      "circuits": [
+        "circuit-freeipa"
+      ],
+      "packages": [
+        "freeipa-client",
+        "freeipa-server",
+        "freeipa-server-dns",
+        "ipa-client",
+        "ipa-server",
+        "ipa-server-dns"
+      ],
+      "osv": [],
+      "github": [
+        "freeipa/freeipa"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "gcc",
+      "circuits": [
+        "circuit-agentbox",
+        "circuit-c-toolchain",
+        "circuit-dotnet",
+        "circuit-nagios",
+        "circuit-nodejs",
+        "circuit-perl",
+        "circuit-ruby",
+        "circuit-rust"
+      ],
+      "packages": [
+        "build-essential",
+        "g++",
+        "gcc",
+        "gcc-c++",
+        "libatomic",
+        "libatomic1",
+        "libstdc++",
+        "libstdc++6"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "gdb",
+      "circuits": [
+        "circuit-c-toolchain"
+      ],
+      "packages": [
+        "gdb"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "git",
+      "circuits": [
+        "circuit-agentbox",
+        "circuit-conn3x-ui",
+        "circuit-forgejo",
+        "circuit-github-runner"
+      ],
+      "packages": [
+        "git"
+      ],
+      "osv": [],
+      "github": [
+        "git/git"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "github-actions-runner",
+      "circuits": [
+        "circuit-github-runner"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "actions/runner"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-github-runner",
+          "variable": "runner_version",
+          "default": "2.338.2"
+        }
+      ]
+    },
+    {
+      "name": "gitlab-ce",
+      "circuits": [
+        "circuit-gitlab",
+        "circuit-lempa-homelab"
+      ],
+      "packages": [
+        "gitlab-ce"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-gitlab",
+          "variable": "gitlab_version",
+          "default": "19.5.3"
+        }
+      ]
+    },
+    {
+      "name": "gitlab-runner",
+      "circuits": [
+        "circuit-gitlab-runner",
+        "circuit-lempa-homelab"
+      ],
+      "packages": [
+        "gitlab-runner"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-gitlab-runner",
+          "variable": "runner_version",
+          "default": "19.5.2"
+        }
+      ]
+    },
+    {
+      "name": "glibc",
+      "circuits": [
+        "circuit-c-toolchain",
+        "circuit-perl",
+        "circuit-rust"
+      ],
+      "packages": [
+        "glibc-devel",
+        "libc6-dev"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "go",
+      "circuits": [
+        "circuit-go"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "stdlib"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "toolchain"
+        }
+      ],
+      "github": [
+        "golang/go"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-go",
+          "variable": "go_version",
+          "default": "1.27.3"
+        }
+      ]
+    },
+    {
+      "name": "grafana",
+      "circuits": [
+        "circuit-grafana",
+        "circuit-lempa-homelab",
+        "circuit-monitoring"
+      ],
+      "packages": [
+        "grafana"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/grafana/grafana"
+        }
+      ],
+      "github": [
+        "grafana/grafana"
+      ],
+      "images": [
+        "docker.io/grafana/grafana"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-grafana",
+          "variable": "grafana_version",
+          "default": "13.3.0"
+        },
+        {
+          "circuit": "circuit-monitoring",
+          "variable": "grafana_version",
+          "default": "13.2.4"
+        }
+      ]
+    },
+    {
+      "name": "gzip",
+      "circuits": [
+        "circuit-adguardhome",
+        "circuit-cassandra",
+        "circuit-conn3x-ui",
+        "circuit-containerd",
+        "circuit-dotnet",
+        "circuit-github-runner",
+        "circuit-go",
+        "circuit-helm",
+        "circuit-istio",
+        "circuit-k6",
+        "circuit-keycloak",
+        "circuit-lldap",
+        "circuit-node-exporter",
+        "circuit-nodejs",
+        "circuit-openbao",
+        "circuit-prometheus",
+        "circuit-qdrant",
+        "circuit-traefik",
+        "circuit-trivy",
+        "circuit-trufflehog",
+        "circuit-velociraptor"
+      ],
+      "packages": [
+        "gzip"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "haproxy",
+      "circuits": [
+        "circuit-haproxy"
+      ],
+      "packages": [
+        "haproxy"
+      ],
+      "osv": [],
+      "github": [
+        "haproxy/haproxy"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "helm",
+      "circuits": [
+        "circuit-helm",
+        "circuit-rancher"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "helm.sh/helm/v3"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "helm.sh/helm/v4"
+        }
+      ],
+      "github": [
+        "helm/helm"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-helm",
+          "variable": "helm_version",
+          "default": "v4.3.1"
+        },
+        {
+          "circuit": "circuit-rancher",
+          "variable": "helm_version",
+          "default": "v3.22.1"
+        }
+      ]
+    },
+    {
+      "name": "home-assistant",
+      "circuits": [
+        "circuit-homeassistant",
+        "circuit-lempa-homelab"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "PyPI",
+          "name": "homeassistant"
+        }
+      ],
+      "github": [
+        "home-assistant/core"
+      ],
+      "images": [
+        "ghcr.io/home-assistant/home-assistant"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-homeassistant",
+          "variable": "homeassistant_version",
+          "default": "2026.11.0"
+        }
+      ]
+    },
+    {
+      "name": "homepage",
+      "circuits": [
+        "circuit-homepage",
+        "circuit-lempa-homelab",
+        "circuit-mini-homelab"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "gethomepage/homepage"
+      ],
+      "images": [
+        "ghcr.io/gethomepage/homepage"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-homepage",
+          "variable": "homepage_version",
+          "default": "v2.7.0"
+        }
+      ]
+    },
+    {
+      "name": "hostname",
+      "circuits": [
+        "circuit-gitlab",
+        "circuit-oracle-free"
+      ],
+      "packages": [
+        "hostname"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "in-toto",
+      "circuits": [
+        "circuit-in-toto"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "PyPI",
+          "name": "in-toto"
+        }
+      ],
+      "github": [
+        "in-toto/in-toto"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-in-toto",
+          "variable": "in_toto_version",
+          "default": "3.1.0"
+        }
+      ]
+    },
+    {
+      "name": "infisical",
+      "circuits": [
+        "circuit-infisical"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "Infisical/infisical"
+      ],
+      "images": [
+        "docker.io/infisical/infisical"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-infisical",
+          "variable": "infisical_version",
+          "default": "v0.167.4"
+        }
+      ]
+    },
+    {
+      "name": "influxdb3-core",
+      "circuits": [
+        "circuit-influxdb",
+        "circuit-lempa-homelab"
+      ],
+      "packages": [
+        "influxdb3-core"
+      ],
+      "osv": [],
+      "github": [
+        "influxdata/influxdb"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-influxdb",
+          "variable": "influxdb_version",
+          "default": "3.12.2"
+        }
+      ]
+    },
+    {
+      "name": "iproute2",
+      "circuits": [
+        "circuit-nomad",
+        "circuit-oracle-free",
+        "circuit-wireguard"
+      ],
+      "packages": [
+        "iproute",
+        "iproute2"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "istio",
+      "circuits": [
+        "circuit-istio"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "istio.io/istio"
+        }
+      ],
+      "github": [
+        "istio/istio"
+      ],
+      "images": [
+        "docker.io/istio/pilot",
+        "docker.io/istio/proxyv2"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-istio",
+          "variable": "istio_version",
+          "default": "1.31.3"
+        }
+      ]
+    },
+    {
+      "name": "jellyfin",
+      "circuits": [
+        "circuit-jellyfin"
+      ],
+      "packages": [
+        "jellyfin",
+        "jellyfin-server",
+        "jellyfin-web"
+      ],
+      "osv": [],
+      "github": [
+        "jellyfin/jellyfin",
+        "jellyfin/jellyfin-web"
+      ],
+      "images": [
+        "docker.io/jellyfin/jellyfin"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-jellyfin",
+          "variable": "jellyfin_version",
+          "default": "12.4"
+        }
+      ]
+    },
+    {
+      "name": "jenkins",
+      "circuits": [
+        "circuit-jenkins"
+      ],
+      "packages": [
+        "jenkins"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.jenkins-ci.main:jenkins-core"
+        }
+      ],
+      "github": [
+        "jenkinsci/jenkins"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-jenkins",
+          "variable": "jenkins_version",
+          "default": "2.580.2"
+        }
+      ]
+    },
+    {
+      "name": "jenkins-plugin-manager",
+      "circuits": [
+        "circuit-jenkins"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "jenkinsci/plugin-installation-manager-tool"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-jenkins",
+          "variable": "plugin_manager_version",
+          "default": "2.15.0"
+        }
+      ]
+    },
+    {
+      "name": "jq",
+      "circuits": [
+        "circuit-agentbox"
+      ],
+      "packages": [
+        "jq"
+      ],
+      "osv": [],
+      "github": [
+        "jqlang/jq"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "k3s",
+      "circuits": [
+        "circuit-k3s"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/k3s-io/k3s"
+        }
+      ],
+      "github": [
+        "k3s-io/k3s"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-k3s",
+          "variable": "k3s_version",
+          "default": "v1.37.1+k3s1"
+        }
+      ]
+    },
+    {
+      "name": "k6",
+      "circuits": [
+        "circuit-k6"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "go.k6.io/k6/v2"
+        }
+      ],
+      "github": [
+        "grafana/k6"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-k6",
+          "variable": "k6_version",
+          "default": "2.3.0"
+        }
+      ]
+    },
+    {
+      "name": "keepalived",
+      "circuits": [
+        "circuit-keepalived"
+      ],
+      "packages": [
+        "keepalived"
+      ],
+      "osv": [],
+      "github": [
+        "acassen/keepalived"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "kestra",
+      "circuits": [
+        "circuit-kestra",
+        "circuit-lempa-homelab"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Maven",
+          "name": "io.kestra:core"
+        }
+      ],
+      "github": [
+        "kestra-io/kestra"
+      ],
+      "images": [
+        "docker.io/kestra/kestra"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-kestra",
+          "variable": "kestra_version",
+          "default": "v2.0.9-slim"
+        }
+      ]
+    },
+    {
+      "name": "keycloak",
+      "circuits": [
+        "circuit-keycloak"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.keycloak:keycloak-services"
+        }
+      ],
+      "github": [
+        "keycloak/keycloak"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-keycloak",
+          "variable": "keycloak_version",
+          "default": "26.8.1"
+        }
+      ]
+    },
+    {
+      "name": "kmod",
+      "circuits": [
+        "circuit-hardening"
+      ],
+      "packages": [
+        "kmod"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "kotlin",
+      "circuits": [
+        "circuit-kotlin"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.jetbrains.kotlin:kotlin-compiler"
+        }
+      ],
+      "github": [
+        "JetBrains/kotlin"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-kotlin",
+          "variable": "kotlin_version",
+          "default": "2.4.21"
+        }
+      ]
+    },
+    {
+      "name": "krb5",
+      "circuits": [
+        "circuit-dotnet"
+      ],
+      "packages": [
+        "krb5-libs",
+        "libgssapi-krb5-2"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "kubernetes",
+      "circuits": [
+        "circuit-kubeadm"
+      ],
+      "packages": [
+        "kubeadm",
+        "kubectl",
+        "kubelet"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "k8s.io/kubernetes"
+        }
+      ],
+      "github": [
+        "kubernetes/kubernetes"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-kubeadm",
+          "variable": "kubernetes_version",
+          "default": "1.37"
+        }
+      ]
+    },
+    {
+      "name": "langfuse",
+      "circuits": [
+        "circuit-langfuse"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "langfuse/langfuse"
+      ],
+      "images": [
+        "docker.io/langfuse/langfuse",
+        "docker.io/langfuse/langfuse-worker"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-langfuse",
+          "variable": "langfuse_version",
+          "default": "4.72.0"
+        }
+      ]
+    },
+    {
+      "name": "libgd",
+      "circuits": [
+        "circuit-nagios"
+      ],
+      "packages": [
+        "gd-devel",
+        "libgd-dev"
+      ],
+      "osv": [],
+      "github": [
+        "libgd/libgd"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "libicu",
+      "circuits": [
+        "circuit-dotnet",
+        "circuit-github-runner"
+      ],
+      "packages": [
+        "libicu",
+        "libicu-dev"
+      ],
+      "osv": [],
+      "github": [
+        "unicode-org/icu"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "litellm",
+      "circuits": [
+        "circuit-litellm"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "PyPI",
+          "name": "litellm"
+        }
+      ],
+      "github": [
+        "BerriAI/litellm"
+      ],
+      "images": [
+        "ghcr.io/berriai/litellm"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-litellm",
+          "variable": "litellm_version",
+          "default": "v1.106.6"
+        }
+      ]
+    },
+    {
+      "name": "lldap",
+      "circuits": [
+        "circuit-lldap"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "lldap/lldap"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-lldap",
+          "variable": "lldap_version",
+          "default": "0.6.3"
+        }
+      ]
+    },
+    {
+      "name": "make",
+      "circuits": [
+        "circuit-agentbox",
+        "circuit-c-toolchain",
+        "circuit-nagios",
+        "circuit-perl",
+        "circuit-ruby"
+      ],
+      "packages": [
+        "make"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "mariadb",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-mariadb",
+        "circuit-passbolt"
+      ],
+      "packages": [
+        "mariadb-server"
+      ],
+      "osv": [],
+      "github": [
+        "MariaDB/server"
+      ],
+      "images": [
+        "docker.io/library/mariadb"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-passbolt",
+          "variable": "mariadb_version",
+          "default": "10.11.19"
+        }
+      ]
+    },
+    {
+      "name": "microshift",
+      "circuits": [
+        "circuit-microshift"
+      ],
+      "packages": [
+        "microshift",
+        "microshift-kindnet"
+      ],
+      "osv": [],
+      "github": [
+        "microshift-io/microshift",
+        "openshift/microshift"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-microshift",
+          "variable": "release.tag",
+          "default": "4.20.0_g153ff0ca9_4.20.0_okd_scos.16"
+        }
+      ]
+    },
+    {
+      "name": "minio",
+      "circuits": [
+        "circuit-langfuse"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/minio/minio"
+        }
+      ],
+      "github": [
+        "minio/minio"
+      ],
+      "images": [
+        "cgr.dev/chainguard/minio"
+      ],
+      "pinned": []
+    },
+    {
+      "name": "monitoring-plugins",
+      "circuits": [
+        "circuit-nagios"
+      ],
+      "packages": [
+        "monitoring-plugins",
+        "nagios-plugins-all",
+        "nagios-plugins-disk",
+        "nagios-plugins-dns",
+        "nagios-plugins-http",
+        "nagios-plugins-load",
+        "nagios-plugins-ntp",
+        "nagios-plugins-ping",
+        "nagios-plugins-procs",
+        "nagios-plugins-smtp",
+        "nagios-plugins-ssh",
+        "nagios-plugins-swap",
+        "nagios-plugins-tcp",
+        "nagios-plugins-users"
+      ],
+      "osv": [],
+      "github": [
+        "monitoring-plugins/monitoring-plugins",
+        "nagios-plugins/nagios-plugins"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "mssql-server",
+      "circuits": [
+        "circuit-mssql"
+      ],
+      "packages": [
+        "mssql-server",
+        "mssql-tools18"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "mysql",
+      "circuits": [
+        "circuit-mysql"
+      ],
+      "packages": [
+        "mysql-community-server"
+      ],
+      "osv": [],
+      "github": [
+        "mysql/mysql-server"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-mysql",
+          "variable": "mysql_version",
+          "default": "9.7"
+        }
+      ]
+    },
+    {
+      "name": "n8n",
+      "circuits": [
+        "circuit-n8n"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "npm",
+          "name": "n8n"
+        }
+      ],
+      "github": [
+        "n8n-io/n8n"
+      ],
+      "images": [
+        "ghcr.io/n8n-io/n8n"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-n8n",
+          "variable": "n8n_version",
+          "default": "2.45.6"
+        }
+      ]
+    },
+    {
+      "name": "nagios-core",
+      "circuits": [
+        "circuit-nagios"
+      ],
+      "packages": [
+        "nagios",
+        "nagios-selinux",
+        "nagios4-cgi",
+        "nagios4-core"
+      ],
+      "osv": [],
+      "github": [
+        "NagiosEnterprises/nagioscore"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-nagios",
+          "variable": "nagios_version",
+          "default": "4.5.14"
+        }
+      ]
+    },
+    {
+      "name": "nasm",
+      "circuits": [
+        "circuit-c-toolchain"
+      ],
+      "packages": [
+        "nasm"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "netbird",
+      "circuits": [
+        "circuit-netbird"
+      ],
+      "packages": [
+        "netbird"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/netbirdio/netbird"
+        }
+      ],
+      "github": [
+        "netbirdio/netbird"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-netbird",
+          "variable": "netbird_version",
+          "default": "0.82.0"
+        }
+      ]
+    },
+    {
+      "name": "netdata",
+      "circuits": [
+        "circuit-netdata"
+      ],
+      "packages": [
+        "netdata"
+      ],
+      "osv": [],
+      "github": [
+        "netdata/netdata"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-netdata",
+          "variable": "netdata_version",
+          "default": "2.12.2"
+        }
+      ]
+    },
+    {
+      "name": "nfs-utils",
+      "circuits": [
+        "circuit-nfs"
+      ],
+      "packages": [
+        "nfs-kernel-server",
+        "nfs-utils"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "nftables",
+      "circuits": [
+        "circuit-fail2ban"
+      ],
+      "packages": [
+        "nftables"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "nginx",
+      "circuits": [
+        "circuit-nginx",
+        "circuit-zabbix"
+      ],
+      "packages": [
+        "nginx"
+      ],
+      "osv": [],
+      "github": [
+        "nginx/nginx"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "node-exporter",
+      "circuits": [
+        "circuit-node-exporter"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/prometheus/node_exporter"
+        }
+      ],
+      "github": [
+        "prometheus/node_exporter"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-node-exporter",
+          "variable": "node_exporter_version",
+          "default": "1.12.1"
+        }
+      ]
+    },
+    {
+      "name": "nodejs",
+      "circuits": [
+        "circuit-agentbox",
+        "circuit-nodejs"
+      ],
+      "packages": [
+        "nodejs"
+      ],
+      "osv": [],
+      "github": [
+        "nodejs/node"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-agentbox",
+          "variable": "node_major",
+          "default": "26"
+        },
+        {
+          "circuit": "circuit-nodejs",
+          "variable": "node_version",
+          "default": "26.13.0"
+        }
+      ]
+    },
+    {
+      "name": "nomad",
+      "circuits": [
+        "circuit-nomad"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/hashicorp/nomad"
+        }
+      ],
+      "github": [
+        "hashicorp/nomad"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-nomad",
+          "variable": "nomad_version",
+          "default": "2.1.1"
+        }
+      ]
+    },
+    {
+      "name": "ollama",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-ollama"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        }
+      ],
+      "github": [
+        "ollama/ollama"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-ollama",
+          "variable": "ollama_version",
+          "default": "0.40.13"
+        }
+      ]
+    },
+    {
+      "name": "open-iscsi",
+      "circuits": [
+        "circuit-proxmox"
+      ],
+      "packages": [
+        "open-iscsi"
+      ],
+      "osv": [],
+      "github": [
+        "open-iscsi/open-iscsi"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "open-webui",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-openwebui"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "PyPI",
+          "name": "open-webui"
+        }
+      ],
+      "github": [
+        "open-webui/open-webui"
+      ],
+      "images": [
+        "ghcr.io/open-webui/open-webui"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-openwebui",
+          "variable": "openwebui_version",
+          "default": "v0.12.5"
+        }
+      ]
+    },
+    {
+      "name": "openbao",
+      "circuits": [
+        "circuit-openbao"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/openbao/openbao"
+        }
+      ],
+      "github": [
+        "openbao/openbao"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-openbao",
+          "variable": "openbao_version",
+          "default": "2.7.2"
+        }
+      ]
+    },
+    {
+      "name": "openjdk",
+      "circuits": [
+        "circuit-java",
+        "circuit-jenkins",
+        "circuit-keycloak"
+      ],
+      "packages": [
+        "java-25-openjdk-devel",
+        "java-25-openjdk-headless",
+        "openjdk-25-jdk-headless",
+        "openjdk-25-jre-headless"
+      ],
+      "osv": [],
+      "github": [
+        "openjdk/jdk"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-java",
+          "variable": "java_version",
+          "default": "25"
+        },
+        {
+          "circuit": "circuit-jenkins",
+          "variable": "java_version",
+          "default": "25"
+        },
+        {
+          "circuit": "circuit-keycloak",
+          "variable": "java_version",
+          "default": "25"
+        }
+      ]
+    },
+    {
+      "name": "openldap",
+      "circuits": [
+        "circuit-openldap"
+      ],
+      "packages": [
+        "ldap-utils",
+        "openldap-clients",
+        "openldap-servers",
+        "slapd"
+      ],
+      "osv": [],
+      "github": [
+        "openldap/openldap"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "openscap",
+      "circuits": [
+        "circuit-openscap"
+      ],
+      "packages": [
+        "openscap-scanner"
+      ],
+      "osv": [],
+      "github": [
+        "OpenSCAP/openscap"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "opensearch",
+      "circuits": [
+        "circuit-opensearch"
+      ],
+      "packages": [
+        "opensearch"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.opensearch:opensearch"
+        }
+      ],
+      "github": [
+        "opensearch-project/OpenSearch",
+        "opensearch-project/security"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-opensearch",
+          "variable": "opensearch_version",
+          "default": "3.9.0"
+        }
+      ]
+    },
+    {
+      "name": "openshift-clients",
+      "circuits": [
+        "circuit-microshift"
+      ],
+      "packages": [
+        "openshift-clients"
+      ],
+      "osv": [],
+      "github": [
+        "openshift/oc"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "openssh-client",
+      "circuits": [
+        "circuit-conn3x-ui",
+        "circuit-restic"
+      ],
+      "packages": [
+        "openssh-client",
+        "openssh-clients"
+      ],
+      "osv": [],
+      "github": [
+        "openssh/openssh-portable"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "openssl",
+      "circuits": [
+        "circuit-certbot",
+        "circuit-dotnet",
+        "circuit-fleet",
+        "circuit-kubeadm",
+        "circuit-nagios",
+        "circuit-nginx",
+        "circuit-openbao",
+        "circuit-opensearch",
+        "circuit-wazuh"
+      ],
+      "packages": [
+        "libssl-dev",
+        "openssl",
+        "openssl-devel",
+        "openssl3-libs"
+      ],
+      "osv": [],
+      "github": [
+        "openssl/openssl"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "opentelemetry-collector",
+      "circuits": [
+        "circuit-otelcol"
+      ],
+      "packages": [
+        "otelcol",
+        "otelcol-contrib"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/open-telemetry/opentelemetry-collector-contrib"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "go.opentelemetry.io/collector"
+        }
+      ],
+      "github": [
+        "open-telemetry/opentelemetry-collector",
+        "open-telemetry/opentelemetry-collector-contrib",
+        "open-telemetry/opentelemetry-collector-releases"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-otelcol",
+          "variable": "otelcol_version",
+          "default": "0.164.0"
+        }
+      ]
+    },
+    {
+      "name": "openvox",
+      "circuits": [
+        "circuit-openvox"
+      ],
+      "packages": [
+        "openvox-agent"
+      ],
+      "osv": [
+        {
+          "ecosystem": "RubyGems",
+          "name": "openvox"
+        }
+      ],
+      "github": [
+        "OpenVoxProject/openvox"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-openvox",
+          "variable": "openvox_version",
+          "default": "9.2.1"
+        }
+      ]
+    },
+    {
+      "name": "oracle-database-free",
+      "circuits": [
+        "circuit-oracle-free"
+      ],
+      "packages": [
+        "oracle-ai-database-free-26ai",
+        "oracle-ai-database-preinstall-26ai"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-oracle-free",
+          "variable": "oracle_free_version",
+          "default": "23.26.3-1"
+        }
+      ]
+    },
+    {
+      "name": "osquery",
+      "circuits": [
+        "circuit-osquery"
+      ],
+      "packages": [
+        "osquery"
+      ],
+      "osv": [],
+      "github": [
+        "osquery/osquery"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-osquery",
+          "variable": "osquery_version",
+          "default": "5.24.0"
+        }
+      ]
+    },
+    {
+      "name": "passbolt",
+      "circuits": [
+        "circuit-passbolt"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Packagist",
+          "name": "passbolt/passbolt_api"
+        }
+      ],
+      "github": [
+        "passbolt/passbolt_api"
+      ],
+      "images": [
+        "docker.io/passbolt/passbolt"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-passbolt",
+          "variable": "passbolt_version",
+          "default": "5.17.0-1-ce-non-root"
+        }
+      ]
+    },
+    {
+      "name": "perl",
+      "circuits": [
+        "circuit-nagios",
+        "circuit-perl"
+      ],
+      "packages": [
+        "perl",
+        "perl-devel",
+        "perl-interpreter"
+      ],
+      "osv": [],
+      "github": [
+        "Perl/perl5"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "php",
+      "circuits": [
+        "circuit-nagios",
+        "circuit-php",
+        "circuit-zabbix"
+      ],
+      "packages": [
+        "libapache2-mod-php",
+        "php",
+        "php-cli",
+        "php-fpm",
+        "php-pgsql",
+        "php8.3-cli",
+        "php8.3-fpm",
+        "php8.4-cli",
+        "php8.4-fpm"
+      ],
+      "osv": [],
+      "github": [
+        "php/php-src"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "pi-hole",
+      "circuits": [
+        "circuit-pihole"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "pi-hole/FTL",
+        "pi-hole/docker-pi-hole",
+        "pi-hole/pi-hole",
+        "pi-hole/web"
+      ],
+      "images": [
+        "docker.io/pihole/pihole"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-pihole",
+          "variable": "pihole_version",
+          "default": "2026.10.0"
+        }
+      ]
+    },
+    {
+      "name": "podman",
+      "circuits": [
+        "circuit-dockge",
+        "circuit-homeassistant",
+        "circuit-kestra",
+        "circuit-lempa-homelab",
+        "circuit-podman",
+        "circuit-portainer",
+        "circuit-renovate",
+        "circuit-zap"
+      ],
+      "packages": [
+        "podman"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/containers/podman/v5"
+        }
+      ],
+      "github": [
+        "podman-container-tools/podman"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "policycoreutils",
+      "circuits": [
+        "circuit-apache",
+        "circuit-cockpit",
+        "circuit-mariadb",
+        "circuit-mysql",
+        "circuit-nagios",
+        "circuit-postgres",
+        "circuit-samba",
+        "circuit-valkey"
+      ],
+      "packages": [
+        "policycoreutils-python-utils"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "portainer",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-portainer"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/portainer/portainer"
+        }
+      ],
+      "github": [
+        "portainer/agent",
+        "portainer/portainer"
+      ],
+      "images": [
+        "docker.io/portainer/agent",
+        "docker.io/portainer/portainer-ce"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-portainer",
+          "variable": "portainer_version",
+          "default": "2.45.3"
+        }
+      ]
+    },
+    {
+      "name": "postfix",
+      "circuits": [
+        "circuit-proxmox"
+      ],
+      "packages": [
+        "postfix"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "postgresql",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-postgres",
+        "circuit-zabbix"
+      ],
+      "packages": [
+        "postgresql",
+        "postgresql-18",
+        "postgresql-client",
+        "postgresql18-server"
+      ],
+      "osv": [],
+      "github": [
+        "postgres/postgres"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-postgres",
+          "variable": "postgres_version",
+          "default": "18"
+        }
+      ]
+    },
+    {
+      "name": "presidio",
+      "circuits": [
+        "circuit-presidio"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "PyPI",
+          "name": "presidio-analyzer"
+        },
+        {
+          "ecosystem": "PyPI",
+          "name": "presidio-anonymizer"
+        }
+      ],
+      "github": [
+        "data-privacy-stack/presidio"
+      ],
+      "images": [
+        "ghcr.io/data-privacy-stack/presidio-analyzer",
+        "ghcr.io/data-privacy-stack/presidio-anonymizer"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-presidio",
+          "variable": "presidio_version",
+          "default": "2.2.366"
+        }
+      ]
+    },
+    {
+      "name": "procps",
+      "circuits": [
+        "circuit-cassandra"
+      ],
+      "packages": [
+        "procps",
+        "procps-ng"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "prometheus",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-monitoring",
+        "circuit-prometheus"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/prometheus/prometheus"
+        }
+      ],
+      "github": [
+        "prometheus/prometheus"
+      ],
+      "images": [
+        "docker.io/prom/prometheus"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-monitoring",
+          "variable": "prometheus_version",
+          "default": "v3.15.0"
+        },
+        {
+          "circuit": "circuit-prometheus",
+          "variable": "prometheus_version",
+          "default": "3.15.1"
+        }
+      ]
+    },
+    {
+      "name": "proxmox-ve",
+      "circuits": [
+        "circuit-proxmox"
+      ],
+      "packages": [
+        "proxmox-default-kernel",
+        "proxmox-ve"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "python3",
+      "circuits": [
+        "circuit-cassandra",
+        "circuit-checkov",
+        "circuit-in-toto",
+        "circuit-python"
+      ],
+      "packages": [
+        "python3",
+        "python3-venv",
+        "python3.13"
+      ],
+      "osv": [],
+      "github": [
+        "python/cpython"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "qdrant",
+      "circuits": [
+        "circuit-qdrant"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "qdrant/qdrant"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-qdrant",
+          "variable": "qdrant_version",
+          "default": "1.20.0"
+        }
+      ]
+    },
+    {
+      "name": "rancher",
+      "circuits": [
+        "circuit-rancher"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/rancher/rancher"
+        }
+      ],
+      "github": [
+        "rancher/rancher"
+      ],
+      "images": [
+        "docker.io/rancher/rancher"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-rancher",
+          "variable": "rancher_version",
+          "default": "2.15.3"
+        }
+      ]
+    },
+    {
+      "name": "renovate",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-renovate"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "npm",
+          "name": "renovate"
+        }
+      ],
+      "github": [
+        "renovatebot/renovate"
+      ],
+      "images": [
+        "ghcr.io/renovatebot/renovate"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-renovate",
+          "variable": "renovate_version",
+          "default": "44.220.0"
+        }
+      ]
+    },
+    {
+      "name": "restic",
+      "circuits": [
+        "circuit-restic"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/restic/restic"
+        }
+      ],
+      "github": [
+        "restic/restic"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-restic",
+          "variable": "restic_version",
+          "default": "0.19.1"
+        }
+      ]
+    },
+    {
+      "name": "ripgrep",
+      "circuits": [
+        "circuit-agentbox"
+      ],
+      "packages": [
+        "ripgrep"
+      ],
+      "osv": [
+        {
+          "ecosystem": "crates.io",
+          "name": "ripgrep"
+        }
+      ],
+      "github": [
+        "BurntSushi/ripgrep"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "ruby",
+      "circuits": [
+        "circuit-ruby"
+      ],
+      "packages": [
+        "ruby",
+        "ruby-dev",
+        "ruby-devel",
+        "ruby-rubygems",
+        "rubygems"
+      ],
+      "osv": [],
+      "github": [
+        "ruby/ruby",
+        "ruby/rubygems"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "runc",
+      "circuits": [
+        "circuit-containerd",
+        "circuit-microshift"
+      ],
+      "packages": [
+        "runc"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/opencontainers/runc"
+        }
+      ],
+      "github": [
+        "opencontainers/runc"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-containerd",
+          "variable": "runc_version",
+          "default": "1.5.2"
+        }
+      ]
+    },
+    {
+      "name": "rust",
+      "circuits": [
+        "circuit-rust"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "rust-lang/cargo",
+        "rust-lang/rust"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-rust",
+          "variable": "rust_version",
+          "default": "1.99.1"
+        }
+      ]
+    },
+    {
+      "name": "samba",
+      "circuits": [
+        "circuit-samba"
+      ],
+      "packages": [
+        "samba"
+      ],
+      "osv": [],
+      "github": [
+        "samba-team/samba"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "scap-security-guide",
+      "circuits": [
+        "circuit-openscap"
+      ],
+      "packages": [
+        "scap-security-guide"
+      ],
+      "osv": [],
+      "github": [
+        "ComplianceAsCode/content"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-openscap",
+          "variable": "content_version",
+          "default": "0.1.82"
+        }
+      ]
+    },
+    {
+      "name": "selenium",
+      "circuits": [
+        "circuit-selenium"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.seleniumhq.selenium:selenium-grid"
+        }
+      ],
+      "github": [
+        "SeleniumHQ/docker-selenium",
+        "SeleniumHQ/selenium"
+      ],
+      "images": [
+        "docker.io/selenium/hub",
+        "docker.io/selenium/node-chromium",
+        "docker.io/selenium/node-firefox"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-selenium",
+          "variable": "selenium_version",
+          "default": "4.51.0-20261010"
+        }
+      ]
+    },
+    {
+      "name": "semaphore",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-semaphore"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/ansible-semaphore/semaphore"
+        },
+        {
+          "ecosystem": "Go",
+          "name": "github.com/semaphoreui/semaphore"
+        }
+      ],
+      "github": [
+        "semaphoreui/semaphore"
+      ],
+      "images": [
+        "docker.io/semaphoreui/semaphore"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-semaphore",
+          "variable": "semaphore_version",
+          "default": "v2.19.17"
+        }
+      ]
+    },
+    {
+      "name": "sqlite",
+      "circuits": [
+        "circuit-sqlite"
+      ],
+      "packages": [
+        "sqlite",
+        "sqlite3"
+      ],
+      "osv": [],
+      "github": [
+        "sqlite/sqlite"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "sudo",
+      "circuits": [
+        "circuit-users"
+      ],
+      "packages": [
+        "sudo"
+      ],
+      "osv": [],
+      "github": [
+        "sudo-project/sudo"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "suricata",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-suricata"
+      ],
+      "packages": [
+        "suricata",
+        "suricata-update"
+      ],
+      "osv": [],
+      "github": [
+        "OISF/suricata",
+        "OISF/suricata-update"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-suricata",
+          "variable": "suricata_series",
+          "default": "8.0"
+        }
+      ]
+    },
+    {
+      "name": "synapse",
+      "circuits": [
+        "circuit-matrix"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "PyPI",
+          "name": "matrix-synapse"
+        }
+      ],
+      "github": [
+        "element-hq/synapse"
+      ],
+      "images": [
+        "ghcr.io/element-hq/synapse"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-matrix",
+          "variable": "synapse_version",
+          "default": "v1.164.1"
+        }
+      ]
+    },
+    {
+      "name": "tailscale",
+      "circuits": [
+        "circuit-tailscale"
+      ],
+      "packages": [
+        "tailscale"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "tailscale.com"
+        }
+      ],
+      "github": [
+        "tailscale/tailscale"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "tar",
+      "circuits": [
+        "circuit-adguardhome",
+        "circuit-caddy",
+        "circuit-cassandra",
+        "circuit-conn3x-ui",
+        "circuit-containerd",
+        "circuit-dotnet",
+        "circuit-github-runner",
+        "circuit-go",
+        "circuit-helm",
+        "circuit-istio",
+        "circuit-k6",
+        "circuit-keycloak",
+        "circuit-lldap",
+        "circuit-nagios",
+        "circuit-node-exporter",
+        "circuit-nodejs",
+        "circuit-ollama",
+        "circuit-openbao",
+        "circuit-openvox",
+        "circuit-prometheus",
+        "circuit-qdrant",
+        "circuit-rust",
+        "circuit-traefik",
+        "circuit-trivy",
+        "circuit-trufflehog",
+        "circuit-wazuh"
+      ],
+      "packages": [
+        "tar"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "teleport",
+      "circuits": [
+        "circuit-teleport"
+      ],
+      "packages": [
+        "teleport"
+      ],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/gravitational/teleport"
+        }
+      ],
+      "github": [
+        "gravitational/teleport"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-teleport",
+          "variable": "teleport_version",
+          "default": "18.11.8"
+        }
+      ]
+    },
+    {
+      "name": "tmux",
+      "circuits": [
+        "circuit-agentbox"
+      ],
+      "packages": [
+        "tmux"
+      ],
+      "osv": [],
+      "github": [
+        "tmux/tmux"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "traefik",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-traefik"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/traefik/traefik/v3"
+        }
+      ],
+      "github": [
+        "traefik/traefik"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-traefik",
+          "variable": "traefik_version",
+          "default": "3.7.16"
+        }
+      ]
+    },
+    {
+      "name": "trivy",
+      "circuits": [
+        "circuit-trivy"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/aquasecurity/trivy"
+        }
+      ],
+      "github": [
+        "aquasecurity/trivy"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-trivy",
+          "variable": "trivy_version",
+          "default": "0.76.1"
+        }
+      ]
+    },
+    {
+      "name": "trufflehog",
+      "circuits": [
+        "circuit-trufflehog"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "github.com/trufflesecurity/trufflehog/v3"
+        }
+      ],
+      "github": [
+        "trufflesecurity/trufflehog"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-trufflehog",
+          "variable": "trufflehog_version",
+          "default": "3.99.8"
+        }
+      ]
+    },
+    {
+      "name": "tzdata",
+      "circuits": [
+        "circuit-baseline",
+        "circuit-gitlab"
+      ],
+      "packages": [
+        "tzdata"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "ufw",
+      "circuits": [
+        "circuit-firewall",
+        "circuit-nginx"
+      ],
+      "packages": [
+        "ufw"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "unattended-upgrades",
+      "circuits": [
+        "circuit-auto-updates"
+      ],
+      "packages": [
+        "unattended-upgrades"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "unbound",
+      "circuits": [
+        "circuit-unbound"
+      ],
+      "packages": [
+        "dns-root-data",
+        "unbound",
+        "unbound-anchor"
+      ],
+      "osv": [],
+      "github": [
+        "NLnetLabs/unbound"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "unixodbc",
+      "circuits": [
+        "circuit-mssql"
+      ],
+      "packages": [
+        "unixODBC",
+        "unixodbc"
+      ],
+      "osv": [],
+      "github": [
+        "lurcher/unixODBC"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "unzip",
+      "circuits": [
+        "circuit-bun",
+        "circuit-kotlin",
+        "circuit-nagios",
+        "circuit-nomad",
+        "circuit-openscap"
+      ],
+      "packages": [
+        "unzip"
+      ],
+      "osv": [],
+      "github": [],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "uptime-kuma",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-mini-homelab",
+        "circuit-uptimekuma"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "louislam/uptime-kuma"
+      ],
+      "images": [
+        "ghcr.io/louislam/uptime-kuma"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-uptimekuma",
+          "variable": "uptimekuma_version",
+          "default": "2.5.9"
+        }
+      ]
+    },
+    {
+      "name": "valkey",
+      "circuits": [
+        "circuit-valkey"
+      ],
+      "packages": [
+        "valkey",
+        "valkey-server"
+      ],
+      "osv": [],
+      "github": [
+        "valkey-io/valkey"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "velociraptor",
+      "circuits": [
+        "circuit-velociraptor"
+      ],
+      "packages": [],
+      "osv": [
+        {
+          "ecosystem": "Go",
+          "name": "www.velocidex.com/golang/velociraptor"
+        }
+      ],
+      "github": [
+        "Velocidex/velociraptor"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-velociraptor",
+          "variable": "velociraptor_version",
+          "default": "0.77.3"
+        }
+      ]
+    },
+    {
+      "name": "wazuh",
+      "circuits": [
+        "circuit-lempa-homelab",
+        "circuit-wazuh"
+      ],
+      "packages": [
+        "wazuh-agent",
+        "wazuh-dashboard",
+        "wazuh-indexer",
+        "wazuh-manager"
+      ],
+      "osv": [],
+      "github": [
+        "wazuh/wazuh",
+        "wazuh/wazuh-dashboard",
+        "wazuh/wazuh-indexer"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-wazuh",
+          "variable": "wazuh_version",
+          "default": "4.14.9"
+        }
+      ]
+    },
+    {
+      "name": "wireguard-tools",
+      "circuits": [
+        "circuit-wireguard"
+      ],
+      "packages": [
+        "wireguard-tools"
+      ],
+      "osv": [],
+      "github": [
+        "WireGuard/wireguard-tools"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "xz",
+      "circuits": [
+        "circuit-rust"
+      ],
+      "packages": [
+        "xz",
+        "xz-utils"
+      ],
+      "osv": [],
+      "github": [
+        "tukaani-project/xz"
+      ],
+      "images": [],
+      "pinned": []
+    },
+    {
+      "name": "zabbix",
+      "circuits": [
+        "circuit-zabbix"
+      ],
+      "packages": [
+        "zabbix-agent2",
+        "zabbix-frontend-php",
+        "zabbix-get",
+        "zabbix-nginx-conf",
+        "zabbix-selinux-policy",
+        "zabbix-server-pgsql",
+        "zabbix-sql-scripts",
+        "zabbix-web-pgsql"
+      ],
+      "osv": [],
+      "github": [
+        "zabbix/zabbix"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-zabbix",
+          "variable": "zabbix_version",
+          "default": "7.0.32-2"
+        }
+      ]
+    },
+    {
+      "name": "zap",
+      "circuits": [
+        "circuit-zap"
+      ],
+      "packages": [],
+      "osv": [],
+      "github": [
+        "zaproxy/zaproxy"
+      ],
+      "images": [
+        "ghcr.io/zaproxy/zaproxy"
+      ],
+      "pinned": [
+        {
+          "circuit": "circuit-zap",
+          "variable": "zap_version",
+          "default": "2.17.0"
+        }
+      ]
+    },
+    {
+      "name": "zeek",
+      "circuits": [
+        "circuit-zeek"
+      ],
+      "packages": [
+        "zeek-9.0",
+        "zeekctl-9.0"
+      ],
+      "osv": [],
+      "github": [
+        "zeek/zeek"
+      ],
+      "images": [],
+      "pinned": [
+        {
+          "circuit": "circuit-zeek",
+          "variable": "zeek_series",
+          "default": "9.0"
+        }
+      ]
+    },
+    {
+      "name": "zstd",
+      "circuits": [
+        "circuit-ollama"
+      ],
+      "packages": [
+        "zstd"
+      ],
+      "osv": [],
+      "github": [
+        "meta/zstd"
+      ],
+      "images": [],
+      "pinned": []
+    }
+  ],
+  "skipped": [
+    {
+      "circuit": "circuit-active-directory",
+      "why": "Windows Server built-in AD DS/DNS roles and features only; nothing third-party installed"
+    },
+    {
+      "circuit": "circuit-iis",
+      "why": "Windows built-in IIS role, plus optional Microsoft URL Rewrite MSI; Microsoft first-party, covered by MSRC not OSV/GitHub"
+    },
+    {
+      "circuit": "circuit-opnsense-vlans",
+      "why": "Terraform config of an OPNsense firewall over its API (browningluke/opnsense provider 0.26.0); installs nothing on a host"
+    },
+    {
+      "circuit": "circuit-proxmox-network",
+      "why": "Terraform config of Proxmox VE networking over its API (bpg/proxmox provider 0.120.0); installs nothing on a host"
+    },
+    {
+      "circuit": "circuit-routeros-baseline",
+      "why": "Terraform config of a MikroTik RouterOS 7 router over its REST API (terraform-routeros/routeros provider 1.99.1); installs nothing on a host"
+    }
+  ],
+  "unsure": [
+    {
+      "circuit": "circuit-forgejo",
+      "what": "forgejo",
+      "why": "No OSV or GitHub source verifies: Forgejo is on Codeberg, and the Go module codeberg.org/forgejo/forgejo stops at v1.20.0 (2023), far behind the pinned 17.0.1. Watch https://codeberg.org/forgejo/forgejo security releases by hand."
+    },
+    {
+      "circuit": "circuit-gitlab",
+      "what": "gitlab-ce",
+      "why": "GitLab is not on GitHub and has no OSV package; advisories come from about.gitlab.com/releases. Only the vendor package name is listed."
+    },
+    {
+      "circuit": "circuit-gitlab-runner",
+      "what": "gitlab-runner",
+      "why": "GitLab-hosted; Go module gitlab.com/gitlab-org/gitlab-runner resolves only to v11.11.4+incompatible (2019), so it was dropped. Only the vendor package name is listed."
+    },
+    {
+      "circuit": "circuit-conn3x-ui",
+      "what": "conn3x-ui and conn3x release binaries",
+      "why": "First-party Conn3x software, not third-party, so left out; the circuit's curl, git, tar, gzip and openssh-client are listed."
+    },
+    {
+      "circuit": "circuit-lempa-homelab",
+      "what": "composed circuits",
+      "why": "Composes 23 other circuits at older module tags (e.g. circuit-homepage?ref=v0.1.0, circuit-wazuh?ref=v0.2.0). Its circuits are listed under each main piece of software, but pinned defaults reflect origin/main of the source circuits, not those tags."
+    },
+    {
+      "circuit": "circuit-mini-homelab",
+      "what": "composed circuits",
+      "why": "Composes circuit-uptimekuma and circuit-homepage at ref v0.1.0; pinned defaults reflect origin/main, not those tags."
+    },
+    {
+      "circuit": "circuit-flux, circuit-istio, circuit-rancher, circuit-kubeadm",
+      "what": "indirect images",
+      "why": "Images for Flux controllers, Istio pilot/proxyv2, Rancher, cert-manager and flannel come from upstream manifests/charts the circuit applies, not from circuit defaults; repositories were inferred from upstream conventions, not read from the manifests."
+    },
+    {
+      "circuit": "circuit-langfuse",
+      "what": "minio",
+      "why": "Runs cgr.dev/chainguard/minio:latest pinned only by digest; upstream minio/minio GitHub repo is archived, so new repository advisories may not appear there."
+    },
+    {
+      "circuit": "circuit-agentbox, circuit-nodejs, circuit-go, circuit-python, circuit-ruby, circuit-perl, circuit-php, circuit-cockpit",
+      "what": "user-chosen extras",
+      "why": "These install whatever npm packages, Go tools, pip packages, gems, CPAN or distro modules, PHP extensions or Cockpit pages the user lists; nothing by default, so none are in the watchlist."
+    },
+    {
+      "circuit": "(many)",
+      "what": "vendor-repo packages",
+      "why": "packages from vendor repositories (grafana, falco, netdata, teleport, wazuh, zabbix, mysql-community-server, mssql-server, docker-ce, etc.) are not in the Debian/Ubuntu/Rocky OSV feeds; match them via the github/osv sources instead."
+    },
+    {
+      "circuit": "circuit-microshift",
+      "what": "dependency RPMs",
+      "why": "cri-o, cri-tools, openshift-clients, runc and containernetworking-plugins come from mirror.openshift.com / CentOS Stream koji URLs pinned in the dependency_rpms default; versions are in those URLs, not separate variables."
+    }
+  ]
+}
