@@ -27,14 +27,14 @@ func TestImportMySQL(t *testing.T) {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)
 			addDeploy(h, "", "")
-			install := `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mariadb-server >/dev/null && systemctl enable --now mariadb`
+			install := `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mariadb-server && systemctl enable --now mariadb`
 			switch {
 			case image == "ubuntu2404":
-				install = `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server >/dev/null && systemctl enable --now mysql`
+				install = `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server && systemctl enable --now mysql`
 			case rpmImage(image):
-				install = "dnf install -y -q mariadb-server >/dev/null && systemctl enable --now mariadb"
+				install = "dnf install -y -q mariadb-server && systemctl enable --now mariadb"
 			}
-			h.exec("", "sh", "-c", `timeout 300 sh -c "$1" || { echo "install failed or hung: $?"; exit 1; }`, "sh",
+			h.exec("", "sh", "-c", `timeout 300 sh -c "$1" >/tmp/install.log 2>&1 || { echo "install failed or hung: $?"; tail -20 /tmp/install.log; exit 1; }`, "sh",
 				install+` && for i in $(seq 60); do mysql -u root -e 'select 1' >/dev/null 2>&1 && break; sleep 1; done`)
 			const cli = `"$(command -v mariadb || command -v mysql)"`
 			sql := func(q string) string {
