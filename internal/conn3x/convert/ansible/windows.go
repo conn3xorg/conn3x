@@ -301,6 +301,23 @@ func winFeatureModule(in *input) ([]step, string) {
 	return []step{feature}, ""
 }
 
+// winTimezoneModule converts community.windows.win_timezone. A zone with
+// _dstoff, which turns daylight saving off, has no windows_timezone
+// setting yet.
+func winTimezoneModule(in *input) ([]step, string) {
+	zone := in.str("timezone")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if zone == "" {
+		return nil, "has no timezone"
+	}
+	if strings.HasSuffix(strings.ToLower(zone), "_dstoff") {
+		return nil, "turns daylight saving off with _dstoff, which windows_timezone doesn't do yet"
+	}
+	return one("windows_timezone", []attr{s("name", zone)})
+}
+
 // winGetURLModule converts ansible.windows.win_get_url when the task gives
 // a SHA-256: checksum with checksum_algorithm sha256, since the algorithm
 // defaults to sha1. force is dropped: the step downloads whenever dest's
