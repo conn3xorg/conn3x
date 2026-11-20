@@ -22,6 +22,8 @@ $readCommands = 'Get-Acl', 'Get-ADDomain', 'Get-ADGroup', 'Get-ADObject', 'Get-A
 # lists the rules in force for the lockout check, and ExpandEnvironmentVariables only expands a
 # rule's program path to compare it with sshd's.
 # Get-WindowsOptionalFeature only reads DISM's list of features.
+# GetEnvironmentVariable only reads one, and read_choco_package.ps1 reads a .nuspec with an
+# XmlReader, whose settings prohibit a DTD and fetch nothing.
 $readImports = 'ActiveDirectory', 'CimCmdlets', 'DnsClient', 'NetConnection', 'Microsoft.PowerShell.LocalAccounts', 'NetSecurity', 'NetTCPIP', 'ScheduledTasks', 'ServerManager'
 # Types and methods together: a name alone would pass [IO.File]::Replace for
 # [BitConverter]'s text, or [IO.File]::Create for [SHA256]::Create.
@@ -32,9 +34,9 @@ $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter:
   'DirectoryServices.DirectorySearcher::new',
   'Environment::ExpandEnvironmentVariables', 'IO.File::ReadAllBytes', 'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
   'Security.Cryptography.SHA256::Create', 'Security.Principal.NTAccount::new', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
-  'string::Join', 'Conn3xLsaRead::Accounts'
+  'string::Join', 'Conn3xLsaRead::Accounts', 'Environment::GetEnvironmentVariable', 'Xml.XmlReader::Create'
 $readInstance = 'Close', 'ComputeHash', 'CreateUpdateSearcher', 'Dispose', 'FindAll', 'Search', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
-  'Replace', 'ToLowerInvariant', 'ToString', 'Translate'
+  'Replace', 'ToLowerInvariant', 'ToString', 'Translate', 'ReadToFollowing', 'ReadElementContentAsString'
 # Cmdlets that treat a positional argument as a -Path, with their usual aliases.
 $pathCommands = 'Add-Content', 'Clear-Content', 'Clear-Item', 'Copy-Item', 'Get-Acl', 'Get-ChildItem', 'Get-Content', 'Get-FileHash', 'Get-Item', 'Get-ItemProperty', 'Invoke-Item',
   'Move-Item', 'Remove-Item', 'Rename-Item', 'Resolve-Path', 'Set-Acl', 'Set-Content', 'Set-Item', 'Set-ItemProperty', 'Set-Location', 'Test-Path',
