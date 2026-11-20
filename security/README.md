@@ -12,6 +12,11 @@ workflows make sure that someone hears about it.
   - the `osv` packages, such as Go modules;
   - the `github` projects' own security advisories.
 
+  It also reads the vendor RSS feeds in `feeds`, such as Oracle's security
+  alerts. A vendor's advisory names its CVEs days before distros ship a fix
+  and OSV lists them, so each new item opens an issue of its own, naming the
+  entries the feed may cover.
+
   It opens one `upstream-advisory` issue per piece of software for
   advisories no earlier issue listed. Each issue names the circuits that
   install it, the fixed versions, and what to check.
@@ -32,6 +37,14 @@ looks like this:
 ```json
 {"name": "nginx", "circuits": ["circuit-nginx"], "packages": ["nginx"],
  "osv": [], "github": [], "images": ["docker.io/library/nginx"], "pinned": []}
+```
+
+A vendor that publishes a security feed, rather than advisories in OSV or on
+GitHub, goes in `feeds`, with the entries it may cover:
+
+```json
+{"name": "Oracle", "url": "https://www.oracle.com/.../rss-otn-sec.xml",
+ "entries": ["openjdk", "mysql"]}
 ```
 
 Software published only on Codeberg or GitLab, such as Forgejo and GitLab,

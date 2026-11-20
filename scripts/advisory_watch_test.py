@@ -84,6 +84,32 @@ class GitHub(unittest.TestCase):
             subprocess.run = real
 
 
+RSS = """<rss><channel>
+<item><title>Oracle Critical Security Patch Update Advisory -
+  November 2026</title><link>https://www.oracle.com/security-alerts/cspunov2026.html
+</link><pubDate>Tue, 17 Nov 2026 13:00:00 -0700</pubDate><guid isPermaLink="false">CSPUNov2026</guid></item>
+<item><title>No guid or date</title><link>https://example.com/a</link></item>
+</channel></rss>"""
+
+
+class Feed(unittest.TestCase):
+    def test_items_are_parsed_and_whitespace_folded(self):
+        a, b = w.feed_items(RSS)
+        self.assertEqual(a["title"], "Oracle Critical Security Patch Update Advisory - November 2026")
+        self.assertEqual(a["link"], "https://www.oracle.com/security-alerts/cspunov2026.html")
+        self.assertEqual(a["published"].isoformat(), "2026-11-17T13:00:00-07:00")
+        self.assertEqual(b["id"], "https://example.com/a")
+        self.assertIsNone(b["published"])
+
+    def test_issue_marker_skips_the_item_next_run(self):
+        feed = {"name": "Oracle"}
+        item = w.feed_items(RSS)[0]
+        body = w.render_feed(feed, item, [{"name": "mysql", "circuits": ["circuit-mysql"]}])
+        self.assertIn("**mysql**, installed by `circuit-mysql`", body)
+        self.assertEqual(w.seen_ids([body]), {w.feed_key(feed, item)})
+        self.assertEqual(w.feed_key(feed, item), "oracle:CSPUNov2026")
+
+
 class Render(unittest.TestCase):
     def test_title_and_table(self):
         rows = w.group([osv("CVE-2026-1", summary="a | b"), osv("CVE-2026-2")])

@@ -5,6 +5,20 @@
     "Ubuntu:24.04:LTS",
     "Rocky Linux:10"
   ],
+  "feeds": [
+    {
+      "name": "Oracle",
+      "url": "https://www.oracle.com/ocom/groups/public/@otn/documents/webcontent/rss-otn-sec.xml",
+      "entries": [
+        "openjdk",
+        "eclipse-temurin",
+        "mysql",
+        "oracle-database-free",
+        "kestra",
+        "opensearch"
+      ]
+    }
+  ],
   "entries": [
     {
       "name": "adguardhome",

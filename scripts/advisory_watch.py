@@ -10,6 +10,10 @@ run opens one issue per piece of software with advisories published in the
 last --days days that no earlier issue has listed, labelled
 upstream-advisory, so someone checks the circuits' defaults, pins and docs.
 
+Its feeds are vendors' own RSS feeds, such as Oracle's security alerts, which
+publish days before OSV has the CVEs. Each new item opens an issue naming the
+entries it may cover.
+
 Usage: python3 scripts/advisory_watch.py [--days 7] [--dry-run]
 """
 
@@ -21,7 +25,9 @@ import subprocess
 import sys
 import time
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 OSV = "https://api.osv.dev/v1"
 LABEL = "upstream-advisory"
@@ -61,6 +67,61 @@ def github_advisories(repo):
     if out.returncode != 0:
         return None
     return json.loads(out.stdout or "[]")
+
+
+def http_text(url):
+    # Some vendors' sites turn away urllib's default user agent.
+    req = urllib.request.Request(url, headers={"User-Agent": "conn3x-advisory-watch"})
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.read().decode("utf-8", "replace")
+        except OSError as e:
+            if attempt == 2:
+                print(f"::warning::{url}: {e}")
+                return None
+            time.sleep(5 * (attempt + 1))
+
+
+def feed_items(xml):
+    """An RSS feed's items as id, title, link and published time. The id is
+    the guid, or the link when there is none."""
+    items = []
+    for it in ET.fromstring(xml).iter("item"):
+        text = {k: " ".join((it.findtext(k) or "").split()) for k in ("title", "link", "guid", "pubDate")}
+        try:
+            published = parsedate_to_datetime(text["pubDate"])
+        except (TypeError, ValueError):
+            published = None
+        items.append({"id": text["guid"] or text["link"], "title": text["title"], "link": text["link"], "published": published})
+    return items
+
+
+def render_feed(feed, item, entries):
+    lines = [
+        f"{feed['name']} published a security advisory: [{md(item['title'])}]({item['link']}), on {item['published']:%Y-%m-%d}.",
+        "",
+        "Its CVEs usually reach OSV, and so this watch's per-package issues, only once distros ship a fix. Check now whether it covers any of these:",
+        "",
+    ]
+    lines += [f"- **{e['name']}**, installed by " + ", ".join(f"`{c}`" for c in e["circuits"]) for e in entries]
+    lines += [
+        "",
+        "**To check**",
+        "",
+        "- [ ] Which of the above does the advisory list, and at which versions?",
+        "- [ ] Is a fixed build out from the vendor, the distros, or the image publisher? If not, note it here and keep this open.",
+        "- [ ] Does a circuit's default, pinned image, docs or example need changing?",
+        "",
+        "Opened by `scripts/advisory_watch.py` from `security/watchlist.json`. Close it when everything above is checked.",
+        "",
+        f"<!-- advisory-ids: {feed_key(feed, item)} -->",
+    ]
+    return "\n".join(lines)
+
+
+def feed_key(feed, item):
+    return f"{feed['name'].lower()}:{''.join(item['id'].split())}"
 
 
 def parse_time(s):
@@ -276,20 +337,34 @@ def main():
     seen = seen_ids(b["body"] for b in bodies)
 
     opened = 0
+    issues = []
+    by_name = {e["name"]: e for e in watchlist["entries"]}
+    for feed in watchlist.get("feeds", []):
+        xml = http_text(feed["url"])
+        if xml is None:
+            skipped.append(feed["url"])
+            continue
+        for item in feed_items(xml):
+            key = feed_key(feed, item)
+            if key in seen or not item["published"] or item["published"] < cutoff:
+                continue
+            issues.append((f"Vendor advisory from {feed['name']}: {item['title']}", render_feed(feed, item, [by_name[n] for n in feed["entries"]])))
+            seen.add(key)
     for i, e in enumerate(watchlist["entries"]):
         rows = new_rows(records[i], seen)
         if not rows:
             continue
-        t, body = title(e, rows), render(e, rows)
+        issues.append((title(e, rows), render(e, rows)))
+        seen |= {r["key"] for r in rows} | {x for r in rows for x in r["ids"]}
+    for t, body in issues:
         if args.dry_run:
             print(f"=== {t}\n{body}\n")
         else:
             gh("issue", "create", "-R", args.repo, "--title", t, "--body", body, "--label", LABEL, "--label", "security", "--assignee", ASSIGNEE)
-        seen |= {r["key"] for r in rows} | {x for r in rows for x in r["ids"]}
         opened += 1
     print(f"{opened} issue(s) {'would be ' if args.dry_run else ''}opened from {sum(map(len, records.values()))} advisory records since {cutoff:%Y-%m-%d}.")
     if skipped:
-        print(f"Skipped {len(skipped)} GitHub repo(s) GitHub refused: {', '.join(skipped)}.")
+        print(f"Skipped {len(skipped)} source(s) that refused or failed: {', '.join(skipped)}.")
 
 
 if __name__ == "__main__":
