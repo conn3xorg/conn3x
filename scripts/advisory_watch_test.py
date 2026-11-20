@@ -73,6 +73,17 @@ class Seen(unittest.TestCase):
         self.assertEqual(w.seen_ids([body]), {"CVE-2026-1", "DEBIAN-CVE-2026-1", "USN-1-1"})
 
 
+class GitHub(unittest.TestCase):
+    def test_a_refused_repo_is_skipped_not_fatal(self):
+        import subprocess
+        real = subprocess.run
+        subprocess.run = lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "HTTP 403: IP allow list")
+        try:
+            self.assertIsNone(w.github_advisories("bridgecrewio/checkov"))
+        finally:
+            subprocess.run = real
+
+
 class Render(unittest.TestCase):
     def test_title_and_table(self):
         rows = w.group([osv("CVE-2026-1", summary="a | b"), osv("CVE-2026-2")])

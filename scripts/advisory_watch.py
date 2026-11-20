@@ -52,6 +52,17 @@ def gh(*args):
     return out.stdout
 
 
+def github_advisories(repo):
+    """A repository's published advisories, or None if GitHub refused, such as
+    an organisation's IP allow list turning the Actions token away. One repo
+    mustn't stop every other entry's issue, so the caller skips it and warns."""
+    out = subprocess.run(["gh", "api", f"repos/{repo}/security-advisories?state=published&sort=published&direction=desc&per_page=30"],
+                         capture_output=True, text=True, check=False)
+    if out.returncode != 0:
+        return None
+    return json.loads(out.stdout or "[]")
+
+
 def parse_time(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00")) if s else None
 
@@ -247,9 +258,15 @@ def main():
             p = parse_time(rec["published"])
             if p and p >= cutoff:
                 records[i].append(rec)
+    skipped = []
     for i, e in enumerate(watchlist["entries"]):
         for repo in e.get("github", []):
-            advs = json.loads(gh("api", f"repos/{repo}/security-advisories?state=published&sort=published&direction=desc&per_page=30") or "[]")
+            advs = github_advisories(repo)
+            if advs is None:
+                skipped.append(repo)
+                # An Actions warning, shown on the run's summary page.
+                print(f"::warning::GitHub refused {repo}'s advisories; its OSV and distro sources were still read")
+                continue
             for a in advs:
                 p = parse_time(a.get("published_at"))
                 if p and p >= cutoff:
@@ -271,6 +288,8 @@ def main():
         seen |= {r["key"] for r in rows} | {x for r in rows for x in r["ids"]}
         opened += 1
     print(f"{opened} issue(s) {'would be ' if args.dry_run else ''}opened from {sum(map(len, records.values()))} advisory records since {cutoff:%Y-%m-%d}.")
+    if skipped:
+        print(f"Skipped {len(skipped)} GitHub repo(s) GitHub refused: {', '.join(skipped)}.")
 
 
 if __name__ == "__main__":
