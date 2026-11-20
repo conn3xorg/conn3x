@@ -59,3 +59,25 @@ echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl resta
 		t.Errorf("different content under fish:\n%s", out)
 	}
 }
+
+// With csh or tcsh as the login shell, nothing can run, so conn3x run says
+// that, not just tcsh's own LC_ALL=C: Command not found. (#1126).
+func TestTcshLoginShell(t *testing.T) {
+	h := startHost(t, "debian13")
+	if err := exec.Command("podman", "exec", h.container, "sh", "-c",
+		"apt-get -qq update && apt-get -qq install -y tcsh").Run(); err != nil {
+		t.Skipf("can't install tcsh in the container: %v", err)
+	}
+	h.exec("", "sh", "-c", `useradd -m -s /usr/bin/tcsh deploy && echo 'deploy:Deploy-Pass-123' | chpasswd &&
+mkdir -p -m 700 /home/deploy/.ssh && cp /root/.ssh/authorized_keys /home/deploy/.ssh/ &&
+chown -R deploy:deploy /home/deploy/.ssh &&
+echo 'UsePAM no' > /etc/ssh/sshd_config.d/00-conn3x-test.conf && systemctl restart ssh`)
+	w := &workdir{t: t, dir: t.TempDir()}
+	if err := os.WriteFile(filepath.Join(w.dir, "hosts.ini"), []byte("t1 ansible_host=127.0.0.1 ansible_port="+h.port+" ansible_user=deploy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := w.conn3x("run", "-i", "hosts.ini", "-private-key-file", h.keyFile, "-known-hosts-file", h.knownHosts, "t1", "-a", "true")
+	if code == 0 || !strings.Contains(out, "login shell is csh or tcsh") || !strings.Contains(out, "chsh -s /bin/sh") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}

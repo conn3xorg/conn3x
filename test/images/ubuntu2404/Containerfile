@@ -6,11 +6,15 @@ FROM docker.io/library/ubuntu:24.04
 RUN printf 'Acquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Retries "3";\n' > /etc/apt/apt.conf.d/80conn3x-e2e-timeouts
 
 # amd64 images fetch from archive.ubuntu.com, whose stalls have run whole e2e
-# shards out of time (#1087). Azure's public mirror, the one GitHub's runners
-# use, carries the same archive and security pockets. arm64 images use
+# shards out of time (#1087), so each source lists a second mirror too: apt
+# reads two URIs on one line as two sources, warns about one it can't reach
+# and goes on, and fetches a package from the other when a download fails
+# (#1151). The second is kernel.org's, not Azure's: Azure's answered 403 on
+# 20 Nov, and apt treats a 4xx as an error, not a warning, which fails
+# apt-get update, a package step's included. arm64 images use
 # ports.ubuntu.com, which this leaves alone.
-RUN sed -i -e 's#http://archive.ubuntu.com/ubuntu/#http://azure.archive.ubuntu.com/ubuntu/#' \
-           -e 's#http://security.ubuntu.com/ubuntu/#http://azure.archive.ubuntu.com/ubuntu/#' \
+RUN sed -i -e 's#^URIs: http://archive.ubuntu.com/ubuntu/#URIs: http://archive.ubuntu.com/ubuntu/ http://mirrors.edge.kernel.org/ubuntu/#' \
+           -e 's#^URIs: http://security.ubuntu.com/ubuntu/#URIs: http://security.ubuntu.com/ubuntu/ http://mirrors.edge.kernel.org/ubuntu/#' \
            /etc/apt/sources.list.d/ubuntu.sources \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd systemd-sysv dbus openssh-server sudo ca-certificates \

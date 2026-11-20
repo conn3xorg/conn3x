@@ -211,3 +211,70 @@ func applyMysqlUser(ctx context.Context, req providers.ApplyResourceChangeReques
 	resp.NewState = cty.ObjectVal(vals)
 	return resp
 }
+
+func mysqlVariableSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "A system variable of the MySQL or MariaDB server on the host, such as max_connections, set with SET GLOBAL, SET PERSIST or SET PERSIST_ONLY through the mysql client as root over the server's socket.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
+			"name":      {Type: cty.String, Required: true, Description: "Variable name, as SHOW GLOBAL VARIABLES lists it, such as max_connections."},
+			"value":     {Type: cty.String, Required: true, Description: "Value, such as \"500\", \"ON\" or \"1G\". A size suffix (K, M, G, T) is turned into bytes, since SET doesn't take one. Booleans compare in any spelling, numbers as numbers."},
+			"mode":      {Type: cty.String, Optional: true, Description: "\"global\" (default) changes the running value only, which the next restart loses. \"persist\" changes it and writes it to mysqld-auto.cnf, so it lasts. \"persist_only\" writes mysqld-auto.cnf alone, for a variable the server only reads at startup. Both persist modes need MySQL 8.0 or later; MariaDB has neither."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the variable, \"delete\" sets the running value back to its default, for global and persist, and takes it out of mysqld-auto.cnf with RESET PERSIST, for the persist modes."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the variable matched at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func mysqlVariableFrom(v cty.Value) mysql.Variable {
+	return mysql.Variable{Name: stringOr(v.GetAttr("name"), ""), Value: stringOr(v.GetAttr("value"), ""), Mode: stringOr(v.GetAttr("mode"), "")}
+}
+
+func validateMysqlVariable(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := mysqlVariableFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func planMysqlVariable(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	// A new mode is a change, not a new variable: moving from persist to
+	// global leaves what mysqld-auto.cnf holds, as the docs say.
+	return planSynced(req, "mysql_variable", []string{"name"}, []string{"value", "mode"})
+}
+
+func readMysqlVariable(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		v := mysqlVariableFrom(prior)
+		st, err := mysql.ReadVariable(ctx, h, v.Name, v.Mode)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("mysql_variable %s: %w", v.Name, err)
+		}
+		return withSync(prior, v.Matches(st)), nil
+	})
+}
+
+func applyMysqlVariable(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			v := mysqlVariableFrom(planned)
+			if err := mysql.ApplyVariable(ctx, h, v); err != nil {
+				return cty.NilVal, fmt.Errorf("mysql_variable %s: %w", v.Name, err)
+			}
+			return withSync(planned, true), nil
+		},
+		func(ctx context.Context, h *hostConn, prior cty.Value) error {
+			v := mysqlVariableFrom(prior)
+			if err := mysql.ResetVariable(ctx, h, v); err != nil {
+				return fmt.Errorf("mysql_variable %s: %w", v.Name, err)
+			}
+			return nil
+		})
+}

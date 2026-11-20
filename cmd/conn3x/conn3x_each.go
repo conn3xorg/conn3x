@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ type eachOptions struct {
 	parallelism      int
 	keepGoing        bool
 	detailedExitcode bool
+	json             bool
 	args             []string
 }
 
@@ -56,14 +58,17 @@ Each configuration is initialised one at a time, then planned, with up to -paral
 
 Arguments after the options go to every plan, as in conn3x each plan -lock-timeout=60s.
 
+With -json, stdout is one JSON object per configuration, for CI or a UI to read: {"dir": "app", "result": "changes", "changes": {"add": 1, "change": 2, "remove": 0}}. result is "no changes", "changes", "failed", "skipped" (with "because", the dependency that didn't plan), "not run" or "removed", and changes comes from each plan's own -json change summary. The plans' own output goes to stderr.
+
 Exits 0 when every plan succeeded and 1 when any failed. With -detailed-exitcode, a run with changes and no failures exits 2.`,
 	}
 	plan.CommandLine.StringVar(&o.changed, "changed", "", "Plan only the configurations changed since this git ref, and those that depend on them.")
 	plan.CommandLine.IntVar(&o.parallelism, "parallelism", 1, "How many configurations to plan at once.")
 	plan.CommandLine.BoolVar(&o.keepGoing, "keep-going", false, "Keep starting plans after one fails.")
 	plan.CommandLine.BoolVar(&o.detailedExitcode, "detailed-exitcode", false, "Exit 2 when any plan has changes and none failed.")
+	plan.CommandLine.BoolVar(&o.json, "json", false, "Print one JSON object per configuration, with its result and change counts, and send the plans' own output to stderr.")
 	plan.CommandLine.VariadicArg(&o.args, "PLAN-ARG")
-	plan.UsageOverride.Usage = "conn3x [global options] each plan [-changed=REF] [-parallelism=N] [-keep-going] [-detailed-exitcode] [PLAN-ARG ...]"
+	plan.UsageOverride.Usage = "conn3x [global options] each plan [-changed=REF] [-parallelism=N] [-keep-going] [-detailed-exitcode] [-json] [PLAN-ARG ...]"
 	plan.Run = func(command.Meta) int {
 		exe, err := os.Executable()
 		if err != nil {
@@ -136,21 +141,32 @@ func runEachPlan(o eachOptions, root string, run eachRunner, stdout, stderr io.W
 		return fail("%s", err)
 	}
 	if len(dirs) == 0 {
-		fmt.Fprintln(stdout, "No root configuration to plan.")
+		if o.json {
+			fmt.Fprintln(stderr, "No root configuration to plan.")
+		} else {
+			fmt.Fprintln(stdout, "No root configuration to plan.")
+		}
 	}
 
 	result := map[string]string{}
 	var mu sync.Mutex
 	failed := false
+	// With -json, stdout is the results alone, and the plans' own output
+	// goes to stderr.
+	planOut := stdout
+	if o.json {
+		planOut = stderr
+	}
 	print := func(dir string, out []byte) {
 		mu.Lock()
 		defer mu.Unlock()
 		sc := bufio.NewScanner(bytes.NewReader(out))
 		sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		for sc.Scan() {
-			fmt.Fprintln(stdout, termsafe.Escape(dir+": "+sc.Text()))
+			fmt.Fprintln(planOut, termsafe.Escape(dir+": "+sc.Text()))
 		}
 	}
+	counts := map[string]*changeCounts{}
 	blocked := func(dir string) string {
 		for _, dep := range tree.Edges[dir] {
 			if r := result[dep]; r == "failed" || strings.HasPrefix(r, "skipped") {
@@ -197,7 +213,11 @@ func runEachPlan(o eachOptions, root string, run eachRunner, stdout, stderr io.W
 			go func(dir string) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				out, code, err := run(dir, append([]string{"plan", "-input=false", "-no-color", "-detailed-exitcode"}, o.args...)...)
+				args := []string{"plan", "-input=false", "-no-color", "-detailed-exitcode"}
+				if o.json {
+					args = append(args, "-json")
+				}
+				out, code, err := run(dir, append(args, o.args...)...)
 				print(dir, out)
 				r := "failed"
 				switch {
@@ -210,6 +230,9 @@ func runEachPlan(o eachOptions, root string, run eachRunner, stdout, stderr io.W
 				}
 				mu.Lock()
 				result[dir] = r
+				if o.json && r == "changes" {
+					counts[dir] = planChanges(out)
+				}
 				if r == "failed" {
 					failed = true
 				}
@@ -219,7 +242,9 @@ func runEachPlan(o eachOptions, root string, run eachRunner, stdout, stderr io.W
 		wg.Wait()
 	}
 
-	fmt.Fprintln(stdout)
+	if !o.json {
+		fmt.Fprintln(stdout)
+	}
 	changes := false
 	for _, dir := range dirs {
 		r := result[dir]
@@ -227,9 +252,17 @@ func runEachPlan(o eachOptions, root string, run eachRunner, stdout, stderr io.W
 			r = "not run: an earlier plan failed"
 		}
 		changes = changes || r == "changes"
+		if o.json {
+			printEachJSON(stdout, dir, r, counts[dir])
+			continue
+		}
 		fmt.Fprintln(stdout, termsafe.Escape(dir+": "+r))
 	}
 	for _, d := range removed {
+		if o.json {
+			printEachJSON(stdout, d, "removed", nil)
+			continue
+		}
 		fmt.Fprintln(stdout, termsafe.Escape(d+": removed by this change, but its resources are still in its state; destroy them from "+o.changed+" first, or move them"))
 	}
 	switch {
@@ -346,4 +379,51 @@ func gitChanges(root, ref string) (files, gone []string, err error) {
 	sort.Strings(files)
 	sort.Strings(gone)
 	return files, gone, nil
+}
+
+// changeCounts is a plan's -json change summary, without its operation.
+type changeCounts struct {
+	Add    int `json:"add"`
+	Change int `json:"change"`
+	Import int `json:"import"`
+	Remove int `json:"remove"`
+	Forget int `json:"forget"`
+}
+
+// planChanges reads the change_summary message from a plan's -json
+// stream, or nil when there's none.
+func planChanges(out []byte) *changeCounts {
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		var m struct {
+			Type    string        `json:"type"`
+			Changes *changeCounts `json:"changes"`
+		}
+		if json.Unmarshal(sc.Bytes(), &m) == nil && m.Type == "change_summary" && m.Changes != nil {
+			return m.Changes
+		}
+	}
+	return nil
+}
+
+// printEachJSON prints one configuration's result as -json does: the
+// text summary's word, with "because" for a skip and "changes" for a plan
+// that has some.
+func printEachJSON(w io.Writer, dir, r string, c *changeCounts) {
+	obj := map[string]any{"dir": dir}
+	switch {
+	case strings.HasPrefix(r, "skipped: "):
+		obj["result"] = "skipped"
+		obj["because"] = strings.TrimSuffix(strings.TrimPrefix(r, "skipped: "), " didn't plan")
+	case strings.HasPrefix(r, "not run"):
+		obj["result"] = "not run"
+	default:
+		obj["result"] = r
+	}
+	if c != nil {
+		obj["changes"] = c
+	}
+	line, _ := json.Marshal(obj)
+	fmt.Fprintln(w, string(line))
 }

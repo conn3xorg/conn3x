@@ -32,6 +32,8 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/storage"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sudoers"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 const (
@@ -658,6 +660,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"postgresql_privs":        pgPrivsModule,
 	"mysql_db":                mysqlDatabaseModule,
 	"mysql_user":              mysqlUserModule,
+	"mysql_variables":         mysqlVariableModule,
 	"hostname":                nameOnly("hostname"),
 	"timezone":                nameOnly("timezone"),
 	"firewalld":               firewalldModule,
@@ -709,6 +712,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_domain_user":       winADUserModule,
 	"win_feature":           winFeatureModule,
 	"win_timezone":          winTimezoneModule,
+	"win_hostname":          winHostnameModule,
 	"win_file":              winFileModule,
 	"win_firewall_rule":     winFirewallRuleModule,
 	"win_group":             winGroupModule,
@@ -1127,6 +1131,7 @@ func userModule(in *input) ([]step, string) {
 	}
 	attrs = in.optional(attrs, "home", "home")
 	attrs = in.optional(attrs, "shell", "shell")
+	attrs = in.optional(attrs, "comment", "comment")
 	if in.has("system") {
 		attrs = append(attrs, attr{key: "system", val: cty.BoolVal(in.bool("system", false))})
 	}
@@ -1183,13 +1188,69 @@ func groupModule(in *input) ([]step, string) {
 
 func authorizedKeyModule(in *input) ([]step, string) {
 	in.state("present", "present")
-	attrs := []attr{s("user", in.str("user")), s("key", in.str("key"))}
+	raw := in.str("key")
+	exclusive := in.has("exclusive") && in.bool("exclusive", false)
+	opts, hasOpts := in.str("key_options"), in.has("key_options")
+	if hasOpts && exclusive {
+		return nil, "sets key_options with exclusive, which the converter can't translate yet"
+	}
+	key := s("key", raw)
+	switch {
+	case !strings.Contains(raw, "\x00"):
+		// Ansible drops blank lines and # comments from key first.
+		var lines []string
+		for _, l := range strings.Split(raw, "\n") {
+			if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
+				lines = append(lines, l)
+			}
+		}
+		if len(lines) > 1 && !exclusive {
+			return nil, fmt.Sprintf("gives %d keys without exclusive, and an authorized_key step takes one; make a task for each key", len(lines))
+		}
+		if hasOpts {
+			for i, l := range lines {
+				line, err := keyWithOptions(opts, l)
+				if err != nil {
+					return nil, err.Error()
+				}
+				lines[i] = line
+			}
+			key = s("key", strings.Join(lines, "\n"))
+		}
+	case hasOpts:
+		// A key from a variable may hold any number of lines, so the
+		// options go on each through an expression that skips blank and #
+		// lines, as Ansible does. Options already on such a key stay.
+		key = keyOptionsExpr(opts, raw)
+	}
+	attrs := []attr{s("user", in.str("user")), key}
 	// exclusive keeps only this task's keys, which key may hold one per
 	// line, as Ansible reads it.
-	if in.has("exclusive") && in.bool("exclusive", false) {
+	if exclusive {
 		attrs = append(attrs, attr{key: "exclusive", val: cty.True})
 	}
 	return one("authorized_key", attrs)
+}
+
+// keyOptionsExpr puts opts on each key line of a key from a variable,
+// skipping blank and # lines.
+func keyOptionsExpr(opts, raw string) attr {
+	return attr{key: "key", raw: fmt.Sprintf(`join("\n", [for k in split("\n", %s) : "%s ${trimspace(k)}" if trimspace(k) != "" && !startswith(trimspace(k), "#")])`, markTemplate(raw), quoted(opts))}
+}
+
+// keyWithOptions is a key line with opts in place of any options it had:
+// Ansible's key_options replaces them rather than adding to them, and two
+// option fields aren't a key line.
+func keyWithOptions(opts, line string) (string, error) {
+	pub, comment, _, _, err := gossh.ParseAuthorizedKey([]byte(line))
+	if err != nil {
+		return "", fmt.Errorf("sets key_options, and key %q isn't a public key the converter can read", line)
+	}
+	out := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(pub)))
+	if comment != "" {
+		out += " " + comment
+	}
+	return opts + " " + out, nil
 }
 
 var cronName = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
@@ -1509,6 +1570,37 @@ func mysqlDatabaseModule(in *input) ([]step, string) {
 
 // mysqlUserModule converts community.mysql.mysql_user. Only database-level
 // privileges convert, since those are what the step's grants holds.
+// mysqlVariableModule converts mysql_variables, from community.mysql or
+// ansible.mysql: variable, value and mode.
+func mysqlVariableModule(in *input) ([]step, string) {
+	if k := in.mysqlUnmodelled(); k != "" {
+		return nil, "sets " + k + ", which mysql_variable doesn't offer yet"
+	}
+	if !in.has("value") {
+		return nil, "has no value, so Ansible only reads the variable"
+	}
+	name, value := in.str("variable"), in.str("value")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	attrs := []attr{s("name", name), s("value", value)}
+	switch mode := in.str("mode"); mode {
+	case "", "global":
+	case "persist", "persist_only":
+		attrs = append(attrs, s("mode", mode))
+	default:
+		return nil, fmt.Sprintf("has mode %q, which Ansible refuses", mode)
+	}
+	var notes []string
+	if sizeSuffixed.MatchString(strings.TrimSpace(value)) {
+		notes = append(notes, "Ansible sends "+value+" to SET as a string, which MySQL refuses for a number; mysql_variable turns the suffix into bytes, so this step sets it where the task failed.")
+	}
+	return one("mysql_variable", attrs, notes...)
+}
+
+// sizeSuffixed is a value with a K, M, G or T suffix, as my.cnf takes it.
+var sizeSuffixed = regexp.MustCompile(`^(?i)\d+[KMGT]$`)
+
 func mysqlUserModule(in *input) ([]step, string) {
 	if st := in.str("state"); st != "" && st != "present" {
 		return nil, fmt.Sprintf("has state %q; mysql_user only makes a user, and drops it only when the step is removed with on_remove = \"delete\"", st)

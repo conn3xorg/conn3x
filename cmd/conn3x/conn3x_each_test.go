@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,5 +181,62 @@ func TestEachChangesSeeMoves(t *testing.T) {
 	git("commit", "-qm", "move")
 	if files, gone, err = gitChanges(root, "base"); err != nil || strings.Join(gone, ",") != "old" || !slices.Contains(files, "old/main.tf") {
 		t.Errorf("committed move: files %v, gone %v, %v", files, gone, err)
+	}
+}
+
+// jsonRun answers plan as plan -json would, with a change summary for a
+// configuration that has changes, and records whether -json was passed.
+type jsonRun struct {
+	fakeRun
+	sawJSON bool
+}
+
+func (f *jsonRun) run(dir string, args ...string) ([]byte, int, error) {
+	if args[0] == "plan" && slices.Contains(args, "-json") {
+		f.mu.Lock()
+		f.sawJSON = true
+		f.mu.Unlock()
+		if f.codes[dir] == 2 {
+			_, _, _ = f.fakeRun.run(dir, args...) // records the call
+			return []byte(`{"@level":"info","@message":"Plan: 1 to add, 2 to change, 0 to destroy.","type":"change_summary","changes":{"add":1,"change":2,"import":0,"remove":0,"forget":0,"operation":"plan"}}` + "\n"), 2, nil
+		}
+	}
+	return f.fakeRun.run(dir, args...)
+}
+
+// With -json, stdout is one object per configuration, and the plans' own
+// output goes to stderr.
+func TestEachPlanJSON(t *testing.T) {
+	root := eachRepo(t)
+	f := &jsonRun{fakeRun: fakeRun{codes: map[string]int{"app": 2}}}
+	var out, errOut bytes.Buffer
+	if code := runEachPlan(eachOptions{parallelism: 1, json: true}, root, f.run, &out, &errOut); code != 0 || !f.sawJSON {
+		t.Fatalf("exit %d, -json passed %t:\n%s%s", code, f.sawJSON, out.String(), errOut.String())
+	}
+	want := `{"changes":{"add":1,"change":2,"import":0,"remove":0,"forget":0},"dir":"app","result":"changes"}` + "\n" +
+		`{"dir":"network","result":"no changes"}` + "\n" +
+		`{"dir":"old","result":"no changes"}` + "\n"
+	if out.String() != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", out.String(), want)
+	}
+	if !strings.Contains(errOut.String(), "network: planned network") {
+		t.Errorf("plan output didn't go to stderr:\n%s", errOut.String())
+	}
+
+	f = &jsonRun{fakeRun: fakeRun{codes: map[string]int{"network": 1}}}
+	out.Reset()
+	if code := runEachPlan(eachOptions{parallelism: 1, keepGoing: true, json: true}, root, f.run, &out, &errOut); code != 1 {
+		t.Fatalf("failure: exit %d", code)
+	}
+	for _, line := range []string{`{"because":"network","dir":"app","result":"skipped"}`, `{"dir":"network","result":"failed"}`} {
+		if !strings.Contains(out.String(), line+"\n") {
+			t.Errorf("stdout lacks %s:\n%s", line, out.String())
+		}
+	}
+	var o map[string]any
+	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if err := json.Unmarshal([]byte(l), &o); err != nil {
+			t.Errorf("%q isn't JSON: %v", l, err)
+		}
 	}
 }

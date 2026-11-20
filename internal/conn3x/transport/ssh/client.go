@@ -732,6 +732,9 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (Result, err
 	if err == nil && res.ExitCode != 0 && windowsShellRefused(res.Stderr) {
 		return res, fmt.Errorf("ssh %s: %w", c.addr, ErrWindowsHost)
 	}
+	if err == nil && res.ExitCode != 0 && cshRefused(res.Stderr) {
+		return res, fmt.Errorf("ssh %s: %w", c.addr, ErrCshLoginShell)
+	}
 	return res, err
 }
 
@@ -832,6 +835,30 @@ var ErrWindowsHost = errors.New("this is a Windows host, and this step's module 
 // word of what Run sends when they can't find it. Message text is localised,
 // but the quoted word survives translation.
 var windowsCommandNotFound = regexp.MustCompile(`^(?:LC_ALL=C : |['"\x{201c}\x{201e}\x{ab}]LC_ALL['"\x{201d}\x{201c}\x{bb}] )`)
+
+// ErrCshLoginShell is what Run reports when the SSH user's login shell is
+// csh or tcsh. sshd hands every command to the login shell first, and
+// those take neither the LC_ALL=C in front of it nor a line break inside
+// quotes, which most of Conn3x's scripts have (#1126).
+var ErrCshLoginShell = errors.New("the SSH user's login shell is csh or tcsh, which can't run Conn3x's commands. Give the user a POSIX shell or fish, such as with chsh -s /bin/sh <user>, or log in as a user that has one")
+
+// cshRefused reports whether stderr is csh or tcsh refusing a command:
+// the LC_ALL=C prefix every Run starts with, or, for a script with a line
+// break, the quote around it, which they reject before running anything.
+// tcsh translates both, so this matches what every translation keeps: the
+// prefix's name, which no POSIX shell or fish prints since they take it,
+// and, on the first line, three single quotes in a row, its quoting of the
+// quote it couldn't match, in a sentence ending in a full stop. Lines
+// after it can be other complaints about the same script.
+func cshRefused(stderr []byte) bool {
+	s := bytes.TrimSpace(stderr)
+	if bytes.HasPrefix(s, []byte("LC_ALL=C: ")) {
+		return true
+	}
+	first, _, _ := bytes.Cut(s, []byte("\n"))
+	first = bytes.TrimSpace(first)
+	return bytes.Contains(first, []byte("'''")) && bytes.HasSuffix(first, []byte("."))
+}
 
 // windowsShellRefused reports whether stderr is a Windows shell refusing the
 // wrapper around Run's command.
