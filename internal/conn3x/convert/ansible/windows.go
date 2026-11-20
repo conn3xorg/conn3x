@@ -458,6 +458,49 @@ func winGroupMembershipModule(in *input) ([]step, string) {
 
 var firewallRuleID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,127}$`)
 
+// winFirewallModule converts community.windows.win_firewall, with a step
+// for each profile in profiles, which defaults to all three, as Ansible's.
+func winFirewallModule(in *input) ([]step, string) {
+	profiles := in.list("profiles")
+	if len(profiles) == 0 {
+		profiles = []string{"domain", "private", "public"}
+	}
+	var attrs []attr
+	switch st := in.str("state"); st {
+	case "":
+	case "enabled":
+		attrs = append(attrs, attr{key: "enabled", val: cty.True})
+	case "disabled":
+		attrs = append(attrs, attr{key: "enabled", val: cty.False})
+	default:
+		return nil, fmt.Sprintf("has state %q, which Ansible refuses", st)
+	}
+	for _, k := range []string{"inbound_action", "outbound_action"} {
+		switch v := in.str(k); v {
+		case "":
+		case "allow", "block":
+			attrs = append(attrs, s("default_"+strings.TrimSuffix(k, "_action"), v))
+		default:
+			return nil, fmt.Sprintf("sets %s to %q; windows_firewall_profile takes allow or block", k, v)
+		}
+	}
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if len(attrs) == 0 {
+		return nil, "sets neither state nor an action, so Ansible changes nothing"
+	}
+	var steps []step
+	for _, p := range profiles {
+		p = strings.ToLower(p)
+		if p != "domain" && p != "private" && p != "public" {
+			return nil, fmt.Sprintf("names the profile %q, which Ansible refuses", p)
+		}
+		steps = append(steps, step{module: "windows_firewall_profile", attrs: append([]attr{s("name", p)}, attrs...), suffix: p})
+	}
+	return steps, ""
+}
+
 func winFirewallRuleModule(in *input) ([]step, string) {
 	if in.state("present", "present", "absent") == "absent" {
 		return nil, "removes a rule; Conn3x deletes a windows_firewall_rule when its step goes, so there's nothing to convert this to yet"

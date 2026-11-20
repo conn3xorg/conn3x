@@ -211,3 +211,108 @@ func applyWinFirewallRule(ctx context.Context, req providers.ApplyResourceChange
 	resp.NewState = withSync(req.PlannedState, true)
 	return resp
 }
+
+func winFirewallProfileSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "One Windows Firewall profile's settings: whether it's on, and its default inbound and outbound actions. Settings left unset are left as they are. Turning a profile on with inbound blocked is refused unless a rule in it surely lets Conn3x's SSH connection in.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":               {Type: cty.String, Computed: true},
+			"revision":         revisionAttr(),
+			"name":             {Type: cty.String, Required: true, Description: "\"domain\", \"private\" or \"public\"."},
+			"enabled":          {Type: cty.Bool, Optional: true, Description: "Whether the profile is on."},
+			"default_inbound":  {Type: cty.String, Optional: true, Description: "\"allow\" or \"block\": what happens to inbound traffic no rule matches."},
+			"default_outbound": {Type: cty.String, Optional: true, Description: "\"allow\" or \"block\": what happens to outbound traffic no rule matches."},
+			"in_sync":          {Type: cty.Bool, Computed: true, Description: "Whether the profile had every setting at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func winFirewallProfileFrom(v cty.Value) windows.FirewallProfile {
+	p := windows.FirewallProfile{Name: stringOr(v.GetAttr("name"), ""), DefaultInbound: stringOr(v.GetAttr("default_inbound"), ""), DefaultOutbound: stringOr(v.GetAttr("default_outbound"), "")}
+	if e := v.GetAttr("enabled"); known(e) {
+		b := e.True()
+		p.Enabled = &b
+	}
+	return p
+}
+
+func validateWinFirewallProfile(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	if err := winFirewallProfileFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}
+
+func planWinFirewallProfile(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planSynced(req, "windows_firewall_profile", []string{"name"}, []string{"enabled", "default_inbound", "default_outbound"})
+}
+
+func readWinFirewallProfile(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	resp := providers.ReadResourceResponse{NewState: req.PriorState}
+	if req.PriorState.IsNull() {
+		return resp
+	}
+	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	p := winFirewallProfileFrom(req.PriorState)
+	st, err := windows.ReadFirewallProfile(ctx, h.raw(), p.Name, nil)
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_firewall_profile: %w", err))
+		return resp
+	}
+	resp.NewState = withSync(req.PriorState, p.Matches(st))
+	return resp
+}
+
+func applyWinFirewallProfile(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	var resp providers.ApplyResourceChangeResponse
+	// Removing the step leaves the profile as it is.
+	if req.PlannedState.IsNull() {
+		resp.NewState = req.PlannedState
+		return resp
+	}
+	fail := func(err error) providers.ApplyResourceChangeResponse {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_firewall_profile: %w", err))
+		return resp
+	}
+	p := winFirewallProfileFrom(req.PlannedState)
+	if err := p.Validate(); err != nil {
+		return fail(err)
+	}
+	h, err := winHost(ctx, req.PlannedState.GetAttr("ssh"))
+	if err != nil {
+		return fail(err)
+	}
+	conn, err := windows.ReadSSHConn(ctx, h.raw(), sshPort(req.PlannedState.GetAttr("ssh")))
+	if err != nil {
+		return fail(err)
+	}
+	st, err := windows.ReadFirewallProfile(ctx, h.raw(), p.Name, &conn)
+	if err != nil {
+		return fail(err)
+	}
+	if !p.Matches(st) {
+		if err := p.LockoutGuard(st, conn); err != nil {
+			return fail(err)
+		}
+		if err := windows.ApplyFirewallProfile(ctx, h.raw(), p); err != nil {
+			return fail(fmt.Errorf("setting the %s profile: %w", p.Name, err))
+		}
+		if st, err = windows.ReadFirewallProfile(ctx, h.raw(), p.Name, nil); err != nil {
+			return fail(err)
+		}
+		if !p.Matches(st) {
+			return fail(fmt.Errorf("the %s profile doesn't have the settings after the change; Group Policy may set them", p.Name))
+		}
+	}
+	resp.NewState = withSync(req.PlannedState, true)
+	return resp
+}

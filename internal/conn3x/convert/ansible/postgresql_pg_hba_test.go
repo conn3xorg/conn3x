@@ -14,35 +14,35 @@ func TestConvertPostgresqlPgHba(t *testing.T) {
 		// The issue's task, with become_user: postgres, which a line step
 		// doesn't need since it keeps the file's owner.
 		"{dest: /etc/postgresql/17/main/pg_hba.conf, contype: host, users: app, source: 10.0.0.0/24, databases: app, method: scram-sha-256}\n      become_user: postgres": {
-			"line {", `path         = "/etc/postgresql/17/main/pg_hba.conf"`,
-			`line         = "host app app 10.0.0.0/24 scram-sha-256"`,
-			`regexp       = "^\\s*host\\s+app\\s+app\\s+10\\.0\\.0\\.0/24(\\s|$)"`,
-			`insertbefore = "^\\s*host(ssl|nossl|gssenc|nogssenc)?\\s+all\\s+all\\s"`,
+			"line {", `path          = "/etc/postgresql/17/main/pg_hba.conf"`,
+			`line          = "host app app 10.0.0.0/24 scram-sha-256"`,
+			`regexp        = "^\\s*host\\s+app\\s+app\\s+10\\.0\\.0\\.0/24(\\s|$)"`,
+			`insert_before = "^\\s*host(ssl|nossl|gssenc|nogssenc)?\\s+all\\s+all\\s"`,
 			"Ansible sorts the whole of pg_hba.conf",
 		},
 		// local has no address in the line or the key, even if one is given.
 		"{dest: /f, contype: local, databases: all, users: app, method: peer, address: 10.0.0.0/8}": {
-			`line         = "local all app peer"`, `regexp       = "^\\s*local\\s+all\\s+app(\\s|$)"`,
-			`insertbefore = "^\\s*local\\s+all\\s+all\\s"`,
+			`line          = "local all app peer"`, `regexp        = "^\\s*local\\s+all\\s+app(\\s|$)"`,
+			`insert_before = "^\\s*local\\s+all\\s+all\\s"`,
 		},
 		// Ansible's defaults: all, all, samehost, md5.
-		"{dest: /f, contype: host}": {`line         = "host all all samehost md5"`},
+		"{dest: /f, contype: host}": {`line          = "host all all samehost md5"`},
 		// An address and netmask are written as one network, as Ansible does.
 		"{dest: /f, contype: hostssl, databases: app, users: app, address: 192.168.0.0, netmask: 255.255.0.0, method: scram-sha-256}": {
-			`line         = "hostssl app app 192.168.0.0/16 scram-sha-256"`,
+			`line          = "hostssl app app 192.168.0.0/16 scram-sha-256"`,
 		},
 		// Options are sorted by key, as Ansible writes them.
 		"{dest: /f, contype: host, users: app, databases: app, address: 10.0.0.0/8, method: ldap, options: 'ldapserver=ldap.example ldapbasedn=dc=example'}": {
-			`line         = "host app app 10.0.0.0/8 ldap ldapbasedn=dc=example ldapserver=ldap.example"`,
+			`line          = "host app app 10.0.0.0/8 ldap ldapbasedn=dc=example ldapserver=ldap.example"`,
 		},
 		// A user name with a dot is escaped in the key.
 		"{dest: /f, contype: host, databases: app, users: j.doe, address: 10.0.0.0/8}": {
-			`regexp       = "^\\s*host\\s+app\\s+j\\.doe\\s+10\\.0\\.0\\.0/8(\\s|$)"`,
+			`regexp        = "^\\s*host\\s+app\\s+j\\.doe\\s+10\\.0\\.0\\.0/8(\\s|$)"`,
 		},
 		"{dest: /f, contype: host, databases: app, users: app, address: 'fd00::/8', state: absent}": {
 			`state  = "absent"`, `regexp = "^\\s*host\\s+app\\s+app\\s+fd00::/8(\\s|$)"`,
 		},
-		"{dest: /f, contype: host, address: db.example, create: true}": {`"host all all db.example md5"`, `create       = true`},
+		"{dest: /f, contype: host, address: db.example, create: true}": {`"host all all db.example md5"`, `create        = true`},
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+args+"\n")
 		for _, w := range want {
