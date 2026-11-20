@@ -629,7 +629,7 @@ func stringListVal(s []string) cty.Value {
 
 func winTimezoneSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "The Windows host's time zone, set with Set-TimeZone. One per host.",
+		Description: "The Windows host's time zone, set with Set-TimeZone. One per host. Changing the zone can slow every new SSH session on the host until it reboots, so add a windows_reboot step after it.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),

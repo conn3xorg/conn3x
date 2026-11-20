@@ -24,7 +24,7 @@ step "utc" {
 
 **Reading.** On every plan, Conn3x reads the zone with `Get-TimeZone`. `in_sync` is true when its ID is `name`. A `name` the host doesn't list fails the plan and names the three closest IDs it does, so a typo such as `Mountian Standard Time` points at `Mountain Standard Time`.
 
-**Applying.** Conn3x runs `Set-TimeZone -Id`, then reads the zone back and fails if it isn't `name`. The change takes effect at once, with no reboot. Windows keeps the ID in the case you give it, which doesn't matter to it or to Conn3x. On GitHub's Windows Server 2022 and 2025 runners, each new SSH session took about 20 seconds to start after a time zone change, instead of well under a second. Once it lasted the rest of the job, even after the zone was put back. Once it passed after a minute. So steps after this one on a host can be slower. A reboot, which a time zone change doesn't need, is the sure way back.
+**Applying.** Conn3x runs `Set-TimeZone -Id`, then reads the zone back and fails if it isn't `name`. The change takes effect at once, with no reboot. Windows keeps the ID in the case you give it, which doesn't matter to it or to Conn3x. On GitHub's Windows Server 2022 and 2025 runners, each new SSH session took about 20 seconds to start after a time zone change, instead of well under a second. Once it lasted the rest of the job, even after the zone was put back. Once it passed after a minute. `tzutil /s` did the same, so it's the change itself, not how it's made. So steps after this one on a host can be slower. A reboot, which a time zone change doesn't need otherwise, is the sure way back, so put a [`windows_reboot`](/modules/windows_reboot) step after this one.
 
 ## Removal
 
