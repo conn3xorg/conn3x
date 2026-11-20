@@ -58,7 +58,7 @@ func TestOptionalFeatureFlow(t *testing.T) {
       name = "Conn3xNoSuchFeature"
     }
   }`)
-	if out := f.expect(1, "plan"); !strings.Contains(out, "Windows has no optional feature named Conn3xNoSuchFeature") {
+	if out := f.expect(1, "apply", "-auto-approve"); !strings.Contains(out, "Windows has no optional feature named Conn3xNoSuchFeature") {
 		t.Errorf("an unknown feature:\n%s", out)
 	}
 }
