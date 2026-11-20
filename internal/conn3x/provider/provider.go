@@ -165,6 +165,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_postgresql_setting":           {pgSettingSchema, validatePgSetting, planPgSetting, readPgSetting, applyPgSetting, upgradeWith(pgSettingSchema)},
 	"conn3x_postgresql_role":              {pgRoleSchema, validatePgRole, planPgRole, readPgRole, applyPgRole, upgradeWith(pgRoleSchema)},
 	"conn3x_windows_package":              {winPackageSchema, validateWinPackage, planWinPackage, readWinPackage, applyWinPackage, upgradeWith(winPackageSchema)},
+	"conn3x_windows_choco_package":        {winChocoSchema, validateWinChoco, planWinChoco, readWinChoco, applyWinChoco, upgradeWith(winChocoSchema)},
 	"conn3x_windows_powershell":           {winPowershellSchema, validateWinPowershell, planWinPowershell, readWinPowershell, applyWinPowershell, upgradeWith(winPowershellSchema)},
 	"conn3x_windows_registry_value":       {winRegistrySchema, validateWinRegistry, planWinRegistry, readWinRegistry, applyWinRegistry, upgradeWith(winRegistrySchema)},
 	"conn3x_windows_environment":          {winEnvSchema, validateWinEnv, planWinEnv, readWinEnv, applyWinEnv, upgradeWith(winEnvSchema)},
