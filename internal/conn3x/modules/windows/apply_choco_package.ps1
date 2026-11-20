@@ -17,8 +17,9 @@ function Invoke-Choco([string[]]$arguments) {
   }
 }
 $name = [string]$A.name
-if ($A.remove) { Invoke-Choco @('uninstall', $name, '-y') }
+# choco skips a pinned package, exiting 0, so its pin comes off first.
 if ($A.unpin_first) { Invoke-Choco @('pin', 'remove', '-n', $name) }
+if ($A.remove) { Invoke-Choco @('uninstall', $name, '-y') }
 if ($A.install) {
   # upgrade installs a package that isn't there, and with a version and
   # --allow-downgrade, moves an installed one to exactly that version.

@@ -101,7 +101,9 @@ func TestChocoApplyArgs(t *testing.T) {
 		{"unpin only", ChocoPackage{Name: "a", Pinned: &no}, ActualChoco{Installed: true, Version: "1.0", Pinned: true},
 			map[string]any{"install": false, "unpin_first": false, "pin": "remove"}},
 		{"remove", ChocoPackage{Name: "a", Absent: true}, ActualChoco{Installed: true, Version: "1.0", Pinned: true},
-			map[string]any{"remove": true, "install": false, "pin": ""}},
+			map[string]any{"remove": true, "install": false, "unpin_first": true, "pin": ""}},
+		{"remove an unpinned one", ChocoPackage{Name: "a", Absent: true}, ActualChoco{Installed: true, Version: "1.0"},
+			map[string]any{"remove": true, "unpin_first": false, "pin": ""}},
 	} {
 		f := &fake{answers: []map[string]any{ok(map[string]any{"restart": c.name == "install"})}}
 		restart, err := ApplyChoco(context.Background(), f, c.p, c.a, time.Minute)

@@ -144,9 +144,11 @@ func ApplyChoco(ctx context.Context, r ps.Runner, p ChocoPackage, a ActualChoco,
 		return false, err
 	}
 	install := !p.Absent && (!a.Installed || (p.Version != "" && !sameVersion(p.Version, a.Version)))
-	// choco doesn't upgrade a pinned package, so the pin comes off first;
-	// then it ends as wanted, which unset means as it was.
-	unpin := install && a.Pinned
+	// choco neither upgrades nor uninstalls a pinned package, and exits 0
+	// all the same, so the pin comes off first; then it ends as wanted,
+	// which unset means as it was.
+	remove := p.Absent && a.Installed
+	unpin := (install || remove) && a.Pinned
 	pin := ""
 	if !p.Absent {
 		want, now := a.Pinned, a.Pinned && !unpin
@@ -161,7 +163,7 @@ func ApplyChoco(ctx context.Context, r ps.Runner, p ChocoPackage, a ActualChoco,
 		}
 	}
 	res, err := ps.Apply(ctx, r, script("apply_choco_package.ps1"), map[string]any{
-		"name": p.Name, "remove": p.Absent && a.Installed, "install": install, "version": p.Version,
+		"name": p.Name, "remove": remove, "install": install, "version": p.Version,
 		"source": p.Source, "unpin_first": unpin, "pin": pin,
 	}, timeout)
 	if err != nil {
