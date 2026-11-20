@@ -6,33 +6,58 @@
 package windowshost
 
 import (
+	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
+// The runner's own zone, set again in another case, plans clean and changes
+// nothing, and a misspelt zone fails with the closest real ones. Neither
+// changes the runner's time zone (see TestTimezoneFlow for why).
+func TestTimezoneReadOnly(t *testing.T) {
+	f := newFlow(t)
+	c := connect(t)
+	orig := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text)
+	f.write(`step "zone" {
+    windows_timezone {
+      name = "` + strings.ToLower(orig) + `"
+    }
+  }`)
+	f.expect(0, "init")
+	f.expect(0, "apply", "-auto-approve")
+	f.expect(0, "plan", "-detailed-exitcode")
+	if got := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text); got != orig {
+		t.Fatalf("the runner's zone changed from %s to %s", orig, got)
+	}
+
+	f.write(`step "zone" {
+    windows_timezone {
+      name = "Tokyo Standrad Time"
+    }
+  }`)
+	out := f.expect(1, "apply", "-auto-approve")
+	if !strings.Contains(out, `Windows has no time zone "Tokyo Standrad Time"`) || !strings.Contains(out, `"Tokyo Standard Time"`) {
+		t.Errorf("a misspelt zone:\n%s", out)
+	}
+	if got := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text); got != orig {
+		t.Fatalf("the runner's zone changed from %s to %s", orig, got)
+	}
+}
+
 // The runner's time zone is set to one it isn't in, drifted by hand and put
-// back; it ends as it started however the test ends. A misspelt zone fails
-// the plan with the closest real ones.
+// back. Only with CONN3X_WIN_TZ_CHANGE set: on GitHub's Windows runners, each
+// new SSH session took about 20 s to start after a time zone change, and
+// stayed that slow for the rest of the job, even after the zone was put back
+// and nine minutes without a session, which ran the suite past its time limit.
 func TestTimezoneFlow(t *testing.T) {
+	if os.Getenv("CONN3X_WIN_TZ_CHANGE") == "" {
+		t.Skip("set CONN3X_WIN_TZ_CHANGE to change the host's time zone: it slows new SSH sessions on GitHub's runners for the rest of the job")
+	}
 	f := newFlow(t)
 	c := connect(t)
 	orig := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text)
 	t.Cleanup(func() {
 		run(t, c, `param($A) Set-TimeZone -Id $A.id`, map[string]any{"id": orig})
-		// After a time zone change, each new SSH session on the runner takes
-		// about 20 s to start, and new sessions seem to keep it that way, so
-		// this waits without opening any, then checks once, until one is
-		// quick, rather than leave the tests after it to crawl.
-		start := time.Now()
-		quick := false
-		for !quick && time.Since(start) < 8*time.Minute {
-			time.Sleep(90 * time.Second)
-			call := time.Now()
-			run(t, c, `1`, nil)
-			quick = time.Since(call) < 5*time.Second
-		}
-		t.Logf("sessions quick again: %v, %v after the time zone was put back", quick, time.Since(start).Round(time.Second))
 	})
 	want, other := "Tokyo Standard Time", "Cape Verde Standard Time"
 	if strings.EqualFold(orig, want) {
@@ -48,15 +73,5 @@ func TestTimezoneFlow(t *testing.T) {
 	// Windows keeps the ID in the case it was set with.
 	if got := strings.TrimSpace(run(t, c, `(Get-TimeZone).Id`, nil).Text); !strings.EqualFold(got, want) {
 		t.Errorf("time zone after the last apply: %s", got)
-	}
-
-	f.write(`step "zone" {
-    windows_timezone {
-      name = "Tokyo Standrad Time"
-    }
-  }`)
-	out := f.expect(1, "apply", "-auto-approve")
-	if !strings.Contains(out, `Windows has no time zone "Tokyo Standrad Time"`) || !strings.Contains(out, `"Tokyo Standard Time"`) {
-		t.Errorf("a misspelt zone:\n%s", out)
 	}
 }
