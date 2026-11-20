@@ -1,0 +1,75 @@
+// Copyright (c) The Conn3x Authors
+// SPDX-License-Identifier: MPL-2.0
+
+package provider
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+
+	"github.com/opentofu/opentofu/internal/configs"
+	"github.com/opentofu/opentofu/internal/conn3x/convert/ansible"
+)
+
+// A converted step has to have arguments its step type takes: the
+// converter's own tests only check the output is HCL, so a misspelt
+// argument there only shows at validate. Each task here is one the
+// converter turns into a step; every step it writes is checked against its
+// resource type's schema.
+func TestConvertedStepsFitTheirSchemas(t *testing.T) {
+	const playbook = `- hosts: all
+  tasks:
+    - community.postgresql.postgresql_pg_hba: {dest: /etc/postgresql/17/main/pg_hba.conf, contype: host, users: app, databases: app, source: 10.0.0.0/24, method: scram-sha-256, create: true}
+    - community.postgresql.postgresql_pg_hba: {dest: /etc/pg_hba.conf, contype: local, users: app, method: peer, state: absent}
+    - community.postgresql.postgresql_alter_system: {param: work_mem, value: 64MB}
+    - community.mysql.mysql_variables: {variable: max_connections, value: 500, mode: persist}
+    - ansible.builtin.lineinfile: {path: /etc/app.conf, line: "a=1", regexp: "^a=", insertbefore: "^b="}
+    - ansible.windows.win_hostname: {name: WEB01}
+    - ansible.windows.win_optional_feature: {name: TelnetClient}
+`
+	path := filepath.Join(t.TempDir(), "play.yml")
+	if err := os.WriteFile(path, []byte(playbook), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ansible.Convert(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range res.Review {
+		t.Errorf("not converted: %s", r.Reason)
+	}
+	f, diags := hclsyntax.ParseConfig(res.HCL, "play.tf", hcl.InitialPos)
+	if diags.HasErrors() {
+		t.Fatal(diags)
+	}
+	checked := 0
+	var walk func(*hclsyntax.Body)
+	walk = func(b *hclsyntax.Body) {
+		for _, blk := range b.Blocks {
+			if typ, ok := configs.CircuitStepType(blk.Type); ok {
+				rt, ok := resourceTypes[typ]
+				if !ok {
+					t.Errorf("%s: no resource type %s", blk.Type, typ)
+					continue
+				}
+				schema := rt.schema().Block
+				for name := range blk.Body.Attributes {
+					if _, ok := schema.Attributes[name]; !ok {
+						t.Errorf("%s step at %s: %s has no argument %q", blk.Type, blk.DefRange(), typ, name)
+					}
+				}
+				checked++
+				continue
+			}
+			walk(blk.Body)
+		}
+	}
+	walk(f.Body.(*hclsyntax.Body))
+	if checked < 7 {
+		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
+	}
+}

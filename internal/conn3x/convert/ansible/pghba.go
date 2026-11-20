@@ -112,7 +112,7 @@ func pgHbaModule(in *input) ([]step, string) {
 	if in.state("present", "present", "absent") == "absent" {
 		attrs = append(attrs, s("state", "absent"))
 	} else {
-		attrs = append(attrs, s("insertbefore", pgHbaCatchAll(contype)))
+		attrs = append(attrs, s("insert_before", pgHbaCatchAll(contype)))
 	}
 	if in.bool("create", false) {
 		attrs = append(attrs, attr{key: "create", val: cty.True})
