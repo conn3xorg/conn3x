@@ -7,10 +7,13 @@ RUN printf 'Acquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire
 
 # amd64 images fetch from archive.ubuntu.com, whose stalls have run whole e2e
 # shards out of time (#1087). Azure's public mirror, the one GitHub's runners
-# use, carries the same archive and security pockets. arm64 images use
-# ports.ubuntu.com, which this leaves alone.
-RUN sed -i -e 's#http://archive.ubuntu.com/ubuntu/#http://azure.archive.ubuntu.com/ubuntu/#' \
-           -e 's#http://security.ubuntu.com/ubuntu/#http://azure.archive.ubuntu.com/ubuntu/#' \
+# use, carries the same archive and security pockets, but it has failed too,
+# timing out and then answering 403 (19-20 Nov). So each source lists both:
+# apt reads two URIs on one line as two sources, warns about one it can't
+# reach and goes on, and fetches a package from the other when a download
+# fails. arm64 images use ports.ubuntu.com, which this leaves alone.
+RUN sed -i -e 's#^URIs: http://archive.ubuntu.com/ubuntu/#URIs: http://azure.archive.ubuntu.com/ubuntu/ http://archive.ubuntu.com/ubuntu/#' \
+           -e 's#^URIs: http://security.ubuntu.com/ubuntu/#URIs: http://azure.archive.ubuntu.com/ubuntu/ http://security.ubuntu.com/ubuntu/#' \
            /etc/apt/sources.list.d/ubuntu.sources \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd systemd-sysv dbus openssh-server sudo ca-certificates \
