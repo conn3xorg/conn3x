@@ -933,10 +933,11 @@ var keywords = map[string]bool{
 }
 
 // runsAsPostgres reports whether a task's module is one whose step already
-// runs psql as the postgres user.
+// runs psql as the postgres user, or, for postgresql_pg_hba, is a line step,
+// which keeps the file's owner, so writing it as root ends the same.
 func runsAsPostgres(t map[string]*yaml.Node) bool {
 	for k := range t {
-		if m := k[strings.LastIndex(k, ".")+1:]; !keywords[k] && (m == "postgresql_db" || m == "postgresql_user" || m == "postgresql_ext" || m == "postgresql_schema" || m == "postgresql_alter_system" || m == "postgresql_set") {
+		if m := k[strings.LastIndex(k, ".")+1:]; !keywords[k] && (m == "postgresql_db" || m == "postgresql_user" || m == "postgresql_ext" || m == "postgresql_schema" || m == "postgresql_alter_system" || m == "postgresql_set" || m == "postgresql_pg_hba") {
 			return true
 		}
 	}
@@ -1121,7 +1122,8 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if k == "when" && (familyCond || boolCond != "") {
 			continue
 		}
-		// The PostgreSQL steps run psql as postgres themselves.
+		// The PostgreSQL steps run psql as postgres themselves, or keep the
+		// file's owner.
 		if k == "become_user" && scalar(t[k]) == "postgres" && runsAsPostgres(t) {
 			continue
 		}

@@ -653,6 +653,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"postgresql_schema":       pgSchemaModule,
 	"postgresql_alter_system": pgSettingModule,
 	"postgresql_set":          pgSettingModule,
+	"postgresql_pg_hba":       pgHbaModule,
 	"postgresql_user":         pgRoleModule,
 	"postgresql_privs":        pgPrivsModule,
 	"mysql_db":                mysqlDatabaseModule,
