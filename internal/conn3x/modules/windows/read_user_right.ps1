@@ -110,7 +110,11 @@ foreach ($p in @($A.principals)) {
   if (-not $p) { continue }
   try {
     if ($p -match '^S-1-[0-9-]+$') { $out.sids[$p] = ([Security.Principal.SecurityIdentifier]$p).Value }
-    else { $out.sids[$p] = ([Security.Principal.NTAccount]$p).Translate([Security.Principal.SecurityIdentifier]).Value }
+    else {
+      # LSA doesn't take .\ for this computer, as a logon does.
+      $n = $p -replace '^\.\\', ($env:COMPUTERNAME + '\')
+      $out.sids[$p] = ([Security.Principal.NTAccount]$n).Translate([Security.Principal.SecurityIdentifier]).Value
+    }
   } catch { $out.sids[$p] = '' }
 }
 $out

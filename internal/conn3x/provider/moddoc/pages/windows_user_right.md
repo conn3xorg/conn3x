@@ -31,7 +31,7 @@ A principal that doesn't exist yet, such as a user a later step makes, shows the
 
 **Group Policy.** A Group Policy that sets a right, from the domain or the local policy, puts it back at its next refresh, so the step shows as out of sync again. Set the right in that policy instead.
 
-**Reading.** No PowerShell command reads a user right, so the plan compiles a small type that asks the Local Security Authority who holds it. The type opens the policy for lookups only, so a plan can't change a right. Windows PowerShell 5.1 compiles it with `csc.exe`, which writes temporary files to the login's temp folder while it runs.
+**Reading.** No PowerShell command reads a user right, so the plan compiles a small type that asks the Local Security Authority who holds it. The type opens the policy for lookups only, so a plan can't change a right. Windows PowerShell 5.1 compiles it with `csc.exe`, which writes temporary files to the login's temp folder while it runs and deletes them after: three reads on Windows Server 2022 left none behind.
 
 ## Removal
 
