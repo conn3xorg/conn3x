@@ -46,6 +46,7 @@ var (
 	PrivilegedShell  = Rule{"C3X004", "privileged-shell", Error}
 	CommandGuard     = Rule{"C3X101", "command-guard", Warning}
 	ModuleConnection = Rule{"C3X102", "module-connection", Warning}
+	CommandSystemctl = Rule{"C3X103", "command-systemctl", Warning}
 	BadIgnore        = Rule{"C3X900", "ignore", Error}
 )
 
@@ -53,7 +54,7 @@ var (
 var Rules = map[string]Rule{}
 
 func init() {
-	for _, r := range []Rule{DownloadChecksum, ImageDigest, ListenAll, PrivilegedShell, CommandGuard, ModuleConnection, BadIgnore} {
+	for _, r := range []Rule{DownloadChecksum, ImageDigest, ListenAll, PrivilegedShell, CommandGuard, ModuleConnection, CommandSystemctl, BadIgnore} {
 		Rules[r.ID] = r
 	}
 }
@@ -464,6 +465,10 @@ func downloads(path, src string) []Finding {
 // the step is created and again only when command changes, so if its work
 // is undone on the host, no plan notices. A command with triggers means to
 // run again when something changes, like a reload, and is left alone.
+// systemctlVerb is a systemctl call that waits on systemd to change a unit,
+// the kind service and service_action retry when systemd re-executes.
+var systemctlVerb = regexp.MustCompile(`\bsystemctl\s+(?:--?[\w-]+(?:=\S+)?\s+)*(daemon-reload|restart|try-restart|reload-or-restart|reload|start|stop)\b`)
+
 func commandGuards(path string, src []byte) []Finding {
 	f, diags := hclsyntax.ParseConfig(src, path, hcl.InitialPos)
 	if diags.HasErrors() {
@@ -483,6 +488,13 @@ func commandGuards(path string, src []byte) []Finding {
 					r := blk.TypeRange
 					out = append(out, Finding{Rule: CommandGuard, File: path, Line: r.Start.Line, Column: r.Start.Column,
 						Message: fmt.Sprintf("command in step %q has no creates, removes, unless or triggers, so it ran once and no plan can tell if its work is undone; add a guard that checks it", inStep)})
+				}
+				if c := a["command"]; c != nil {
+					rg := c.Expr.Range()
+					if m := systemctlVerb.FindSubmatch(src[rg.Start.Byte:rg.End.Byte]); m != nil {
+						out = append(out, Finding{Rule: CommandSystemctl, File: path, Line: rg.Start.Line, Column: rg.Start.Column,
+							Message: fmt.Sprintf("command in step %q runs systemctl %s, which fails if systemd re-executes during the apply, as a libc6 or systemd upgrade makes it do; a service or service_action step tries again, and a command can't", inStep, m[1])})
+					}
 				}
 			}
 			walk(blk.Body, step)

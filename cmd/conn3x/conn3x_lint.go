@@ -31,6 +31,7 @@ Rules:
   C3X004 privileged-shell   shell that's wrong wherever it runs as root, such as curl | sh
   C3X101 command-guard      a command step with no creates, removes, unless or triggers (a warning)
   C3X102 module-connection  a module you call that names its own hosts, or sets a host, key or password file in an ssh block (a warning)
+  C3X103 command-systemctl  a command step that runs systemctl restart, reload, start, stop or daemon-reload, which fails if systemd re-executes mid-apply; use service or service_action (a warning)
   C3X900 ignore             an ignore with no reason, or one that matches nothing
 
 C3X001 to C3X004 are the circuit grader's checks of a circuit's own code, with the same patterns, so a circuit that lints clean passes them.

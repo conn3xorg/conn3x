@@ -58,8 +58,41 @@ func TestCommandGuard(t *testing.T) {
 	}
 	// triggers says when to run again, like a reload: left alone.
 	src := "circuit \"c\" {\n  step \"reload\" {\n    command {\n      command  = \"systemctl reload app\"\n      triggers = [conn3x_file.c__conf]\n    }\n  }\n}\n"
-	if got := File("main.circuit.hcl", []byte(src)); len(got) != 0 {
-		t.Errorf("a command with triggers: %v", got)
+	for _, f := range File("main.circuit.hcl", []byte(src)) {
+		if f.Rule == CommandGuard {
+			t.Errorf("a command with triggers: %v", f)
+		}
+	}
+}
+
+// A command that has systemd change a unit fails when systemd re-executes
+// mid-apply, which service and service_action ride out; one that only asks
+// systemd something doesn't wait on it the same way.
+func TestCommandSystemctl(t *testing.T) {
+	for cmd, want := range map[string]string{
+		`systemctl daemon-reload && systemctl restart 'app.service'`: "daemon-reload",
+		`systemctl --user --now restart app`:                         "restart",
+		`systemctl reload nginx`:                                     "reload",
+		`systemctl is-active --quiet app || exit 1`:                  "",
+		`systemctl show -p ActiveState app`:                          "",
+		`echo systemctl-restart-later`:                               "",
+	} {
+		src := "circuit \"c\" {\n  step \"s\" {\n    command {\n      command = \"" + strings.ReplaceAll(cmd, `"`, `\"`) + "\"\n      creates = \"/x\"\n    }\n  }\n}\n"
+		var got []Finding
+		for _, f := range File("main.circuit.hcl", []byte(src)) {
+			if f.Rule == CommandSystemctl {
+				got = append(got, f)
+			}
+		}
+		switch {
+		case want == "" && len(got) != 0:
+			t.Errorf("%s: %v, want nothing", cmd, got)
+		case want != "" && (len(got) != 1 || got[0].Line != 4 || !strings.Contains(got[0].Message, "systemctl "+want)):
+			t.Errorf("%s: %v, want one finding naming systemctl %s on line 4", cmd, got, want)
+		}
+	}
+	if Failed([]Finding{{Rule: CommandSystemctl}}) {
+		t.Error("C3X103 is a warning and shouldn't fail the run")
 	}
 }
 
