@@ -152,6 +152,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_windows_optional_feature":     {winOptionalFeatureSchema, validateWinOptionalFeature, planWinOptionalFeature, readWinOptionalFeature, applyWinOptionalFeature, upgradeWith(winOptionalFeatureSchema)},
 	"conn3x_windows_file":                 {winFileSchema, validateWinFile, planWinFile, readWinFile, applyWinFile, upgradeWith(winFileSchema)},
 	"conn3x_windows_group":                {winGroupSchema, validateWinGroup, planWinGroup, readWinGroup, applyWinGroup, upgradeWith(winGroupSchema)},
+	"conn3x_windows_user_right":           {winUserRightSchema, validateWinUserRight, planWinUserRight, readWinUserRight, applyWinUserRight, upgradeWith(winUserRightSchema)},
 	"conn3x_windows_iis_app_pool":         {winAppPoolSchema, validateWinAppPool, planWinAppPool, readWinAppPool, applyWinAppPool, upgradeWith(winAppPoolSchema)},
 	"conn3x_windows_iis_site":             {winSiteSchema, validateWinSite, planWinSite, readWinSite, applyWinSite, upgradeWith(winSiteSchema)},
 	"conn3x_windows_firewall_rule":        {winFirewallRuleSchema, validateWinFirewallRule, planWinFirewallRule, readWinFirewallRule, applyWinFirewallRule, upgradeWith(winFirewallRuleSchema)},

@@ -456,6 +456,40 @@ func winGroupMembershipModule(in *input) ([]step, string) {
 	return one("windows_group", attrs)
 }
 
+// winUserRightModule converts win_user_right. Its action set, the default,
+// makes users the complete list, so an empty list clears the right; add
+// only adds.
+func winUserRightModule(in *input) ([]step, string) {
+	action := "set"
+	if in.has("action") {
+		action = in.str("action")
+	}
+	switch action {
+	case "remove":
+		return nil, "takes the right from users; windows_user_right grants it, or keeps the complete list with authoritative = true"
+	case "add", "set":
+	default:
+		return nil, fmt.Sprintf("action %q has no Conn3x equivalent", action)
+	}
+	if !in.has("name") {
+		return nil, "has no name"
+	}
+	var vals []cty.Value
+	for _, u := range in.list("users") {
+		vals = append(vals, cty.StringVal(u))
+	}
+	attrs := []attr{s("name", in.str("name"))}
+	if len(vals) > 0 {
+		attrs = append(attrs, attr{key: "principals", val: cty.ListVal(vals)})
+	} else if action == "add" {
+		return nil, "adds no users"
+	}
+	if action == "set" {
+		attrs = append(attrs, attr{key: "authoritative", val: cty.True})
+	}
+	return one("windows_user_right", attrs)
+}
+
 var firewallRuleID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,127}$`)
 
 // winFirewallModule converts community.windows.win_firewall, with a step

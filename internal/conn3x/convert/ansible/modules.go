@@ -736,6 +736,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_shell":             winShellModule,
 	"win_template":          winTemplateModule,
 	"win_user":              winUserModule,
+	"win_user_right":        winUserRightModule,
 	"win_wait_for":          winWaitForModule,
 	// microsoft.iis, which replaces the community.windows IIS modules.
 	"web_app_pool": winIISAppPoolModule,

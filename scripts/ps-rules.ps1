@@ -32,7 +32,7 @@ $readStatic = 'BitConverter::GetBytes', 'BitConverter::ToString', 'BitConverter:
   'DirectoryServices.DirectorySearcher::new',
   'Environment::ExpandEnvironmentVariables', 'IO.File::ReadAllBytes', 'IO.Path::GetDirectoryName', 'Microsoft.Web.Administration.ServerManager::new', 'Reflection.Assembly::Load',
   'Security.Cryptography.SHA256::Create', 'Security.Principal.NTAccount::new', 'Security.Principal.SecurityIdentifier::new', 'Security.Principal.WindowsIdentity::GetCurrent',
-  'string::Join'
+  'string::Join', 'Conn3xLsaRead::Accounts'
 $readInstance = 'Close', 'ComputeHash', 'CreateUpdateSearcher', 'Dispose', 'FindAll', 'Search', 'GetAccessRules', 'GetBytes', 'GetOwner', 'GetType', 'GetValue', 'GetValueKind', 'Invoke', 'InvokeMember', 'IsInRole', 'OpenSubKey',
   'Replace', 'ToLowerInvariant', 'ToString', 'Translate'
 # Cmdlets that treat a positional argument as a -Path, with their usual aliases.
@@ -40,6 +40,111 @@ $pathCommands = 'Add-Content', 'Clear-Content', 'Clear-Item', 'Copy-Item', 'Get-
   'Move-Item', 'Remove-Item', 'Rename-Item', 'Resolve-Path', 'Set-Acl', 'Set-Content', 'Set-Item', 'Set-ItemProperty', 'Set-Location', 'Test-Path',
   'ac', 'cat', 'cd', 'copy', 'cp', 'del', 'dir', 'gc', 'gci', 'gi', 'gp', 'ii', 'ls', 'move', 'mv', 'rd', 'ren', 'ri', 'rm', 'rni', 'rvpa', 'sc', 'si', 'sl', 'sp', 'type'
 $bannedText = 'Win32_Product'
+# The one type a read script may compile: read_user_right.ps1's, which opens
+# the LSA policy for lookups only (0x801, a literal) and lists who holds a
+# right. It's pinned as text, not a hash, so a change to it is a diff here.
+# Windows PowerShell 5.1 compiles it with csc.exe, through temporary files.
+$lsaReadType = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+
+// Lists who holds a user right. It opens the local LSA policy with
+// POLICY_LOOKUP_NAMES | POLICY_VIEW_LOCAL_INFORMATION (0x801) and nothing
+// else, a literal here, so no caller can ask for more: it can read rights,
+// never change them.
+public static class Conn3xLsaRead
+{
+    [StructLayout(LayoutKind.Sequential)]
+    struct LsaObjectAttributes
+    {
+        public int Length;
+        public IntPtr RootDirectory;
+        public IntPtr ObjectName;
+        public int Attributes;
+        public IntPtr SecurityDescriptor;
+        public IntPtr SecurityQualityOfService;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct LsaUnicodeString
+    {
+        public ushort Length;
+        public ushort MaximumLength;
+        public string Buffer;
+    }
+
+    [DllImport("advapi32.dll")]
+    static extern uint LsaOpenPolicy(IntPtr systemName, ref LsaObjectAttributes attributes, uint access, out IntPtr policy);
+
+    [DllImport("advapi32.dll")]
+    static extern uint LsaEnumerateAccountsWithUserRight(IntPtr policy, ref LsaUnicodeString right, out IntPtr buffer, out uint count);
+
+    [DllImport("advapi32.dll")]
+    static extern uint LsaFreeMemory(IntPtr buffer);
+
+    [DllImport("advapi32.dll")]
+    static extern uint LsaClose(IntPtr policy);
+
+    [DllImport("advapi32.dll")]
+    static extern int LsaNtStatusToWinError(uint status);
+
+    const uint StatusNoMoreEntries = 0x8000001A;
+    const uint StatusNoSuchPrivilege = 0xC0000060;
+
+    public static string[] Accounts(string right)
+    {
+        LsaObjectAttributes attributes = new LsaObjectAttributes();
+        attributes.Length = Marshal.SizeOf(typeof(LsaObjectAttributes));
+        IntPtr policy;
+        uint status = LsaOpenPolicy(IntPtr.Zero, ref attributes, 0x00000801, out policy);
+        if (status != 0)
+        {
+            throw new System.ComponentModel.Win32Exception(LsaNtStatusToWinError(status));
+        }
+        try
+        {
+            LsaUnicodeString name = new LsaUnicodeString();
+            name.Buffer = right;
+            name.Length = (ushort)(right.Length * 2);
+            name.MaximumLength = (ushort)(right.Length * 2 + 2);
+            IntPtr buffer;
+            uint count;
+            status = LsaEnumerateAccountsWithUserRight(policy, ref name, out buffer, out count);
+            if (status == StatusNoMoreEntries)
+            {
+                return new string[0];
+            }
+            if (status == StatusNoSuchPrivilege)
+            {
+                throw new ArgumentException("Windows has no user right named " + right);
+            }
+            if (status != 0)
+            {
+                throw new System.ComponentModel.Win32Exception(LsaNtStatusToWinError(status));
+            }
+            try
+            {
+                string[] sids = new string[count];
+                for (int i = 0; i < count; i++)
+                {
+                    IntPtr sid = Marshal.ReadIntPtr(buffer, i * IntPtr.Size);
+                    sids[i] = new SecurityIdentifier(sid).Value;
+                }
+                return sids;
+            }
+            finally
+            {
+                LsaFreeMemory(buffer);
+            }
+        }
+        finally
+        {
+            LsaClose(policy);
+        }
+    }
+}
+'@
 
 $failed = 0
 function Report($file, $ast, $why) {
@@ -96,6 +201,13 @@ foreach ($file in $Files) {
           elseif ($name -eq 'Install-WindowsFeature') {
             $whatIf = $a.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ieq 'WhatIf' -and -not $_.Argument }
             if (-not $whatIf) { Report $file $a 'a read script may run Install-WindowsFeature only with -WhatIf' }
+          }
+          elseif ($name -eq 'Add-Type') {
+            # Only read_user_right.ps1, and only the pinned type, as the one argument.
+            $rest = @($a.CommandElements | Select-Object -Skip 1)
+            $ok = (Split-Path -Leaf $file) -eq 'read_user_right.ps1' -and $rest.Count -eq 2 -and $rest[0].Extent.Text -ceq '-TypeDefinition' -and
+              $rest[1] -is [Management.Automation.Language.StringConstantExpressionAst] -and ($rest[1].Value -replace "`r", '') -ceq ($lsaReadType -replace "`r", '')
+            if (-not $ok) { Report $file $a 'a read script may use Add-Type only in read_user_right.ps1, as -TypeDefinition with the type pinned in ps-rules.ps1' }
           }
           elseif ($name -eq 'New-Object') {
             # Only Windows Update's session, whose searcher reads and changes nothing.

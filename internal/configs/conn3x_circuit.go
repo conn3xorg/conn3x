@@ -141,6 +141,7 @@ var circuitModules = map[string]string{
 	"windows_optional_feature":     "conn3x_windows_optional_feature",
 	"windows_file":                 "conn3x_windows_file",
 	"windows_group":                "conn3x_windows_group",
+	"windows_user_right":           "conn3x_windows_user_right",
 	"windows_iis_app_pool":         "conn3x_windows_iis_app_pool",
 	"windows_iis_site":             "conn3x_windows_iis_site",
 	"windows_firewall_rule":        "conn3x_windows_firewall_rule",
