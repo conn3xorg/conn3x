@@ -110,6 +110,16 @@ class Feed(unittest.TestCase):
         self.assertEqual(w.feed_key(feed, item), "oracle:CSPUNov2026")
 
 
+class Watchlist(unittest.TestCase):
+    def test_every_feed_entry_exists(self):
+        import json
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "security", "watchlist.json")) as f:
+            wl = json.load(f)
+        names = {e["name"] for e in wl["entries"]}
+        for feed in wl.get("feeds", []):
+            self.assertEqual(set(feed["entries"]) - names, set(), feed["name"])
+
+
 class Render(unittest.TestCase):
     def test_title_and_table(self):
         rows = w.group([osv("CVE-2026-1", summary="a | b"), osv("CVE-2026-2")])
