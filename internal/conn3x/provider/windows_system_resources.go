@@ -626,3 +626,110 @@ func stringListVal(s []string) cty.Value {
 	}
 	return cty.ListVal(vals)
 }
+
+func winHostnameSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "The Windows host's computer name, set with Rename-Computer. One per host. It never reboots: reboot_required says the new name waits for one, and windows_reboot does it. A domain member is refused.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":              {Type: cty.String, Computed: true},
+			"revision":        revisionAttr(),
+			"name":            {Type: cty.String, Required: true, Description: "Computer name, such as WEB01: 15 characters at most, letters, digits and hyphens, without the domain. Case doesn't matter."},
+			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether the host is still running under its old name, waiting for a reboot to take the new one."},
+			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether the name, now or after the pending reboot, matched at the last refresh."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateWinHostname(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() {
+		return diags
+	}
+	if n := cfg.GetAttr("name"); known(n) {
+		if err := windows.ValidateHostname(n.AsString()); err != nil {
+			diags = diags.Append(attrError("name", err.Error()))
+		}
+	}
+	return diags
+}
+
+func planWinHostname(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	resp := planSyncedFold(req, "windows_hostname", nil, []string{"name"})
+	if resp.PlannedState.IsNull() {
+		return resp
+	}
+	vals := resp.PlannedState.AsValueMap()
+	if vals["in_sync"].IsKnown() {
+		vals["reboot_required"] = req.PriorState.GetAttr("reboot_required")
+	} else {
+		vals["reboot_required"] = cty.UnknownVal(cty.Bool)
+	}
+	resp.PlannedState = cty.ObjectVal(vals)
+	return resp
+}
+
+// withHostname records what the host says of its name.
+func withHostname(v cty.Value, st windows.HostnameState) cty.Value {
+	vals := v.AsValueMap()
+	vals["in_sync"] = cty.BoolVal(st.InSync(v.GetAttr("name").AsString()))
+	vals["reboot_required"] = cty.BoolVal(st.RebootRequired())
+	return cty.ObjectVal(vals)
+}
+
+func readWinHostname(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	resp := providers.ReadResourceResponse{NewState: req.PriorState}
+	if req.PriorState.IsNull() {
+		return resp
+	}
+	h, err := winHost(ctx, req.PriorState.GetAttr("ssh"))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	st, err := windows.ReadHostname(ctx, h.raw())
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_hostname: %w", err))
+		return resp
+	}
+	resp.NewState = withHostname(req.PriorState, st)
+	return resp
+}
+
+func applyWinHostname(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	var resp providers.ApplyResourceChangeResponse
+	// Removing the step leaves the name as it is.
+	if req.PlannedState.IsNull() {
+		resp.NewState = req.PlannedState
+		return resp
+	}
+	fail := func(err error) providers.ApplyResourceChangeResponse {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("windows_hostname: %w", err))
+		return resp
+	}
+	name := req.PlannedState.GetAttr("name").AsString()
+	if err := windows.ValidateHostname(name); err != nil {
+		return fail(err)
+	}
+	h, err := winHost(ctx, req.PlannedState.GetAttr("ssh"))
+	if err != nil {
+		return fail(err)
+	}
+	st, err := windows.ReadHostname(ctx, h.raw())
+	if err != nil {
+		return fail(err)
+	}
+	if !st.InSync(name) {
+		if err := windows.ApplyHostname(ctx, h.raw(), st, name); err != nil {
+			return fail(fmt.Errorf("renaming the host to %s: %w", name, err))
+		}
+		if st, err = windows.ReadHostname(ctx, h.raw()); err != nil {
+			return fail(err)
+		}
+		if !st.InSync(name) {
+			return fail(fmt.Errorf("the name for the next boot is %s after renaming the host to %s", st.Pending, name))
+		}
+	}
+	resp.NewState = withHostname(req.PlannedState, st)
+	return resp
+}

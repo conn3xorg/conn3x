@@ -301,6 +301,19 @@ func winFeatureModule(in *input) ([]step, string) {
 	return []step{feature}, ""
 }
 
+// winHostnameModule converts ansible.windows.win_hostname. Ansible doesn't
+// reboot either; it returns reboot_required, which the step has too.
+func winHostnameModule(in *input) ([]step, string) {
+	name := in.str("name")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if name == "" {
+		return nil, "has no name"
+	}
+	return one("windows_hostname", []attr{s("name", name)})
+}
+
 func winUserModule(in *input) ([]step, string) {
 	if in.state("present", "present", "absent") == "absent" {
 		return nil, "removes a user; Conn3x deletes a windows_user with on_remove = \"delete\" when its step goes, so there's nothing to convert this to yet"
