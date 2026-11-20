@@ -16,6 +16,7 @@ RUN printf 'Acquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire
 # A mirror can still answer an error, a 520 from archive.ubuntu.com on
 # 20 Nov, and apt-get update then fails as a whole, so it's tried up to
 # five times, as the package step does (#1154).
+#
 # The base image lags the archive. An upgrade during an apply that brings a
 # new libc6, as installing postgresql-18 from pgdg does through locales,
 # runs its postinst's systemctl daemon-reexec and cuts off any systemctl
