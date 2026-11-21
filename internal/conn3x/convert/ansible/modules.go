@@ -1071,6 +1071,16 @@ func packageModule(in *input) ([]step, string) {
 	}
 	var steps []step
 	for _, n := range names {
+		// A glob or '*' names no single package and cannot validate as a
+		// package step. Leave the whole task for review, not a partial list.
+		// Names holding \x00 are internal marks for loop items, resolved after
+		// the module runs, so they are checked there instead.
+		if !strings.Contains(n, "\x00") && !pkg.ValidName(n) {
+			if n == "*" {
+				return nil, "upgrades every package, which Conn3x leaves to a scheduled job rather than a step"
+			}
+			return nil, "package name " + strconv.Quote(n) + " cannot be a package step"
+		}
 		attrs := []attr{s("name", n)}
 		if st != "present" {
 			attrs = append(attrs, s("state", st))
