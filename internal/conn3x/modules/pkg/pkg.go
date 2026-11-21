@@ -72,6 +72,10 @@ var (
 	versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+~:_-]*$`)
 )
 
+// ValidName reports whether name passes the check Validate applies. A
+// converter uses it to leave a name that could never validate for review.
+func ValidName(name string) bool { return namePattern.MatchString(name) }
+
 // Validate checks a Desired before anything runs on a host.
 func (d Desired) Validate() error {
 	if !namePattern.MatchString(d.Name) {
