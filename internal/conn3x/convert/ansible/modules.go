@@ -1935,6 +1935,9 @@ func unarchiveModule(in *input) ([]step, string) {
 func gitModule(in *input) ([]step, string) {
 	attrs := []attr{s("repo", in.str("repo")), s("dest", in.str("dest"))}
 	attrs = in.optional(attrs, "ref", "version")
+	if in.has("depth") {
+		attrs = append(attrs, in.number("depth"))
+	}
 	// A git step always checks out with --force, which is force: true.
 	if in.bool("force", false) {
 		return one("git", attrs)
