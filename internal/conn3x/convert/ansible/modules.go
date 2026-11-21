@@ -1924,7 +1924,11 @@ func unarchiveModule(in *input) ([]step, string) {
 func gitModule(in *input) ([]step, string) {
 	attrs := []attr{s("repo", in.str("repo")), s("dest", in.str("dest"))}
 	attrs = in.optional(attrs, "ref", "version")
-	return one("git", attrs)
+	// A git step always checks out with --force, which is force: true.
+	if in.bool("force", false) {
+		return one("git", attrs)
+	}
+	return one("git", attrs, "Ansible stops when the checkout has local changes; a git step discards changes to tracked files.")
 }
 
 func mountModule(in *input) ([]step, string) {

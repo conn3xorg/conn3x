@@ -54,4 +54,4 @@ When you delete a `git` step, Conn3x stops managing it and leaves the checkout w
 
 ## From Ansible
 
-`conn3x convert ansible` turns `git` tasks into `git` steps, with `version` becoming `ref`.
+`conn3x convert ansible` turns `git` tasks into `git` steps, with `version` becoming `ref`. `force: true` needs nothing, because a `git` step always discards changes to tracked files. Without it, Ansible stops when the checkout has local changes, so the converted step carries a note saying that it won't stop. `update: false` is left for review.
