@@ -34,8 +34,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Every OSV ID each package had at the last run, so an old CVE newly
+      # marked as affecting one is reported. Saved under a new key each run;
+      # with none, such as after eviction, the run only starts it again.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: advisory-state.json
+          key: advisory-state-${{ github.run_id }}
+          restore-keys: advisory-state-
       - name: Look for new advisories
         env:
           GH_TOKEN: ${{ github.token }}
           DAYS: ${{ inputs.days || '7' }}
-        run: python3 scripts/advisory_watch.py --days "$DAYS"
+        run: python3 scripts/advisory_watch.py --days "$DAYS" --state advisory-state.json

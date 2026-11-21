@@ -140,10 +140,15 @@ def osv_queries(watchlist):
     return out
 
 
+def query_key(p):
+    return f"{p['ecosystem']}/{p['name']}"
+
+
 def osv_recent(queries, cutoff):
-    """{entry index: set of OSV IDs modified since cutoff}. querybatch gives
-    only IDs and modified times, so this keeps the detail fetches few."""
-    found = {}
+    """{entry index: set of OSV IDs modified since cutoff}, and {query key:
+    every OSV ID for that package}. querybatch gives only IDs and modified
+    times, so this keeps the detail fetches few."""
+    found, every = {}, {}
     for start in range(0, len(queries), 500):
         chunk = queries[start:start + 500]
         res = http_json(f"{OSV}/querybatch", {"queries": [{"package": p} for _, p in chunk]})
@@ -154,11 +159,27 @@ def osv_recent(queries, cutoff):
                 more = http_json(f"{OSV}/query", {"package": p, "page_token": token})
                 vulns += more.get("vulns", [])
                 token = more.get("next_page_token")
+            every.setdefault(query_key(p), set()).update(v["id"] for v in vulns)
             for v in vulns:
                 m = parse_time(v.get("modified"))
                 if m and m >= cutoff:
                     found.setdefault(i, set()).add(v["id"])
-    return found
+    return found, every
+
+
+def late_ids(queries, every, state):
+    """{entry index: IDs a package has now that the last run's state didn't},
+    such as an old CVE a distro has just marked as affecting it. A package
+    with no state, on the first run or newly added to the watchlist, only
+    starts its state, or every old CVE would be reported."""
+    late = {}
+    for i, p in queries:
+        k = query_key(p)
+        if k in state:
+            new = every.get(k, set()) - set(state[k])
+            if new:
+                late.setdefault(i, set()).update(new)
+    return late
 
 
 # OSV ecosystems that are distro releases, of which only the watchlist's are shown.
@@ -303,21 +324,34 @@ def main():
     ap.add_argument("--days", type=int, default=7)
     ap.add_argument("--repo", default="conn3xorg/conn3x")
     ap.add_argument("--dry-run", action="store_true", help="print the issues instead of opening them")
+    ap.add_argument("--state", help="JSON file of every OSV ID seen per package, read at the start and written at the end")
     args = ap.parse_args()
 
     with open(args.watchlist) as f:
         watchlist = json.load(f)
     cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
 
+    state = {}
+    if args.state and os.path.exists(args.state):
+        with open(args.state) as f:
+            state = json.load(f)
+
     records = {i: [] for i in range(len(watchlist["entries"]))}
     details = {}
-    for i, ids in osv_recent(osv_queries(watchlist), cutoff).items():
-        for vid in sorted(ids):
-            if vid not in details:
-                details[vid] = from_osv(http_json(f"{OSV}/vulns/{vid}"), watchlist["ecosystems"])
-            rec = details[vid]
+
+    def detail(vid):
+        if vid not in details:
+            details[vid] = from_osv(http_json(f"{OSV}/vulns/{vid}"), watchlist["ecosystems"])
+        return details[vid]
+
+    queries = osv_queries(watchlist)
+    recent, every = osv_recent(queries, cutoff)
+    late = late_ids(queries, every, state)
+    for i in records:
+        for vid in sorted(recent.get(i, set()) | late.get(i, set())):
+            rec = detail(vid)
             p = parse_time(rec["published"])
-            if p and p >= cutoff:
+            if vid in late.get(i, ()) or (p and p >= cutoff):
                 records[i].append(rec)
     skipped = []
     for i, e in enumerate(watchlist["entries"]):
@@ -333,8 +367,9 @@ def main():
                 if p and p >= cutoff:
                     records[i].append(from_github(a))
 
-    bodies = json.loads(gh("issue", "list", "-R", args.repo, "--label", LABEL, "--state", "all", "--limit", "1000", "--json", "body") or "[]") if not args.dry_run or os.environ.get("GH_TOKEN") else []
-    seen = seen_ids(b["body"] for b in bodies)
+    # Every issue's body, paged, so no cap on how many earlier issues count.
+    bodies = gh("api", "--paginate", f"repos/{args.repo}/issues?labels={LABEL}&state=all&per_page=100", "--jq", ".[].body") if not args.dry_run or os.environ.get("GH_TOKEN") else ""
+    seen = seen_ids([bodies])
 
     opened = 0
     issues = []
@@ -362,6 +397,9 @@ def main():
         else:
             gh("issue", "create", "-R", args.repo, "--title", t, "--body", body, "--label", LABEL, "--label", "security", "--assignee", ASSIGNEE)
         opened += 1
+    if args.state and not args.dry_run:
+        with open(args.state, "w") as f:
+            json.dump({k: sorted(v) for k, v in every.items()}, f)
     print(f"{opened} issue(s) {'would be ' if args.dry_run else ''}opened from {sum(map(len, records.values()))} advisory records since {cutoff:%Y-%m-%d}.")
     if skipped:
         print(f"Skipped {len(skipped)} source(s) that refused or failed: {', '.join(skipped)}.")
