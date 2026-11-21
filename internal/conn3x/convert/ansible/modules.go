@@ -32,6 +32,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/storage"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sudoers"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/system"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -1289,11 +1290,22 @@ func cronModule(in *input) ([]step, string) {
 
 func sysctlModule(in *input) ([]step, string) {
 	in.state("present", "present")
-	if in.has("sysctl_file") {
-		return nil, "writes to a named sysctl_file, which the converter can't translate yet"
-	}
 	in.ignore("reload", "sysctl_set")
-	return one("sysctl", []attr{s("name", in.str("name")), s("value", in.str("value"))})
+	name := in.str("name")
+	attrs := []attr{s("name", name), s("value", in.str("value"))}
+	if !in.has("sysctl_file") {
+		return one("sysctl", attrs)
+	}
+	// The step keeps the setting in a file of its own, and sets the running
+	// value, so the task converts; the old file still holds its line.
+	file, ours := in.str("sysctl_file"), "its own file in /etc/sysctl.d"
+	if !strings.ContainsAny(name+file, "\x00{") {
+		ours = system.Sysctl{Key: name}.Path()
+	}
+	if strings.ContainsAny(file, "\x00{") {
+		file = "the file the task names"
+	}
+	return one("sysctl", attrs, fmt.Sprintf("Ansible kept this setting in %s; a sysctl step keeps it in %s. Take the line out of %s: at boot these files are applied in name order, so a later file's value wins.", file, ours, file))
 }
 
 // htpasswdModule converts community.general.htpasswd. The password is never
