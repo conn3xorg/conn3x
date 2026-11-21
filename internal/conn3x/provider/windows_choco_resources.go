@@ -24,7 +24,7 @@ func winChocoSchema() providers.Schema {
 			"name":            {Type: cty.String, Required: true, Description: "The package ID, such as git."},
 			"version":         {Type: cty.String, Optional: true, Description: "The exact version, such as 2.44.0. Unset, any installed version will do, and a missing package gets the feed's newest."},
 			"state":           {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\"."},
-			"source":          {Type: cty.String, Optional: true, Description: "The feed: an http(s) URL with no login in it, or an absolute folder. Unset, Chocolatey's configured sources, the community feed by default."},
+			"source":          {Type: cty.String, Optional: true, Description: "The feed: an https URL with no login in it, or an absolute folder. Unset, Chocolatey's configured sources, the community feed by default."},
 			"pinned":          {Type: cty.Bool, Optional: true, Description: "Whether choco upgrade all leaves the package alone. Unset leaves the pin as it is."},
 			"timeout":         {Type: cty.String, Optional: true, Description: "How long to allow. Defaults to \"30m\"."},
 			"reboot_required": {Type: cty.Bool, Computed: true, Description: "Whether choco asked for a reboot (3010 or 1641) at the last change."},

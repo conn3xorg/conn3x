@@ -36,7 +36,7 @@ Package IDs ignore case, so `git` matches a package installed as `Git`. Versions
 
 **Dependencies.** Packages a package depends on are installed by Chocolatey, but not managed by this step. Removing the package leaves them installed. Give each one a step of its own to manage it.
 
-**Feeds.** `source` is an http(s) feed URL or an absolute folder. A URL with a login in it is refused, since it would be stored in state and shown in plans. Feed logins aren't supported yet. Without `source`, Chocolatey uses its configured sources: the community feed, unless the host's configuration says otherwise.
+**Feeds.** `source` is an https feed URL or an absolute folder. Plain http is refused: a package's install script runs as an administrator, so anyone on the way to the feed could swap the package. A URL with a login in it is refused too, since it would be stored in state and shown in plans. Feed logins aren't supported yet. Without `source`, Chocolatey uses its configured sources: the community feed, unless the host's configuration says otherwise.
 
 **Chocolatey itself.** This step doesn't install Chocolatey, which would mean running a script from the internet as an administrator. To install it from a file you've checked, download a pinned `chocolatey.<version>.nupkg` with `windows_download` and its `sha256`, then install it with a `windows_powershell` step.
 

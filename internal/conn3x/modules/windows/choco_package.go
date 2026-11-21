@@ -54,13 +54,18 @@ func (p ChocoPackage) Validate() error {
 	return nil
 }
 
-// validChocoSource takes an http(s) feed without a login in it, which would
-// end up in state and the plan, or an absolute folder path.
+// validChocoSource takes an https feed without a login in it, which would
+// end up in state and the plan, or an absolute folder path. Not http: a
+// package's install script runs as an administrator, so anyone on the path
+// to the feed could swap the package.
 func validChocoSource(s string) error {
 	if strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return errors.New("source has a control character")
 	}
-	if u, err := url.Parse(s); err == nil && (u.Scheme == "https" || u.Scheme == "http") {
+	if u, err := url.Parse(s); err == nil && strings.EqualFold(u.Scheme, "http") {
+		return errors.New("source is plain http, so anyone on the way to the feed could swap a package whose install script runs as an administrator; use https")
+	}
+	if u, err := url.Parse(s); err == nil && strings.EqualFold(u.Scheme, "https") {
 		if u.User != nil {
 			return errors.New("source has a login in it, which would be stored in state and shown in plans; feed logins aren't supported yet")
 		}
@@ -70,7 +75,7 @@ func validChocoSource(s string) error {
 		return nil
 	}
 	if !filepath.IsAbs(strings.ReplaceAll(s, `\`, "/")) && !regexp.MustCompile(`^[A-Za-z]:[\\/]|^\\\\[^\\]+\\`).MatchString(s) {
-		return fmt.Errorf("source %q is neither an http(s) feed nor an absolute folder", s)
+		return fmt.Errorf("source %q is neither an https feed nor an absolute folder", s)
 	}
 	return nil
 }

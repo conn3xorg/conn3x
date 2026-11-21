@@ -31,6 +31,8 @@ func TestChocoValidate(t *testing.T) {
 		{Name: "app", Version: "1.2.3.4.5"}:               "exact version",
 		{Name: "app", Source: "https://u:p@feed.example"}: "login",
 		{Name: "app", Source: "feeds/local"}:              "absolute folder",
+		{Name: "app", Source: "http://feed.example/"}:     "use https",
+		{Name: "app", Source: "HTTP://feed.example/"}:     "use https",
 		{Name: "app", Source: "https://feed\n.example"}:   "control character",
 		{Name: "app", Absent: true, Version: "1.0"}:       `state "present"`,
 		{Name: "app", Absent: true, Pinned: new(bool)}:    `state "present"`,

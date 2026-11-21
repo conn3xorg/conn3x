@@ -28,7 +28,8 @@ $reader = [Xml.XmlReader]::Create($nuspec.FullName, $settings)
 try {
   if ($reader.ReadToFollowing('version')) { $out.version = $reader.ReadElementContentAsString() -replace '^\s+|\s+$', '' }
 } finally { $reader.Dispose() }
-if (-not $out.version) { throw "$($nuspec.FullName) has no version" }
+# The version is the package author's, and it names a folder below.
+if ($out.version -notmatch '^[0-9]+(\.[0-9]+){0,3}(-[0-9A-Za-z.-]+)?$') { throw "$($nuspec.FullName) has a version Conn3x can't read: '$($out.version)'" }
 $out.installed = $true
 $state = Get-Item -LiteralPath ($root + '\.chocolatey') -Force -ErrorAction SilentlyContinue
 $dir = if ($state) { Get-Item -LiteralPath ($state.FullName + '\' + $pkg.Name + '.' + $out.version) -Force -ErrorAction SilentlyContinue }

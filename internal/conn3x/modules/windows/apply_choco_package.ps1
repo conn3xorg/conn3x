@@ -8,6 +8,9 @@ $choco = $root + '\choco.exe'
 if (-not $root -or -not (Test-Path -LiteralPath $choco -PathType Leaf)) { throw 'Chocolatey isn''t installed: the machine has no ChocolateyInstall variable, or no choco.exe under it' }
 $script:restart = $false
 function Invoke-Choco([string[]]$arguments) {
+  # Windows PowerShell 5.1 turns a native program's redirected stderr into
+  # errors, which Stop would throw on: the exit code says how it went.
+  $ErrorActionPreference = 'Continue'
   $output = & $choco @arguments --no-progress --limit-output 2>&1 | Out-String
   # 3010 and 1641: done, and Windows wants a reboot, which windows_reboot does.
   if ($LASTEXITCODE -in 3010, 1641) { $script:restart = $true }

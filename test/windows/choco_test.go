@@ -31,7 +31,11 @@ foreach ($v in '1.0.0', '2.0.0') {
   <files><file src="tools\**" target="tools" /></files>
 </package>
 "@
-  Set-Content -LiteralPath (Join-Path $d 'tools\chocolateyInstall.ps1') -Value "Write-Host $v"
+  # 1.0.0 also writes to stderr and succeeds: under Windows PowerShell 5.1,
+  # a native program's stderr mustn't count as a failure.
+  $install = "Write-Host $v"
+  if ($v -eq '1.0.0') { $install = "[Console]::Error.WriteLine('a line on stderr'); Write-Host $v" }
+  Set-Content -LiteralPath (Join-Path $d 'tools\chocolateyInstall.ps1') -Value $install
   Push-Location -LiteralPath $d
   & "$env:ChocolateyInstall\choco.exe" pack --out $feed --limit-output | Out-Null
   Pop-Location
@@ -97,4 +101,20 @@ func TestChocoFlow(t *testing.T) {
 	if a := read(); a.Installed {
 		t.Fatalf("after absent: %+v", a)
 	}
+}
+
+// What Windows PowerShell 5.1 does with a native program's stderr under
+// $ErrorActionPreference = 'Stop', as the module scripts run: logged, since
+// apply_service.ps1 runs sc.exe the same way Invoke-Choco runs choco.exe.
+func TestNativeStderrUnderStop(t *testing.T) {
+	c := connect(t)
+	out := run(t, c, `
+$ErrorActionPreference = 'Stop'
+$r = [ordered]@{ edition = $PSVersionTable.PSEdition; version = "$($PSVersionTable.PSVersion)" }
+try { $o = & cmd.exe /c "echo to-stderr 1>&2 & exit 0" 2>&1 | Out-String; $r.redirected = "no throw, exit $LASTEXITCODE, output: $($o.Trim())" }
+catch { $r.redirected = "threw: $($_.Exception.Message)" }
+try { & cmd.exe /c "echo to-stderr 1>&2 & exit 0"; $r.not_redirected = "no throw, exit $LASTEXITCODE" }
+catch { $r.not_redirected = "threw: $($_.Exception.Message)" }
+$r | ConvertTo-Json`, nil)
+	t.Logf("native stderr under Stop:\n%s", out.Text)
 }
