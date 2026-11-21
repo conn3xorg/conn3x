@@ -176,7 +176,9 @@ def load_state(path):
     try:
         with open(path) as f:
             state = json.load(f)
-        if isinstance(state, dict):
+        # Every value a list of IDs, or a hand edit could fail every run or
+        # make every current ID read as late.
+        if isinstance(state, dict) and all(isinstance(v, list) and all(isinstance(x, str) for x in v) for v in state.values()):
             return state
     except (OSError, ValueError):
         pass

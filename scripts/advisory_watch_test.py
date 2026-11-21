@@ -134,6 +134,17 @@ class Late(unittest.TestCase):
             os.unlink(f.name)
         self.assertEqual(w.load_state(None), {})
 
+    def test_a_state_file_of_the_wrong_shape_is_no_state(self):
+        import json
+        import tempfile
+        for bad in ({"Debian:13/nginx": 5}, {"Debian:13/nginx": "DEBIAN-CVE-2026-1"}, ["DEBIAN-CVE-2026-1"]):
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(bad, f)
+            try:
+                self.assertEqual(w.load_state(f.name), {}, bad)
+            finally:
+                os.unlink(f.name)
+
 
 class Watchlist(unittest.TestCase):
     def test_every_feed_entry_exists(self):
