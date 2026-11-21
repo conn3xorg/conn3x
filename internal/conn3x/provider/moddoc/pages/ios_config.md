@@ -1,4 +1,4 @@
-**Experimental.** Network devices are new, and this module may change between releases. It's tested against IOS XE 17.18 (IOL-XE) in Cisco Modeling Labs on a lab VM, not yet in CI, so try it on a lab device first.
+**Experimental.** Network devices are new, and this module may change between releases. It's tested against IOS XE 17.18 (IOL-XE) and classic IOS 15.9 (IOSv) in Cisco Modeling Labs on a lab VM, not yet in CI and not on hardware, so try it on a lab device first.
 
 Use `ios_config` to own a few lines of a Cisco IOS XE device's running configuration: a description on an interface, an NTP server, a logging host. You write each line the way `show running-config` prints it, under the blocks it sits in, and Conn3x leaves every other line alone.
 
@@ -35,7 +35,7 @@ ip ssh pubkey-chain
    <your public key>
 ```
 
-IOS XE 17 takes Conn3x's SSH defaults. Classic IOS, such as IOS 15.9, only offers SHA-1 SSH, which Conn3x refuses, so classic IOS isn't supported yet.
+IOS XE 17 takes Conn3x's SSH defaults. Classic IOS, such as IOS 15.9, only offers SHA-1 SSH, which Conn3x refuses by default: set `legacy_algorithms = true` on that device's host object, and it applies to that host only, never a jump host. Classic IOS also prints access-list entries without their sequence numbers, so write them without, the way `show running-config` shows them.
 
 ### One commit per device
 
