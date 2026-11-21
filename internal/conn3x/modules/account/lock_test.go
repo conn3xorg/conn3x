@@ -10,18 +10,29 @@ import (
 
 func TestReadShadow(t *testing.T) {
 	for out, want := range map[string]Shadow{
-		"$6$s$h:\n":       {Hash: "$6$s$h"},
-		"!$6$s$h:20818\n": {Hash: "!$6$s$h", Expires: "2026-12-31"},
-		"!:0\n":           {Hash: "!", Expires: "1970-01-01"},
-		"*:-1\n":          {Hash: "*"},
+		"$6$s$h::::\n":        {Hash: "$6$s$h", MinDays: -1, MaxDays: -1, WarnDays: -1},
+		"!$6$s$h:::::20818\n": {},
+		"!$6$s$h::::20818\n":  {Hash: "!$6$s$h", Expires: "2026-12-31", MinDays: -1, MaxDays: -1, WarnDays: -1},
+		"!:0:99999:7:0\n":     {Hash: "!", Expires: "1970-01-01", MinDays: 0, MaxDays: 99999, WarnDays: 7},
+		"*:1:90:14:-1\n":      {Hash: "*", MinDays: 1, MaxDays: 90, WarnDays: 14},
+		"$6$s$h:-1:-1:-1:\n":  {Hash: "$6$s$h", MinDays: -1, MaxDays: -1, WarnDays: -1},
 	} {
+		if want == (Shadow{}) {
+			// Six fields: not the line cut gives, so it's refused.
+			if _, err := ReadShadow(ctx, &host{answers: map[string]string{"getent shadow": out}}, "u"); err == nil {
+				t.Errorf("%q: a line with the wrong number of fields was read", out)
+			}
+			continue
+		}
 		got, err := ReadShadow(ctx, &host{answers: map[string]string{"getent shadow": out}}, "u")
 		if err != nil || got != want {
 			t.Errorf("%q: %+v, %v", out, got, err)
 		}
 	}
-	if _, err := ReadShadow(ctx, &host{answers: map[string]string{"getent shadow": "!:soon\n"}}, "u"); err == nil {
-		t.Error("an expiry that isn't a number was read")
+	for _, bad := range []string{"!::::soon\n", "!:x:::\n", "!::-2::\n"} {
+		if _, err := ReadShadow(ctx, &host{answers: map[string]string{"getent shadow": bad}}, "u"); err == nil {
+			t.Errorf("%q was read", bad)
+		}
 	}
 }
 
@@ -73,6 +84,36 @@ func TestSetExpiry(t *testing.T) {
 		}
 		if err := SetExpiry(ctx, &host{}, "u", bad); err == nil {
 			t.Errorf("%q was set", bad)
+		}
+	}
+}
+
+// SetAging runs one chage with only the fields that differ (#1184).
+func TestSetAging(t *testing.T) {
+	n := func(i int) *int { return &i }
+	now := Shadow{MinDays: 0, MaxDays: 99999, WarnDays: 7}
+	for _, c := range []struct {
+		want Aging
+		ran  string // the chage run, "" for none
+	}{
+		{Aging{MaxDays: n(90)}, "chage -M 90 -- 'u'"},
+		{Aging{MinDays: n(1), MaxDays: n(365), WarnDays: n(7)}, "chage -m 1 -M 365 -- 'u'"},
+		{Aging{MaxDays: n(99999), WarnDays: n(7)}, ""},
+		{Aging{MaxDays: n(-1)}, "chage -M -1 -- 'u'"},
+		{Aging{}, ""},
+	} {
+		h := &host{}
+		if err := SetAging(ctx, h, "u", c.want, now); err != nil {
+			t.Fatal(err)
+		}
+		ran := ""
+		for _, l := range h.ran {
+			if strings.Contains(l, "chage") {
+				ran = l[strings.Index(l, "chage"):]
+			}
+		}
+		if ran != c.ran {
+			t.Errorf("%+v: ran %q, want %q", c.want, ran, c.ran)
 		}
 	}
 }

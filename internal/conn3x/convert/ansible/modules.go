@@ -1155,6 +1155,20 @@ func userModule(in *input) ([]step, string) {
 	if in.has("password_lock") {
 		attrs = append(attrs, attr{key: "locked", val: cty.BoolVal(in.bool("password_lock", false))})
 	}
+	// Ansible's password_expire_* are chage's -m, -M and -W, with -1 for no
+	// limit, as the step takes them.
+	for _, m := range [][2]string{{"password_expire_min", "password_min_days"}, {"password_expire_max", "password_max_days"}, {"password_expire_warn", "password_warn_days"}} {
+		from, to := m[0], m[1]
+		if !in.has(from) {
+			continue
+		}
+		v := in.str(from)
+		n, err := strconv.Atoi(v)
+		if in.problem == "" && (err != nil || n < -1) {
+			return nil, fmt.Sprintf("sets %s %q, which isn't a number of days or -1", from, v)
+		}
+		attrs = append(attrs, attr{key: to, val: cty.NumberIntVal(int64(n))})
+	}
 	// expires is seconds since 1970; Ansible compares only the date it
 	// falls on in UTC, and a negative one removes the expiry.
 	if in.has("expires") {

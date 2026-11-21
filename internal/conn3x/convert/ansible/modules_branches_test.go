@@ -17,6 +17,8 @@ func TestConvertModuleOptions(t *testing.T) {
 		"package: { name: [a, b], state: removed }":                                                                                {`name  = "a"`, `name  = "b"`, `state = "absent"`},
 		"apt: { name: nginx, state: installed, update_cache: yes }":                                                                {`name = "nginx"`, "update_cache dropped"},
 		"service: { name: nginx, enabled: yes, daemon_reload: yes }":                                                               {"enabled = true", "daemon_reload dropped"},
+		"user: { name: bob, password_expire_max: 365, password_expire_min: 1, password_expire_warn: 7 }":                           {"password_min_days  = 1", "password_max_days  = 365", "password_warn_days = 7"},
+		"user: { name: bob, password_expire_max: -1 }":                                                                             {"password_max_days = -1"},
 		"user: { name: app, groups: [] }":                                                                                          {"user {", `name = "app"`},
 		"group: { name: app }":                                                                                                     {"group {", `name = "app"`},
 		"cron: { name: 'nightly job', special_time: daily, job: /bin/true, user: app }":                                            {`schedule = "@daily"`, `name     = "nightly-job"`, `user     = "app"`},
