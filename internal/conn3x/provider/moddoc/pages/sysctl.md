@@ -56,4 +56,4 @@ When you delete a `sysctl` step, `on_remove` decides what happens on the host. T
 
 ## From Ansible
 
-`conn3x convert ansible` turns `ansible.posix.sysctl` tasks into `sysctl` steps. `reload` and `sysctl_set` are dropped, since Conn3x always sets the running value. A task with `sysctl_file`, or with a `state` other than `present`, stays a TODO.
+`conn3x convert ansible` turns `ansible.posix.sysctl` tasks into `sysctl` steps. `reload` and `sysctl_set` are dropped, since Conn3x always sets the running value. A task with `sysctl_file` converts too, with a note naming that file: the step keeps the setting in its own `/etc/sysctl.d/90-conn3x-<name>.conf`, so take the line out of the old file, or a file that sorts later wins at boot. A task with a `state` other than `present` stays a TODO.
