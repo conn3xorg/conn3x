@@ -160,3 +160,24 @@ func TestDownloadLogsInWithANetrcFile(t *testing.T) {
 		t.Fatalf("dest holds %q", got)
 	}
 }
+
+// An annotated tag resolves to the commit it points at, not the tag object,
+// or the checkout never matches and every plan shows a change.
+func TestRemoteAnnotatedTag(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("needs git")
+	}
+	src := filepath.Join(t.TempDir(), "src")
+	out, err := exec.Command("sh", "-c", `git init -q -b main "$0" && cd "$0" &&
+git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m a &&
+git -c user.name=t -c user.email=t@example.com tag -a -m t v1 &&
+git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m b &&
+git rev-parse "v1^{commit}"`, src).CombinedOutput()
+	if err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	want := strings.TrimSpace(string(out))
+	if got, err := Remote(context.Background(), moduletest.Local{}, Git{Repo: "file://" + src, Ref: "v1"}); err != nil || got != want {
+		t.Errorf("Remote(v1) = %q, %v; want the commit %s", got, err, want)
+	}
+}

@@ -268,7 +268,9 @@ func Remote(ctx context.Context, r modules.Runner, g Git) (string, error) {
 	if commitHex.MatchString(g.ref()) {
 		return g.ref(), nil
 	}
-	res, err := r.Run(ctx, fmt.Sprintf("%s\ngit ls-remote -- %s %s", gitInstalled, ssh.Quote(g.Repo), ssh.Quote(g.ref())), nil)
+	// ls-remote matches a pattern against the end of each ref's name, so "v1"
+	// alone misses the "refs/tags/v1^{}" line resolve needs for an annotated tag.
+	res, err := r.Run(ctx, fmt.Sprintf("%s\ngit ls-remote -- %s %s %s", gitInstalled, ssh.Quote(g.Repo), ssh.Quote(g.ref()), ssh.Quote(g.ref()+"^{}")), nil)
 	if err := check(res, err); err != nil {
 		return "", err
 	}
