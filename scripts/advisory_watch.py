@@ -167,6 +167,23 @@ def osv_recent(queries, cutoff):
     return found, every
 
 
+def load_state(path):
+    """The last run's state, or none. A file that won't parse, which would
+    otherwise fail every run until its cache entry is deleted, is treated
+    as no state: this run only starts it again."""
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            state = json.load(f)
+        if isinstance(state, dict):
+            return state
+    except (OSError, ValueError):
+        pass
+    print(f"::warning::{path} couldn't be read, so this run starts the state again and reports no late-affected advisories")
+    return {}
+
+
 def late_ids(queries, every, state):
     """{entry index: IDs a package has now that the last run's state didn't},
     such as an old CVE a distro has just marked as affecting it. A package
@@ -331,10 +348,7 @@ def main():
         watchlist = json.load(f)
     cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
 
-    state = {}
-    if args.state and os.path.exists(args.state):
-        with open(args.state) as f:
-            state = json.load(f)
+    state = load_state(args.state)
 
     records = {i: [] for i in range(len(watchlist["entries"]))}
     details = {}

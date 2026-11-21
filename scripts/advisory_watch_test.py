@@ -110,6 +110,31 @@ class Feed(unittest.TestCase):
         self.assertEqual(w.feed_key(feed, item), "oracle:CSPUNov2026")
 
 
+class Late(unittest.TestCase):
+    Q = [(0, {"name": "nginx", "ecosystem": "Debian:13"}), (1, {"name": "php8.4", "ecosystem": "Debian:13"})]
+
+    def test_an_old_id_new_to_a_package_is_late(self):
+        every = {"Debian:13/nginx": {"DEBIAN-CVE-2020-1", "DEBIAN-CVE-2026-1"}, "Debian:13/php8.4": {"DEBIAN-CVE-2026-2"}}
+        state = {"Debian:13/nginx": ["DEBIAN-CVE-2026-1"], "Debian:13/php8.4": ["DEBIAN-CVE-2026-2"]}
+        self.assertEqual(w.late_ids(self.Q, every, state), {0: {"DEBIAN-CVE-2020-1"}})
+
+    def test_first_run_and_new_packages_report_nothing(self):
+        every = {"Debian:13/nginx": {"DEBIAN-CVE-2020-1"}, "Debian:13/php8.4": {"DEBIAN-CVE-2021-1"}}
+        self.assertEqual(w.late_ids(self.Q, every, {}), {})
+        # nginx has state; php8.4 was just added to the watchlist.
+        self.assertEqual(w.late_ids(self.Q, every, {"Debian:13/nginx": ["DEBIAN-CVE-2020-1"]}), {})
+
+    def test_a_corrupt_state_file_is_no_state(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write('{"Debian:13/nginx": [')
+        try:
+            self.assertEqual(w.load_state(f.name), {})
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(w.load_state(None), {})
+
+
 class Watchlist(unittest.TestCase):
     def test_every_feed_entry_exists(self):
         import json
