@@ -140,7 +140,7 @@ func gitSchema() providers.Schema {
 			"repo":     {Type: cty.String, Required: true, Description: "Repository URL, without a user name or password. The host needs access to it. Plain http needs a full commit as ref."},
 			"dest":     {Type: cty.String, Required: true, Description: "Directory to check it out in."},
 			"ref":      {Type: cty.String, Optional: true, Description: "Branch, tag or full commit. Defaults to the remote's default branch."},
-			"depth":    {Type: cty.Number, Optional: true, Description: "Fetch only this many commits of history, 1 or more, for a shallow checkout. Tags aren't fetched then. A full commit as ref needs a server that lets clients fetch a commit by its hash. Changing it doesn't reclone. Defaults to the whole history."},
+			"depth":    {Type: cty.Number, Optional: true, Description: "Fetch only this many commits of history, 1 or more, for a shallow checkout. Tags aren't fetched then. A full commit as ref needs a server that lets clients fetch a commit by its hash. Changing it doesn't reclone, and removing it fetches the rest of the history. Defaults to the whole history."},
 			"commit":   {Type: cty.String, Computed: true, Description: "The commit checked out."},
 			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the checkout is at the commit ref points to."},
 		},

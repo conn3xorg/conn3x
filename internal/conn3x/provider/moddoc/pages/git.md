@@ -57,7 +57,7 @@ step "pinned" {
 
 **Applying.** If `dest` has no repository, Conn3x clones into it. It then fetches from the remote when the commit isn't already there, and checks the commit out with a detached `HEAD`. The checkout is forced, so local changes to tracked files are discarded. Untracked files are left alone. The `commit` attribute records the commit checked out.
 
-**Shallow checkouts.** With `depth`, the clone and every fetch take only that many commits of history, and tags aren't fetched, since they'd bring the history back. Conn3x fetches `ref` by name, which every git server allows. With a full commit as `ref`, it fetches the commit by its hash, which some servers refuse depending on their `uploadpack` settings. Changing `depth` on an existing checkout doesn't reclone it: the next fetch uses the new depth.
+**Shallow checkouts.** With `depth`, the clone and every fetch take only that many commits of history, and tags aren't fetched, since they'd bring the history back. Conn3x fetches `ref` by name, which every git server allows. With a full commit as `ref`, it fetches the commit by its hash, which some servers refuse depending on their `uploadpack` settings. Changing `depth` on an existing checkout doesn't reclone it: the next fetch uses the new depth. Removing `depth` fetches the rest of the history, so the checkout is whole again.
 
 **Requirements.** The host needs `git`. If it's missing, add a [`package`](/modules/package) step for it first. For a private repository, the host needs its own credentials for it: an SSH key, or for https a `.netrc` or credential helper in the home directory of the user who runs the step. `repo` can't hold a user name or password for https, since it's in the plan, the state and the host's process list.
 

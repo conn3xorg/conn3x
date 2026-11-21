@@ -303,8 +303,13 @@ func ApplyGit(ctx context.Context, r modules.Runner, g Git, commit string) error
 	// and skips --tags, which would pull in the history depth leaves out.
 	// The commit itself is fetched last, for a ref that is a full commit;
 	// fetching a bare commit is up to the server's uploadpack settings.
+	// Without depth, a checkout left shallow by an earlier depth gets its
+	// whole history back, or removing depth would change nothing.
 	depth, fetchRef := "", `git -C "$dest" fetch --quiet --tags origin`
+	unshallow := `
+if [ -f "$dest/.git/shallow" ]; then git -C "$dest" fetch --quiet --unshallow --tags origin; fi`
 	if g.Depth > 0 {
+		unshallow = ""
 		depth = fmt.Sprintf(" --depth %d", g.Depth)
 		fetchRef = fmt.Sprintf(`git -C "$dest" fetch --quiet%s origin %s`, depth, ssh.Quote(g.ref()))
 	}
@@ -312,10 +317,10 @@ func ApplyGit(ctx context.Context, r modules.Runner, g Git, commit string) error
 %[1]s
 dest=%[2]s
 if [ ! -d "$dest/.git" ]; then git clone --quiet --no-checkout%[5]s -- %[3]s "$dest"; fi
-git -C "$dest" remote set-url origin %[3]s
+git -C "$dest" remote set-url origin %[3]s%[8]s
 git -C "$dest" cat-file -e %[4]s^{commit} 2>/dev/null || %[6]s
 git -C "$dest" cat-file -e %[4]s^{commit} 2>/dev/null || git -C "$dest" fetch --quiet%[7]s origin %[4]s
-git -C "$dest" checkout --quiet --force --detach %[4]s`, gitInstalled, ssh.Quote(g.Dest), ssh.Quote(g.Repo), commit, depth, fetchRef, depth)
+git -C "$dest" checkout --quiet --force --detach %[4]s`, gitInstalled, ssh.Quote(g.Dest), ssh.Quote(g.Repo), commit, depth, fetchRef, depth, unshallow)
 	res, err := r.Run(ctx, modules.Guard(script, modules.Whole(g.Dest+"/.git/config")), nil)
 	return check(res, err)
 }

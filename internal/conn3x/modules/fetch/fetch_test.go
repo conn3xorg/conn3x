@@ -217,6 +217,13 @@ func TestApplyGitShallow(t *testing.T) {
 		t.Errorf("after main moved: at %s with %s commits, want %s with 1", got, count(g.Dest), moved)
 	}
 
+	// Removing depth brings the whole history back.
+	g.Depth = 0
+	apply(g)
+	if n := count(g.Dest); n != "6" {
+		t.Errorf("after removing depth the checkout has %s commits, want 6", n)
+	}
+
 	old := Git{Repo: "file://" + src, Dest: filepath.Join(dir, "old"), Ref: commits[2], Depth: 1}
 	apply(old)
 
