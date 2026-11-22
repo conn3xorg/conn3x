@@ -20,10 +20,11 @@ import (
 )
 
 // Ansible's network resource modules (eos_vlans, junos_interfaces, ...)
-// take a config, one object or a list of them, and a state. Only merged,
-// the default, adds what the play names and leaves the rest, as a Conn3x
-// step does; replaced does the same for a single object such as the
-// hostname. overridden and deleted remove what the play doesn't name, and
+// take a config, one object or a list of them, and a state. merged, the
+// default, adds what the play names and leaves the rest, as a Conn3x step
+// does for one value or a whole object it creates, but not for a list the
+// step owns as a set (see addsToLists). replaced does the same for a single
+// object such as the hostname, and sets each named object's lists whole. overridden and deleted remove what the play doesn't name, and
 // gathered, rendered and parsed don't change the device, so those stay for
 // review.
 func resourceState(in *input, single bool) string {
@@ -32,6 +33,15 @@ func resourceState(in *input, single bool) string {
 		return ""
 	}
 	return "sets state: " + st + ", which removes or reads configuration the play doesn't name; a Conn3x step only adds what it's given"
+}
+
+// addsToLists reports whether a task merges, which adds a list's items to
+// what the device has. A step's list, such as a route's next_hops, is all
+// of them, so a merged list would delete the rest; replaced sets the whole
+// list for each object it names, as the step does.
+func addsToLists(in *input) bool {
+	st := in.str("state")
+	return st == "" || st == "merged"
 }
 
 // resourceItems is config as a list of objects, each as its keys' scalars.
@@ -326,7 +336,7 @@ func iosL2Interfaces(in *input) ([]step, string) {
 // vyosL3Interfaces converts vyos_l3_interfaces into vyos_interface's
 // addresses, a step per interface. Sub-interfaces (vifs) stay for review.
 func vyosL3Interfaces(in *input) ([]step, string) {
-	if reason := resourceState(in, false); reason != "" {
+	if reason := resourceState(in, true); reason != "" {
 		return nil, reason
 	}
 	items, reason := resourceItems(in)
@@ -360,6 +370,9 @@ func vyosL3Interfaces(in *input) ([]step, string) {
 		if len(addrs) == 0 {
 			return nil, "sets no address on " + name
 		}
+		if addsToLists(in) {
+			return nil, "sets addresses on " + name + " under state: merged, which adds them to the ones it has; a vyos_interface step's addresses are all of them, so write every address " + name + " should have, or use state: replaced"
+		}
 		steps = append(steps, step{module: "vyos_interface", attrs: []attr{s("name", name), {key: "addresses", val: strList(addrs)}}, suffix: itemSuffix("", name)})
 	}
 	return steps, ""
@@ -372,7 +385,7 @@ func vyosL3Interfaces(in *input) ([]step, string) {
 // stay for review.
 func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 	return func(in *input) ([]step, string) {
-		if reason := resourceState(in, false); reason != "" {
+		if reason := resourceState(in, true); reason != "" {
 			return nil, reason
 		}
 		items, reason := resourceItems(in)
@@ -429,6 +442,9 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 					}
 					if dest == "" || len(hops) == 0 {
 						return nil, "has a route without a dest and a next hop"
+					}
+					if addsToLists(in) {
+						return nil, "sets next hops for " + dest + " under state: merged, which adds them to the ones the route has; a " + platform + "_static_route step's next_hops are all of them, so write every next hop the route should have, or use state: replaced"
 					}
 					attrs := []attr{s("prefix", dest), {key: "next_hops", val: strList(hops)}}
 					if distance != "" {
@@ -489,8 +505,10 @@ func networkUser(platform string) func(*input) ([]step, string) {
 				return nil, "has no role, and a junos_user step needs its class"
 			}
 			attrs = append(attrs, s("class", role))
-			if k := in.str("sshkey"); k != "" {
-				attrs = append(attrs, attr{key: "ssh_keys", val: strList([]string{k})})
+			if in.has("sshkey") {
+				// junos_user merges the key in, and the step's ssh_keys are all
+				// of them: converted, the account's other keys would be deleted.
+				return nil, "sets sshkey, which junos_user adds to the account's keys; a junos_user step's ssh_keys are all of them, so list every key the account should have"
 			}
 			if in.has("full_name") {
 				return nil, "sets full_name, which a junos_user step doesn't take"

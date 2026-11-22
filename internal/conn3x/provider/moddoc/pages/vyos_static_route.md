@@ -43,4 +43,4 @@ step "branch_v6" {
 
 ## From Ansible
 
-`conn3x convert ansible` turns `vyos.vyos.vyos_static_routes` tasks into a `vyos_static_route` step per IPv4 route, with `dest` as `prefix` and each next hop's `forward_router_address` in `next_hops`. An `admin_distance` becomes `distance` when every next hop has the same one. Only `state: merged`, the default, converts. IPv6 routes, interface next hops and `blackhole_config` stay TODOs.
+`conn3x convert ansible` turns `vyos.vyos.vyos_static_routes` tasks into a `vyos_static_route` step per IPv4 route, with `dest` as `prefix` and each next hop's `forward_router_address` in `next_hops`. An `admin_distance` becomes `distance` when every next hop has the same one. Only `state: replaced` converts. Under `merged`, the default, Ansible adds the next hops to the ones the route has, while this step's `next_hops` are all of them, so a converted task would drop the route's other next hops. That task stays a TODO asking for every next hop. IPv6 routes, interface next hops and `blackhole_config` stay TODOs.

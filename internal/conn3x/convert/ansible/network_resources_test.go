@@ -24,7 +24,7 @@ func TestConvertNetworkResources(t *testing.T) {
 		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1/0/5, mode: access, access: {vlan: 10}}]}": {"ios_interface {", `mode        = "access"`, "access_vlan = 10"},
 		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1/0/48, mode: trunk}]}":                     {"ios_interface {", `mode = "trunk"`},
 		"vyos.vyos.vyos_interfaces: {config: [{name: eth1, enable: false}]}":                                      {"vyos_interface {", "enabled = false"},
-		"vyos.vyos.vyos_l3_interfaces: {config: [{name: eth1, ipv4: [{address: 192.0.2.1/24}], ipv6: [{address: '2001:db8::1/64'}]}]}": {
+		"vyos.vyos.vyos_l3_interfaces: {config: [{name: eth1, ipv4: [{address: 192.0.2.1/24}], ipv6: [{address: '2001:db8::1/64'}]}], state: replaced}": {
 			"vyos_interface {", `addresses = ["192.0.2.1/24", "2001:db8::1/64"]`},
 	} {
 		res := convertString(t, netPlay+"    - "+task+"\n")
@@ -109,14 +109,13 @@ func TestConvertNetworkResourceRefusals(t *testing.T) {
 
 func TestConvertNetworkRoutesAndUsers(t *testing.T) {
 	for task, want := range map[string][]string{
-		"junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.254}]}]}]}]}": {
+		"junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.254}]}]}]}], state: replaced}": {
 			"junos_static_route {", `prefix    = "0.0.0.0/0"`, `next_hops = ["192.0.2.254"]`},
-		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.1, admin_distance: 10}, {forward_router_address: 192.0.2.2, admin_distance: 10}]}]}]}]}": {
+		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.1, admin_distance: 10}, {forward_router_address: 192.0.2.2, admin_distance: 10}]}]}]}], state: replaced}": {
 			"vyos_static_route {", `next_hops = ["192.0.2.1", "192.0.2.2"]`, "distance  = 10"},
 		"arista.eos.eos_user: {name: ops, role: network-admin, privilege: 15, sshkey: 'ssh-ed25519 AAAA ops'}": {
 			"eos_user {", `role      = "network-admin"`, "privilege = 15", `ssh_key   = "ssh-ed25519 AAAA ops"`},
-		"junipernetworks.junos.junos_user: {name: alice, role: operator, sshkey: 'ssh-ed25519 AAAA alice'}": {
-			"junos_user {", `class    = "operator"`, `ssh_keys = ["ssh-ed25519 AAAA alice"]`},
+		"junipernetworks.junos.junos_user: {name: alice, role: operator}": {"junos_user {", `class = "operator"`},
 		"vyos.vyos.vyos_user: {name: alice, full_name: Alice, public_keys: [{name: alice@laptop, key: AAAA, type: ssh-ed25519}]}": {
 			"vyos_user {", `full_name = "Alice"`, `ssh_keys  = ["ssh-ed25519 AAAA alice@laptop"]`},
 	} {
@@ -146,11 +145,16 @@ func TestConvertNetworkRoutesAndUsers(t *testing.T) {
 		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, blackhole_config: {type: blackhole}}]}]}]}":                                                                                         "sets blackhole_config",
 		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{forward_router_address: 192.0.2.1, admin_distance: 1}, {forward_router_address: 192.0.2.2, admin_distance: 5}]}]}]}]}": "different admin_distance",
 		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{interface: eth0}]}]}]}]}":                                                                                              "sets interface",
-		"arista.eos.eos_user: {aggregate: [{name: a}, {name: b}]}":                               "sets aggregate",
-		"arista.eos.eos_user: {name: ops, state: absent}":                                        "has state absent",
-		"junipernetworks.junos.junos_user: {name: alice}":                                        "has no role",
-		"vyos.vyos.vyos_user: {name: alice, encrypted_password: '$6$x'}":                         "sets encrypted_password",
-		"vyos.vyos.vyos_user: {name: alice, configured_password: x, update_password: on_create}": "update_password: on_create",
+		"arista.eos.eos_user: {aggregate: [{name: a}, {name: b}]}": "sets aggregate",
+		"arista.eos.eos_user: {name: ops, state: absent}":          "has state absent",
+		// merged and junos_user add to a list the step owns whole.
+		"junipernetworks.junos.junos_user: {name: alice, role: operator, sshkey: 'ssh-ed25519 AAAA alice'}":                                                                          "list every key the account should have",
+		"junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.254}]}]}]}]}":   "or use state: replaced",
+		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.1}]}]}]}], state: merged}": "or use state: replaced",
+		"vyos.vyos.vyos_l3_interfaces: {config: [{name: eth1, ipv4: [{address: 192.0.2.1/24}]}]}":                                                                                    "write every address eth1 should have",
+		"junipernetworks.junos.junos_user: {name: alice}":                                                                                                                            "has no role",
+		"vyos.vyos.vyos_user: {name: alice, encrypted_password: '$6$x'}":                                                                                                             "sets encrypted_password",
+		"vyos.vyos.vyos_user: {name: alice, configured_password: x, update_password: on_create}":                                                                                     "update_password: on_create",
 	} {
 		res := convertString(t, netPlay+"    - "+task+"\n")
 		if res.Converted != 0 || !strings.Contains(reasons(res), reason) {

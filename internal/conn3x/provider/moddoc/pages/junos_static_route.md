@@ -43,4 +43,4 @@ step "branch_v6" {
 
 ## From Ansible
 
-`conn3x convert ansible` turns `junipernetworks.junos.junos_static_routes` tasks into a `junos_static_route` step per IPv4 route, with `dest` as `prefix` and each next hop's `forward_router_address` in `next_hops`. Only `state: merged`, the default, converts. IPv6 routes, a `vrf`, and `metric` stay TODOs: Junos keeps a route's metric apart from the preference this step sets.
+`conn3x convert ansible` turns `junipernetworks.junos.junos_static_routes` tasks into a `junos_static_route` step per IPv4 route, with `dest` as `prefix` and each next hop's `forward_router_address` in `next_hops`. Only `state: replaced` converts. Under `merged`, the default, Ansible adds the next hops to the ones the route has, while this step's `next_hops` are all of them, so a converted task would drop the route's other next hops. That task stays a TODO asking for every next hop. IPv6 routes, a `vrf`, and `metric` stay TODOs: Junos keeps a route's metric apart from the preference this step sets.

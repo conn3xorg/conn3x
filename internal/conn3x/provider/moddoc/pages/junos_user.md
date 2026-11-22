@@ -25,4 +25,4 @@ step "alice" {
 
 ## From Ansible
 
-`conn3x convert ansible` turns `junipernetworks.junos.junos_user` tasks into `junos_user` steps, with `role` as `class` and `sshkey` in `ssh_keys`. A task without `role` stays a TODO, since Junos needs a class. `encrypted_password`, `full_name`, `active: false`, `aggregate`, `purge` and `state: absent` stay TODOs too.
+`conn3x convert ansible` turns `junipernetworks.junos.junos_user` tasks into `junos_user` steps, with `role` as `class`. `sshkey` stays a TODO: `junos_user` merges the key into the account's keys, while this step's `ssh_keys` are all of them, so a converted task would delete the account's other keys. List every key instead. A task without `role` stays a TODO, since Junos needs a class. `encrypted_password`, `full_name`, `active: false`, `aggregate`, `purge` and `state: absent` stay TODOs too.
