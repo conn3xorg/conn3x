@@ -87,6 +87,11 @@ func (i Interface) addrCommands(lines []string) []string {
 	have, want := readAddrs(lines), i.wantAddrs()
 	var add, del []string
 	if want.primary != "" && want.primary != have.primary {
+		// A secondary becoming the primary comes off as a secondary first,
+		// or the interface would hold it twice.
+		if slices.Contains(have.second, want.primary) {
+			add = append(add, "no ip address "+want.primary+" secondary")
+		}
 		add = append(add, "ip address "+want.primary)
 	}
 	for _, s := range want.second {
@@ -100,7 +105,7 @@ func (i Interface) addrCommands(lines []string) []string {
 		}
 	}
 	for _, s := range have.second {
-		if !slices.Contains(want.second, s) {
+		if !slices.Contains(want.second, s) && s != want.primary {
 			del = append(del, "no ip address "+s+" secondary")
 		}
 	}

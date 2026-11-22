@@ -35,6 +35,10 @@ func TestInterfaceAddressCommands(t *testing.T) {
 			[]string{"interface Ethernet1", "ip address 203.0.113.1/24 secondary", "no ip address 198.51.100.1/24 secondary"}},
 		"a new primary replaces the old": {[]string{"192.0.2.9/24", "198.51.100.1/24", "2001:db8::1/64"},
 			[]string{"interface Ethernet1", "ip address 192.0.2.9/24"}},
+		// Renumbering: .2 comes off as a secondary before it's the primary,
+		// and the old primary becomes a secondary.
+		"primary and secondary swapped": {[]string{"198.51.100.1/24", "192.0.2.1/24", "2001:db8::1/64"},
+			[]string{"interface Ethernet1", "no ip address 198.51.100.1/24 secondary", "ip address 198.51.100.1/24", "ip address 192.0.2.1/24 secondary"}},
 		"IPv4 only, IPv6 goes": {[]string{"192.0.2.1/24", "198.51.100.1/24"},
 			[]string{"interface Ethernet1", "no ipv6 address 2001:db8::1/64"}},
 		"none, secondaries before the primary": {[]string{},
