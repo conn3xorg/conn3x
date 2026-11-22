@@ -50,6 +50,18 @@ func TestConvertPackageNameToReview(t *testing.T) {
 			t.Errorf("no review item for the mixed list: %+v", res.Review)
 		}
 	})
+	// A name render couldn't fill keeps render's reason, not this check's.
+	for name, want := range map[string]string{
+		"'{{ web_package }}'":          `refers to "web_package", which isn't a play variable`,
+		"'{% if a %}nginx{% endif %}'": "uses a Jinja expression the converter can't translate",
+	} {
+		t.Run("unfilled "+name, func(t *testing.T) {
+			res := convertString(t, "- hosts: all\n  tasks:\n    - apt: {name: "+name+"}\n")
+			if !hasPackageReviewReason(res, want) || hasPackageReviewReason(res, "cannot be a package step") {
+				t.Errorf("review %+v, want %q", res.Review, want)
+			}
+		})
+	}
 	t.Run("plain name still converts", func(t *testing.T) {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - apt: {name: nginx, state: latest}\n")
 		if res.Converted != 1 || len(res.Review) != 0 {

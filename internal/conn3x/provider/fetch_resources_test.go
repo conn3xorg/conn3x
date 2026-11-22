@@ -57,4 +57,16 @@ func TestGitCommitIsUnknownUntilApplied(t *testing.T) {
 	}
 }
 
+// depth is a whole number of commits, 1 or more; anything else is refused
+// rather than read as the whole history (#1182).
+func TestGitDepthValidates(t *testing.T) {
+	r := resourceTypes["conn3x_git"]
+	for depth, ok := range map[float64]bool{1: true, 50: true, 0: false, -1: false, 1.5: false} {
+		cfg := objFor(r.schema(), map[string]cty.Value{"dest": cty.StringVal("/srv/app"), "repo": cty.StringVal("https://example.com/a.git"), "depth": cty.NumberFloatVal(depth)})
+		if diags := r.validate(cfg); diags.HasErrors() == ok {
+			t.Errorf("depth %v: errors %v, want ok %v", depth, diags.Err(), ok)
+		}
+	}
+}
+
 const sum64 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"

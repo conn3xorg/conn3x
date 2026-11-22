@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -13,16 +14,43 @@ import (
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
-// locked and expires are read from /etc/shadow only when the step sets
-// them, since that needs root: a step that leaves them out never asks.
+// locked, expires and the password aging days are read from /etc/shadow
+// only when the step sets them, since that needs root: a step that leaves
+// them all out never asks.
 func userLockSet(v cty.Value) (lock, expires bool) {
 	return known(v.GetAttr("locked")), known(v.GetAttr("expires"))
 }
+
+var agingAttrs = []string{"password_min_days", "password_max_days", "password_warn_days"}
+
+// userAging is the aging a step sets, nil for each it leaves out.
+func userAging(v cty.Value) (account.Aging, bool) {
+	var a account.Aging
+	set := false
+	for i, ptr := range []**int{&a.MinDays, &a.MaxDays, &a.WarnDays} {
+		if d := v.GetAttr(agingAttrs[i]); known(d) {
+			n, _ := d.AsBigFloat().Int64()
+			m := int(n)
+			*ptr, set = &m, true
+		}
+	}
+	return a, set
+}
+
+func shadowAging(sh account.Shadow) []int { return []int{sh.MinDays, sh.MaxDays, sh.WarnDays} }
 
 func validateUserLock(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
 	if e := cfg.GetAttr("expires"); known(e) && !account.ValidExpiry(e.AsString()) {
 		diags = diags.Append(attrError("expires", fmt.Sprintf("expires %q isn't a date as YYYY-MM-DD, or \"\" for no expiry", e.AsString())))
+	}
+	for _, k := range agingAttrs {
+		if d := cfg.GetAttr(k); known(d) {
+			n, acc := d.AsBigFloat().Int64()
+			if acc != big.Exact || n < -1 || n > 99999 {
+				diags = diags.Append(attrError(k, fmt.Sprintf("%s must be a whole number of days from 0 to 99999, or -1 for no limit", k)))
+			}
+		}
 	}
 	return diags
 }
@@ -32,7 +60,8 @@ func validateUserLock(cfg cty.Value) tfdiags.Diagnostics {
 func refreshUserLock(ctx context.Context, h *hostConn, state cty.Value) (cty.Value, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 	lock, expires := userLockSet(state)
-	if !lock && !expires {
+	aging, agingSet := userAging(state)
+	if !lock && !expires && !agingSet {
 		return state, diags
 	}
 	name := stringOr(state.GetAttr("name"), "")
@@ -40,14 +69,24 @@ func refreshUserLock(ctx context.Context, h *hostConn, state cty.Value) (cty.Val
 	sh, err := account.ReadShadow(ctx, h, name)
 	if err != nil {
 		// Not knowing isn't in sync: say why, and plan to set them again.
-		diags = diags.Append(tfdiags.SimpleWarning(fmt.Sprintf("user %s: can't check its lock and expiry: %s", name, err)))
+		diags = diags.Append(tfdiags.SimpleWarning(fmt.Sprintf("user %s: can't check its lock, expiry and password aging: %s", name, err)))
 		if lock {
 			vals["locked"] = cty.NullVal(cty.Bool)
 		}
 		if expires {
 			vals["expires"] = cty.NullVal(cty.String)
 		}
+		for i, want := range []*int{aging.MinDays, aging.MaxDays, aging.WarnDays} {
+			if want != nil {
+				vals[agingAttrs[i]] = cty.NullVal(cty.Number)
+			}
+		}
 		return cty.ObjectVal(vals), diags
+	}
+	for i, want := range []*int{aging.MinDays, aging.MaxDays, aging.WarnDays} {
+		if want != nil {
+			vals[agingAttrs[i]] = cty.NumberIntVal(int64(shadowAging(sh)[i]))
+		}
 	}
 	if lock {
 		vals["locked"] = cty.BoolVal(sh.IsLocked())
@@ -62,7 +101,8 @@ func refreshUserLock(ctx context.Context, h *hostConn, state cty.Value) (cty.Val
 // the password, so a new password is in place before an unlock.
 func applyUserLock(ctx context.Context, h *hostConn, name string, cfg cty.Value) error {
 	lock, expires := userLockSet(cfg)
-	if !lock && !expires {
+	aging, agingSet := userAging(cfg)
+	if !lock && !expires && !agingSet {
 		return nil
 	}
 	sh, err := account.ReadShadow(ctx, h, name)
@@ -79,7 +119,17 @@ func applyUserLock(ctx context.Context, h *hostConn, name string, cfg cty.Value)
 			return err
 		}
 	}
+	if err := account.SetAging(ctx, h, name, aging, sh); err != nil {
+		return err
+	}
 	after, err := account.ReadShadow(ctx, h, name)
+	if err == nil {
+		for i, want := range []*int{aging.MinDays, aging.MaxDays, aging.WarnDays} {
+			if want != nil && shadowAging(after)[i] != *want {
+				return fmt.Errorf("its %s is %d after applying, not %d", agingAttrs[i], shadowAging(after)[i], *want)
+			}
+		}
+	}
 	switch {
 	case err != nil:
 		return err

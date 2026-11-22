@@ -77,6 +77,7 @@ func TestGitValidate(t *testing.T) {
 		{Repo: "http://example.com/a.git", Dest: "/srv/app"},
 		{Repo: "http://example.com/a.git", Dest: "/srv/app", Ref: "v1.2.3"},
 		{Repo: "https://token@example.com/a.git", Dest: "/srv/app"},
+		{Repo: "https://example.com/a.git", Dest: "/srv/app", Depth: -1},
 	} {
 		if bad.Validate() == nil {
 			t.Errorf("accepted %+v", bad)
@@ -179,5 +180,77 @@ git rev-parse "v1^{commit}"`, src).CombinedOutput()
 	want := strings.TrimSpace(string(out))
 	if got, err := Remote(context.Background(), moduletest.Local{}, Git{Repo: "file://" + src, Ref: "v1"}); err != nil || got != want {
 		t.Errorf("Remote(v1) = %q, %v; want the commit %s", got, err, want)
+	}
+}
+
+// A shallow checkout keeps only depth commits, stays shallow when the branch
+// moves, and can still check out an older commit named in full (#1182).
+func TestApplyGitShallow(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("needs git")
+	}
+	ctx, r := context.Background(), moduletest.Local{}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	commit := func() string {
+		out, err := exec.Command("sh", "-c", `cd "$0" && n=$(git rev-list --count HEAD 2>/dev/null || echo 0) && echo "$n" > f && git add f && git -c user.name=t -c user.email=t@example.com commit -qm "c$n" && git rev-parse HEAD`, src).CombinedOutput()
+		if err != nil {
+			t.Fatalf("commit: %v\n%s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if out, err := exec.Command("git", "init", "-q", "-b", "main", src).CombinedOutput(); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	var commits []string
+	for range 5 {
+		commits = append(commits, commit())
+	}
+	count := func(dest string) string {
+		out, err := exec.Command("git", "-C", dest, "rev-list", "--count", "HEAD").CombinedOutput()
+		if err != nil {
+			t.Fatalf("rev-list: %v\n%s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	apply := func(g Git) string {
+		t.Helper()
+		want, err := Remote(ctx, r, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ApplyGit(ctx, r, g, want); err != nil {
+			t.Fatal(err)
+		}
+		if have, err := Checkout(ctx, r, g.Dest); err != nil || have != want {
+			t.Fatalf("checked out %q, %v; want %s", have, err, want)
+		}
+		return want
+	}
+
+	g := Git{Repo: "file://" + src, Dest: filepath.Join(dir, "shallow"), Ref: "main", Depth: 1}
+	apply(g)
+	if n := count(g.Dest); n != "1" {
+		t.Errorf("depth 1 checkout has %s commits", n)
+	}
+	moved := commit()
+	if got := apply(g); got != moved || count(g.Dest) != "1" {
+		t.Errorf("after main moved: at %s with %s commits, want %s with 1", got, count(g.Dest), moved)
+	}
+
+	// Removing depth brings the whole history back.
+	g.Depth = 0
+	apply(g)
+	if n := count(g.Dest); n != "6" {
+		t.Errorf("after removing depth the checkout has %s commits, want 6", n)
+	}
+
+	old := Git{Repo: "file://" + src, Dest: filepath.Join(dir, "old"), Ref: commits[2], Depth: 1}
+	apply(old)
+
+	full := Git{Repo: "file://" + src, Dest: filepath.Join(dir, "full"), Ref: "main"}
+	apply(full)
+	if n := count(full.Dest); n != "6" {
+		t.Errorf("full checkout has %s commits, want 6", n)
 	}
 }

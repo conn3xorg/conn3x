@@ -17,6 +17,8 @@ func TestConvertModuleOptions(t *testing.T) {
 		"package: { name: [a, b], state: removed }":                                                                                {`name  = "a"`, `name  = "b"`, `state = "absent"`},
 		"apt: { name: nginx, state: installed, update_cache: yes }":                                                                {`name = "nginx"`, "update_cache dropped"},
 		"service: { name: nginx, enabled: yes, daemon_reload: yes }":                                                               {"enabled = true", "daemon_reload dropped"},
+		"user: { name: bob, password_expire_max: 365, password_expire_min: 1, password_expire_warn: 7 }":                           {"password_min_days  = 1", "password_max_days  = 365", "password_warn_days = 7"},
+		"user: { name: bob, password_expire_max: -1 }":                                                                             {"password_max_days = -1"},
 		"user: { name: app, groups: [] }":                                                                                          {"user {", `name = "app"`},
 		"group: { name: app }":                                                                                                     {"group {", `name = "app"`},
 		"cron: { name: 'nightly job', special_time: daily, job: /bin/true, user: app }":                                            {`schedule = "@daily"`, `name     = "nightly-job"`, `user     = "app"`},
@@ -36,11 +38,14 @@ func TestConvertModuleOptions(t *testing.T) {
 		"lvol: { vg: data, lv: app, size: 10g, resizefs: yes }":                                                                    {"TODO(convert): resizefs grew the file system"},
 		"filesystem: { dev: /dev/sdb1, fstype: xfs, opts: '-L data', resizefs: yes, force: yes }": {
 			`opts   = ["-L", "data"]`, "resize = true", "force  = true", "TODO(convert): force = true lets this step make"},
-		"wait_for: { port: 22, timeout: 30 }":                      {"wait_for {", `timeout = "30s"`, "port    = 22"},
-		"wait_for: { path: /tmp/ready, host: localhost }":          {`path = "/tmp/ready"`},
-		"yum_versionlock: { name: [httpd, nginx], state: absent }": {`name  = "httpd"`, `state = "released"`},
-		"dpkg_selections: { name: nginx, selection: install }":     {"package_hold {", `state = "released"`},
-		"selinux: { state: enforcing, policy: targeted }":          {"selinux_mode {", "policy dropped"},
+		"git: { repo: 'https://example.com/a.git', dest: /opt/a }":                          {`dest = "/opt/a"`, "a git step discards changes to tracked files"},
+		"git: { repo: 'https://example.com/a.git', dest: /opt/a, version: main, depth: 1 }": {`ref   = "main"`, "depth = 1"},
+		"git: { repo: 'https://example.com/a.git', dest: /opt/a, force: no }":               {"a git step discards changes to tracked files"},
+		"wait_for: { port: 22, timeout: 30 }":                                               {"wait_for {", `timeout = "30s"`, "port    = 22"},
+		"wait_for: { path: /tmp/ready, host: localhost }":                                   {`path = "/tmp/ready"`},
+		"yum_versionlock: { name: [httpd, nginx], state: absent }":                          {`name  = "httpd"`, `state = "released"`},
+		"dpkg_selections: { name: nginx, selection: install }":                              {"package_hold {", `state = "released"`},
+		"selinux: { state: enforcing, policy: targeted }":                                   {"selinux_mode {", "policy dropped"},
 		"acl: { path: /srv, etype: user, entity: app, permissions: r-x, default: yes, state: absent }": {
 			`permissions = "rx"`, "default     = true", `state       = "absent"`},
 		"debconf: { name: tzdata, question: tz, vtype: boolean, value: 'yes' }":                      {`value    = "true"`},
@@ -85,6 +90,14 @@ func TestConvertModuleOptions(t *testing.T) {
 }
 
 // What the converter can't prove for a module stays for review, with why.
+// force: true is what a git step always does, so it converts without a note (#1187).
+func TestConvertGitForce(t *testing.T) {
+	res := convertString(t, "- hosts: all\n  tasks:\n    - git: { repo: 'https://example.com/a.git', dest: /opt/a, force: true }\n")
+	if hcl := string(res.HCL); res.Converted != 1 || len(res.Review) != 0 || strings.Contains(hcl, "local changes") {
+		t.Errorf("converted %d, review %+v:\n%s", res.Converted, res.Review, hcl)
+	}
+}
+
 func TestConvertModuleOptionRefusals(t *testing.T) {
 	for task, reason := range map[string]string{
 		"copy: { src: /etc/hosts, dest: /tmp/h, remote_src: yes }":                        "copies a file already on the host",
