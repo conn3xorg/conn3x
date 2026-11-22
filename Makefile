@@ -2,9 +2,6 @@
 
 export PATH := $(abspath bin/):${PATH}
 
-# Dependency versions
-LICENSEI_VERSION = 0.9.0
-
 # run Go tests and generate a coverage report
 #
 # NOTE:
@@ -73,23 +70,6 @@ license-check:
 	licensei header --debug
 	rm -rf vendor/
 	git diff --exit-code
-
-# This runs the copyright checks against the files in this repository.
-# This is the same script that is used also in the .github/workflows/checks.yml. If this or that configuration is ever changed,
-# be sure that the changes are reflected in both places.
-copyright:
-	curl -fsSL https://raw.githubusercontent.com/opentofu/scripts/main/sh/copyright_check.sh | bash -s -- "" "*.go *.proto" "*/.git* */vendor/* */node_modules/* */.workdir* */website/* */tfplugin*.proto"
-
-# Install dependencies
-deps: bin/licensei
-deps:
-
-bin/licensei: bin/licensei-${LICENSEI_VERSION}
-	@ln -sf licensei-${LICENSEI_VERSION} bin/licensei
-bin/licensei-${LICENSEI_VERSION}:
-	@mkdir -p bin
-	curl -sfL https://git.io/licensei | bash -s v${LICENSEI_VERSION}
-	@mv bin/licensei $@
 
 # disallow any parallelism (-j) for Make. This is necessary since some
 # commands during the build process create temporary files that collide
