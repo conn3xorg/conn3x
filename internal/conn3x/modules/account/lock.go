@@ -15,10 +15,14 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
 
-// Shadow is what /etc/shadow holds for a user's lock and expiry.
+// Shadow is what /etc/shadow holds for a user's lock, expiry and password
+// aging.
 type Shadow struct {
 	Hash    string // the password field, ! in front when it's locked
 	Expires string // the account's last day as YYYY-MM-DD, "" for never
+	// The days a password must be kept, may be kept, and is warned about
+	// before it expires: fields 4, 5 and 6. Empty is -1, as chage reads it.
+	MinDays, MaxDays, WarnDays int
 }
 
 // IsLocked reports whether the password field is locked, with the ! that
@@ -26,10 +30,10 @@ type Shadow struct {
 // account's bare ! counts as locked: it has no password to log in with.
 func (s Shadow) IsLocked() bool { return strings.HasPrefix(s.Hash, "!") }
 
-// ReadShadow reads name's password field and expiry from /etc/shadow,
-// which needs root.
+// ReadShadow reads name's password field, expiry and aging from
+// /etc/shadow, which needs root.
 func ReadShadow(ctx context.Context, r modules.Runner, name string) (Shadow, error) {
-	res, err := r.Run(ctx, needsRoot+"getent shadow -- "+ssh.Quote(name)+" | cut -d: -f2,8", nil)
+	res, err := r.Run(ctx, needsRoot+"getent shadow -- "+ssh.Quote(name)+" | cut -d: -f2,4,5,6,8", nil)
 	if err != nil {
 		return Shadow{}, err
 	}
@@ -39,12 +43,39 @@ func ReadShadow(ctx context.Context, r modules.Runner, name string) (Shadow, err
 	if res.ExitCode != 0 {
 		return Shadow{}, fmt.Errorf("reading the shadow entry of %s: %s", name, strings.TrimSpace(string(res.Stderr)))
 	}
-	hash, days, _ := strings.Cut(strings.TrimSpace(string(res.Stdout)), ":")
-	expires, err := expiryDate(days)
+	return parseShadow(name, strings.TrimSpace(string(res.Stdout)))
+}
+
+// parseShadow reads the password, min, max, warn and expiry fields, in
+// that order, joined by colons.
+func parseShadow(name, line string) (Shadow, error) {
+	f := strings.Split(line, ":")
+	if len(f) != 5 {
+		return Shadow{}, fmt.Errorf("reading the shadow entry of %s: expected 5 fields, got %d", name, len(f))
+	}
+	expires, err := expiryDate(f[4])
 	if err != nil {
 		return Shadow{}, fmt.Errorf("reading the expiry of %s: %w", name, err)
 	}
-	return Shadow{Hash: hash, Expires: expires}, nil
+	sh := Shadow{Hash: f[0], Expires: expires}
+	for i, d := range []*int{&sh.MinDays, &sh.MaxDays, &sh.WarnDays} {
+		if *d, err = agingDays(f[i+1]); err != nil {
+			return Shadow{}, fmt.Errorf("reading the password aging of %s: %w", name, err)
+		}
+	}
+	return sh, nil
+}
+
+// agingDays reads a shadow aging field: empty is -1, no limit.
+func agingDays(s string) (int, error) {
+	if s == "" {
+		return -1, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < -1 {
+		return 0, fmt.Errorf("%q isn't a number of days", s)
+	}
+	return n, nil
 }
 
 // expiryDate turns shadow's days since 1970-01-01 into a date in UTC, as
@@ -88,6 +119,29 @@ func SetLock(ctx context.Context, r modules.Runner, name string, lock bool, now 
 		flag = "-U"
 	}
 	return run(ctx, r, "usermod "+flag+" -- "+ssh.Quote(name))
+}
+
+// Aging is the password aging a user step sets: days, -1 for no limit, and
+// nil for one it leaves alone.
+type Aging struct{ MinDays, MaxDays, WarnDays *int }
+
+// SetAging sets the aging fields that differ from now with one chage, and
+// does nothing when none do.
+func SetAging(ctx context.Context, r modules.Runner, name string, want Aging, now Shadow) error {
+	var flags []string
+	for _, f := range []struct {
+		flag string
+		want *int
+		now  int
+	}{{"-m", want.MinDays, now.MinDays}, {"-M", want.MaxDays, now.MaxDays}, {"-W", want.WarnDays, now.WarnDays}} {
+		if f.want != nil && *f.want != f.now {
+			flags = append(flags, f.flag, strconv.Itoa(*f.want))
+		}
+	}
+	if len(flags) == 0 {
+		return nil
+	}
+	return run(ctx, r, "chage "+strings.Join(flags, " ")+" -- "+ssh.Quote(name))
 }
 
 // SetExpiry sets name's last day, YYYY-MM-DD in UTC, or no expiry for "".

@@ -1,0 +1,19 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "operator" {
+    user {
+      name               = "conn3xa"
+      password_min_days  = {{.Min}}
+      password_max_days  = {{.Max}}
+      password_warn_days = {{.Warn}}
+    }
+  }
+}

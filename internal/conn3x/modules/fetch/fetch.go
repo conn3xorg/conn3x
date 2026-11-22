@@ -203,6 +203,7 @@ type Git struct {
 	Repo, Dest string
 	Ref        string // defaults to HEAD, the remote's default branch
 	Depth      int    // commits of history to fetch; 0 fetches all of it
+	KeyFile    string // private key on the host for an ssh repo, such as a deploy key
 }
 
 // Validate checks a Git before anything reaches the host.
@@ -227,10 +228,28 @@ func (g Git) Validate() error {
 	if g.Ref != "" && (!gitRef.MatchString(g.Ref) || strings.HasPrefix(g.Ref, "-")) {
 		return fmt.Errorf("ref %q is not a branch, tag or commit", g.Ref)
 	}
+	if g.KeyFile != "" {
+		if err := absolute("key_file", g.KeyFile); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(g.Repo, "ssh://") && !strings.HasPrefix(g.Repo, "git@") {
+			return fmt.Errorf("key_file is for an ssh repo, and %q isn't one: use an ssh:// URL, such as ssh://deploy@git.example.com/app.git, or git@host:path", g.Repo)
+		}
+	}
 	if g.Depth < 0 {
 		return errors.New("depth must be a whole number of commits, 1 or more")
 	}
 	return nil
+}
+
+// sshEnv is the line that makes git log in with KeyFile and nothing else,
+// never asking for a password, or "" without one. git hands
+// GIT_SSH_COMMAND to a shell, so the path is quoted inside it too.
+func (g Git) sshEnv() string {
+	if g.KeyFile == "" {
+		return ""
+	}
+	return "export GIT_SSH_COMMAND=" + ssh.Quote("ssh -i "+ssh.Quote(g.KeyFile)+" -o IdentitiesOnly=yes -o BatchMode=yes") + "\n"
 }
 
 func (g Git) ref() string {
@@ -272,7 +291,7 @@ func Remote(ctx context.Context, r modules.Runner, g Git) (string, error) {
 	if commitHex.MatchString(g.ref()) {
 		return g.ref(), nil
 	}
-	res, err := r.Run(ctx, fmt.Sprintf("%s\ngit ls-remote -- %s %s", gitInstalled, ssh.Quote(g.Repo), ssh.Quote(g.ref())), nil)
+	res, err := r.Run(ctx, fmt.Sprintf("%s\n%sgit ls-remote -- %s %s", gitInstalled, g.sshEnv(), ssh.Quote(g.Repo), ssh.Quote(g.ref())), nil)
 	if err := check(res, err); err != nil {
 		return "", err
 	}
@@ -303,19 +322,24 @@ func ApplyGit(ctx context.Context, r modules.Runner, g Git, commit string) error
 	// and skips --tags, which would pull in the history depth leaves out.
 	// The commit itself is fetched last, for a ref that is a full commit;
 	// fetching a bare commit is up to the server's uploadpack settings.
+	// Without depth, a checkout left shallow by an earlier depth gets its
+	// whole history back, or removing depth would change nothing.
 	depth, fetchRef := "", `git -C "$dest" fetch --quiet --tags origin`
+	unshallow := `
+if [ -f "$dest/.git/shallow" ]; then git -C "$dest" fetch --quiet --unshallow --tags origin; fi`
 	if g.Depth > 0 {
+		unshallow = ""
 		depth = fmt.Sprintf(" --depth %d", g.Depth)
 		fetchRef = fmt.Sprintf(`git -C "$dest" fetch --quiet%s origin %s`, depth, ssh.Quote(g.ref()))
 	}
 	script := fmt.Sprintf(`set -e
 %[1]s
-dest=%[2]s
+%[9]sdest=%[2]s
 if [ ! -d "$dest/.git" ]; then git clone --quiet --no-checkout%[5]s -- %[3]s "$dest"; fi
-git -C "$dest" remote set-url origin %[3]s
+git -C "$dest" remote set-url origin %[3]s%[8]s
 git -C "$dest" cat-file -e %[4]s^{commit} 2>/dev/null || %[6]s
 git -C "$dest" cat-file -e %[4]s^{commit} 2>/dev/null || git -C "$dest" fetch --quiet%[7]s origin %[4]s
-git -C "$dest" checkout --quiet --force --detach %[4]s`, gitInstalled, ssh.Quote(g.Dest), ssh.Quote(g.Repo), commit, depth, fetchRef, depth)
+git -C "$dest" checkout --quiet --force --detach %[4]s`, gitInstalled, ssh.Quote(g.Dest), ssh.Quote(g.Repo), commit, depth, fetchRef, depth, unshallow, g.sshEnv())
 	res, err := r.Run(ctx, modules.Guard(script, modules.Whole(g.Dest+"/.git/config")), nil)
 	return check(res, err)
 }

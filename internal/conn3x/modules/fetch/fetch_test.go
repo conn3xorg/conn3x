@@ -62,6 +62,8 @@ func TestGitValidate(t *testing.T) {
 		{Repo: "git@github.com:octocat/Hello-World.git", Dest: "/srv/app", Ref: "v1.2.3"},
 		{Repo: "ssh://git@example.com/app.git", Dest: "/srv/app", Ref: "release/2026"},
 		{Repo: "http://example.com/app.git", Dest: "/srv/app", Ref: "0123456789abcdef0123456789abcdef01234567"},
+		{Repo: "git@github.com:octocat/Hello-World.git", Dest: "/srv/app", KeyFile: "/root/.ssh/deploy"},
+		{Repo: "ssh://git@example.com/app.git", Dest: "/srv/app", KeyFile: "/root/.ssh/deploy"},
 	} {
 		if err := ok.Validate(); err != nil {
 			t.Errorf("rejected %+v: %v", ok, err)
@@ -78,6 +80,9 @@ func TestGitValidate(t *testing.T) {
 		{Repo: "http://example.com/a.git", Dest: "/srv/app", Ref: "v1.2.3"},
 		{Repo: "https://token@example.com/a.git", Dest: "/srv/app"},
 		{Repo: "https://example.com/a.git", Dest: "/srv/app", Depth: -1},
+		{Repo: "https://example.com/a.git", Dest: "/srv/app", KeyFile: "/root/.ssh/deploy"},
+		{Repo: "git@example.com:a.git", Dest: "/srv/app", KeyFile: ".ssh/deploy"},
+		{Repo: "git@example.com:a.git", Dest: "/srv/app", KeyFile: "/root/.ssh/deploy\nx"},
 	} {
 		if bad.Validate() == nil {
 			t.Errorf("accepted %+v", bad)
@@ -217,6 +222,13 @@ func TestApplyGitShallow(t *testing.T) {
 		t.Errorf("after main moved: at %s with %s commits, want %s with 1", got, count(g.Dest), moved)
 	}
 
+	// Removing depth brings the whole history back.
+	g.Depth = 0
+	apply(g)
+	if n := count(g.Dest); n != "6" {
+		t.Errorf("after removing depth the checkout has %s commits, want 6", n)
+	}
+
 	old := Git{Repo: "file://" + src, Dest: filepath.Join(dir, "old"), Ref: commits[2], Depth: 1}
 	apply(old)
 
@@ -224,5 +236,39 @@ func TestApplyGitShallow(t *testing.T) {
 	apply(full)
 	if n := count(full.Dest); n != "6" {
 		t.Errorf("full checkout has %s commits, want 6", n)
+	}
+}
+
+// key_file reaches every git command that talks to the remote, as one ssh
+// argument however odd its path, with no other key and no password prompt
+// (#1183).
+func TestGitKeyFile(t *testing.T) {
+	g := Git{Repo: "git@example.com:app.git", Dest: "/srv/app", Ref: "main", KeyFile: "/root/.ssh/my key's"}
+	line := g.sshEnv()
+	// git runs GIT_SSH_COMMAND through a shell, so split it the same way.
+	out, err := exec.Command("sh", "-c", line+`eval "set -- $GIT_SSH_COMMAND"; printf '%s\n' "$@"`).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "ssh\n-i\n/root/.ssh/my key's\n-o\nIdentitiesOnly=yes\n-o\nBatchMode=yes\n"; string(out) != want {
+		t.Errorf("GIT_SSH_COMMAND splits into\n%s\nwant\n%s", out, want)
+	}
+
+	r := &scriptRunner{}
+	_, _ = Remote(context.Background(), r, g)
+	if !strings.Contains(r.script, line) {
+		t.Errorf("ls-remote runs without key_file:\n%s", r.script)
+	}
+	_ = ApplyGit(context.Background(), r, g, strings.Repeat("a", 40))
+	// Apply's script is wrapped for the user who runs it, which quotes it
+	// again, so look for the variable rather than the exact line.
+	if !strings.Contains(r.script, "GIT_SSH_COMMAND=") || !strings.Contains(r.script, "IdentitiesOnly=yes") {
+		t.Errorf("clone and fetch run without key_file:\n%s", r.script)
+	}
+	if out, err := exec.Command("sh", "-n", "-c", r.script).CombinedOutput(); err != nil {
+		t.Errorf("apply's script doesn't parse with key_file in it: %v\n%s", err, out)
+	}
+	if (Git{Repo: g.Repo, Dest: g.Dest}).sshEnv() != "" {
+		t.Error("a git step without key_file sets GIT_SSH_COMMAND")
 	}
 }

@@ -1156,6 +1156,20 @@ func userModule(in *input) ([]step, string) {
 	if in.has("password_lock") {
 		attrs = append(attrs, attr{key: "locked", val: cty.BoolVal(in.bool("password_lock", false))})
 	}
+	// Ansible's password_expire_* are chage's -m, -M and -W, with -1 for no
+	// limit, as the step takes them.
+	for _, m := range [][2]string{{"password_expire_min", "password_min_days"}, {"password_expire_max", "password_max_days"}, {"password_expire_warn", "password_warn_days"}} {
+		from, to := m[0], m[1]
+		if !in.has(from) {
+			continue
+		}
+		v := in.str(from)
+		n, err := strconv.Atoi(v)
+		if in.problem == "" && (err != nil || n < -1) {
+			return nil, fmt.Sprintf("sets %s %q, which isn't a number of days or -1", from, v)
+		}
+		attrs = append(attrs, attr{key: to, val: cty.NumberIntVal(int64(n))})
+	}
 	// expires is seconds since 1970; Ansible compares only the date it
 	// falls on in UTC, and a negative one removes the expiry.
 	if in.has("expires") {
@@ -1950,11 +1964,18 @@ func gitModule(in *input) ([]step, string) {
 	if in.has("depth") {
 		attrs = append(attrs, in.number("depth"))
 	}
-	// A git step always checks out with --force, which is force: true.
-	if in.bool("force", false) {
-		return one("git", attrs)
+	attrs = in.optional(attrs, "key_file", "key_file")
+	var notes []string
+	// Turning off the host key check is what a deploy key is meant to make
+	// safe, so it isn't carried over.
+	if in.bool("accept_hostkey", false) || in.bool("accept_newhostkey", false) {
+		notes = append(notes, "accept_hostkey dropped: a git step checks the server's host key. Add a known_hosts step for it before this one.")
 	}
-	return one("git", attrs, "Ansible stops when the checkout has local changes; a git step discards changes to tracked files.")
+	// A git step always checks out with --force, which is force: true.
+	if !in.bool("force", false) {
+		notes = append(notes, "Ansible stops when the checkout has local changes; a git step discards changes to tracked files.")
+	}
+	return one("git", attrs, notes...)
 }
 
 func mountModule(in *input) ([]step, string) {

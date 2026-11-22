@@ -140,7 +140,8 @@ func gitSchema() providers.Schema {
 			"repo":     {Type: cty.String, Required: true, Description: "Repository URL, without a user name or password. The host needs access to it. Plain http needs a full commit as ref."},
 			"dest":     {Type: cty.String, Required: true, Description: "Directory to check it out in."},
 			"ref":      {Type: cty.String, Optional: true, Description: "Branch, tag or full commit. Defaults to the remote's default branch."},
-			"depth":    {Type: cty.Number, Optional: true, Description: "Fetch only this many commits of history, 1 or more, for a shallow checkout. Tags aren't fetched then. A full commit as ref needs a server that lets clients fetch a commit by its hash. Changing it doesn't reclone. Defaults to the whole history."},
+			"key_file": {Type: cty.String, Optional: true, Description: "Private key on the host to log in to an ssh repo with, such as a deploy key, absolute. Only that key is offered, and ssh never asks for a password. The repo's server must already be in the host's known_hosts: add a known_hosts step before this one."},
+			"depth":    {Type: cty.Number, Optional: true, Description: "Fetch only this many commits of history, 1 or more, for a shallow checkout. Tags aren't fetched then. A full commit as ref needs a server that lets clients fetch a commit by its hash. Changing it doesn't reclone, and removing it fetches the rest of the history. Defaults to the whole history."},
 			"commit":   {Type: cty.String, Computed: true, Description: "The commit checked out."},
 			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether the checkout is at the commit ref points to."},
 		},
@@ -149,7 +150,7 @@ func gitSchema() providers.Schema {
 }
 
 func gitFrom(v cty.Value) fetch.Git {
-	g := fetch.Git{Repo: v.GetAttr("repo").AsString(), Dest: v.GetAttr("dest").AsString(), Ref: stringOr(v.GetAttr("ref"), "")}
+	g := fetch.Git{Repo: v.GetAttr("repo").AsString(), Dest: v.GetAttr("dest").AsString(), Ref: stringOr(v.GetAttr("ref"), ""), KeyFile: stringOr(v.GetAttr("key_file"), "")}
 	if d := v.GetAttr("depth"); !d.IsNull() && d.IsKnown() {
 		n, acc := d.AsBigFloat().Int64()
 		// A depth of 0 or less, or one that isn't a whole number, is refused
