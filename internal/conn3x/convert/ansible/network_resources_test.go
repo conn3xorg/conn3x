@@ -13,6 +13,8 @@ func TestConvertNetworkResources(t *testing.T) {
 	for task, want := range map[string][]string{
 		"arista.eos.eos_hostname: {config: {hostname: leaf1}}":                                     {"eos_hostname {", `name = "leaf1"`},
 		"junipernetworks.junos.junos_hostname: {config: {hostname: sw1}, state: replaced}":         {"junos_hostname {", `name = "sw1"`},
+		"cisco.ios.ios_vlans: {config: [{vlan_id: 10, name: users, state: active}]}":               {"ios_vlan {", "vlan_id = 10", `name    = "users"`},
+		"cisco.ios.ios_vlans: {config: [{vlan_id: 20}], state: replaced}":                          {"ios_vlan {", "vlan_id = 20"},
 		"cisco.ios.ios_hostname: {config: {hostname: edge01}}":                                     {"ios_hostname {", `name = "edge01"`},
 		"vyos.vyos.vyos_hostname: {config: {hostname: r1}}":                                        {"vyos_hostname {"},
 		"arista.eos.eos_vlans: {config: [{vlan_id: 10, name: users}], state: merged}":              {"eos_vlan {", "vlan_id = 10", `name    = "users"`},
@@ -62,7 +64,7 @@ func TestConvertNetworkHostnameFromAVariable(t *testing.T) {
 }
 
 func TestConvertNetworkResourceLists(t *testing.T) {
-	res := convertString(t, netPlay+"    - name: vlans\n      arista.eos.eos_vlans: {config: [{vlan_id: 10}, {vlan_id: 20}, {vlan_id: 30}]}\n")
+	res := convertString(t, netPlay+"    - name: vlans\n      arista.eos.eos_vlans: {config: [{vlan_id: 10}, {vlan_id: 20}, {vlan_id: 30}], state: replaced}\n")
 	hcl := string(res.HCL)
 	for _, w := range []string{`step "vlans_vlan_10"`, `step "vlans_vlan_20"`, `step "vlans_vlan_30"`} {
 		if !strings.Contains(hcl, w) {
@@ -73,14 +75,21 @@ func TestConvertNetworkResourceLists(t *testing.T) {
 
 func TestConvertNetworkResourceRefusals(t *testing.T) {
 	for task, reason := range map[string]string{
-		"arista.eos.eos_vlans: {config: [{vlan_id: 10}], state: overridden}":                                                      "sets state: overridden",
-		"arista.eos.eos_vlans: {state: gathered}":                                                                                 "sets state: gathered",
-		"arista.eos.eos_hostname: {config: {hostname: leaf1}, state: deleted}":                                                    "sets state: deleted",
-		"cisco.ios.ios_hostname: {config: {hostname: edge.lab}}":                                                                  "the ios_hostname step refuses",
-		"cisco.ios.ios_hostname: {config: {hostname: '123'}}":                                                                     "the ios_hostname step refuses",
-		"arista.eos.eos_hostname: {config: {hostname: leaf_1}}":                                                                   "the eos_hostname step refuses",
-		"junipernetworks.junos.junos_hostname: {config: {hostname: sw_1}}":                                                        "the junos_hostname step refuses",
-		"vyos.vyos.vyos_hostname: {config: {hostname: r1.lab}}":                                                                   "the vyos_hostname step refuses",
+		"arista.eos.eos_vlans: {config: [{vlan_id: 10}], state: overridden}":   "sets state: overridden",
+		"arista.eos.eos_vlans: {state: gathered}":                              "sets state: gathered",
+		"arista.eos.eos_hostname: {config: {hostname: leaf1}, state: deleted}": "sets state: deleted",
+		"cisco.ios.ios_hostname: {config: {hostname: edge.lab}}":               "the ios_hostname step refuses",
+		"cisco.ios.ios_hostname: {config: {hostname: '123'}}":                  "the ios_hostname step refuses",
+		"arista.eos.eos_hostname: {config: {hostname: leaf_1}}":                "the eos_hostname step refuses",
+		"junipernetworks.junos.junos_hostname: {config: {hostname: sw_1}}":     "the junos_hostname step refuses",
+		"vyos.vyos.vyos_hostname: {config: {hostname: r1.lab}}":                "the vyos_hostname step refuses",
+		// merged leaves a VLAN's name, and a step without one resets it.
+		"arista.eos.eos_vlans: {config: [{vlan_id: 10}]}":                                                                         "without a name under state: merged",
+		"cisco.ios.ios_vlans: {config: [{vlan_id: 10}], state: merged}":                                                           "or use state: replaced",
+		"cisco.ios.ios_vlans: {config: [{vlan_id: 1002, name: x}]}":                                                               "IOS keeps for itself",
+		"cisco.ios.ios_vlans: {config: [{vlan_id: 10, name: 'two words'}]}":                                                       "one word",
+		"cisco.ios.ios_vlans: {config: [{vlan_id: 10, name: users, mtu: 1500}]}":                                                  "sets mtu",
+		"cisco.ios.ios_vlans: {config: [{vlan_id: 10, name: users, state: suspend}]}":                                             "state to suspend",
 		"arista.eos.eos_vlans: {config: [{vlan_id: 10, state: suspend}]}":                                                         "state to suspend",
 		"junipernetworks.junos.junos_vlans: {config: [{name: users, vlan_id: 10, l3_interface: irb.10}]}":                         "sets l3_interface",
 		"junipernetworks.junos.junos_vlans: {config: [{name: users}]}":                                                            "without a vlan_id",

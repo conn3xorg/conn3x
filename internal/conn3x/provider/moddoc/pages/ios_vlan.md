@@ -32,3 +32,7 @@ step "users" {
 ## Removal
 
 By default, deleting an `ios_vlan` step deletes the VLAN with `no vlan`. Ports in it stop passing traffic until they're moved to another VLAN. Set `on_remove = "forget"` to stop tracking the VLAN and leave it on the switch.
+
+## From Ansible
+
+`conn3x convert ansible` turns `cisco.ios.ios_vlans` tasks into an `ios_vlan` step per VLAN in `config`, with `vlan_id` and `name`. `state: merged`, the default, and `replaced` convert. `overridden` and `deleted` remove VLANs the play doesn't name, so they stay TODOs. Under `merged`, a VLAN without `name` also stays a TODO, since Ansible leaves the switch's name while this step resets it; set `name`, or use `replaced`. `mtu`, `shutdown`, `state: suspend` and the other VLAN settings stay TODOs, and so does a VLAN this step refuses, such as VLAN 1002, with the step's own message. The converted circuit still needs the switch in VTP transparent mode.

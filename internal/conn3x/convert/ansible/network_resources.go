@@ -154,10 +154,17 @@ var hostnameRules = map[string]func(string) error{
 	"vyos":  vyos.ValidateHostname,
 }
 
+// vlanRules are each platform's VLAN step's own check, so a VLAN the step
+// would refuse stays for review instead of failing validate.
+var vlanRules = map[string]func(id int, name string) error{
+	"eos": func(id int, name string) error { return eos.VLAN{ID: id, Name: name}.Validate() },
+	"ios": func(id int, name string) error { return ios.VLAN{ID: id, Name: name}.Validate() },
+}
+
 // networkVLANs converts eos_vlans and junos_vlans, a step per VLAN.
 func networkVLANs(platform string) func(*input) ([]step, string) {
 	return func(in *input) ([]step, string) {
-		if reason := resourceState(in, false); reason != "" {
+		if reason := resourceState(in, true); reason != "" {
 			return nil, reason
 		}
 		items, reason := resourceItems(in)
@@ -165,7 +172,7 @@ func networkVLANs(platform string) func(*input) ([]step, string) {
 			return nil, reason
 		}
 		allowed := []string{"vlan_id", "name"}
-		if platform == "eos" {
+		if platform == "eos" || platform == "ios" {
 			allowed = append(allowed, "state")
 		}
 		var steps []step
@@ -174,7 +181,7 @@ func networkVLANs(platform string) func(*input) ([]step, string) {
 				return nil, "sets " + extra + " on a VLAN, which a " + platform + "_vlan step doesn't take"
 			}
 			if st, _ := itemValue(in, item, "state"); st != "" && st != "active" {
-				return nil, "sets a VLAN's state to " + st + ", which an eos_vlan step doesn't take"
+				return nil, "sets a VLAN's state to " + st + ", which a " + platform + "_vlan step doesn't take"
 			}
 			idText, hasID := itemValue(in, item, "vlan_id")
 			name, _ := itemValue(in, item, "name")
@@ -193,6 +200,15 @@ func networkVLANs(platform string) func(*input) ([]step, string) {
 				attrs = []attr{s("name", name), attrs[0]}
 			} else if name != "" {
 				attrs = append(attrs, s("name", name))
+			} else if addsToLists(in) {
+				// merged leaves a VLAN's name as it is, and a step without
+				// one takes it back to the switch's default.
+				return nil, fmt.Sprintf("sets VLAN %d without a name under state: merged, which leaves the name it has; a %s_vlan step without name takes it back to the default, so set name, or use state: replaced", id, platform)
+			}
+			if check := vlanRules[platform]; check != nil && !strings.Contains(name, "${") {
+				if err := check(id, name); err != nil {
+					return nil, err.Error()
+				}
 			}
 			steps = append(steps, step{module: platform + "_vlan", attrs: attrs, suffix: itemSuffix("vlan_", idText)})
 		}

@@ -51,6 +51,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
     - arista.eos.eos_hostname: {config: {hostname: leaf1}}
     - arista.eos.eos_vlans: {config: [{vlan_id: 10, name: users}]}
     - junipernetworks.junos.junos_vlans: {config: [{name: users, vlan_id: 10}]}
+    - cisco.ios.ios_vlans: {config: [{vlan_id: 10, name: users}]}
     - arista.eos.eos_interfaces: {config: [{name: Ethernet1, description: uplink, mtu: 9000, enabled: true}]}
     - junipernetworks.junos.junos_interfaces: {config: [{name: ge-0/0/1, description: uplink, mtu: 9000}]}
     - vyos.vyos.vyos_interfaces: {config: [{name: eth1, description: uplink, mtu: 1500}]}
@@ -101,7 +102,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
 		}
 	}
 	walk(f.Body.(*hclsyntax.Body))
-	if checked < 36 {
+	if checked < 37 {
 		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
 	}
 }

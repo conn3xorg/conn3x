@@ -28,4 +28,4 @@ step "vlans" {
 
 ## From Ansible
 
-`conn3x convert ansible` turns `arista.eos.eos_vlans` tasks into an `eos_vlan` step per VLAN in `config`, with `vlan_id` and `name`. Only `state: merged`, the default, converts, since `overridden` and `deleted` remove VLANs the play doesn't name. A VLAN with `state: suspend` stays a TODO.
+`conn3x convert ansible` turns `arista.eos.eos_vlans` tasks into an `eos_vlan` step per VLAN in `config`, with `vlan_id` and `name`. `state: merged`, the default, and `replaced` convert. `overridden` and `deleted` remove VLANs the play doesn't name, so they stay TODOs. Under `merged`, a VLAN without `name` also stays a TODO: Ansible leaves the name the switch has, while this step without `name` takes it back to the default. Set `name`, or use `replaced`, which resets it too. A VLAN with `state: suspend` stays a TODO, and so does one this step would refuse, with the step's own message.
