@@ -6,6 +6,7 @@ package ios
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -227,4 +228,39 @@ func negate(line string) string {
 		return rest
 	}
 	return "no " + line
+}
+
+// hostnameRe is Cisco's rule for the hostname command: start with a letter,
+// end with a letter or digit, only letters, digits and hyphens between, and
+// 63 characters at most.
+var hostnameRe = regexp.MustCompile(`^[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+// ValidateHostname checks a name IOS takes as it is.
+func ValidateHostname(name string) error {
+	if !hostnameRe.MatchString(name) {
+		return fmt.Errorf("hostname %q must start with a letter, end with a letter or digit, and hold only letters, digits and hyphens, at most 63 characters", name)
+	}
+	return nil
+}
+
+// Hostname is the device's name, the top-level hostname line.
+type Hostname struct{ Name string }
+
+// InSync ignores case: Cisco doesn't promise to keep it.
+func (h Hostname) InSync(config string) bool {
+	have, _ := section(config, nil)
+	for _, l := range have {
+		if name, ok := strings.CutPrefix(l, "hostname "); ok && strings.EqualFold(name, h.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// Commands set the name, or nil when config already has it.
+func (h Hostname) Commands(config string) []string {
+	if h.InSync(config) {
+		return nil
+	}
+	return []string{"hostname " + h.Name}
 }

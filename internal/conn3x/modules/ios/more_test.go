@@ -56,3 +56,36 @@ func TestConfigEdges(t *testing.T) {
 		t.Errorf("nothing left: %q", got)
 	}
 }
+
+// The hostname line is matched at the top level only, and without case,
+// since Cisco doesn't promise to keep it.
+func TestHostname(t *testing.T) {
+	running := "version 17.18\nhostname Edge01\n!\ninterface GigabitEthernet1\n hostname not-this\n"
+	for name, want := range map[string]bool{"edge01": true, "EDGE01": true, "edge02": false, "not-this": false} {
+		if got := (Hostname{Name: name}).InSync(running); got != want {
+			t.Errorf("%s: InSync = %v", name, got)
+		}
+	}
+	if got := (Hostname{Name: "edge02"}).Commands(running); !slices.Equal(got, []string{"hostname edge02"}) {
+		t.Errorf("Commands = %q", got)
+	}
+	if got := (Hostname{Name: "edge01"}).Commands(running); got != nil {
+		t.Errorf("in sync, Commands = %q", got)
+	}
+	if got := (Hostname{Name: "r1"}).Commands("version 17.18\n"); !slices.Equal(got, []string{"hostname r1"}) {
+		t.Errorf("no hostname line, Commands = %q", got)
+	}
+}
+
+func TestValidateHostname(t *testing.T) {
+	for _, ok := range []string{"r", "edge01", "core-sw-1", strings.Repeat("a", 63)} {
+		if err := ValidateHostname(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "123", "1edge", "edge-", "edge.lab", "edge_01", "edge 01", `\99`, strings.Repeat("a", 64)} {
+		if err := ValidateHostname(bad); err == nil {
+			t.Errorf("%q: no error", bad)
+		}
+	}
+}

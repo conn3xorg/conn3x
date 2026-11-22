@@ -120,3 +120,22 @@ func validateIOSConfig(cfg cty.Value) tfdiags.Diagnostics {
 	}
 	return diags
 }
+
+var iosHostnameKind = cliKind{
+	p:        iosPlatform,
+	name:     "hostname",
+	settings: []string{"name"},
+	config:   func(v cty.Value) cliWant { return ios.Hostname{Name: v.GetAttr("name").AsString()} },
+}
+
+func iosHostnameSchema() providers.Schema {
+	s := singletonSchema(iosExperimental+"A Cisco IOS XE device's hostname. Removing this step leaves the name as it is.",
+		"Hostname, such as edge01. IOS takes letters, digits and hyphens, starting with a letter.")
+	s.Block.Attributes["in_sync"].Description = "Whether the device had this name at the last refresh."
+	s.Block.Attributes["circuit"] = eosCircuitAttr()
+	return s
+}
+
+func validateIOSHostname(cfg cty.Value) tfdiags.Diagnostics {
+	return validateName(cfg, ios.ValidateHostname)
+}

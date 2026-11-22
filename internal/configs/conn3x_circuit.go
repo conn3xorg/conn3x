@@ -123,6 +123,7 @@ var circuitModules = map[string]string{
 	"vyos_static_route":            "conn3x_vyos_static_route",
 	"vyos_user":                    "conn3x_vyos_user",
 	"ios_config":                   "conn3x_ios_config",
+	"ios_hostname":                 "conn3x_ios_hostname",
 	"windows_acl":                  "conn3x_windows_acl",
 	"windows_ad_domain":            "conn3x_windows_ad_domain",
 	"windows_ad_domain_controller": "conn3x_windows_ad_domain_controller",

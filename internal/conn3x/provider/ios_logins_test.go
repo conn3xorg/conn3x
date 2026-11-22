@@ -85,3 +85,15 @@ func TestIOSHostNeedsNoLogin(t *testing.T) {
 		t.Errorf("hostConn %+v", h)
 	}
 }
+
+func TestIOSHostnameValidate(t *testing.T) {
+	r := resourceTypes["conn3x_ios_hostname"]
+	for _, name := range []string{"123", "edge.lab", "edge-"} {
+		if diags := r.validate(objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal(name)})); !diags.HasErrors() {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	if diags := r.validate(objFor(r.schema(), map[string]cty.Value{"name": cty.StringVal("edge01")})); diags.HasErrors() {
+		t.Error(diags.Err())
+	}
+}
