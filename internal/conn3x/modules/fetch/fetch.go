@@ -233,7 +233,7 @@ func (g Git) Validate() error {
 			return err
 		}
 		if !strings.HasPrefix(g.Repo, "ssh://") && !strings.HasPrefix(g.Repo, "git@") {
-			return fmt.Errorf("key_file is for an ssh repo, and %q isn't one", g.Repo)
+			return fmt.Errorf("key_file is for an ssh repo, and %q isn't one: use an ssh:// URL, such as ssh://deploy@git.example.com/app.git, or git@host:path", g.Repo)
 		}
 	}
 	if g.Depth < 0 {
