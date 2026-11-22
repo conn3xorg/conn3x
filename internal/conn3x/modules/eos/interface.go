@@ -6,6 +6,7 @@ package eos
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"slices"
 	"sort"
@@ -20,10 +21,11 @@ type Interface struct {
 	Name         string
 	Description  *string
 	Enabled      *bool
-	Mode         string // "access", "trunk" or "" to leave
-	AccessVLAN   int    // 0 to leave
-	AllowedVLANs []int  // nil to leave
-	MTU          int    // 0 to leave
+	Mode         string   // "access", "trunk" or "" to leave
+	AccessVLAN   int      // 0 to leave
+	AllowedVLANs []int    // nil to leave
+	MTU          int      // 0 to leave
+	Addresses    []string // CIDR, the whole set; nil to leave
 }
 
 var interfaceName = regexp.MustCompile(`^(Ethernet[0-9]+(/[0-9]+)*|Port-Channel[0-9]+|Vlan[0-9]+|Loopback[0-9]+|Management[0-9]+)$`)
@@ -46,6 +48,14 @@ func (i Interface) Validate() error {
 	switchport := i.Mode != "" || i.AccessVLAN != 0 || i.AllowedVLANs != nil
 	if switchport && !strings.HasPrefix(i.Name, "Ethernet") && !strings.HasPrefix(i.Name, "Port-Channel") {
 		return fmt.Errorf("mode, access_vlan and allowed_vlans are switchport settings, which %s doesn't have", i.Name)
+	}
+	if i.Addresses != nil && switchport {
+		return errors.New("addresses are for a routed port, an SVI or a loopback, and mode, access_vlan and allowed_vlans for a switched one; set one or the other")
+	}
+	for _, a := range i.Addresses {
+		if p, err := netip.ParsePrefix(a); err != nil || p.Addr().Zone() != "" {
+			return fmt.Errorf("address %q must be an address with its prefix length, such as 192.0.2.1/24", a)
+		}
 	}
 	if i.AccessVLAN != 0 && i.Mode == "trunk" {
 		return errors.New("access_vlan is for mode \"access\"; a trunk takes allowed_vlans")
@@ -152,7 +162,7 @@ func (i Interface) InSync(config string) bool {
 			return false
 		}
 	}
-	return true
+	return i.addrsInSync(lines)
 }
 
 // Commands are what makes the interface have what i owns, or nil.
@@ -169,6 +179,7 @@ func (i Interface) Commands(config string) []string {
 			cmds = append(cmds, s.want)
 		}
 	}
+	cmds = append(cmds, i.addrCommands(lines)...)
 	if found && len(cmds) == 0 {
 		return nil
 	}
@@ -188,6 +199,7 @@ func (i Interface) RemoveCommands(config string) []string {
 			cmds = append(cmds, negate(got))
 		}
 	}
+	cmds = append(cmds, i.addrRemoveCommands(lines)...)
 	if len(cmds) == 0 {
 		return nil
 	}
@@ -198,10 +210,13 @@ func (i Interface) RemoveCommands(config string) []string {
 // Conn3x reaches the switch at. The revert timer would undo it, but only
 // after the full wait.
 func (i Interface) Guard(config, address string) error {
+	lines, _ := Section(config, i.parents())
+	if err := i.addrGuard(lines, address); err != nil {
+		return err
+	}
 	if i.Enabled == nil || *i.Enabled {
 		return nil
 	}
-	lines, _ := Section(config, i.parents())
 	for _, l := range lines {
 		if ip, ok := strings.CutPrefix(l, "ip address "); ok && strings.SplitN(ip, "/", 2)[0] == address {
 			return fmt.Errorf("Conn3x reaches this switch at %s, which is %s's address, so shutting %s down would cut it off. Change it from another address, or by hand", address, i.Name, i.Name)

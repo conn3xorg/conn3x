@@ -877,13 +877,16 @@ func eosInterfaceFrom(v cty.Value) eos.Interface {
 			i.AllowedVLANs = append(i.AllowedVLANs, int(x))
 		}
 	}
+	if l := v.GetAttr("addresses"); known(l) {
+		i.Addresses = append([]string{}, stringList(l)...)
+	}
 	return i
 }
 
 var eosInterfaceKind = eosKind{
 	name:     "interface",
 	keys:     []string{"name"},
-	settings: []string{"description", "enabled", "mode", "access_vlan", "allowed_vlans", "mtu"},
+	settings: []string{"description", "enabled", "mode", "access_vlan", "allowed_vlans", "mtu", "addresses"},
 	config:   func(v cty.Value) eosWant { return eosInterfaceFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return eosInterfaceFrom(v).RemoveCommands(running) },
 	guard:    func(v cty.Value, config, address string) error { return eosInterfaceFrom(v).Guard(config, address) },
@@ -891,7 +894,7 @@ var eosInterfaceKind = eosKind{
 
 func eosInterfaceSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: eosExperimental + "The settings Conn3x owns on one interface of an Arista EOS switch: description, enabled, switchport mode and VLANs, MTU. Each one left unset is left alone, and so is every other line under the interface.",
+		Description: eosExperimental + "The settings Conn3x owns on one interface of an Arista EOS switch: description, enabled, switchport mode and VLANs, MTU, addresses. Each one left unset is left alone, and so is every other line under the interface.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":            {Type: cty.String, Computed: true},
 			"revision":      revisionAttr(),
@@ -902,6 +905,7 @@ func eosInterfaceSchema() providers.Schema {
 			"access_vlan":   {Type: cty.Number, Optional: true, Description: "The VLAN of an access port, 1 to 4094."},
 			"allowed_vlans": {Type: cty.List(cty.Number), Optional: true, Description: "The VLANs a trunk carries. Conn3x writes them the way EOS prints them, as in 10,20-22."},
 			"mtu":           {Type: cty.Number, Optional: true, Description: "MTU, 68 to 9214."},
+			"addresses":     {Type: cty.List(cty.String), Optional: true, Description: "The interface's whole set of addresses, each with its prefix length, such as 192.0.2.1/24 or 2001:db8::1/64. The first IPv4 address is the primary and the rest are secondaries. Taking off the address Conn3x connects to is refused, and an Ethernet or Port-Channel interface needs \"no switchport\" first."},
 			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens when this resource is removed: \"forget\" (default) leaves the interface as it is, \"delete\" takes the settings it owns back to EOS's defaults. The interface itself stays."},
 			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the interface had these settings at the last refresh."},
 			"circuit":       eosCircuitAttr(),
