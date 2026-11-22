@@ -44,3 +44,7 @@ step "backup" {
 ## Removal
 
 By default, deleting an `ios_static_route` step stops tracking the route and leaves it on the device. With `on_remove = "delete"`, Conn3x removes every next hop of the route.
+
+## From Ansible
+
+`conn3x convert ansible` turns `cisco.ios.ios_static_routes` tasks into an `ios_static_route` step per destination, IPv4 or IPv6, with each next hop's `forward_router_address` in `next_hops`. `distance_metric` becomes `distance` when every next hop has the same one. Only `state: replaced` converts. Under `merged`, the default, Ansible adds the next hops to the ones the route has, while this step's `next_hops` are all of them, so a converted task would drop the route's other next hops. That task stays a TODO asking for every next hop. A `vrf`, an `interface` next hop, unequal distances and a route this step would refuse stay TODOs too.

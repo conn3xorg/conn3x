@@ -126,6 +126,12 @@ func TestConvertNetworkRoutesAndUsers(t *testing.T) {
 			"junos_static_route {", `prefix    = "0.0.0.0/0"`, `next_hops = ["192.0.2.254"]`},
 		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.1, admin_distance: 10}, {forward_router_address: 192.0.2.2, admin_distance: 10}]}]}]}], state: replaced}": {
 			"vyos_static_route {", `next_hops = ["192.0.2.1", "192.0.2.2"]`, "distance  = 10"},
+		"cisco.ios.ios_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{forward_router_address: 192.0.2.1, distance_metric: 5}, {forward_router_address: 192.0.2.2, distance_metric: 5}]}]}]}], state: replaced}": {
+			"ios_static_route {", `next_hops = ["192.0.2.1", "192.0.2.2"]`, "distance  = 5"},
+		"cisco.ios.ios_static_routes: {config: [{address_families: [{afi: ipv6, routes: [{dest: '2001:db8:20::/48', next_hops: [{forward_router_address: '2001:db8::1'}]}]}]}], state: replaced}": {
+			"ios_static_route {", `prefix    = "2001:db8:20::/48"`},
+		"arista.eos.eos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.20.0.0/16, next_hops: [{forward_router_address: 192.0.2.1, admin_distance: 200}]}]}]}], state: replaced}": {
+			"eos_static_route {", `prefix    = "10.20.0.0/16"`, "distance  = 200"},
 		"arista.eos.eos_user: {name: ops, role: network-admin, privilege: 15, sshkey: 'ssh-ed25519 AAAA ops'}": {
 			"eos_user {", `role      = "network-admin"`, "privilege = 15", `ssh_key   = "ssh-ed25519 AAAA ops"`},
 		"junipernetworks.junos.junos_user: {name: alice, role: operator}": {"junos_user {", `class = "operator"`},
@@ -161,13 +167,19 @@ func TestConvertNetworkRoutesAndUsers(t *testing.T) {
 		"arista.eos.eos_user: {aggregate: [{name: a}, {name: b}]}": "sets aggregate",
 		"arista.eos.eos_user: {name: ops, state: absent}":          "has state absent",
 		// merged and junos_user add to a list the step owns whole.
-		"junipernetworks.junos.junos_user: {name: alice, role: operator, sshkey: 'ssh-ed25519 AAAA alice'}":                                                                          "list every key the account should have",
-		"junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.254}]}]}]}]}":   "or use state: replaced",
-		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.1}]}]}]}], state: merged}": "or use state: replaced",
-		"vyos.vyos.vyos_l3_interfaces: {config: [{name: eth1, ipv4: [{address: 192.0.2.1/24}]}]}":                                                                                    "write every address eth1 should have",
-		"junipernetworks.junos.junos_user: {name: alice}":                                                                                                                            "has no role",
-		"vyos.vyos.vyos_user: {name: alice, encrypted_password: '$6$x'}":                                                                                                             "sets encrypted_password",
-		"vyos.vyos.vyos_user: {name: alice, configured_password: x, update_password: on_create}":                                                                                     "update_password: on_create",
+		"junipernetworks.junos.junos_user: {name: alice, role: operator, sshkey: 'ssh-ed25519 AAAA alice'}":                                                                                                                                                       "list every key the account should have",
+		"junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.254}]}]}]}]}":                                                                                "or use state: replaced",
+		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.1}]}]}]}], state: merged}":                                                                              "or use state: replaced",
+		"vyos.vyos.vyos_l3_interfaces: {config: [{name: eth1, ipv4: [{address: 192.0.2.1/24}]}]}":                                                                                                                                                                 "write every address eth1 should have",
+		"cisco.ios.ios_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{forward_router_address: 192.0.2.1}]}]}]}]}":                                                                                               "or use state: replaced",
+		"arista.eos.eos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{forward_router_address: 192.0.2.1}]}]}]}], state: merged}":                                                                               "or use state: replaced",
+		"cisco.ios.ios_static_routes: {config: [{vrf: blue, address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{forward_router_address: 192.0.2.1}]}]}]}], state: replaced}":                                                                   "sets vrf",
+		"cisco.ios.ios_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{interface: Null0}]}]}]}], state: replaced}":                                                                                               "sets interface",
+		"cisco.ios.ios_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{forward_router_address: 192.0.2.1, distance_metric: 1}, {forward_router_address: 192.0.2.2, distance_metric: 5}]}]}]}], state: replaced}": "different distance_metric",
+		"arista.eos.eos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.1/8, next_hops: [{forward_router_address: 192.0.2.1}]}]}]}], state: replaced}":                                                                            "host bits",
+		"junipernetworks.junos.junos_user: {name: alice}":                                        "has no role",
+		"vyos.vyos.vyos_user: {name: alice, encrypted_password: '$6$x'}":                         "sets encrypted_password",
+		"vyos.vyos.vyos_user: {name: alice, configured_password: x, update_password: on_create}": "update_password: on_create",
 	} {
 		res := convertString(t, netPlay+"    - "+task+"\n")
 		if res.Converted != 0 || !strings.Contains(reasons(res), reason) {

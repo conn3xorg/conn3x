@@ -17,6 +17,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/eos"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/ios"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/junos"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/netroute"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/vyos"
 )
 
@@ -424,11 +425,11 @@ func vyosL3Interfaces(in *input) ([]step, string) {
 	return steps, ""
 }
 
-// networkStaticRoutes converts junos_static_routes and vyos_static_routes:
-// a step per destination, its next hops' forward_router_address as
-// next_hops. IPv6, a VRF, an interface or blackhole next hop, and a Junos
-// metric (not the step's preference, which is Junos's route preference)
-// stay for review.
+// networkStaticRoutes converts eos_, ios_, junos_ and vyos_static_routes: a
+// step per destination, its next hops' forward_router_address as
+// next_hops. A VRF, an interface or blackhole next hop, IPv6 on Junos and
+// VyOS, and a Junos metric (not the step's preference, which is Junos's
+// route preference) stay for review.
 func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 	return func(in *input) ([]step, string) {
 		if reason := resourceState(in, true); reason != "" {
@@ -438,12 +439,19 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 		if reason != "" {
 			return nil, reason
 		}
-		hopKey, hopKeys := "next_hop", []string{"forward_router_address"}
+		hopKey, hopKeys, distKey := "next_hop", []string{"forward_router_address"}, ""
 		routeKeys := []string{"dest", "next_hop", "metric"}
-		if platform == "vyos" {
-			hopKey, hopKeys = "next_hops", []string{"forward_router_address", "admin_distance"}
+		switch platform {
+		case "vyos", "eos":
+			distKey = "admin_distance"
+		case "ios":
+			distKey = "distance_metric"
+		}
+		if distKey != "" {
+			hopKey, hopKeys = "next_hops", []string{"forward_router_address", distKey}
 			routeKeys = []string{"dest", "next_hops"}
 		}
+		ipv6 := platform == "ios" || platform == "eos"
 		var steps []step
 		for _, item := range items {
 			if extra := unknownKeys(item, "address_families"); extra != "" {
@@ -451,7 +459,10 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 			}
 			for _, fam := range seq(item["address_families"]) {
 				f := mapping(fam)
-				if afi, _ := itemValue(in, f, "afi"); afi != "ipv4" {
+				if afi, _ := itemValue(in, f, "afi"); afi != "ipv4" && (!ipv6 || afi != "ipv6") {
+					if ipv6 {
+						return nil, fmt.Sprintf("sets afi %q, and an %s_static_route step takes ipv4 and ipv6", afi, platform)
+					}
 					return nil, fmt.Sprintf("sets afi %q, and a %s_static_route step takes IPv4 routes only", afi, platform)
 				}
 				for _, r := range seq(f["routes"]) {
@@ -477,9 +488,9 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 						hops = append(hops, addr)
 						// The step's distance is the route's, so every next hop
 						// has to have the same one.
-						d, _ := itemValue(in, hop, "admin_distance")
+						d, _ := itemValue(in, hop, distKey)
 						if i > 0 && d != distance {
-							return nil, "sets a different admin_distance on next hops of " + dest + ", and a vyos_static_route step has one distance for the route"
+							return nil, "sets a different " + distKey + " on next hops of " + dest + ", and a " + platform + "_static_route step has one distance for the route"
 						}
 						distance = d
 					}
@@ -493,12 +504,21 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 						return nil, "sets next hops for " + dest + " under state: merged, which adds them to the ones the route has; a " + platform + "_static_route step's next_hops are all of them, so write every next hop the route should have, or use state: replaced"
 					}
 					attrs := []attr{s("prefix", dest), {key: "next_hops", val: strList(hops)}}
+					n := 0
 					if distance != "" {
-						n, err := strconv.Atoi(distance)
-						if err != nil {
-							return nil, fmt.Sprintf("sets admin_distance %q on %s, which isn't a whole number", distance, dest)
+						var err error
+						if n, err = strconv.Atoi(distance); err != nil {
+							return nil, fmt.Sprintf("sets %s %q on %s, which isn't a whole number", distKey, distance, dest)
 						}
 						attrs = append(attrs, attr{key: "distance", val: cty.NumberIntVal(int64(n))})
+					}
+					if ipv6 && !strings.Contains(dest+strings.Join(hops, ""), "${") {
+						// The step's own check, so a route it would refuse stays
+						// here rather than failing validate.
+						r := netroute.StaticRoute{Prefix: dest, NextHops: hops, Distance: n}
+						if err := r.Validate(); err != nil {
+							return nil, err.Error()
+						}
 					}
 					steps = append(steps, step{module: platform + "_static_route", attrs: attrs, suffix: itemSuffix("route_", dest)})
 				}
