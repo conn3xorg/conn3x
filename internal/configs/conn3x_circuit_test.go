@@ -1435,3 +1435,63 @@ circuit "app" {
 		t.Errorf("a script without source: %v", diags)
 	}
 }
+
+// A service_action step restarts a unit where it's written, rather than
+// after the circuit's steps as a handler does (#1218).
+const serviceActionStepCircuit = `
+circuit "db" {
+  hosts = { db1 = "192.0.2.10" }
+  ssh {
+    user = "root"
+  }
+  step "conf" {
+    file {
+      path    = "/etc/mysql/conf.d/conn3x.cnf"
+      content = "[mysqld]"
+    }
+  }
+  step "restart" {
+    service_action {
+      name     = "mysql"
+      triggers = { conf = conn3x_file.db__conf[each.key].revision }
+    }
+  }
+  step "after" {
+    file {
+      path    = "/tmp/after"
+      content = "x"
+    }
+  }
+}
+`
+
+func TestServiceActionStep(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": serviceActionStepCircuit})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	if _, ok := mod.ManagedResources["conn3x_service_action.db__restart"]; !ok {
+		t.Fatalf("no service_action step; have %v", keys(mod.ManagedResources))
+	}
+	// The step after it waits for it, as it would for any step.
+	after := mod.ManagedResources["conn3x_file.db__after"]
+	found := false
+	for _, d := range after.DependsOn {
+		found = found || strings.Contains(fmt.Sprint(d), "db__restart")
+	}
+	if !found {
+		t.Errorf("the step after doesn't depend on the restart: %v", after.DependsOn)
+	}
+}
+
+func TestServiceActionStepAndHandlerCantShareAName(t *testing.T) {
+	src := strings.Replace(serviceActionStepCircuit, `content = "[mysqld]"
+    }`, `content = "[mysqld]"
+    }
+    notify = [handler.restart]`, 1)
+	src = strings.Replace(src, "\n}\n", "\n  handler \"restart\" {\n    service {\n      name = \"mysql\"\n    }\n  }\n}\n", 1)
+	_, diags := loadCircuitModule(t, map[string]string{"main.circuit.hcl": src})
+	if !diags.HasErrors() || !strings.Contains(diags.Error(), "Handler and step share a name") {
+		t.Fatalf("want the clash refused, got %v", diags)
+	}
+}

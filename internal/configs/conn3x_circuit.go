@@ -102,6 +102,7 @@ var circuitModules = map[string]string{
 	"pip":                  "conn3x_pip",
 	"npm":                  "conn3x_npm",
 	"service":              "conn3x_service",
+	"service_action":       "conn3x_service_action",
 	"user":                 "conn3x_user",
 	"group":                "conn3x_group",
 
@@ -304,6 +305,9 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	var resources []*Resource
 	var imports []*Import
 	steps := map[string]hcl.Range{}
+	// A handler is a conn3x_service_action named after it, so a
+	// service_action step can't share its name.
+	actionSteps := map[string]hcl.Range{}
 	var chain []*Resource                 // the steps the next step waits for
 	var earlier []*Resource               // every step so far, for a reboot that watches them
 	notifiers := map[string][]*Resource{} // handler name => steps that notify it
@@ -340,6 +344,9 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 		diags = append(diags, stepDiags...)
 		if imp != nil {
 			imports = append(imports, imp)
+		}
+		if r != nil && r.Type == "conn3x_service_action" {
+			actionSteps[stepName] = step.DefRange
 		}
 		if r != nil {
 			// A reboot that only runs when one is pending learns when an
@@ -425,6 +432,15 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			continue
 		}
 		handlers[hName] = true
+		if prev, clash := actionSteps[hName]; clash {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Handler and step share a name",
+				Detail:   fmt.Sprintf("Circuit %q has a service_action step named %q, declared at %s, and a handler of the same name. Both become a service action, so rename one.", name, hName, prev),
+				Subject:  &h.DefRange,
+			})
+			continue
+		}
 		if len(notifiers[hName]) == 0 {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagWarning,
