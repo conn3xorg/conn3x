@@ -85,6 +85,16 @@ class Claims(unittest.TestCase):
         self.assertEqual(d.claim(self.issue(assignees=["a"])), "taken by `@a`")
         self.assertEqual(d.claim(self.issue(prs=1)), "taken (PR open)")
 
+    def test_questions_are_not_claims(self):
+        for body in ["I would like to know why this fails", "the claim in the README is wrong", "I'd love to see this land"]:
+            self.assertIsNone(d.claim(self.issue(comments=[("dev", body)])), body)
+        self.assertEqual(d.claim(self.issue(comments=[("dev", "I would love to help with this")])), "taken by `@dev`")
+
+    def test_another_maintainers_comment_is_not_a_claim(self):
+        issue = self.issue()
+        issue["comments"]["nodes"] = [{"author": {"login": "other"}, "authorAssociation": "MEMBER", "body": "I'll take this"}]
+        self.assertIsNone(d.claim(issue))
+
 
 def issue(title, repo="circuit-x", labels=("help wanted",), assignees=()):
     return {"title": title, "url": f"https://github.com/conn3xorg/{repo}/issues/1",
@@ -133,3 +143,39 @@ class Fitting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Boards(unittest.TestCase):
+    """Only a maintainer's or this workflow's issue can hold a board."""
+
+    def board(self, n, login, role):
+        return {"number": n, "body": "<!-- conn3x-dashboard:help-wanted -->\nx",
+                "user": {"login": login}, "author_association": role}
+
+    def lookup(self, issues):
+        real, calls = d.gh, []
+        d.gh = lambda *a, **k: calls.append(a) or issues
+        try:
+            return d.existing_boards(), calls
+        finally:
+            d.gh = real
+
+    def test_a_strangers_issue_with_the_marker_is_ignored(self):
+        # Newest first, as GitHub lists them: the stranger's comes first.
+        found, _ = self.lookup([self.board(900, "stranger", "NONE"), self.board(383, "jamesconwaydev", "OWNER")])
+        self.assertEqual(found, {"help-wanted": 383})
+
+    def test_the_workflows_own_issue_counts(self):
+        found, _ = self.lookup([self.board(900, "stranger", "CONTRIBUTOR"), self.board(383, "github-actions[bot]", "NONE")])
+        self.assertEqual(found, {"help-wanted": 383})
+
+    def test_a_strangers_board_alone_makes_a_new_one(self):
+        found, _ = self.lookup([self.board(900, "stranger", "NONE")])
+        self.assertEqual(found, {})
+
+
+class Outside(unittest.TestCase):
+    def test_another_maintainers_pr_is_not_outside(self):
+        self.assertFalse(d.outside(pr(author={"__typename": "User", "login": "other"}, authorAssociation="COLLABORATOR")))
+        self.assertTrue(d.outside(pr(authorAssociation="CONTRIBUTOR")))
+        self.assertFalse(d.outside(pr(author={"__typename": "Bot", "login": "renovate"}, authorAssociation="NONE")))
