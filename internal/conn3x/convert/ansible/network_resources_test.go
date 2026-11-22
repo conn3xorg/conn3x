@@ -203,3 +203,42 @@ func TestConvertNetworkRoutesReplacedNote(t *testing.T) {
 		t.Errorf("junos's replaced only touches the named routes, but got %+v", junos.Notes)
 	}
 }
+
+// eos_l3_interfaces and junos_l3_interfaces become the interface step's
+// addresses under replaced; merged adds to a set the step owns whole.
+func TestConvertNetworkL3Interfaces(t *testing.T) {
+	for task, want := range map[string][]string{
+		"arista.eos.eos_l3_interfaces: {config: [{name: Vlan10, ipv4: [{address: 198.51.100.1/24, secondary: true}, {address: 192.0.2.1/24}], ipv6: [{address: '2001:db8::1/64'}]}], state: replaced}": {
+			"eos_interface {", `name      = "Vlan10"`, `addresses = ["192.0.2.1/24", "198.51.100.1/24", "2001:db8::1/64"]`},
+		"junipernetworks.junos.junos_l3_interfaces: {config: [{name: irb, unit: 10, ipv4: [{address: 192.0.2.1/24}]}], state: replaced}": {
+			"junos_interface {", "unit      = 10", `addresses = ["192.0.2.1/24"]`},
+		"junipernetworks.junos.junos_l3_interfaces: {config: [{name: lo0, ipv4: [{address: 192.0.2.254/32}]}], state: replaced}": {
+			"junos_interface {", `name      = "lo0"`},
+	} {
+		res := convertString(t, netPlay+"    - "+task+"\n")
+		hcl := string(res.HCL)
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v\n%s", task, res.Converted, res.Review, hcl)
+			continue
+		}
+		for _, w := range want {
+			if !strings.Contains(hcl, w) {
+				t.Errorf("%s: missing %q:\n%s", task, w, hcl)
+			}
+		}
+	}
+	for task, reason := range map[string]string{
+		"arista.eos.eos_l3_interfaces: {config: [{name: Vlan10, ipv4: [{address: 192.0.2.1/24}]}]}":                                           "or use state: replaced",
+		"junipernetworks.junos.junos_l3_interfaces: {config: [{name: irb, unit: 10, ipv4: [{address: 192.0.2.1/24}]}], state: merged}":        "or use state: replaced",
+		"arista.eos.eos_l3_interfaces: {config: [{name: Vlan10, ipv4: [{address: 192.0.2.1/24, virtual: true}]}], state: replaced}":           "sets virtual",
+		"junipernetworks.junos.junos_l3_interfaces: {config: [{name: ge-0/0/1, ipv4: [{address: dhcp}]}], state: replaced}":                   "isn't a fixed address",
+		"arista.eos.eos_l3_interfaces: {config: [{name: Vlan10, ipv4: [{address: 192.0.2.1/24}, {address: 192.0.2.2/24}]}], state: replaced}": "more than one primary",
+		"arista.eos.eos_l3_interfaces: {config: [{name: Vlan10, ipv4: [{address: 192.0.2.1}]}], state: replaced}":                             "prefix length",
+		"arista.eos.eos_l3_interfaces: {config: [{name: Vlan10, ipv4: [{address: 192.0.2.1/24}]}], state: overridden}":                        "sets state: overridden",
+	} {
+		res := convertString(t, netPlay+"    - "+task+"\n")
+		if res.Converted != 0 || !strings.Contains(reasons(res), reason) {
+			t.Errorf("%s: converted %d, review %q, want %q", task, res.Converted, reasons(res), reason)
+		}
+	}
+}

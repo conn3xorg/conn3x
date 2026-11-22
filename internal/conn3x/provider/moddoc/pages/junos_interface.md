@@ -50,3 +50,5 @@ step "gateway" {
 ## From Ansible
 
 `conn3x convert ansible` turns `junipernetworks.junos.junos_interfaces` tasks into a `junos_interface` step per interface in `config`, with `name`, `description`, `mtu` and `enabled`. Ansible defaults `enabled` to true, so a task without it converts with `enabled = true`. Only `state: merged`, the default, converts, and any other setting stays a TODO.
+
+`junipernetworks.junos.junos_l3_interfaces` tasks become `junos_interface` steps with `unit` and `addresses`, IPv4 and IPv6 together. Only `state: replaced` converts, since `merged` adds to a set the step owns whole, so that task stays a TODO asking for every address. A `dhcp` address stays a TODO too.

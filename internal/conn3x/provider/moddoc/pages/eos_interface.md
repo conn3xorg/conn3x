@@ -70,3 +70,5 @@ With `on_remove = "forget"` (the default), removing the step leaves the interfac
 ## From Ansible
 
 `conn3x convert ansible` turns `arista.eos.eos_interfaces` tasks into an `eos_interface` step per interface in `config`, with `name`, `description`, `mtu` and `enabled`. Only `state: merged`, the default, converts. Any other setting, such as `speed` or `mode`, stays a TODO, since Ansible's `mode` is layer 2 or 3, not this step's access or trunk.
+
+`arista.eos.eos_l3_interfaces` tasks become `eos_interface` steps with `addresses`: the primary IPv4 address first, then the ones marked `secondary`, then IPv6. Only `state: replaced` converts. Under `merged`, the default, Ansible adds addresses to the ones the interface has, while `addresses` is the whole set, so that task stays a TODO asking for every address. A `virtual` address, more than one primary, and an address without its prefix length stay TODOs too. The converted step still needs `no switchport` on an Ethernet or Port-Channel interface.

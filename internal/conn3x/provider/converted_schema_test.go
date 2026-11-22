@@ -56,6 +56,8 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
     - junipernetworks.junos.junos_interfaces: {config: [{name: ge-0/0/1, description: uplink, mtu: 9000}]}
     - vyos.vyos.vyos_interfaces: {config: [{name: eth1, description: uplink, mtu: 1500}]}
     - vyos.vyos.vyos_l3_interfaces: {config: [{name: eth1, ipv4: [{address: 192.0.2.1/24}]}], state: replaced}
+    - arista.eos.eos_l3_interfaces: {config: [{name: Vlan10, ipv4: [{address: 192.0.2.1/24}]}], state: replaced}
+    - junipernetworks.junos.junos_l3_interfaces: {config: [{name: irb, unit: 10, ipv4: [{address: 192.0.2.1/24}]}], state: replaced}
     - junipernetworks.junos.junos_hostname: {config: {hostname: sw1}}
     - vyos.vyos.vyos_hostname: {config: {hostname: r1}}
     - junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.254}]}]}]}], state: replaced}
@@ -104,7 +106,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
 		}
 	}
 	walk(f.Body.(*hclsyntax.Body))
-	if checked < 39 {
+	if checked < 41 {
 		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
 	}
 }

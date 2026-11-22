@@ -380,6 +380,99 @@ func iosL2Interfaces(in *input) ([]step, string) {
 	return steps, ""
 }
 
+// networkL3Interfaces converts eos_l3_interfaces and junos_l3_interfaces
+// into the interface step's addresses, a step per interface (and unit, on
+// Junos). Only replaced converts: merged adds to the addresses the step
+// owns whole. On EOS a secondary address follows the primary, as the step
+// writes them; a virtual address, DHCP and the other settings stay for
+// review.
+func networkL3Interfaces(platform string) func(*input) ([]step, string) {
+	return func(in *input) ([]step, string) {
+		if reason := resourceState(in, true); reason != "" {
+			return nil, reason
+		}
+		items, reason := resourceItems(in)
+		if reason != "" {
+			return nil, reason
+		}
+		keys := []string{"name", "ipv4", "ipv6"}
+		if platform == "junos" {
+			keys = append(keys, "unit")
+		}
+		addrKeys := map[string][]string{"ipv4": {"address"}, "ipv6": {"address"}}
+		if platform == "eos" {
+			addrKeys["ipv4"] = []string{"address", "secondary"}
+		}
+		var steps []step
+		for _, item := range items {
+			if extra := unknownKeys(item, keys...); extra != "" {
+				return nil, "sets " + extra + " on an interface, which a " + platform + "_interface step doesn't take"
+			}
+			name, _ := itemValue(in, item, "name")
+			if name == "" {
+				return nil, "has an interface without a name"
+			}
+			unit := 0
+			if u, ok := itemValue(in, item, "unit"); ok {
+				n, err := strconv.Atoi(u)
+				if err != nil {
+					return nil, fmt.Sprintf("sets unit %q on %s, which isn't a whole number", u, name)
+				}
+				unit = n
+			}
+			var primary, rest []string
+			for _, fam := range []string{"ipv4", "ipv6"} {
+				for _, a := range seq(item[fam]) {
+					m := mapping(a)
+					if extra := unknownKeys(m, addrKeys[fam]...); extra != "" {
+						return nil, "sets " + extra + " on an " + fam + " address of " + name + ", which a " + platform + "_interface step doesn't take"
+					}
+					v, _ := itemValue(in, m, "address")
+					if v == "" || v == "dhcp" {
+						return nil, "has an " + fam + " address of " + name + " that isn't a fixed address, which a " + platform + "_interface step needs"
+					}
+					if sec, _ := itemValue(in, m, "secondary"); fam == "ipv4" && !truthy(sec) {
+						primary = append(primary, v)
+					} else {
+						rest = append(rest, v)
+					}
+				}
+			}
+			if in.problem != "" {
+				return nil, in.problem
+			}
+			if len(primary) > 1 && platform == "eos" {
+				return nil, "has more than one primary IPv4 address on " + name + "; mark the others secondary"
+			}
+			addrs := append(primary, rest...)
+			if len(addrs) == 0 {
+				return nil, "sets no address on " + name
+			}
+			if addsToLists(in) {
+				return nil, "sets addresses on " + name + " under state: merged, which adds them to the ones it has; a " + platform + "_interface step's addresses are all of them, so write every address " + name + " should have, or use state: replaced"
+			}
+			var err error
+			if platform == "eos" {
+				err = eos.Interface{Name: name, Addresses: addrs}.Validate()
+			} else {
+				err = junos.Interface{Name: name, Unit: unit, Addresses: addrs}.Validate()
+			}
+			if err != nil && !strings.Contains(name+strings.Join(addrs, ""), "${") {
+				return nil, err.Error()
+			}
+			attrs := []attr{s("name", name)}
+			suffix := itemSuffix("", name)
+			if unit != 0 {
+				attrs = append(attrs, attr{key: "unit", val: cty.NumberIntVal(int64(unit))})
+				suffix = itemSuffix("", fmt.Sprintf("%s_%d", name, unit))
+			}
+			attrs = append(attrs, attr{key: "addresses", val: strList(addrs)})
+			steps = append(steps, step{module: platform + "_interface", attrs: attrs, suffix: suffix})
+		}
+		return steps, ""
+	}
+}
+
 // vyosL3Interfaces converts vyos_l3_interfaces into vyos_interface's
 // addresses, a step per interface. Sub-interfaces (vifs) stay for review.
 func vyosL3Interfaces(in *input) ([]step, string) {

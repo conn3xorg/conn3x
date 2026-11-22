@@ -717,6 +717,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"ios_interfaces":        networkInterfaces("ios"),
 	"ios_l2_interfaces":     iosL2Interfaces,
 	"vyos_l3_interfaces":    vyosL3Interfaces,
+	"eos_l3_interfaces":     networkL3Interfaces("eos"),
+	"junos_l3_interfaces":   networkL3Interfaces("junos"),
 	"junos_static_routes":   networkStaticRoutes("junos"),
 	"ios_static_routes":     networkStaticRoutes("ios"),
 	"eos_static_routes":     networkStaticRoutes("eos"),
