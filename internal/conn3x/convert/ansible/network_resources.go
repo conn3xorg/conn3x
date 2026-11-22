@@ -6,6 +6,7 @@ package ansible
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -267,7 +268,7 @@ func networkInterfaces(platform string) func(*input) ([]step, string) {
 // the step owns all of it; so do a native VLAN, an encapsulation, a voice
 // VLAN and the other switchport settings.
 func iosL2Interfaces(in *input) ([]step, string) {
-	if reason := resourceState(in, false); reason != "" {
+	if reason := resourceState(in, true); reason != "" {
 		return nil, reason
 	}
 	items, reason := resourceItems(in)
@@ -307,14 +308,43 @@ func iosL2Interfaces(in *input) ([]step, string) {
 		}
 		if t := item["trunk"]; t != nil {
 			trunk := mapping(t)
-			if trunk["allowed_vlans"] != nil {
-				// merged adds these to what the trunk carries, and the step's
-				// allowed_vlans is the whole list: converted, a play that adds
-				// VLANs would remove the rest.
-				return nil, "sets trunk allowed_vlans on " + name + ", which adds them to the trunk's list; an ios_interface step's allowed_vlans is the whole list, so write every VLAN the trunk should carry"
-			}
-			if extra := unknownKeys(trunk); extra != "" {
+			if extra := unknownKeys(trunk, "allowed_vlans"); extra != "" {
 				return nil, "sets trunk " + extra + " on " + name + ", which an ios_interface step doesn't take"
+			}
+			if trunk["allowed_vlans"] != nil {
+				if addsToLists(in) {
+					return nil, "sets trunk allowed_vlans on " + name + " under state: merged, which adds them to the trunk's list; an ios_interface step's allowed_vlans is the whole list, so write every VLAN the trunk should carry, or use state: replaced"
+				}
+				var vlans []int
+				for _, e := range seq(trunk["allowed_vlans"]) {
+					list := in.render("config", scalar(e))
+					for _, part := range strings.Split(list, ",") {
+						lo, hi, isRange := strings.Cut(strings.TrimSpace(part), "-")
+						a, errA := strconv.Atoi(lo)
+						b, errB := a, error(nil)
+						if isRange {
+							b, errB = strconv.Atoi(hi)
+						}
+						// Bounded before expanding, so a typo can't make millions.
+						if errA != nil || errB != nil || a < 1 || b < a || b > 4094 {
+							return nil, fmt.Sprintf("sets allowed_vlans %q on %s, which isn't a list of VLANs and ranges from 1 to 4094", list, name)
+						}
+						for v := a; v <= b; v++ {
+							vlans = append(vlans, v)
+						}
+					}
+				}
+				slices.Sort(vlans)
+				vlans = slices.Compact(vlans)
+				if len(vlans) == 0 {
+					return nil, "sets trunk allowed_vlans on " + name + " without a VLAN"
+				}
+				want.AllowedVLANs = vlans
+				vals := make([]cty.Value, len(vlans))
+				for n, v := range vlans {
+					vals[n] = cty.NumberIntVal(int64(v))
+				}
+				attrs = append(attrs, attr{key: "allowed_vlans", val: cty.ListVal(vals)})
 			}
 		}
 		if in.problem != "" {

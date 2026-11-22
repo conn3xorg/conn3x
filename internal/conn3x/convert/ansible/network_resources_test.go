@@ -23,7 +23,10 @@ func TestConvertNetworkResources(t *testing.T) {
 		"cisco.ios.ios_interfaces: {config: [{name: GigabitEthernet1/0/1, description: uplink, mtu: 9000}]}":      {"ios_interface {", `description = "uplink"`, "mtu         = 9000"},
 		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1/0/5, mode: access, access: {vlan: 10}}]}": {"ios_interface {", `mode        = "access"`, "access_vlan = 10"},
 		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1/0/48, mode: trunk}]}":                     {"ios_interface {", `mode = "trunk"`},
-		"vyos.vyos.vyos_interfaces: {config: [{name: eth1, enable: false}]}":                                      {"vyos_interface {", "enabled = false"},
+		// replaced sets the trunk's whole list, as the step does; ranges are
+		// written out, sorted and without repeats.
+		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1/0/48, mode: trunk, trunk: {allowed_vlans: ['20', '10-12', '11']}}], state: replaced}": {"ios_interface {", "allowed_vlans = [10, 11, 12, 20]"},
+		"vyos.vyos.vyos_interfaces: {config: [{name: eth1, enable: false}]}":                                                                                  {"vyos_interface {", "enabled = false"},
 		"vyos.vyos.vyos_l3_interfaces: {config: [{name: eth1, ipv4: [{address: 192.0.2.1/24}], ipv6: [{address: '2001:db8::1/64'}]}], state: replaced}": {
 			"vyos_interface {", `addresses = ["192.0.2.1/24", "2001:db8::1/64"]`},
 	} {
@@ -70,22 +73,23 @@ func TestConvertNetworkResourceLists(t *testing.T) {
 
 func TestConvertNetworkResourceRefusals(t *testing.T) {
 	for task, reason := range map[string]string{
-		"arista.eos.eos_vlans: {config: [{vlan_id: 10}], state: overridden}":                              "sets state: overridden",
-		"arista.eos.eos_vlans: {state: gathered}":                                                         "sets state: gathered",
-		"arista.eos.eos_hostname: {config: {hostname: leaf1}, state: deleted}":                            "sets state: deleted",
-		"cisco.ios.ios_hostname: {config: {hostname: edge.lab}}":                                          "the ios_hostname step refuses",
-		"cisco.ios.ios_hostname: {config: {hostname: '123'}}":                                             "the ios_hostname step refuses",
-		"arista.eos.eos_hostname: {config: {hostname: leaf_1}}":                                           "the eos_hostname step refuses",
-		"junipernetworks.junos.junos_hostname: {config: {hostname: sw_1}}":                                "the junos_hostname step refuses",
-		"vyos.vyos.vyos_hostname: {config: {hostname: r1.lab}}":                                           "the vyos_hostname step refuses",
-		"arista.eos.eos_vlans: {config: [{vlan_id: 10, state: suspend}]}":                                 "state to suspend",
-		"junipernetworks.junos.junos_vlans: {config: [{name: users, vlan_id: 10, l3_interface: irb.10}]}": "sets l3_interface",
-		"junipernetworks.junos.junos_vlans: {config: [{name: users}]}":                                    "without a vlan_id",
-		"arista.eos.eos_vlans: {config: [{vlan_id: 5000}]}":                                               "without a vlan_id from 1 to 4094",
-		"cisco.ios.ios_interfaces: {config: [{name: Gi1/0/1, description: x}]}":                           "is not an interface name",
-		"cisco.ios.ios_interfaces: {config: [{name: GigabitEthernet1, mode: layer3}]}":                    "sets mode",
-		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1, mode: dynamic_auto}]}":           "sets mode dynamic_auto",
-		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1, trunk: {native_vlan: 99}}]}":     "sets trunk native_vlan",
+		"arista.eos.eos_vlans: {config: [{vlan_id: 10}], state: overridden}":                                                      "sets state: overridden",
+		"arista.eos.eos_vlans: {state: gathered}":                                                                                 "sets state: gathered",
+		"arista.eos.eos_hostname: {config: {hostname: leaf1}, state: deleted}":                                                    "sets state: deleted",
+		"cisco.ios.ios_hostname: {config: {hostname: edge.lab}}":                                                                  "the ios_hostname step refuses",
+		"cisco.ios.ios_hostname: {config: {hostname: '123'}}":                                                                     "the ios_hostname step refuses",
+		"arista.eos.eos_hostname: {config: {hostname: leaf_1}}":                                                                   "the eos_hostname step refuses",
+		"junipernetworks.junos.junos_hostname: {config: {hostname: sw_1}}":                                                        "the junos_hostname step refuses",
+		"vyos.vyos.vyos_hostname: {config: {hostname: r1.lab}}":                                                                   "the vyos_hostname step refuses",
+		"arista.eos.eos_vlans: {config: [{vlan_id: 10, state: suspend}]}":                                                         "state to suspend",
+		"junipernetworks.junos.junos_vlans: {config: [{name: users, vlan_id: 10, l3_interface: irb.10}]}":                         "sets l3_interface",
+		"junipernetworks.junos.junos_vlans: {config: [{name: users}]}":                                                            "without a vlan_id",
+		"arista.eos.eos_vlans: {config: [{vlan_id: 5000}]}":                                                                       "without a vlan_id from 1 to 4094",
+		"cisco.ios.ios_interfaces: {config: [{name: Gi1/0/1, description: x}]}":                                                   "is not an interface name",
+		"cisco.ios.ios_interfaces: {config: [{name: GigabitEthernet1, mode: layer3}]}":                                            "sets mode",
+		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1, mode: dynamic_auto}]}":                                   "sets mode dynamic_auto",
+		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1, trunk: {native_vlan: 99}}]}":                             "sets trunk native_vlan",
+		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1, trunk: {allowed_vlans: ['1-99999']}}], state: replaced}": "from 1 to 4094",
 		// merged adds to a trunk's list, and the step owns all of it.
 		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1, trunk: {allowed_vlans: ['30']}}]}":                "write every VLAN the trunk should carry",
 		"cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1, trunk: {allowed_vlans: ['30']}}], state: merged}": "write every VLAN the trunk should carry",
