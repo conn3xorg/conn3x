@@ -29,6 +29,9 @@ ORG = "conn3xorg"
 DASHBOARD_REPO = "conn3xorg/conn3x"
 CORE_TEAM = {"jamesconwaydev"}
 MAINTAINER_ROLES = {"OWNER", "MEMBER", "COLLABORATOR"}
+# Who may own a dashboard issue besides a maintainer: this workflow, which
+# opens one when a board is missing. Anyone can open an issue with a marker.
+BOARD_OWNERS = {"github-actions[bot]"}
 # First label that matches decides the section, so an issue shows up once.
 KINDS = [
     ("good first issue", "🌱 Good first issues"),
@@ -54,15 +57,24 @@ TEMPLATES = [
 ]
 CONTRIBUTING = "https://github.com/conn3xorg/.github/blob/main/CONTRIBUTING.md"
 BODY_LIMIT = 65000  # GitHub rejects issue bodies over 65536 characters.
+# "I'd like to" alone is as often a question ("I'd like to know why"), so
+# it needs a verb of taking the work after it, and a bare "claim" is gone.
 CLAIM = re.compile(
-    r"\b(i'?ll take|i will take|i'?d like to|i would like to|i'?d love to|"
+    r"\b(i'?ll take|i will take|"
+    r"(i'?d|i would) (like|love) to (work|take|try|help|pick|fix)|"
     r"can i (take|work|pick|have)|may i (take|work)|assign (it |this )?(to )?me|"
-    r"working on (this|it)|i'?m on (it|this)|claim(ing)?|dibs)\b",
+    r"working on (this|it)|i'?m on (it|this)|dibs)\b",
     re.I,
 )
 EXPIRY = re.compile(r"\bkey\b.*\bexpir", re.I)
 
 calls = 0
+
+
+def maintainer(login, association):
+    """Whether someone speaks for the project: the core team, or anyone
+    GitHub says owns, belongs to or collaborates on the repository."""
+    return login in CORE_TEAM or association in MAINTAINER_ROLES
 
 
 def gh(*args, payload=None):
@@ -173,7 +185,7 @@ HELP_FIELDS = """... on Issue {
   number title url createdAt repository { name } author { login }
   labels(first: 20) { nodes { name } }
   assignees(first: 3) { nodes { login } }
-  comments(last: 30) { nodes { author { login } body } }
+  comments(last: 30) { nodes { author { login } authorAssociation body } }
   closedByPullRequestsReferences(first: 1, includeClosedPrs: false) { totalCount }
 }"""
 
@@ -187,7 +199,9 @@ def claim(issue):
         return "taken (PR open)"
     for c in reversed(issue["comments"]["nodes"]):
         who = (c["author"] or {}).get("login", "")
-        if who and who not in CORE_TEAM and not who.endswith("[bot]") and CLAIM.search(c["body"]):
+        if maintainer(who, c.get("authorAssociation")) or who.endswith("[bot]"):
+            continue
+        if who and CLAIM.search(c["body"]):
             return "taken by " + handle(who)
     return None
 
@@ -271,7 +285,7 @@ pull request linked. If one has gone quiet for a few weeks, ask on the issue.
 
 PR_FIELDS = """... on PullRequest {
   number title url isDraft createdAt additions deletions changedFiles mergeable
-  repository { name } author { __typename login }
+  repository { name } author { __typename login } authorAssociation
   commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
   reviews(last: 30) { nodes { author { login } authorAssociation submittedAt } }
   comments(last: 30) { nodes { author { login } authorAssociation createdAt } }
@@ -288,7 +302,7 @@ BUCKETS = [
 
 def outside(pr):
     a = pr["author"]
-    return bool(a) and a["__typename"] != "Bot" and a["login"] not in CORE_TEAM
+    return bool(a) and a["__typename"] != "Bot" and not maintainer(a["login"], pr.get("authorAssociation"))
 
 
 def bucket(pr):
@@ -304,7 +318,7 @@ def bucket(pr):
             continue
         if who == author:
             last_author = max(last_author, when)
-        elif item["authorAssociation"] in MAINTAINER_ROLES or who in CORE_TEAM:
+        elif maintainer(who, item["authorAssociation"]):
             last_us = max(last_us or when, when)
     if pr["isDraft"]:
         return "draft", last_author
@@ -420,18 +434,29 @@ checks we run, not a security guarantee.
 
 # ---- Publishing -----------------------------------------------------------
 
-def publish(boards):
+def existing_boards():
+    """{marker: issue number} for the open dashboard issues. Only an issue a
+    maintainer or this workflow opened counts: the list is newest first, and
+    anyone can open an issue that starts with a marker, which would
+    otherwise take the board over."""
     existing = {}
     page = 1
     while True:
         issues = gh(f"repos/{DASHBOARD_REPO}/issues?state=open&per_page=100&page={page}")
         for i in issues:
             m = re.match(r"<!-- conn3x-dashboard:([\w-]+) -->", i.get("body") or "")
-            if m and "pull_request" not in i:
+            login = (i.get("user") or {}).get("login", "")
+            owner = maintainer(login, i.get("author_association")) or login in BOARD_OWNERS
+            if m and owner and "pull_request" not in i:
                 existing.setdefault(m.group(1), i["number"])
         if len(issues) < 100:
             break
         page += 1
+    return existing
+
+
+def publish(boards):
+    existing = existing_boards()
     for marker, (title, body) in boards.items():
         if marker in existing:
             gh("-X", "PATCH", f"repos/{DASHBOARD_REPO}/issues/{existing[marker]}", "--input", "-", payload={"body": body})

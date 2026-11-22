@@ -39,6 +39,26 @@ step "theme" {
 }
 ```
 
+Clone a private repository with a deploy key, after pinning its server's host key. Steps run in the order they're written, so the key is in place first:
+
+```hcl
+step "github_host_key" {
+  known_hosts {
+    host = "github.com"
+    key  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+  }
+}
+
+step "app" {
+  git {
+    repo     = "git@github.com:example/app.git"
+    dest     = "/srv/app"
+    ref      = "main"
+    key_file = "/root/.ssh/app_deploy"
+  }
+}
+```
+
 Pin a commit, given in full:
 
 ```hcl
@@ -61,6 +81,8 @@ step "pinned" {
 
 **Requirements.** The host needs `git`. If it's missing, add a [`package`](/modules/package) step for it first. For a private repository, the host needs its own credentials for it: an SSH key, or for https a `.netrc` or credential helper in the home directory of the user who runs the step. `repo` can't hold a user name or password for https, since it's in the plan, the state and the host's process list.
 
+**Deploy keys.** With `key_file`, every command that talks to the remote (`ls-remote`, clone and fetch) logs in through `ssh -i <key_file> -o IdentitiesOnly=yes -o BatchMode=yes`. Only that key is offered, and ssh never waits for a password. `key_file` works with `ssh://` and `git@` repositories only. The key stays on the host, so it's never in the plan or the state. The server's host key isn't accepted blindly: put it in `known_hosts` first, with a [`known_hosts`](/modules/known_hosts) step.
+
 **Plain http.** Nothing checks what an `http://` repository sends, so it's only accepted with a full commit as `ref`, which the content has to match. Use `https://` or SSH for a branch or tag.
 
 ## Removal
@@ -69,4 +91,4 @@ When you delete a `git` step, Conn3x stops managing it and leaves the checkout w
 
 ## From Ansible
 
-`conn3x convert ansible` turns `git` tasks into `git` steps, with `version` becoming `ref` and `depth` kept as it is. `force: true` needs nothing, because a `git` step always discards changes to tracked files. Without it, Ansible stops when the checkout has local changes, so the converted step carries a note saying that it won't stop. `update: false` is left for review.
+`conn3x convert ansible` turns `git` tasks into `git` steps, with `version` becoming `ref`, and `depth` and `key_file` kept as they are. `accept_hostkey` and `accept_newhostkey` aren't carried over: the converted step gets a note to add a `known_hosts` step for the server instead. `force: true` needs nothing, because a `git` step always discards changes to tracked files. Without it, Ansible stops when the checkout has local changes, so the converted step carries a note saying that it won't stop. `update: false` is left for review.

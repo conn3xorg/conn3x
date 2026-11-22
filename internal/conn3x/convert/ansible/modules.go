@@ -1952,11 +1952,18 @@ func gitModule(in *input) ([]step, string) {
 	if in.has("depth") {
 		attrs = append(attrs, in.number("depth"))
 	}
-	// A git step always checks out with --force, which is force: true.
-	if in.bool("force", false) {
-		return one("git", attrs)
+	attrs = in.optional(attrs, "key_file", "key_file")
+	var notes []string
+	// Turning off the host key check is what a deploy key is meant to make
+	// safe, so it isn't carried over.
+	if in.bool("accept_hostkey", false) || in.bool("accept_newhostkey", false) {
+		notes = append(notes, "accept_hostkey dropped: a git step checks the server's host key. Add a known_hosts step for it before this one.")
 	}
-	return one("git", attrs, "Ansible stops when the checkout has local changes; a git step discards changes to tracked files.")
+	// A git step always checks out with --force, which is force: true.
+	if !in.bool("force", false) {
+		notes = append(notes, "Ansible stops when the checkout has local changes; a git step discards changes to tracked files.")
+	}
+	return one("git", attrs, notes...)
 }
 
 func mountModule(in *input) ([]step, string) {
