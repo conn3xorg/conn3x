@@ -141,10 +141,6 @@ class Fitting(unittest.TestCase):
         self.assertIn("more. [See them all]", body)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Boards(unittest.TestCase):
     """Only a maintainer's or this workflow's issue can hold a board."""
 
@@ -179,3 +175,7 @@ class Outside(unittest.TestCase):
         self.assertFalse(d.outside(pr(author={"__typename": "User", "login": "other"}, authorAssociation="COLLABORATOR")))
         self.assertTrue(d.outside(pr(authorAssociation="CONTRIBUTOR")))
         self.assertFalse(d.outside(pr(author={"__typename": "Bot", "login": "renovate"}, authorAssociation="NONE")))
+
+
+if __name__ == "__main__":
+    unittest.main()
