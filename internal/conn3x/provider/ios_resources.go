@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -285,4 +286,42 @@ func iosStaticRouteSchema() providers.Schema {
 
 func validateIOSStaticRoute(cfg cty.Value) tfdiags.Diagnostics {
 	return validateWith("prefix", func(v cty.Value) error { return iosStaticRouteFrom(v).Validate() })(cfg)
+}
+
+// iosDeviceSchema is the conn3x_ios_device data source: what a circuit
+// checks before it changes a device.
+func iosDeviceSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: iosExperimental + "Facts about a Cisco IOS or IOS XE device, from show version.",
+		Attributes: map[string]*configschema.Attribute{
+			"hostname": {Type: cty.String, Computed: true, Description: "The device's hostname."},
+			"model":    {Type: cty.String, Computed: true, Description: "Model, such as C9300-48P, or IOL-XE in Cisco Modeling Labs."},
+			"version":  {Type: cty.String, Computed: true, Description: "Software version, such as 17.18.01 or 15.9(3)M4."},
+			"serial":   {Type: cty.String, Computed: true, Description: "The processor board ID."},
+			"image":    {Type: cty.String, Computed: true, Description: "The system image file the device booted."},
+			"ios_type": {Type: cty.String, Computed: true, Description: "\"IOS-XE\" or \"IOS\"."},
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func readIOSDevice(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
+	var resp providers.ReadDataSourceResponse
+	conn := req.Config.GetAttr("ssh")
+	h, err := iosPlatform.hostFor(ctx, conn)
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
+		return resp
+	}
+	f, err := ios.ReadFacts(ctx, iosPlatform.device(h, conn))
+	if err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("conn3x_ios_device: %w", err))
+		return resp
+	}
+	vals := req.Config.AsValueMap()
+	for k, v := range map[string]string{"hostname": f.Hostname, "model": f.Model, "version": f.Version, "serial": f.Serial, "image": f.Image, "ios_type": f.Type} {
+		vals[k] = cty.StringVal(v)
+	}
+	resp.State = cty.ObjectVal(vals)
+	return resp
 }

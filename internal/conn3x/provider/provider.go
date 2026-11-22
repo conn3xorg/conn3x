@@ -215,7 +215,7 @@ func (p *Provider) GetProviderSchema(context.Context) providers.GetProviderSchem
 		Provider:      providers.Schema{Block: providerConfigSchema()},
 		ResourceTypes: resourceSchemas(),
 		DataSources: map[string]providers.Schema{
-			"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema(), "conn3x_junos_device": junosDeviceSchema(), "conn3x_vyos_device": vyosDeviceSchema(),
+			"conn3x_host": hostDataSchema(), "conn3x_eos_device": eosDeviceSchema(), "conn3x_junos_device": junosDeviceSchema(), "conn3x_vyos_device": vyosDeviceSchema(), "conn3x_ios_device": iosDeviceSchema(),
 			"conn3x_packages": packagesDataSchema(), "conn3x_services": servicesDataSchema(),
 			"conn3x_file": fileDataSchema(), "conn3x_command": commandDataSchema(),
 		},
@@ -258,6 +258,9 @@ func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.V
 	}
 	if req.TypeName == "conn3x_junos_device" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateJunosSSH(req.Config))}
+	}
+	if req.TypeName == "conn3x_ios_device" {
+		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateIOSSSH(req.Config))}
 	}
 	if req.TypeName == "conn3x_eos_device" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateEOSSSH(req.Config))}
@@ -458,7 +461,7 @@ func locateApplyErrors(block *configschema.Block, diags tfdiags.Diagnostics) tfd
 
 func (p *Provider) ReadDataSource(ctx context.Context, req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
 	read, ok := map[string]func(context.Context, providers.ReadDataSourceRequest) providers.ReadDataSourceResponse{
-		"conn3x_host": readHostData, "conn3x_eos_device": readEOSDevice, "conn3x_junos_device": readJunosDevice, "conn3x_vyos_device": readVyOSDevice,
+		"conn3x_host": readHostData, "conn3x_eos_device": readEOSDevice, "conn3x_junos_device": readJunosDevice, "conn3x_vyos_device": readVyOSDevice, "conn3x_ios_device": readIOSDevice,
 		"conn3x_packages": readPackagesData, "conn3x_services": readServicesData,
 		"conn3x_file": readFileData, "conn3x_command": readCommandData,
 	}[req.TypeName]
