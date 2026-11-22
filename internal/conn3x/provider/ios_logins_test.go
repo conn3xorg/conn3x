@@ -97,3 +97,20 @@ func TestIOSHostnameValidate(t *testing.T) {
 		t.Error(diags.Err())
 	}
 }
+
+func TestIOSInterfaceValidate(t *testing.T) {
+	r := resourceTypes["conn3x_ios_interface"]
+	for name, attrs := range map[string]map[string]cty.Value{
+		"EOS spelling":      {"name": cty.StringVal("Port-Channel10")},
+		"switchport on SVI": {"name": cty.StringVal("Vlan20"), "mode": cty.StringVal("access")},
+		"bad on_remove":     {"name": cty.StringVal("GigabitEthernet1"), "on_remove": cty.StringVal("purge")},
+	} {
+		if diags := r.validate(objFor(r.schema(), attrs)); !diags.HasErrors() {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	ok := map[string]cty.Value{"name": cty.StringVal("GigabitEthernet1/0/1"), "mode": cty.StringVal("trunk"), "allowed_vlans": cty.ListVal([]cty.Value{cty.NumberIntVal(10), cty.NumberIntVal(20)})}
+	if diags := r.validate(objFor(r.schema(), ok)); diags.HasErrors() {
+		t.Error(diags.Err())
+	}
+}

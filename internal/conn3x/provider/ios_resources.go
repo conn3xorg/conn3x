@@ -139,3 +139,71 @@ func iosHostnameSchema() providers.Schema {
 func validateIOSHostname(cfg cty.Value) tfdiags.Diagnostics {
 	return validateName(cfg, ios.ValidateHostname)
 }
+
+func iosInterfaceFrom(v cty.Value) ios.Interface {
+	i := ios.Interface{Name: stringOr(v.GetAttr("name"), ""), Description: optString(v.GetAttr("description")), Mode: stringOr(v.GetAttr("mode"), "")}
+	if e := v.GetAttr("enabled"); known(e) {
+		b := e.True()
+		i.Enabled = &b
+	}
+	num := func(attr string) int {
+		n := v.GetAttr(attr)
+		if !known(n) {
+			return 0
+		}
+		x, _ := n.AsBigFloat().Int64()
+		return int(x)
+	}
+	i.AccessVLAN, i.MTU = num("access_vlan"), num("mtu")
+	if l := v.GetAttr("allowed_vlans"); known(l) {
+		i.AllowedVLANs = []int{}
+		for _, e := range l.AsValueSlice() {
+			x, _ := e.AsBigFloat().Int64()
+			i.AllowedVLANs = append(i.AllowedVLANs, int(x))
+		}
+	}
+	return i
+}
+
+var iosInterfaceKind = cliKind{
+	p:        iosPlatform,
+	name:     "interface",
+	keys:     []string{"name"},
+	settings: []string{"description", "enabled", "mode", "access_vlan", "allowed_vlans", "mtu"},
+	config:   func(v cty.Value) cliWant { return iosInterfaceFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return iosInterfaceFrom(v).RemoveCommands(running) },
+	guard:    func(v cty.Value, config, address string) error { return iosInterfaceFrom(v).Guard(config, address) },
+}
+
+func iosInterfaceSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: iosExperimental + "The settings Conn3x owns on one interface of a Cisco IOS XE device: description, enabled, switchport mode and VLANs, MTU. Each one left unset is left alone, and so is every other line under the interface.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":            {Type: cty.String, Computed: true},
+			"revision":      revisionAttr(),
+			"name":          {Type: cty.String, Required: true, Description: "The interface, as show running-config names it, such as GigabitEthernet1/0/1, Port-channel10, Vlan20 or Loopback0."},
+			"description":   {Type: cty.String, Optional: true, Description: "Its description."},
+			"enabled":       {Type: cty.Bool, Optional: true, Description: "false shuts it down, true brings it up. Shutting down the interface whose address Conn3x connects to is refused."},
+			"mode":          {Type: cty.String, Optional: true, Description: "\"access\" or \"trunk\". Ethernet and Port-channel interfaces only."},
+			"access_vlan":   {Type: cty.Number, Optional: true, Description: "The VLAN of an access port, 1 to 4094."},
+			"allowed_vlans": {Type: cty.List(cty.Number), Optional: true, Description: "The VLANs a trunk carries. They're compared as a set, so a list IOS prints over several add lines still reads as in sync."},
+			"mtu":           {Type: cty.Number, Optional: true, Description: "MTU, 64 to 9216. The device refuses a value outside its own range."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens when this resource is removed: \"forget\" (default) leaves the interface as it is, \"delete\" takes the settings it owns back to IOS's defaults. The interface itself stays."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the interface had these settings at the last refresh."},
+			"circuit":       eosCircuitAttr(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateIOSInterface(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	if err := iosInterfaceFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("name", err.Error()))
+	}
+	return diags
+}

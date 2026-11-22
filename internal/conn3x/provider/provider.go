@@ -127,6 +127,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_vyos_removals":        vyosCommitTypes["conn3x_vyos_removals"],
 	"conn3x_ios_config":           iosConfigKind.entry(iosConfigSchema, validateIOSConfig),
 	"conn3x_ios_hostname":         iosHostnameKind.entry(iosHostnameSchema, validateIOSHostname),
+	"conn3x_ios_interface":        iosInterfaceKind.entry(iosInterfaceSchema, validateIOSInterface),
 	"conn3x_ios_commit":           iosCommitTypes["conn3x_ios_commit"],
 	"conn3x_ios_removals":         iosCommitTypes["conn3x_ios_removals"],
 	"conn3x_junos_commit":         junosCommitTypes["conn3x_junos_commit"],
