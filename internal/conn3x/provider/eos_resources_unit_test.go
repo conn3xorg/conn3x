@@ -288,3 +288,26 @@ func TestEOSUserWarnsOfAnOpenLogin(t *testing.T) {
 		t.Errorf("nopassword = true: in_sync %#v, %v", resp.NewState.GetAttr("in_sync"), resp.Diagnostics)
 	}
 }
+
+func TestEOSStaticRouteValidate(t *testing.T) {
+	r := resourceTypes["conn3x_eos_static_route"]
+	hops := func(h ...string) cty.Value {
+		var v []cty.Value
+		for _, x := range h {
+			v = append(v, cty.StringVal(x))
+		}
+		return cty.ListVal(v)
+	}
+	for name, attrs := range map[string]map[string]cty.Value{
+		"host bits":    {"prefix": cty.StringVal("10.0.0.1/8"), "next_hops": hops("192.0.2.1")},
+		"wrong family": {"prefix": cty.StringVal("10.0.0.0/8"), "next_hops": hops("2001:db8::1")},
+	} {
+		if diags := r.validate(objFor(r.schema(), attrs)); !diags.HasErrors() {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	ok := map[string]cty.Value{"prefix": cty.StringVal("0.0.0.0/0"), "next_hops": hops("192.0.2.1")}
+	if diags := r.validate(objFor(r.schema(), ok)); diags.HasErrors() {
+		t.Error(diags.Err())
+	}
+}
