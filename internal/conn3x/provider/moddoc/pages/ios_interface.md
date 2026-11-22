@@ -47,6 +47,6 @@ By default, deleting an `ios_interface` step stops tracking it and leaves the po
 `conn3x convert ansible` turns two cisco.ios modules into `ios_interface` steps, one per interface:
 
 - **`cisco.ios.ios_interfaces`:** `description`, `enabled` and `mtu` carry over. `speed`, `duplex`, `mode` (`layer2` or `layer3`) and the other settings stay TODOs.
-- **`cisco.ios.ios_l2_interfaces`:** `mode` (`access` or `trunk`), `access.vlan` and `trunk.allowed_vlans` carry over, with ranges such as `10-12` written out. `trunk.native_vlan`, `trunk.encapsulation`, a voice VLAN, the other modes and the other switchport settings stay TODOs.
+- **`cisco.ios.ios_l2_interfaces`:** `mode` (`access` or `trunk`) and `access.vlan` carry over. `trunk.allowed_vlans` stays a TODO. Under `merged` it adds VLANs to what the trunk carries, but this step's `allowed_vlans` is the whole list, so a converted task would remove every VLAN it didn't name. Write the full list yourself. `trunk.native_vlan`, `trunk.encapsulation`, a voice VLAN, the other modes and the other switchport settings stay TODOs too.
 
 For both modules, only `state: merged` converts. An interface's name must be the full one `show running-config` prints. Ansible expands a short name such as `Gi1/0/1` for you, but the converter leaves that task for review. A setting the step would refuse, such as a switchport on a `Vlan` interface, stays for review too, with the step's own message.

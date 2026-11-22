@@ -252,9 +252,10 @@ func networkInterfaces(platform string) func(*input) ([]step, string) {
 }
 
 // iosL2Interfaces converts ios_l2_interfaces into ios_interface's switchport
-// settings, a step per interface: mode access or trunk, access.vlan and
-// trunk.allowed_vlans. A native VLAN, an encapsulation, a voice VLAN and the
-// other switchport settings stay for review.
+// settings, a step per interface: mode access or trunk and access.vlan. A
+// trunk's allowed_vlans stays for review, since merged adds to the list and
+// the step owns all of it; so do a native VLAN, an encapsulation, a voice
+// VLAN and the other switchport settings.
 func iosL2Interfaces(in *input) ([]step, string) {
 	if reason := resourceState(in, false); reason != "" {
 		return nil, reason
@@ -296,32 +297,15 @@ func iosL2Interfaces(in *input) ([]step, string) {
 		}
 		if t := item["trunk"]; t != nil {
 			trunk := mapping(t)
-			if extra := unknownKeys(trunk, "allowed_vlans"); extra != "" {
+			if trunk["allowed_vlans"] != nil {
+				// merged adds these to what the trunk carries, and the step's
+				// allowed_vlans is the whole list: converted, a play that adds
+				// VLANs would remove the rest.
+				return nil, "sets trunk allowed_vlans on " + name + ", which adds them to the trunk's list; an ios_interface step's allowed_vlans is the whole list, so write every VLAN the trunk should carry"
+			}
+			if extra := unknownKeys(trunk); extra != "" {
 				return nil, "sets trunk " + extra + " on " + name + ", which an ios_interface step doesn't take"
 			}
-			var vals []cty.Value
-			for _, e := range seq(trunk["allowed_vlans"]) {
-				list := in.render("config", scalar(e))
-				for _, part := range strings.Split(list, ",") {
-					lo, hi, isRange := strings.Cut(strings.TrimSpace(part), "-")
-					a, errA := strconv.Atoi(lo)
-					b, errB := a, error(nil)
-					if isRange {
-						b, errB = strconv.Atoi(hi)
-					}
-					if errA != nil || errB != nil || a < 1 || b < a || b > 4094 {
-						return nil, fmt.Sprintf("sets allowed_vlans %q on %s, which isn't a list of VLANs and ranges from 1 to 4094", list, name)
-					}
-					for v := a; v <= b; v++ {
-						want.AllowedVLANs = append(want.AllowedVLANs, v)
-						vals = append(vals, cty.NumberIntVal(int64(v)))
-					}
-				}
-			}
-			if len(vals) == 0 {
-				return nil, "sets trunk on " + name + " without allowed_vlans"
-			}
-			attrs = append(attrs, attr{key: "allowed_vlans", val: cty.ListVal(vals)})
 		}
 		if in.problem != "" {
 			return nil, in.problem
