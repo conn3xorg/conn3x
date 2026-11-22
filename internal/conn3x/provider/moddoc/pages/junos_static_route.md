@@ -40,3 +40,7 @@ step "branch_v6" {
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the route on the device. `on_remove = "delete"` deletes the route and everything under it.
+
+## From Ansible
+
+`conn3x convert ansible` turns `junipernetworks.junos.junos_static_routes` tasks into a `junos_static_route` step per IPv4 route, with `dest` as `prefix` and each next hop's `forward_router_address` in `next_hops`. Only `state: merged`, the default, converts. IPv6 routes, a `vrf`, and `metric` stay TODOs: Junos keeps a route's metric apart from the preference this step sets.

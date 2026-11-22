@@ -40,3 +40,7 @@ step "branch_v6" {
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the route on the router. `on_remove = "delete"` deletes the route and everything under it. When it was the router's last static route, VyOS keeps an empty `protocols static`, which does nothing.
+
+## From Ansible
+
+`conn3x convert ansible` turns `vyos.vyos.vyos_static_routes` tasks into a `vyos_static_route` step per IPv4 route, with `dest` as `prefix` and each next hop's `forward_router_address` in `next_hops`. An `admin_distance` becomes `distance` when every next hop has the same one. Only `state: merged`, the default, converts. IPv6 routes, interface next hops and `blackhole_config` stay TODOs.

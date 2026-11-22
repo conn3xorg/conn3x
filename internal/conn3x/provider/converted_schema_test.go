@@ -53,6 +53,11 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
     - vyos.vyos.vyos_l3_interfaces: {config: [{name: eth1, ipv4: [{address: 192.0.2.1/24}]}]}
     - junipernetworks.junos.junos_hostname: {config: {hostname: sw1}}
     - vyos.vyos.vyos_hostname: {config: {hostname: r1}}
+    - junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.254}]}]}]}]}
+    - vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.1, admin_distance: 10}]}]}]}]}
+    - arista.eos.eos_user: {name: ops, role: network-admin, privilege: 15, sshkey: "ssh-ed25519 AAAA ops", nopassword: false}
+    - junipernetworks.junos.junos_user: {name: alice, role: operator, sshkey: "ssh-ed25519 AAAA alice"}
+    - vyos.vyos.vyos_user: {name: alice, full_name: Alice, public_keys: [{name: alice@laptop, key: AAAA, type: ssh-ed25519}]}
 `
 	path := filepath.Join(t.TempDir(), "play.yml")
 	if err := os.WriteFile(path, []byte(playbook), 0o644); err != nil {
@@ -92,7 +97,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
 		}
 	}
 	walk(f.Body.(*hclsyntax.Body))
-	if checked < 27 {
+	if checked < 32 {
 		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
 	}
 }

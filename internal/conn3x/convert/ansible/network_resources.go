@@ -265,3 +265,165 @@ func vyosL3Interfaces(in *input) ([]step, string) {
 	}
 	return steps, ""
 }
+
+// networkStaticRoutes converts junos_static_routes and vyos_static_routes:
+// a step per destination, its next hops' forward_router_address as
+// next_hops. IPv6, a VRF, an interface or blackhole next hop, and a Junos
+// metric (not the step's preference, which is Junos's route preference)
+// stay for review.
+func networkStaticRoutes(platform string) func(*input) ([]step, string) {
+	return func(in *input) ([]step, string) {
+		if reason := resourceState(in, false); reason != "" {
+			return nil, reason
+		}
+		items, reason := resourceItems(in)
+		if reason != "" {
+			return nil, reason
+		}
+		hopKey, hopKeys := "next_hop", []string{"forward_router_address"}
+		routeKeys := []string{"dest", "next_hop", "metric"}
+		if platform == "vyos" {
+			hopKey, hopKeys = "next_hops", []string{"forward_router_address", "admin_distance"}
+			routeKeys = []string{"dest", "next_hops"}
+		}
+		var steps []step
+		for _, item := range items {
+			if extra := unknownKeys(item, "address_families"); extra != "" {
+				return nil, "sets " + extra + " on a route set, which a " + platform + "_static_route step doesn't take"
+			}
+			for _, fam := range seq(item["address_families"]) {
+				f := mapping(fam)
+				if afi, _ := itemValue(in, f, "afi"); afi != "ipv4" {
+					return nil, fmt.Sprintf("sets afi %q, and a %s_static_route step takes IPv4 routes only", afi, platform)
+				}
+				for _, r := range seq(f["routes"]) {
+					route := mapping(r)
+					if extra := unknownKeys(route, routeKeys...); extra != "" {
+						return nil, "sets " + extra + " on a route, which a " + platform + "_static_route step doesn't take"
+					}
+					if _, ok := route["metric"]; ok {
+						return nil, "sets metric on a route, which Junos keeps apart from the preference a junos_static_route step sets"
+					}
+					dest, _ := itemValue(in, route, "dest")
+					var hops []string
+					distance := ""
+					for i, h := range seq(route[hopKey]) {
+						hop := mapping(h)
+						if extra := unknownKeys(hop, hopKeys...); extra != "" {
+							return nil, "sets " + extra + " on a next hop of " + dest + ", which a " + platform + "_static_route step doesn't take"
+						}
+						addr, _ := itemValue(in, hop, "forward_router_address")
+						if addr == "" {
+							return nil, "has a next hop of " + dest + " without a forward_router_address"
+						}
+						hops = append(hops, addr)
+						// The step's distance is the route's, so every next hop
+						// has to have the same one.
+						d, _ := itemValue(in, hop, "admin_distance")
+						if i > 0 && d != distance {
+							return nil, "sets a different admin_distance on next hops of " + dest + ", and a vyos_static_route step has one distance for the route"
+						}
+						distance = d
+					}
+					if in.problem != "" {
+						return nil, in.problem
+					}
+					if dest == "" || len(hops) == 0 {
+						return nil, "has a route without a dest and a next hop"
+					}
+					attrs := []attr{s("prefix", dest), {key: "next_hops", val: strList(hops)}}
+					if distance != "" {
+						n, err := strconv.Atoi(distance)
+						if err != nil {
+							return nil, fmt.Sprintf("sets admin_distance %q on %s, which isn't a whole number", distance, dest)
+						}
+						attrs = append(attrs, attr{key: "distance", val: cty.NumberIntVal(int64(n))})
+					}
+					steps = append(steps, step{module: platform + "_static_route", attrs: attrs, suffix: itemSuffix("route_", dest)})
+				}
+			}
+		}
+		if len(steps) == 0 {
+			return nil, "sets no routes"
+		}
+		return steps, ""
+	}
+}
+
+// networkUser converts eos_user, junos_user and vyos_user, one account. A
+// password is never read: the step gets a TODO to set password_wo from a
+// secret instead, as a Linux user's does.
+func networkUser(platform string) func(*input) ([]step, string) {
+	return func(in *input) ([]step, string) {
+		for _, k := range []string{"aggregate", "purge"} {
+			if in.has(k) {
+				return nil, "sets " + k + ", which works on every account at once; a " + platform + "_user step manages one"
+			}
+		}
+		if st := in.str("state"); st != "" && st != "present" {
+			return nil, "has state " + st + "; a " + platform + "_user step removes its account when the step is removed, with on_remove"
+		}
+		if in.has("encrypted_password") {
+			return nil, "sets encrypted_password, a hash a " + platform + "_user step can't take; set password_wo from a secret instead"
+		}
+		if u := in.str("update_password"); u == "on_create" {
+			return nil, "sets update_password: on_create, and a " + platform + "_user step sets password_wo whenever it changes"
+		}
+		name := in.str("name")
+		if name == "" {
+			return nil, "has no name"
+		}
+		attrs := []attr{s("name", name)}
+		switch platform {
+		case "eos":
+			if in.has("privilege") {
+				attrs = append(attrs, in.number("privilege"))
+			}
+			attrs = in.optional(attrs, "role", "role")
+			attrs = in.optional(attrs, "ssh_key", "sshkey")
+			if in.has("nopassword") {
+				attrs = append(attrs, attr{key: "nopassword", val: cty.BoolVal(in.bool("nopassword", false))})
+			}
+		case "junos":
+			role := in.str("role")
+			if role == "" {
+				return nil, "has no role, and a junos_user step needs its class"
+			}
+			attrs = append(attrs, s("class", role))
+			if k := in.str("sshkey"); k != "" {
+				attrs = append(attrs, attr{key: "ssh_keys", val: strList([]string{k})})
+			}
+			if in.has("full_name") {
+				return nil, "sets full_name, which a junos_user step doesn't take"
+			}
+			if in.has("active") && !in.bool("active", true) {
+				return nil, "sets active: false, and a junos_user step keeps its account active"
+			}
+		case "vyos":
+			attrs = in.optional(attrs, "full_name", "full_name")
+			var keys []string
+			for _, k := range seq(in.args["public_keys"]) {
+				m := mapping(k)
+				typ, key, comment := in.render("public_keys", scalar(m["type"])), in.render("public_keys", scalar(m["key"])), in.render("public_keys", scalar(m["name"]))
+				if typ == "" || key == "" {
+					return nil, "has a public key without its type and key"
+				}
+				keys = append(keys, strings.TrimSpace(typ+" "+key+" "+comment))
+			}
+			in.ignore("public_keys")
+			if len(keys) > 0 {
+				attrs = append(attrs, attr{key: "ssh_keys", val: strList(keys)})
+			}
+		}
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		var notes []string
+		if in.has("configured_password") {
+			in.ignore("configured_password", "update_password")
+			notes = append(notes, "TODO(convert): Set password_wo from an ephemeral variable holding the task's configured_password. It isn't copied here.")
+		}
+		in.ignore("update_password")
+		return one(platform+"_user", attrs, notes...)
+	}
+}

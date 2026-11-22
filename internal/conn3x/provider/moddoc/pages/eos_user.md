@@ -44,3 +44,7 @@ Conn3x won't lower the privilege or change the role of the account it logs in as
 ## Removal
 
 `on_remove` defaults to `"delete"`: removing the step deletes the account, as with every step that grants access. Set `"forget"` to leave it.
+
+## From Ansible
+
+`conn3x convert ansible` turns `arista.eos.eos_user` tasks into `eos_user` steps, carrying over `role`, `privilege`, `nopassword`, and `sshkey` as `ssh_key`. A `configured_password` isn't copied: the step gets a TODO to set `password_wo` from a secret. `aggregate`, `purge`, `state: absent` and `update_password: on_create` stay TODOs.

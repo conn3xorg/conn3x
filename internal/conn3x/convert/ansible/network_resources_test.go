@@ -75,3 +75,55 @@ func TestConvertNetworkResourceRefusals(t *testing.T) {
 		t.Errorf("network_cli with a resource module: %q", reasons(res))
 	}
 }
+
+func TestConvertNetworkRoutesAndUsers(t *testing.T) {
+	for task, want := range map[string][]string{
+		"junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.254}]}]}]}]}": {
+			"junos_static_route {", `prefix    = "0.0.0.0/0"`, `next_hops = ["192.0.2.254"]`},
+		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.1, admin_distance: 10}, {forward_router_address: 192.0.2.2, admin_distance: 10}]}]}]}]}": {
+			"vyos_static_route {", `next_hops = ["192.0.2.1", "192.0.2.2"]`, "distance  = 10"},
+		"arista.eos.eos_user: {name: ops, role: network-admin, privilege: 15, sshkey: 'ssh-ed25519 AAAA ops'}": {
+			"eos_user {", `role      = "network-admin"`, "privilege = 15", `ssh_key   = "ssh-ed25519 AAAA ops"`},
+		"junipernetworks.junos.junos_user: {name: alice, role: operator, sshkey: 'ssh-ed25519 AAAA alice'}": {
+			"junos_user {", `class    = "operator"`, `ssh_keys = ["ssh-ed25519 AAAA alice"]`},
+		"vyos.vyos.vyos_user: {name: alice, full_name: Alice, public_keys: [{name: alice@laptop, key: AAAA, type: ssh-ed25519}]}": {
+			"vyos_user {", `full_name = "Alice"`, `ssh_keys  = ["ssh-ed25519 AAAA alice@laptop"]`},
+	} {
+		res := convertString(t, netPlay+"    - "+task+"\n")
+		hcl := string(res.HCL)
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v\n%s", task, res.Converted, res.Review, hcl)
+			continue
+		}
+		for _, w := range want {
+			if !strings.Contains(hcl, w) {
+				t.Errorf("%s: missing %q:\n%s", task, w, hcl)
+			}
+		}
+	}
+
+	// A configured_password becomes a TODO, and its value isn't copied.
+	res := convertString(t, netPlay+"    - arista.eos.eos_user: {name: ops, role: network-admin, configured_password: Hunter2-secret}\n")
+	if hcl := string(res.HCL); strings.Contains(hcl, "Hunter2") || !strings.Contains(hcl, "TODO(convert): Set password_wo") {
+		t.Errorf("configured_password:\n%s", hcl)
+	}
+
+	for task, reason := range map[string]string{
+		"junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv6, routes: [{dest: '::/0', next_hop: [{forward_router_address: '2001:db8::1'}]}]}]}]}":                                                               "takes IPv4 routes only",
+		"junipernetworks.junos.junos_static_routes: {config: [{vrf: blue, address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.1}]}]}]}]}":                                                     "sets vrf",
+		"junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, metric: 5, next_hop: [{forward_router_address: 192.0.2.1}]}]}]}]}":                                                     "sets metric",
+		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, blackhole_config: {type: blackhole}}]}]}]}":                                                                                         "sets blackhole_config",
+		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{forward_router_address: 192.0.2.1, admin_distance: 1}, {forward_router_address: 192.0.2.2, admin_distance: 5}]}]}]}]}": "different admin_distance",
+		"vyos.vyos.vyos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{interface: eth0}]}]}]}]}":                                                                                              "sets interface",
+		"arista.eos.eos_user: {aggregate: [{name: a}, {name: b}]}":                               "sets aggregate",
+		"arista.eos.eos_user: {name: ops, state: absent}":                                        "has state absent",
+		"junipernetworks.junos.junos_user: {name: alice}":                                        "has no role",
+		"vyos.vyos.vyos_user: {name: alice, encrypted_password: '$6$x'}":                         "sets encrypted_password",
+		"vyos.vyos.vyos_user: {name: alice, configured_password: x, update_password: on_create}": "update_password: on_create",
+	} {
+		res := convertString(t, netPlay+"    - "+task+"\n")
+		if res.Converted != 0 || !strings.Contains(reasons(res), reason) {
+			t.Errorf("%s: converted %d, review %q, want %q", task, res.Converted, reasons(res), reason)
+		}
+	}
+}

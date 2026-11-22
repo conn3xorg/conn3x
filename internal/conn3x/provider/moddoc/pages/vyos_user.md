@@ -24,3 +24,7 @@ step "alice" {
   }
 }
 ```
+
+## From Ansible
+
+`conn3x convert ansible` turns `vyos.vyos.vyos_user` tasks into `vyos_user` steps, carrying over `full_name`, and `public_keys` as `ssh_keys`, one `type key name` line each. A `configured_password` isn't copied: the step gets a TODO to set `password_wo` from a secret. `encrypted_password`, `update_password: on_create`, `aggregate`, `purge` and `state: absent` stay TODOs.

@@ -21,7 +21,9 @@ var networkModules = map[string]string{
 	"eos_hostname": "eos", "junos_hostname": "junos", "vyos_hostname": "vyos",
 	"eos_vlans": "eos", "junos_vlans": "junos",
 	"eos_interfaces": "eos", "junos_interfaces": "junos", "vyos_interfaces": "vyos",
-	"vyos_l3_interfaces": "vyos",
+	"vyos_l3_interfaces":  "vyos",
+	"junos_static_routes": "junos", "vyos_static_routes": "vyos",
+	"eos_user": "eos", "junos_user": "junos", "vyos_user": "vyos",
 }
 
 // networkConfig converts ios_config, eos_config, junos_config and
