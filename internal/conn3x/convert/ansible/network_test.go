@@ -41,6 +41,7 @@ func TestConvertNetworkConfig(t *testing.T) {
 // Anything that changes what's compared stays for review.
 func TestConvertNetworkConfigRefusals(t *testing.T) {
 	for task, reason := range map[string]string{
+		"cisco.ios.ios_config: {parents: ['interface Loopback1'], lines: ['description why?']}":              "refuses ?",
 		"cisco.ios.ios_config: {src: running.cfg}":                                                           "sets src",
 		"cisco.ios.ios_config: {lines: ['ntp server 192.0.2.10'], match: exact}":                             "sets match: exact",
 		"arista.eos.eos_config: {parents: ['interface Ethernet1'], lines: ['shutdown'], replace: block}":     "sets replace: block",

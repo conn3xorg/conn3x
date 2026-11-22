@@ -80,7 +80,7 @@ func TestVLANValidate(t *testing.T) {
 			t.Errorf("%+v: %v", ok, err)
 		}
 	}
-	for _, bad := range []VLAN{{ID: 0}, {ID: 1}, {ID: 1002}, {ID: 1005}, {ID: 4095}, {ID: 10, Name: "two words"}, {ID: 10, Name: strings.Repeat("x", 33)}} {
+	for _, bad := range []VLAN{{ID: 0}, {ID: 1}, {ID: 1002}, {ID: 1005}, {ID: 4095}, {ID: 10, Name: "two words"}, {ID: 10, Name: strings.Repeat("x", 33)}, {ID: 10, Name: "a?b"}, {ID: 10, Name: "us\u200bers"}, {ID: 10, Name: "\u202eusers"}, {ID: 10, Name: "café"}} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("%+v: no error", bad)
 		}

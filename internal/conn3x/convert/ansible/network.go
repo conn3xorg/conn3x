@@ -58,6 +58,9 @@ func networkConfig(platform string) func(*input) ([]step, string) {
 			if strings.Contains(l, "\x00") {
 				return nil, key + " is built from a loop, which a " + platform + "_config step takes as one list; write the lines out"
 			}
+			if platform == "ios" && strings.Contains(l, "?") {
+				return nil, fmt.Sprintf("has the line %q, and an ios_config step refuses ?, which the IOS command line takes as a request for help", l)
+			}
 			if (platform == "junos" || platform == "vyos") && !strings.HasPrefix(l, "set ") {
 				return nil, fmt.Sprintf("has the line %q, and a %s_config step takes only set lines; remove it by hand, or take the step out with on_remove", l, platform)
 			}

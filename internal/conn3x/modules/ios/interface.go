@@ -36,8 +36,11 @@ func (i Interface) Validate() error {
 		return fmt.Errorf("name %q is not an interface name as show running-config prints it, such as GigabitEthernet1/0/1, Port-channel10, Vlan20 or Loopback0", i.Name)
 	}
 	if i.Description != nil {
-		if *i.Description == "" || checkLine("description "+*i.Description) != nil {
-			return errors.New("description must be one line, without leading or trailing spaces")
+		if *i.Description == "" {
+			return errors.New("description must not be empty; leave it unset to leave the description alone")
+		}
+		if err := checkLine("description " + *i.Description); err != nil {
+			return fmt.Errorf("description: %w", err)
 		}
 	}
 	switch i.Mode {

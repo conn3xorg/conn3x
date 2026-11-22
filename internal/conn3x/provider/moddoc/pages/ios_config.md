@@ -78,7 +78,7 @@ step "mgmt_acl" {
 
 **Changes.** Changing `lines` or `match` updates the device in place. Changing `parents` is a different block, so it replaces the step.
 
-**What's refused.** A line that would leave configuration mode or act outside it, such as `end`, `exit`, `do`, `write`, `copy` or a short form of them, or one with a leading space, a newline or a control character. Conn3x enters configuration mode, confirms and saves on its own.
+**What's refused.** A line that would leave configuration mode or act outside it, such as `end`, `exit`, `do`, `write`, `copy` or a short form of them, or one with a leading space, a newline, a control character or a `?`, which the IOS command line takes as a request for help instead of typing it. Conn3x enters configuration mode, confirms and saves on its own.
 
 ## Removal
 

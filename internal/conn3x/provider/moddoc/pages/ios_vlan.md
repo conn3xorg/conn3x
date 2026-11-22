@@ -23,7 +23,7 @@ step "users" {
 
 **VTP transparent mode only.** In VTP server mode, a VLAN you create or delete goes to every switch in the VTP domain, and the VLANs live in `vlan.dat`, outside the running configuration the revert timer rolls back. A change made there can't be undone by the timer, and it doesn't stay on the switch you meant. In transparent mode, or `off` under VTP version 3, the switch keeps its VLANs to itself and in its running configuration. So before any change, `ios_vlan` looks for a `vtp mode transparent` or `vtp mode off` line, and refuses without one. A step earlier in the same circuit that sets the mode counts.
 
-**Names.** `name` is one word of up to 32 characters. Leave it unset for the switch's default, such as `VLAN0010`, and a name set by hand is taken away with `no name`.
+**Names.** `name` is one word of up to 32 printable ASCII characters, without `?`, which the IOS command line takes as a request for help. Leave it unset for the switch's default, such as `VLAN0010`, and a name set by hand is taken away with `no name`.
 
 **Reserved VLANs.** VLAN 1 and VLANs 1002 to 1005 belong to IOS. They can't be renamed or deleted, so `ios_vlan` refuses them.
 

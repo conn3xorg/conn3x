@@ -121,6 +121,7 @@ func TestInterfaceValidate(t *testing.T) {
 		"VLAN 4095":          {Name: "GigabitEthernet1", AccessVLAN: 4095},
 		"mtu":                {Name: "GigabitEthernet1", MTU: 9217},
 		"two-line desc":      {Name: "GigabitEthernet1", Description: ptr("a\nb")},
+		"? in a desc":        {Name: "GigabitEthernet1", Description: ptr("who owns this?")},
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("%s: no error", name)

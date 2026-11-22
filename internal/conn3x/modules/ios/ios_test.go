@@ -106,6 +106,8 @@ func TestValidate(t *testing.T) {
 		{Lines: []string{" description x"}},
 		{Lines: []string{"hostname a\nhostname b"}},
 		{Lines: []string{"! a comment"}},
+		{Lines: []string{"banner motd ^Who are you?^"}},
+		{Parents: []string{"interface Loopback1"}, Lines: []string{"description why?"}},
 		{Lines: []string{"x"}, Match: MatchBlock},
 	} {
 		if bad.Validate() == nil {

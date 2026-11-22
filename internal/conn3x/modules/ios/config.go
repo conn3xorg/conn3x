@@ -152,6 +152,9 @@ func checkLine(l string) error {
 		return errors.New("lines and parents must not be empty strings")
 	case strings.ContainsFunc(l, unicode.IsControl):
 		return fmt.Errorf("line %q holds a newline or another control character; write it on one line, with printable characters and spaces only", l)
+	case strings.Contains(l, "?"):
+		// The IOS CLI takes ? as a request for help rather than a character.
+		return fmt.Errorf("line %q holds a ?, which the IOS command line takes as a request for help instead of typing it; leave it out", l)
 	case t != l:
 		return fmt.Errorf("line %q has leading or trailing spaces; write it the way show running-config prints it, without the indent", l)
 	case strings.HasPrefix(t, "!"):

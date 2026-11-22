@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"unicode"
 )
 
 // VLAN is one VLAN and its name, as ios_vlan owns it. Name "" is IOS's
@@ -27,8 +26,10 @@ func (v VLAN) Validate() error {
 	if v.ID == 1 || (v.ID >= 1002 && v.ID <= 1005) {
 		return fmt.Errorf("VLAN %d is one IOS keeps for itself; it can't be renamed or deleted", v.ID)
 	}
-	if strings.ContainsFunc(v.Name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) || len(v.Name) > 32 {
-		return errors.New("name must be one word of at most 32 characters")
+	// ASCII only: IOS VLAN names are, and it keeps out look-alike,
+	// zero-width and bidi characters. ? would ask the CLI for help.
+	if strings.ContainsFunc(v.Name, func(r rune) bool { return r <= ' ' || r > '~' || r == '?' }) || len(v.Name) > 32 {
+		return errors.New("name must be one word of at most 32 printable ASCII characters, without ?")
 	}
 	return nil
 }
