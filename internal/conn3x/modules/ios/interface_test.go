@@ -4,6 +4,7 @@
 package ios
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -69,25 +70,6 @@ func TestInterfaceAllowedVLANsAcrossAddLines(t *testing.T) {
 	if got := i.Commands(interfaces); !slices.Equal(got, []string{"interface GigabitEthernet1/0/2", " switchport trunk allowed vlan 10,20-22,30-35,40-84,100,200"}) {
 		t.Errorf("one more VLAN: Commands = %q", got)
 	}
-	// Every odd VLAN is 9,710 bytes of list: it goes in as IOS prints it,
-	// a first part and add lines, and reads back as in sync.
-	var odd []int
-	for v := 1; v <= 4093; v += 2 {
-		odd = append(odd, v)
-	}
-	big := Interface{Name: "GigabitEthernet1/0/9", AllowedVLANs: odd}
-	cmds := big.Commands("")
-	if len(cmds) < 3 || cmds[1] == "" || !strings.HasPrefix(cmds[2], " switchport trunk allowed vlan add ") {
-		t.Fatalf("Commands = %q", cmds[:min(3, len(cmds))])
-	}
-	for _, c := range cmds[1:] {
-		if len(c) > len(" "+allowedPrefix+"add ")+trunkLine || strings.HasSuffix(c, ",") {
-			t.Errorf("line of %d bytes: %q", len(c), c)
-		}
-	}
-	if !big.InSync(strings.Join(cmds, "\n")) {
-		t.Error("the commands, read back, aren't in sync")
-	}
 	if got := (Interface{Name: "GigabitEthernet1/0/2", AllowedVLANs: []int{10}}).InSync("interface GigabitEthernet1/0/2\n switchport trunk allowed vlan none\n"); got {
 		t.Error("none read as VLAN 10")
 	}
@@ -143,5 +125,99 @@ func TestInterfaceValidate(t *testing.T) {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("%s: no error", name)
 		}
+	}
+}
+
+// trunkModel applies trunk commands one at a time, as IOS does, and fails
+// if any step leaves out a VLAN that both the old and the new list hold.
+func trunkModel(t *testing.T, name string, old map[int]bool, want []int, cmds []string) {
+	t.Helper()
+	keep := map[int]bool{}
+	for _, v := range want {
+		if old[v] {
+			keep[v] = true
+		}
+	}
+	have := maps.Clone(old)
+	for n, c := range cmds[1:] {
+		c = strings.TrimPrefix(c, " ")
+		if len(c) > len(allowedPrefix+"remove ")+trunkLine || strings.HasSuffix(c, ",") {
+			t.Errorf("%s: line of %d bytes: %q", name, len(c), c)
+		}
+		rest, _ := strings.CutPrefix(c, allowedPrefix)
+		verb, list, _ := strings.Cut(rest, " ")
+		if verb != "add" && verb != "remove" {
+			verb, list = "replace", rest
+		}
+		vlans, err := parseVLANs(list)
+		if err != nil {
+			t.Fatalf("%s: %q: %v", name, c, err)
+		}
+		if verb == "replace" {
+			clear(have)
+		}
+		for _, v := range vlans {
+			have[v] = verb != "remove"
+		}
+		for v := range keep {
+			if !have[v] {
+				t.Fatalf("%s: after line %d, %q, the trunk lacks VLAN %d, which both lists hold", name, n+1, c, v)
+			}
+		}
+	}
+	got := []int{}
+	for v, in := range have {
+		if in {
+			got = append(got, v)
+		}
+	}
+	if vlanRanges(got) != vlanRanges(want) {
+		t.Errorf("%s: ends with %s, want %s", name, vlanRanges(got), vlanRanges(want))
+	}
+}
+
+// A list too long for one command goes as adds, then removes, so a VLAN in
+// both lists never leaves the trunk; one that fits replaces it at once.
+func TestInterfaceTrunkChangeNeverDropsAKeptVLAN(t *testing.T) {
+	set := func(vlans []int) map[int]bool {
+		m := map[int]bool{}
+		for _, v := range vlans {
+			m[v] = true
+		}
+		return m
+	}
+	span := func(lo, hi int, skip func(int) bool) []int {
+		var v []int
+		for n := lo; n <= hi; n++ {
+			if !skip(n) {
+				v = append(v, n)
+			}
+		}
+		return v
+	}
+	all := span(1, 4094, func(int) bool { return false })
+	notSevens := span(1, 4000, func(n int) bool { return n%7 == 0 })
+	odd := span(1, 4093, func(n int) bool { return n%2 == 0 })
+	notFives := span(1, 4094, func(n int) bool { return n%5 == 0 })
+	for name, tc := range map[string]struct {
+		running string
+		old     []int
+		want    []int
+	}{
+		"from no list, which is every VLAN": {"", all, notSevens},
+		"from one long list to another":     {" switchport trunk allowed vlan " + vlanRanges(odd), odd, notFives},
+		"from a list it can't read":         {" switchport trunk allowed vlan all", all, notSevens},
+	} {
+		i := Interface{Name: "GigabitEthernet1/0/9", AllowedVLANs: tc.want}
+		running := "interface GigabitEthernet1/0/9\n" + tc.running + "\n"
+		cmds := i.Commands(running)
+		trunkModel(t, name, set(tc.old), tc.want, cmds)
+		if !i.InSync("interface GigabitEthernet1/0/9\n " + allowedPrefix + vlanRanges(tc.want) + "\n") {
+			t.Errorf("%s: the wanted list doesn't read as in sync", name)
+		}
+	}
+	short := Interface{Name: "GigabitEthernet1/0/2", AllowedVLANs: []int{10, 20}}
+	if got := short.Commands(interfaces); !slices.Equal(got, []string{"interface GigabitEthernet1/0/2", " switchport trunk allowed vlan 10,20"}) {
+		t.Errorf("a short list: %q", got)
 	}
 }

@@ -115,25 +115,11 @@ func (s setting) reset() string { return "no " + strings.TrimSpace(s.prefix) }
 // lines, so the list is read across them and compared as a set.
 func (s setting) got(lines []string) string {
 	if s.prefix == allowedPrefix {
-		var vlans []int
-		seen := false
-		for _, l := range lines {
-			list, ok := strings.CutPrefix(l, allowedPrefix)
-			if !ok {
-				continue
-			}
-			list = strings.TrimPrefix(list, "add ")
-			seen = true
-			if list == "none" {
-				continue
-			}
-			v, err := parseVLANs(list)
-			if err != nil {
-				return l // not a list Conn3x writes, so never in sync
-			}
-			vlans = append(vlans, v...)
-		}
-		if !seen {
+		vlans, seen, err := trunkVLANs(lines)
+		switch {
+		case err != nil:
+			return err.Error() // not a list Conn3x writes, so never in sync
+		case !seen:
 			return ""
 		}
 		return allowedPrefix + vlanRanges(vlans)
@@ -167,23 +153,87 @@ func vlanRanges(vlans []int) string {
 	return strings.Join(parts, ",")
 }
 
-// trunkLine is how much of a VLAN list one command carries. IOS's input
-// limit isn't known, so a list goes in the way IOS prints it back: the
-// first part replaces the old list, and add lines carry the rest.
+// trunkVLANs reads a trunk's list across its add lines. seen is false when
+// there's no list line, which IOS takes as every VLAN.
+func trunkVLANs(lines []string) (vlans []int, seen bool, err error) {
+	for _, l := range lines {
+		list, ok := strings.CutPrefix(l, allowedPrefix)
+		if !ok {
+			continue
+		}
+		list = strings.TrimPrefix(list, "add ")
+		seen = true
+		if list == "none" {
+			continue
+		}
+		v, err := parseVLANs(list)
+		if err != nil {
+			return nil, true, fmt.Errorf("unread %q", l)
+		}
+		vlans = append(vlans, v...)
+	}
+	return vlans, seen, nil
+}
+
+// trunkLine is how much of a VLAN list one command carries, since IOS's
+// input limit isn't known.
 const trunkLine = 200
 
-func trunkCommands(list string) []string {
+// trunkCommands bring a trunk's list to want. A list that fits one command
+// replaces the old one at once. A longer one can't, since IOS applies each
+// line as it comes and a replacing first line would drop every VLAN in the
+// later ones until they arrived, management included. So it goes as add
+// lines for what's missing, then remove lines for what's going: a VLAN in
+// both lists never leaves the trunk.
+func trunkCommands(lines []string, want []int) []string {
+	if list := vlanRanges(want); len(list) <= trunkLine {
+		return []string{allowedPrefix + list}
+	}
+	all := make([]int, 4094)
+	for n := range all {
+		all[n] = n + 1
+	}
+	current, seen, err := trunkVLANs(lines)
+	add := want
+	switch {
+	case err != nil:
+		// The list can't be read, so add all of want; adding a VLAN the
+		// trunk has does nothing.
+		current = all
+	case !seen:
+		current = all
+	default:
+		add = minus(want, current)
+	}
+	return append(chunked(allowedPrefix+"add ", add), chunked(allowedPrefix+"remove ", minus(current, want))...)
+}
+
+func minus(a, b []int) []int {
+	var in [4095]bool
+	for _, v := range b {
+		in[v] = true
+	}
+	var out []int
+	for _, v := range a {
+		if !in[v] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// chunked writes vlans as verb lines of at most trunkLine characters of
+// list each, cut at a comma.
+func chunked(verb string, vlans []int) []string {
 	var cmds []string
-	verb := allowedPrefix
+	list := vlanRanges(vlans)
 	for list != "" {
 		part := list
 		if len(part) > trunkLine {
-			cut := strings.LastIndex(part[:trunkLine], ",")
-			part = part[:cut]
+			part = part[:strings.LastIndex(part[:trunkLine], ",")]
 		}
 		cmds = append(cmds, verb+part)
 		list = strings.TrimPrefix(list[len(part):], ",")
-		verb = allowedPrefix + "add "
 	}
 	return cmds
 }
@@ -244,7 +294,7 @@ func (i Interface) Commands(config string) []string {
 		case s.want == "":
 			cmds = append(cmds, s.reset())
 		case s.prefix == allowedPrefix:
-			cmds = append(cmds, trunkCommands(strings.TrimPrefix(s.want, allowedPrefix))...)
+			cmds = append(cmds, trunkCommands(lines, i.AllowedVLANs)...)
 		default:
 			cmds = append(cmds, s.want)
 		}
