@@ -18,6 +18,7 @@ var networkModules = map[string]string{
 	"junos_config": "junos",
 	"vyos_config":  "vyos",
 
+	"eos_facts": "eos", "ios_facts": "ios", "junos_facts": "junos", "vyos_facts": "vyos",
 	"eos_hostname": "eos", "ios_hostname": "ios", "junos_hostname": "junos", "vyos_hostname": "vyos",
 	"eos_vlans": "eos", "ios_vlans": "ios", "junos_vlans": "junos",
 	"eos_interfaces": "eos", "ios_interfaces": "ios", "ios_l2_interfaces": "ios", "junos_interfaces": "junos", "vyos_interfaces": "vyos",

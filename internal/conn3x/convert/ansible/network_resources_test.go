@@ -242,3 +242,23 @@ func TestConvertNetworkL3Interfaces(t *testing.T) {
 		}
 	}
 }
+
+// A network facts module changes nothing, so it's left out, with a pointer
+// to the device data source; a later task reading the facts is flagged.
+func TestConvertNetworkFacts(t *testing.T) {
+	for mod, ds := range map[string]string{
+		"cisco.ios.ios_facts":               "conn3x_ios_device",
+		"arista.eos.eos_facts":              "conn3x_eos_device",
+		"junipernetworks.junos.junos_facts": "conn3x_junos_device",
+		"vyos.vyos.vyos_facts":              "conn3x_vyos_device",
+	} {
+		res := convertString(t, netPlay+"    - "+mod+": {gather_subset: min}\n")
+		if len(res.Review) != 0 || !strings.Contains(string(res.HCL), ds) {
+			t.Errorf("%s: review %+v\n%s", mod, res.Review, res.HCL)
+		}
+	}
+	res := convertString(t, netPlay+"    - cisco.ios.ios_facts: {gather_subset: min}\n    - cisco.ios.ios_config: {lines: ['ntp server 192.0.2.1']}\n      when: ansible_net_version is version('17.0', '>=')\n")
+	if !strings.Contains(string(res.HCL), "A later task in this play reads those facts") {
+		t.Errorf("a later ansible_net_version wasn't flagged:\n%s", res.HCL)
+	}
+}

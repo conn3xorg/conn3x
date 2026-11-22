@@ -463,6 +463,19 @@ func factsModule(name string, args ...string) func(*input) ([]step, string) {
 	}
 }
 
+// networkFacts drops a network facts module, as factsModule does, and
+// points at the device data source that reads the same facts at plan.
+func networkFacts(platform string) func(*input) ([]step, string) {
+	facts := factsModule(platform+"_facts", "gather_subset", "gather_network_resources", "available_network_resources")
+	return func(in *input) ([]step, string) {
+		steps, reason := facts(in)
+		if reason == "" && len(steps) == 1 && len(steps[0].notes) == 1 {
+			steps[0].notes[0] += " The conn3x_" + platform + "_device data source reads the device's model and version when you plan, for a precondition in its place."
+		}
+		return steps, reason
+	}
+}
+
 // pingModule drops ping, which only proves Ansible can reach the host: Conn3x
 // connects to every host before it does anything. data: crash fails the task
 // on purpose to stop the play, so that, and a data template that could turn
