@@ -242,8 +242,19 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 	circuit := hclwrite.NewBlock("circuit", []string{name})
 	cb := circuit.Body()
 	c.playNever = neverTagged(p["tags"])
+	// A play of network device tasks logs in over the device's CLI, which
+	// is what a Conn3x network step does, so network_cli needs no TODO.
+	platforms, network := networkPlatforms(p)
+	onlyEOS := network && len(platforms) == 1 && platforms["eos"]
 	for _, k := range sortedKeys(p) {
+		conn := scalar(p[k])
 		switch {
+		case k == "connection" && (conn == "network_cli" || conn == "ansible.netcommon.network_cli") && network:
+		case k == "connection" && (conn == "network_cli" || conn == "ansible.netcommon.network_cli"):
+			c.playIssue(cb, name, node, "sets connection: network_cli but mixes network tasks with others; a circuit's steps share one ssh block, so split the network tasks into a play of their own")
+		case k == "become_method" && conn == "enable" && onlyEOS:
+		case k == "become" && network && !onlyEOS && truthy(conn):
+			c.playIssue(cb, name, node, "sets become, which only an Arista EOS ssh block takes, as enable; log in as a user whose session starts privileged instead")
 		case playKeys[k] || (k == "become_method" && scalar(p[k]) == "sudo"):
 		case k == "<<":
 			c.playIssue(cb, name, node, "merges in keys with <<, which the converter doesn't read, so the steps below are written without whatever they set")
@@ -273,7 +284,7 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 	ssh := cb.AppendNewBlock("ssh", nil).Body()
 	c.login(cb, ssh, name, node, group)
 	ssh.SetAttributeRaw("private_key_file", rawTokens("var.ssh_private_key_file"))
-	become := truthy(scalar(p["become"]))
+	become := truthy(scalar(p["become"])) && (!network || onlyEOS)
 	if become {
 		ssh.SetAttributeValue("become", cty.True)
 	}

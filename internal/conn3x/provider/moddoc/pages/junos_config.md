@@ -105,3 +105,7 @@ Planning `lines_wo` needs the HMAC key, `CONN3X_HMAC_KEY` or `~/.config/conn3x/h
 - A deactivated statement doesn't count as there, so a step that owns one shows as changed until it's activated.
 - Don't put secrets in `lines`: state keeps them as written, so a plan warns about a statement that ends in one. Use `lines_wo`. In logs and errors, Conn3x hides what follows `encrypted-password`, `authentication-key`, `secret`, `community`, `pre-shared-key` and `key`.
 - Commits on Junos persist, so there's no separate save step.
+
+## From Ansible
+
+`conn3x convert ansible` turns `junipernetworks.junos.junos_config` tasks into `junos_config` steps: `lines` (or its alias `commands`) carry over. Ansible's defaults, `match: line` and `update: merge`, are what this step does, so they need nothing. `save` becomes a note, since a Junos commit persists by itself; `confirm` becomes one too, since every change goes in under a revert timer; and `backup` becomes a note to set `device_backup_dir` on the circuit. `src`, any other `update`, and a line that isn't a `set` statement, `delete` lines included, stay TODOs. A play whose tasks are all network modules takes `connection: network_cli` without a TODO.

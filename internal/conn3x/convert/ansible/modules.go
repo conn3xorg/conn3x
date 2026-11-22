@@ -700,6 +700,10 @@ var modules = map[string]func(*input) ([]step, string){
 	"dpkg_selections":         dpkgSelectionsModule,
 	"yum_versionlock":         versionlockModule,
 
+	"ios_config":            networkConfig("ios"),
+	"eos_config":            networkConfig("eos"),
+	"junos_config":          networkConfig("junos"),
+	"vyos_config":           networkConfig("vyos"),
 	"win_acl":               winACLModule,
 	"win_chocolatey":        winChocolateyModule,
 	"win_acl_inheritance":   winACLInheritanceModule,

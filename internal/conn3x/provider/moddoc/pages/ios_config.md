@@ -83,3 +83,7 @@ step "mgmt_acl" {
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the lines. `on_remove = "delete"` removes each line with its `no` form, and leaves the parent blocks.
+
+## From Ansible
+
+`conn3x convert ansible` turns `cisco.ios.ios_config` tasks into `ios_config` steps: `lines` (or its alias `commands`) and `parents` carry over. Ansible's defaults, `match: line` and `replace: line`, are what this step does, so they need nothing. `save_when` becomes a note, since Conn3x saves the running configuration after every change; `confirm` becomes one too, since every change goes in under a revert timer; and `backup` becomes a note to set `device_backup_dir` on the circuit. `src`, any other `match` or `replace`, and a line with `prompt` and `answer` stay TODOs. `become` stays a TODO too, since IOS refuses it: log in as a user whose session starts at `#`. A play whose tasks are all network modules takes `connection: network_cli` without a TODO.

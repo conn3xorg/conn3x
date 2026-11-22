@@ -37,6 +37,13 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
     - chocolatey.chocolatey.win_chocolatey: {name: git, version: 2.44.0, source: 'https://nuget.example.com/v3/index.json', pinned: true}
     - ansible.windows.win_lineinfile: {path: 'C:/app/app.ini', line: 'a=1', regexp: '^a=', insertbefore: '^b='}
     - ansible.builtin.get_url: {url: "https://example.com/a.tgz", dest: /opt/a.tgz, checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000", headers: {Accept: application/octet-stream}}
+- hosts: switches
+  connection: network_cli
+  tasks:
+    - cisco.ios.ios_config: {parents: ["interface GigabitEthernet1"], lines: ["description uplink"]}
+    - arista.eos.eos_config: {parents: ["interface Ethernet1"], lines: ["description uplink"]}
+    - junipernetworks.junos.junos_config: {lines: ["set system ntp server 192.0.2.10"]}
+    - vyos.vyos.vyos_config: {lines: ["set system ntp server 192.0.2.10"]}
 `
 	path := filepath.Join(t.TempDir(), "play.yml")
 	if err := os.WriteFile(path, []byte(playbook), 0o644); err != nil {
@@ -76,7 +83,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
 		}
 	}
 	walk(f.Body.(*hclsyntax.Body))
-	if checked < 14 {
+	if checked < 18 {
 		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
 	}
 }

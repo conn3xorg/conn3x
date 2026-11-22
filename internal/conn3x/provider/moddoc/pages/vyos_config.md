@@ -67,3 +67,7 @@ Planning `lines_wo` needs the HMAC key, `CONN3X_HMAC_KEY` or `~/.config/conn3x/h
 - Log in as a user in the `vyattacfg` group, such as VyOS's own `vyos` user, with a key. `become` and `agent` are refused in the circuit's `ssh` block.
 - Every line must be a `set` statement, so no line can leave configuration mode, commit early or run another command.
 - Don't put secrets in `lines`: state keeps them as written, so a plan warns about a statement that ends in one. Use `lines_wo`. In logs and errors, Conn3x hides what follows `plaintext-password`, `encrypted-password`, `pre-shared-secret`, `secret`, `community` and `key`.
+
+## From Ansible
+
+`conn3x convert ansible` turns `vyos.vyos.vyos_config` tasks into `vyos_config` steps: `lines` (or its alias `commands`) carry over. Ansible's default, `match: line`, is what this step does, so it needs nothing. `save` becomes a note, since Conn3x saves the configuration after every change; `confirm` becomes one too, since every change goes in under a revert timer; and `backup` becomes a note to set `device_backup_dir` on the circuit. `src`, `match: enforce` or `none`, and a line that isn't a `set` statement, `delete` lines included, stay TODOs. A play whose tasks are all network modules takes `connection: network_cli` without a TODO.

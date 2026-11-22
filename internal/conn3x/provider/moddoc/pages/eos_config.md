@@ -104,8 +104,12 @@ A line in `lines_wo` must hold a secret Conn3x knows, a key, secret or password;
   aaa authorization exec default local
   ```
 
-  Conn3x never types `enable`: on a switch with an enable password, `enable` would read the next line of the change as the password. Without the `aaa` line, every step fails and says so.
-- EOS has no shell and no sudo, so `become` and `agent` are refused in the circuit's `ssh` block. Log in with a key; password login isn't supported yet.
+  Without `become`, Conn3x never types `enable`: on a switch with an enable password, `enable` would read the next line of the change as the password. Without the `aaa` line, every step fails and says so.
+- EOS has no shell, so `agent` is refused in the circuit's `ssh` block. `become = true` means `enable` (since v0.21.0), with `become_password_file` for an enable password; see [Network devices](/network-devices). Log in with a key; password login isn't supported yet.
 - A line the switch rewrites, such as `int et1` for `interface Ethernet1`, never matches, and the step shows as changed on every plan. Copy lines from `show running-config`.
 - A line can't leave or end the config session, so `end`, `exit`, `configure`, `write`, `copy`, `commit`, `abort`, `reload`, `bash`, `enable`, `disable`, `do`, `run` and `rollback` are refused as a line's first word, and so is any short form of them, such as `conf t` or `wr`. EOS would take the short form for the command, and the lines after it would go live outside the session and its revert timer. Control characters are refused too.
 - Don't put secrets in `lines`: state keeps them as written, so a plan warns about a line that looks like one. Use `lines_wo`. In logs and errors Conn3x hides what follows `secret`, `password`, `key`, `key-string`, `community`, `auth` and `priv` on a line.
+
+## From Ansible
+
+`conn3x convert ansible` turns `arista.eos.eos_config` tasks into `eos_config` steps: `lines` (or its alias `commands`) and `parents` carry over. Ansible's defaults, `match: line` and `replace: line`, are what this step does, so they need nothing. `save_when` becomes a note, since Conn3x saves the running configuration after every change; `confirm` becomes one too, since every change goes in under a revert timer; and `backup` becomes a note to set `device_backup_dir` on the circuit. `src`, and any other `match` or `replace`, stay TODOs. `become: true` with `become_method: enable` becomes the `ssh` block's `become`. A play whose tasks are all network modules takes `connection: network_cli` without a TODO.
