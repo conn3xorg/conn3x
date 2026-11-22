@@ -705,6 +705,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"junos_config":          networkConfig("junos"),
 	"vyos_config":           networkConfig("vyos"),
 	"eos_hostname":          networkHostname("eos"),
+	"ios_hostname":          networkHostname("ios"),
 	"junos_hostname":        networkHostname("junos"),
 	"vyos_hostname":         networkHostname("vyos"),
 	"eos_vlans":             networkVLANs("eos"),

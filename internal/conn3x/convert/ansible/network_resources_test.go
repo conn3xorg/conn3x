@@ -13,6 +13,7 @@ func TestConvertNetworkResources(t *testing.T) {
 	for task, want := range map[string][]string{
 		"arista.eos.eos_hostname: {config: {hostname: leaf1}}":                                     {"eos_hostname {", `name = "leaf1"`},
 		"junipernetworks.junos.junos_hostname: {config: {hostname: sw1}, state: replaced}":         {"junos_hostname {", `name = "sw1"`},
+		"cisco.ios.ios_hostname: {config: {hostname: edge01}}":                                     {"ios_hostname {", `name = "edge01"`},
 		"vyos.vyos.vyos_hostname: {config: {hostname: r1}}":                                        {"vyos_hostname {"},
 		"arista.eos.eos_vlans: {config: [{vlan_id: 10, name: users}], state: merged}":              {"eos_vlan {", "vlan_id = 10", `name    = "users"`},
 		"junipernetworks.junos.junos_vlans: {config: [{name: users, vlan_id: 10}]}":                {"junos_vlan {", `name    = "users"`, "vlan_id = 10"},

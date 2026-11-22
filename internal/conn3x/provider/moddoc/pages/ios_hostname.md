@@ -21,3 +21,7 @@ step "name" {
 ## Removal
 
 When you delete an `ios_hostname` step, Conn3x stops tracking it. The device keeps its name; Conn3x never sends `no hostname`.
+
+## From Ansible
+
+`conn3x convert ansible` turns `cisco.ios.ios_hostname` tasks into `ios_hostname` steps, with `config.hostname` as `name`. `state: merged` and `replaced` convert; `deleted`, `overridden`, `gathered`, `rendered` and `parsed` stay TODOs.
