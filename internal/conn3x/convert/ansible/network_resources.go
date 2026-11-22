@@ -451,7 +451,9 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 			hopKey, hopKeys = "next_hops", []string{"forward_router_address", distKey}
 			routeKeys = []string{"dest", "next_hops"}
 		}
-		ipv6 := platform == "ios" || platform == "eos"
+		// IOS and EOS steps take IPv6 routes and go through netroute, and
+		// their modules' replaced clears the address family's other routes.
+		iosOrEOS := platform == "ios" || platform == "eos"
 		var steps []step
 		for _, item := range items {
 			if extra := unknownKeys(item, "address_families"); extra != "" {
@@ -459,8 +461,8 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 			}
 			for _, fam := range seq(item["address_families"]) {
 				f := mapping(fam)
-				if afi, _ := itemValue(in, f, "afi"); afi != "ipv4" && (!ipv6 || afi != "ipv6") {
-					if ipv6 {
+				if afi, _ := itemValue(in, f, "afi"); afi != "ipv4" && (!iosOrEOS || afi != "ipv6") {
+					if iosOrEOS {
 						return nil, fmt.Sprintf("sets afi %q, and an %s_static_route step takes ipv4 and ipv6", afi, platform)
 					}
 					return nil, fmt.Sprintf("sets afi %q, and a %s_static_route step takes IPv4 routes only", afi, platform)
@@ -512,7 +514,7 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 						}
 						attrs = append(attrs, attr{key: "distance", val: cty.NumberIntVal(int64(n))})
 					}
-					if ipv6 && !strings.Contains(dest+strings.Join(hops, ""), "${") {
+					if iosOrEOS && !strings.Contains(dest+strings.Join(hops, ""), "${") {
 						// The step's own check, so a route it would refuse stays
 						// here rather than failing validate.
 						r := netroute.StaticRoute{Prefix: dest, NextHops: hops, Distance: n}
@@ -527,7 +529,7 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 		if len(steps) == 0 {
 			return nil, "sets no routes"
 		}
-		if ipv6 {
+		if iosOrEOS {
 			// IOS's and EOS's replaced also removes the address family's
 			// other static routes, which one step per route leaves alone.
 			steps[0].notes = append(steps[0].notes, "TODO(convert): Ansible's replaced also removed the other static routes in this task's address families. These steps leave them, so add a step with on_remove = \"delete\" for any route that should still go.")
