@@ -16,7 +16,7 @@ step "name" {
 
 **Names.** IOS takes letters, digits and hyphens. A name starts with a letter, ends with a letter or digit, and runs to 63 characters at most, as Cisco's command reference sets out. An all-digit name is refused before anything reaches the device.
 
-**In sync.** The step compares the top-level `hostname` line without regard to case, since Cisco doesn't promise to keep it.
+**In sync.** The step compares the top-level `hostname` line without regard to case, since Cisco doesn't promise to keep it. So a change of case alone isn't applied: with `Edge01` on the device, `name = "EDGE01"` is already in sync, and nothing is sent.
 
 ## Removal
 
