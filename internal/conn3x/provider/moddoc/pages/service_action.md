@@ -2,36 +2,41 @@ Use `service_action` to restart or reload a systemd unit at a set point in a cir
 
 ## Example usage
 
-Restart MySQL when its configuration changes, before the steps that log in to it:
+Restart MySQL when its configuration changes, before the steps after it log in:
 
 ```hcl
-circuit "db" {
-  hosts = var.db_hosts
-
-  step "config" {
-    file {
-      path    = "/etc/mysql/conf.d/conn3x.cnf"
-      content = local.mysql_config
-    }
+step "config" {
+  file {
+    path    = "/etc/mysql/conf.d/conn3x.cnf"
+    content = "[mysqld]\nbind-address = 127.0.0.1\n"
   }
+}
 
-  step "restart" {
-    service_action {
-      name     = "mysql"
-      triggers = { config = conn3x_file.db__config[each.key].revision }
-    }
+step "restart" {
+  service_action {
+    name     = "mysql"
+    triggers = { config = conn3x_file.docs__config[each.key].revision }
   }
 }
 ```
 
+The address is the step's resource address, `conn3x_file.CIRCUIT__STEP`, here in a circuit named `docs`.
+
 Reload rather than restart:
 
 ```hcl
+step "site" {
+  file {
+    path    = "/etc/nginx/conf.d/site.conf"
+    content = "server { listen 8080; }\n"
+  }
+}
+
 step "reload_nginx" {
   service_action {
     name     = "nginx"
     action   = "reload"
-    triggers = { site = conn3x_file.web__site[each.key].revision }
+    triggers = { site = conn3x_file.docs__site[each.key].revision }
   }
 }
 ```
@@ -55,10 +60,17 @@ When you delete a `service_action` step, Conn3x stops tracking it. Nothing runs 
 A step such as
 
 ```hcl
+step "config" {
+  file {
+    path    = "/etc/mysql/conf.d/conn3x.cnf"
+    content = "[mysqld]\n"
+  }
+}
+
 step "restart" {
   command {
     command  = "systemctl daemon-reload && systemctl restart mysql"
-    triggers = { config = conn3x_file.db__config[each.key].revision }
+    triggers = { config = conn3x_file.docs__config[each.key].revision }
   }
 }
 ```
