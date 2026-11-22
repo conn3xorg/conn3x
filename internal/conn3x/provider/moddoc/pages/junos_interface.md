@@ -1,8 +1,10 @@
 **Experimental.** Network devices are new, and this module may change between releases. It's tested against vJunos-switch 26.2R1.7 on a lab VM, not yet in CI.
 
-Use `junos_interface` to own a few settings on one interface of a Juniper Junos device: its description, whether it's enabled, its MTU, and on an ELS switch port, whether it's an access port or a trunk and which VLANs it carries. Every setting you leave unset is left alone, and so is everything else under the interface, its addresses included. The change goes in like every Junos step does, once per device per circuit; see [`junos_config`](/modules/junos_config).
+Use `junos_interface` to own a few settings on one interface of a Juniper Junos device: its description, whether it's enabled, its MTU, and on an ELS switch port, whether it's an access port or a trunk and which VLANs it carries. On an irb, a loopback or a routed port it can also own the addresses of one unit. Every setting you leave unset is left alone, and so is everything else under the interface. The change goes in like every Junos step does, once per device per circuit; see [`junos_config`](/modules/junos_config).
 
 `enabled = false` is refused on a management interface (`fxp0`, `em0`, `me0`, `vme`), and on the interface whose address Conn3x connects to, since that would cut Conn3x off. `commit confirmed` would undo it, but only after five minutes.
+
+`addresses` is one unit's whole set, IPv4 under `family inet` and IPv6 under `family inet6`. `unit` picks the unit, 0 when unset, so `irb.10` is `name = "irb"` with `unit = 10`. Addresses are compared as addresses, so case and zero compression don't matter, and new ones are set before old ones are deleted. Taking off the address Conn3x connects to is refused. `addresses` can't be combined with `mode`, `access_vlan` or `allowed_vlans`, and those need unit 0. Addresses are tested against parsed configurations only so far, not yet on vJunos-switch.
 
 ## Example usage
 
@@ -29,6 +31,18 @@ step "uplink" {
     mode          = "trunk"
     allowed_vlans = ["users", "voice", "100-110"]
     mtu           = 9216
+  }
+}
+```
+
+A gateway on `irb.10`:
+
+```hcl
+step "gateway" {
+  junos_interface {
+    name      = "irb"
+    unit      = 10
+    addresses = ["192.0.2.1/24", "2001:db8:10::1/64"]
   }
 }
 ```

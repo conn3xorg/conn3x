@@ -247,14 +247,21 @@ func junosInterfaceFrom(v cty.Value) junos.Interface {
 	if l := v.GetAttr("allowed_vlans"); known(l) {
 		i.AllowedVLANs = append([]string{}, stringList(l)...)
 	}
+	if u := v.GetAttr("unit"); known(u) {
+		x, _ := u.AsBigFloat().Int64()
+		i.Unit = int(x)
+	}
+	if l := v.GetAttr("addresses"); known(l) {
+		i.Addresses = append([]string{}, stringList(l)...)
+	}
 	return i
 }
 
 var junosInterfaceKind = cliKind{
 	p:        junosPlatform,
 	name:     "interface",
-	keys:     []string{"name"},
-	settings: []string{"description", "enabled", "mode", "access_vlan", "allowed_vlans", "mtu"},
+	keys:     []string{"name", "unit"},
+	settings: []string{"description", "enabled", "mode", "access_vlan", "allowed_vlans", "mtu", "addresses"},
 	config:   func(v cty.Value) cliWant { return junosInterfaceFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return junosInterfaceFrom(v).RemoveCommands(running) },
 	guard:    func(v cty.Value, config, address string) error { return junosInterfaceFrom(v).Guard(config, address) },
@@ -273,6 +280,8 @@ func junosInterfaceSchema() providers.Schema {
 			"access_vlan":   {Type: cty.String, Optional: true, Description: "The VLAN of an access port, by name or ID, as vlan members."},
 			"allowed_vlans": {Type: cty.List(cty.String), Optional: true, Description: "The VLANs a trunk carries, by name, ID or range such as 20-22. Members not listed are deleted."},
 			"mtu":           {Type: cty.Number, Optional: true, Description: "MTU, 256 to 9216."},
+			"unit":          {Type: cty.Number, Optional: true, Description: "The logical unit addresses go on, 0 to 16385, as in irb.10. Unset is unit 0."},
+			"addresses":     {Type: cty.List(cty.String), Optional: true, Description: "The unit's whole set of addresses, each with its prefix length, such as 192.0.2.1/24 or 2001:db8::1/64, under family inet or inet6. Taking off the address Conn3x connects to is refused."},
 			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens when this resource is removed: \"forget\" (default) leaves the interface as it is, \"delete\" deletes the statements it owns. The interface itself stays."},
 			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the interface had these settings at the last refresh."},
 			"circuit":       eosCircuitAttr(),

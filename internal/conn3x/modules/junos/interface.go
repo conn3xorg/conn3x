@@ -6,6 +6,7 @@ package junos
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strconv"
@@ -23,6 +24,8 @@ type Interface struct {
 	AccessVLAN   string   // a VLAN name or ID; "" to leave
 	AllowedVLANs []string // nil to leave
 	MTU          int      // 0 to leave
+	Unit         int      // the logical unit addresses go on, as in irb.10
+	Addresses    []string // CIDR, the unit's whole set; nil to leave
 }
 
 var (
@@ -71,6 +74,21 @@ func (i Interface) Validate() error {
 	}
 	if i.MTU != 0 && (i.MTU < 256 || i.MTU > 9216) {
 		return fmt.Errorf("mtu must be between 256 and 9216, not %d", i.MTU)
+	}
+	if i.Unit < 0 || i.Unit > 16385 {
+		return fmt.Errorf("unit must be from 0 to 16385, not %d", i.Unit)
+	}
+	switched := i.Mode != "" || i.AccessVLAN != "" || i.AllowedVLANs != nil
+	if switched && i.Unit != 0 {
+		return errors.New("mode, access_vlan and allowed_vlans go on unit 0; leave unit unset")
+	}
+	if switched && i.Addresses != nil {
+		return errors.New("addresses are for a routed unit, an irb or a loopback, and mode, access_vlan and allowed_vlans for a switched port; set one or the other")
+	}
+	for _, a := range i.Addresses {
+		if p, err := netip.ParsePrefix(a); err != nil || p.Addr().Zone() != "" {
+			return fmt.Errorf("address %q must be an address with its prefix length, such as 192.0.2.1/24", a)
+		}
 	}
 	return nil
 }
@@ -168,7 +186,7 @@ func (i Interface) Commands(config string) []string {
 			}
 		}
 	}
-	return cmds
+	return append(cmds, i.addrCommands(lines)...)
 }
 
 // RemoveCommands take the settings i owns back to Junos's defaults, for
@@ -189,13 +207,16 @@ func (i Interface) RemoveCommands(config string) []string {
 			}
 		}
 	}
-	return cmds
+	return append(cmds, i.addrRemoveCommands(lines)...)
 }
 
 // Guard refuses disabling a management interface, or the interface that
 // holds address, the one Conn3x reaches the device at. commit confirmed
 // would undo either, but only after the full wait.
 func (i Interface) Guard(config, address string) error {
+	if err := i.addrGuard(SetLines(config), address); err != nil {
+		return err
+	}
 	if i.Enabled == nil || *i.Enabled {
 		return nil
 	}
