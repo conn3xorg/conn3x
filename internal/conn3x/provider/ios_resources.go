@@ -243,3 +243,45 @@ func iosVLANSchema() providers.Schema {
 func validateIOSVLAN(cfg cty.Value) tfdiags.Diagnostics {
 	return validateWith("vlan_id", func(v cty.Value) error { return iosVLANFrom(v).Validate() })(cfg)
 }
+
+func iosStaticRouteFrom(v cty.Value) ios.StaticRoute {
+	r := ios.StaticRoute{Prefix: stringOr(v.GetAttr("prefix"), "")}
+	if l := v.GetAttr("next_hops"); known(l) {
+		r.NextHops = stringList(l)
+	}
+	if d := v.GetAttr("distance"); known(d) {
+		n, _ := d.AsBigFloat().Int64()
+		r.Distance = int(n)
+	}
+	return r
+}
+
+var iosStaticRouteKind = cliKind{
+	p:        iosPlatform,
+	name:     "static_route",
+	keys:     []string{"prefix"},
+	settings: []string{"next_hops", "distance"},
+	config:   func(v cty.Value) cliWant { return iosStaticRouteFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return iosStaticRouteFrom(v).RemoveCommands(running) },
+}
+
+func iosStaticRouteSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: iosExperimental + "One static route on a Cisco IOS XE device, owned whole: its next hops are exactly these, and any other next hop for the prefix, such as Null0, is removed.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
+			"prefix":    {Type: cty.String, Required: true, Description: "The network, such as 10.20.0.0/16 or 2001:db8:20::/48. Conn3x writes an IPv4 one with a dotted mask, as IOS prints it."},
+			"next_hops": {Type: cty.List(cty.String), Required: true, Description: "The next hop addresses, of the prefix's family."},
+			"distance":  {Type: cty.Number, Optional: true, Description: "The administrative distance of each next hop, 1 to 255; lower wins. Unset is IOS's default, 1."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the device when this resource is removed: \"forget\" (default) leaves the route, \"delete\" removes every next hop of it."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the device had this route, and no other next hop for it, at the last refresh."},
+			"circuit":   eosCircuitAttr(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateIOSStaticRoute(cfg cty.Value) tfdiags.Diagnostics {
+	return validateWith("prefix", func(v cty.Value) error { return iosStaticRouteFrom(v).Validate() })(cfg)
+}
