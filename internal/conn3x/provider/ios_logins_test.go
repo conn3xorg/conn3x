@@ -114,3 +114,16 @@ func TestIOSInterfaceValidate(t *testing.T) {
 		t.Error(diags.Err())
 	}
 }
+
+func TestIOSVLANValidate(t *testing.T) {
+	r := resourceTypes["conn3x_ios_vlan"]
+	for _, id := range []int64{1, 1003, 4095} {
+		if diags := r.validate(objFor(r.schema(), map[string]cty.Value{"vlan_id": cty.NumberIntVal(id)})); !diags.HasErrors() {
+			t.Errorf("VLAN %d: no error", id)
+		}
+	}
+	ok := map[string]cty.Value{"vlan_id": cty.NumberIntVal(10), "name": cty.StringVal("users")}
+	if diags := r.validate(objFor(r.schema(), ok)); diags.HasErrors() {
+		t.Error(diags.Err())
+	}
+}

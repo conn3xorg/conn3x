@@ -207,3 +207,39 @@ func validateIOSInterface(cfg cty.Value) tfdiags.Diagnostics {
 	}
 	return diags
 }
+
+func iosVLANFrom(v cty.Value) ios.VLAN {
+	id, _ := v.GetAttr("vlan_id").AsBigFloat().Int64()
+	return ios.VLAN{ID: int(id), Name: stringOr(v.GetAttr("name"), "")}
+}
+
+var iosVLANKind = cliKind{
+	p:        iosPlatform,
+	name:     "vlan",
+	keys:     []string{"vlan_id"},
+	settings: []string{"name"},
+	deletes:  true,
+	config:   func(v cty.Value) cliWant { return iosVLANFrom(v) },
+	remove:   func(v cty.Value, running string) []string { return iosVLANFrom(v).RemoveCommands(running) },
+	guard:    func(_ cty.Value, config, _ string) error { return ios.VTPLocal(config) },
+}
+
+func iosVLANSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: iosExperimental + "A VLAN on a Cisco IOS XE switch, and its name. The switch must be in VTP transparent mode.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":        {Type: cty.String, Computed: true},
+			"revision":  revisionAttr(),
+			"vlan_id":   {Type: cty.Number, Required: true, Description: "VLAN ID, 2 to 4094, except 1002 to 1005, which IOS keeps for itself."},
+			"name":      {Type: cty.String, Optional: true, Description: "VLAN name: one word, up to 32 characters. Leave unset for the switch's default, such as VLAN0010; a name set by hand is then removed."},
+			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the switch when this resource is removed: \"delete\" (default) removes the VLAN, \"forget\" leaves it."},
+			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the VLAN was there, with this name, at the last refresh."},
+			"circuit":   eosCircuitAttr(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func validateIOSVLAN(cfg cty.Value) tfdiags.Diagnostics {
+	return validateWith("vlan_id", func(v cty.Value) error { return iosVLANFrom(v).Validate() })(cfg)
+}

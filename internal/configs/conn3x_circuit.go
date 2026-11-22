@@ -125,6 +125,7 @@ var circuitModules = map[string]string{
 	"ios_config":                   "conn3x_ios_config",
 	"ios_hostname":                 "conn3x_ios_hostname",
 	"ios_interface":                "conn3x_ios_interface",
+	"ios_vlan":                     "conn3x_ios_vlan",
 	"windows_acl":                  "conn3x_windows_acl",
 	"windows_ad_domain":            "conn3x_windows_ad_domain",
 	"windows_ad_domain_controller": "conn3x_windows_ad_domain_controller",
