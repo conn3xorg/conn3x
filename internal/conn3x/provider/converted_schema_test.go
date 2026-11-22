@@ -42,6 +42,8 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
   tasks:
     - cisco.ios.ios_config: {parents: ["interface GigabitEthernet1"], lines: ["description uplink"]}
     - cisco.ios.ios_hostname: {config: {hostname: edge01}}
+    - cisco.ios.ios_interfaces: {config: [{name: GigabitEthernet1/0/1, description: uplink, enabled: true}]}
+    - cisco.ios.ios_l2_interfaces: {config: [{name: GigabitEthernet1/0/2, mode: trunk, trunk: {allowed_vlans: ['10-12']}}]}
     - arista.eos.eos_config: {parents: ["interface Ethernet1"], lines: ["description uplink"]}
     - junipernetworks.junos.junos_config: {lines: ["set system ntp server 192.0.2.10"]}
     - vyos.vyos.vyos_config: {lines: ["set system ntp server 192.0.2.10"]}
@@ -98,7 +100,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
 		}
 	}
 	walk(f.Body.(*hclsyntax.Body))
-	if checked < 33 {
+	if checked < 35 {
 		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
 	}
 }

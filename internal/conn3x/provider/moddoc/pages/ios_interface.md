@@ -41,3 +41,12 @@ step "desk" {
 ## Removal
 
 By default, deleting an `ios_interface` step stops tracking it and leaves the port as it is. With `on_remove = "delete"`, Conn3x takes each setting it owns back to IOS's default with its `no` form, such as `no description` or `no switchport mode`. The interface itself stays. That includes `no shutdown`: a step with `enabled = false` and `on_remove = "delete"` brings the port back up when you delete it.
+
+## From Ansible
+
+`conn3x convert ansible` turns two cisco.ios modules into `ios_interface` steps, one per interface:
+
+- **`cisco.ios.ios_interfaces`:** `description`, `enabled` and `mtu` carry over. `speed`, `duplex`, `mode` (`layer2` or `layer3`) and the other settings stay TODOs.
+- **`cisco.ios.ios_l2_interfaces`:** `mode` (`access` or `trunk`), `access.vlan` and `trunk.allowed_vlans` carry over, with ranges such as `10-12` written out. `trunk.native_vlan`, `trunk.encapsulation`, a voice VLAN, the other modes and the other switchport settings stay TODOs.
+
+For both modules, only `state: merged` converts. An interface's name must be the full one `show running-config` prints. Ansible expands a short name such as `Gi1/0/1` for you, but the converter leaves that task for review. A setting the step would refuse, such as a switchport on a `Vlan` interface, stays for review too, with the step's own message.
