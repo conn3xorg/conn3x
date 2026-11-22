@@ -12,6 +12,11 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
+
+	"github.com/opentofu/opentofu/internal/conn3x/modules/eos"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/ios"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/junos"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/vyos"
 )
 
 // Ansible's network resource modules (eos_vlans, junos_interfaces, ...)
@@ -119,8 +124,23 @@ func networkHostname(platform string) func(*input) ([]step, string) {
 		if !ok || name == "" {
 			return nil, "has no hostname in config"
 		}
+		// A name from a variable is checked when the circuit is validated.
+		if !strings.Contains(name, "${") {
+			if err := hostnameRules[platform](name); err != nil {
+				return nil, "sets a hostname the " + platform + "_hostname step refuses: " + err.Error()
+			}
+		}
 		return one(platform+"_hostname", []attr{s("name", name)})
 	}
+}
+
+// hostnameRules are each platform's hostname step's own check, so a name
+// the step would refuse stays for review instead of failing validate.
+var hostnameRules = map[string]func(string) error{
+	"eos":   eos.ValidateHostname,
+	"ios":   ios.ValidateHostname,
+	"junos": junos.ValidateHostname,
+	"vyos":  vyos.ValidateHostname,
 }
 
 // networkVLANs converts eos_vlans and junos_vlans, a step per VLAN.

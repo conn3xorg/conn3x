@@ -43,6 +43,18 @@ func TestConvertNetworkResources(t *testing.T) {
 	}
 }
 
+// A play variable is filled in before the name is checked, so a bad value
+// is caught too, and a good one converts.
+func TestConvertNetworkHostnameFromAVariable(t *testing.T) {
+	for value, converted := range map[string]int{"leaf1": 1, "leaf_1": 0} {
+		play := strings.Replace(netPlay, "  tasks:\n", "  vars: {name: "+value+"}\n  tasks:\n", 1)
+		res := convertString(t, play+"    - arista.eos.eos_hostname: {config: {hostname: '{{ name }}'}}\n")
+		if res.Converted != converted {
+			t.Errorf("%s: converted %d, review %q:\n%s", value, res.Converted, reasons(res), res.HCL)
+		}
+	}
+}
+
 func TestConvertNetworkResourceLists(t *testing.T) {
 	res := convertString(t, netPlay+"    - name: vlans\n      arista.eos.eos_vlans: {config: [{vlan_id: 10}, {vlan_id: 20}, {vlan_id: 30}]}\n")
 	hcl := string(res.HCL)
@@ -58,6 +70,11 @@ func TestConvertNetworkResourceRefusals(t *testing.T) {
 		"arista.eos.eos_vlans: {config: [{vlan_id: 10}], state: overridden}":                              "sets state: overridden",
 		"arista.eos.eos_vlans: {state: gathered}":                                                         "sets state: gathered",
 		"arista.eos.eos_hostname: {config: {hostname: leaf1}, state: deleted}":                            "sets state: deleted",
+		"cisco.ios.ios_hostname: {config: {hostname: edge.lab}}":                                          "the ios_hostname step refuses",
+		"cisco.ios.ios_hostname: {config: {hostname: '123'}}":                                             "the ios_hostname step refuses",
+		"arista.eos.eos_hostname: {config: {hostname: leaf_1}}":                                           "the eos_hostname step refuses",
+		"junipernetworks.junos.junos_hostname: {config: {hostname: sw_1}}":                                "the junos_hostname step refuses",
+		"vyos.vyos.vyos_hostname: {config: {hostname: r1.lab}}":                                           "the vyos_hostname step refuses",
 		"arista.eos.eos_vlans: {config: [{vlan_id: 10, state: suspend}]}":                                 "state to suspend",
 		"junipernetworks.junos.junos_vlans: {config: [{name: users, vlan_id: 10, l3_interface: irb.10}]}": "sets l3_interface",
 		"junipernetworks.junos.junos_vlans: {config: [{name: users}]}":                                    "without a vlan_id",

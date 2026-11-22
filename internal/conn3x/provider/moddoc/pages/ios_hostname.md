@@ -24,4 +24,4 @@ When you delete an `ios_hostname` step, Conn3x stops tracking it. The device kee
 
 ## From Ansible
 
-`conn3x convert ansible` turns `cisco.ios.ios_hostname` tasks into `ios_hostname` steps, with `config.hostname` as `name`. `state: merged` and `replaced` convert; `deleted`, `overridden`, `gathered`, `rendered` and `parsed` stay TODOs.
+`conn3x convert ansible` turns `cisco.ios.ios_hostname` tasks into `ios_hostname` steps, with `config.hostname` as `name`. `state: merged` and `replaced` convert; `deleted`, `overridden`, `gathered`, `rendered` and `parsed` stay TODOs. So does a name the step would refuse, with the step's own message, so it shows in the convert output instead of failing `conn3x validate` later.
