@@ -40,6 +40,8 @@ func downloadSchema() providers.Schema {
 			"revision":   revisionAttr(),
 			"url":        {Type: cty.String, Required: true, Description: "http or https URL, without a user name or password."},
 			"netrc_file": {Type: cty.String, Optional: true, Description: "Absolute path of a netrc file on the host with the login for the URL's server. Needs curl on the host."},
+			"headers":    {Type: cty.Map(cty.String), Optional: true, Description: "Request headers, such as { Accept = \"application/octet-stream\" }. Sent only to the URL's origin: a redirect to another host goes on without them. Needs curl on the host."},
+			"headers_wo": {Type: cty.Map(cty.String), Optional: true, WriteOnly: true, Sensitive: true, Description: "Headers kept out of plan and state, such as { Authorization = \"Bearer ...\" } or { PRIVATE-TOKEN = ... }. They reach curl on stdin, never its command line, and only the URL's origin gets them. A change to them alone downloads nothing: sha256 decides whether the file is right. Needs curl on the host."},
 			"dest":       {Type: cty.String, Required: true, Description: "Absolute path to save it to."},
 			"sha256":     {Type: cty.String, Required: true, Description: "Expected SHA-256, in lowercase hex."},
 			"mode":       {Type: cty.String, Optional: true, Description: "Octal permissions. Defaults to \"0644\"."},
@@ -53,13 +55,32 @@ func downloadSchema() providers.Schema {
 }
 
 func downloadFrom(v cty.Value) fetch.Download {
-	return fetch.Download{URL: v.GetAttr("url").AsString(), Dest: v.GetAttr("dest").AsString(), SHA256: v.GetAttr("sha256").AsString(),
+	d := fetch.Download{URL: v.GetAttr("url").AsString(), Dest: v.GetAttr("dest").AsString(), SHA256: v.GetAttr("sha256").AsString(),
 		Mode: stringOr(v.GetAttr("mode"), ""), Owner: stringOr(v.GetAttr("owner"), ""), Group: stringOr(v.GetAttr("group"), ""),
 		NetrcFile: stringOr(v.GetAttr("netrc_file"), "")}
+	for _, name := range []string{"headers", "headers_wo"} {
+		if h := v.GetAttr(name); known(h) {
+			if d.Headers == nil {
+				d.Headers = map[string]string{}
+			}
+			for k, e := range h.AsValueMap() {
+				d.Headers[k] = stringOr(e, "")
+			}
+		}
+	}
+	return d
 }
 
 func planDownload(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "download", []string{"dest"}, []string{"url", "sha256", "mode", "owner", "group"})
+	resp := planSynced(req, "download", []string{"dest"}, []string{"url", "sha256", "mode", "owner", "group"})
+	// Write-only values never reach plan or state; apply reads them from
+	// the configuration.
+	if !resp.PlannedState.IsNull() {
+		vals := resp.PlannedState.AsValueMap()
+		vals["headers_wo"] = cty.NullVal(cty.Map(cty.String))
+		resp.PlannedState = cty.ObjectVal(vals)
+	}
+	return resp
 }
 
 func readDownload(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -77,6 +98,14 @@ func applyDownload(ctx context.Context, req providers.ApplyResourceChangeRequest
 	return applyPathResource(ctx, req,
 		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
 			d := downloadFrom(planned)
+			if !req.Config.IsNull() {
+				for k, v := range downloadFrom(req.Config).Headers {
+					if d.Headers == nil {
+						d.Headers = map[string]string{}
+					}
+					d.Headers[k] = v
+				}
+			}
 			if err := fetch.ApplyDownload(ctx, h, d); err != nil {
 				return cty.NilVal, fmt.Errorf("download %s: %w", d.Dest, err)
 			}

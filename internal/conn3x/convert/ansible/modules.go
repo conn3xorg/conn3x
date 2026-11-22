@@ -1933,8 +1933,39 @@ func getURLModule(in *input) ([]step, string) {
 	if m, ok := in.mode("mode"); ok {
 		attrs = append(attrs, m)
 	}
-	return one("download", in.owners(attrs))
+	var notes []string
+	if n, ok := in.args["headers"]; ok {
+		in.used["headers"] = true
+		if n.Kind != yaml.MappingNode {
+			return nil, "sets headers as an expression, which the converter can't split into a download step's headers"
+		}
+		plain := map[string]cty.Value{}
+		var secret []string
+		for _, k := range sortedKeys(mapping(n)) {
+			// A credential stays out of the circuit, templated or not: the
+			// step takes it in headers_wo, from a secret.
+			if credentialHeader.MatchString(k) {
+				secret = append(secret, k)
+				continue
+			}
+			plain[k] = cty.StringVal(in.render("headers", scalar(mapping(n)[k])))
+		}
+		if len(plain) > 0 {
+			attrs = append(attrs, attr{key: "headers", val: cty.MapVal(plain)})
+		}
+		if len(secret) > 0 {
+			notes = append(notes, "TODO(convert): Set headers_wo = { "+strings.Join(secret, ", ")+" = ... } from an ephemeral variable holding the secret. It isn't copied here.")
+		}
+	}
+	if in.has("unredirected_headers") {
+		in.ignore("unredirected_headers")
+		notes = append(notes, "unredirected_headers dropped: a download step never sends its headers to another origin after a redirect.")
+	}
+	return one("download", in.owners(attrs), notes...)
 }
+
+// credentialHeader is a header whose value is a credential.
+var credentialHeader = regexp.MustCompile(`(?i)^(authorization|proxy-authorization|cookie)$|token|secret|password|api[-_]?key|(^|-)key$`)
 
 func unarchiveModule(in *input) ([]step, string) {
 	if !in.bool("remote_src", false) {

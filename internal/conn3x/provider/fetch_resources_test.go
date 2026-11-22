@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
@@ -66,6 +67,29 @@ func TestGitDepthValidates(t *testing.T) {
 		if diags := r.validate(cfg); diags.HasErrors() == ok {
 			t.Errorf("depth %v: errors %v, want ok %v", depth, diags.Err(), ok)
 		}
+	}
+}
+
+// headers_wo stays out of the plan, and both header maps reach the
+// download, checked before anything runs (#1181).
+func TestDownloadHeaders(t *testing.T) {
+	r := resourceTypes["conn3x_download"]
+	attrs := map[string]cty.Value{
+		"dest": cty.StringVal("/opt/a"), "url": cty.StringVal("https://example.com/a"), "sha256": cty.StringVal(sum64),
+		"headers":    cty.MapVal(map[string]cty.Value{"Accept": cty.StringVal("application/octet-stream")}),
+		"headers_wo": cty.MapVal(map[string]cty.Value{"PRIVATE-TOKEN": cty.StringVal("s3cret")}),
+	}
+	cfg := objFor(r.schema(), attrs)
+	planned := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(cfg.Type()), ProposedNewState: cfg, Config: cfg}).PlannedState
+	if !planned.GetAttr("headers_wo").IsNull() {
+		t.Fatal("headers_wo is in the plan")
+	}
+	if got := downloadFrom(cfg).Headers; got["Accept"] != "application/octet-stream" || got["PRIVATE-TOKEN"] != "s3cret" {
+		t.Fatalf("headers: %v", got)
+	}
+	attrs["headers_wo"] = cty.MapVal(map[string]cty.Value{"X-Token": cty.StringVal("a\nInjected: 1")})
+	if diags := r.validate(objFor(r.schema(), attrs)); !diags.HasErrors() || strings.Contains(diags.Err().Error(), "Injected") {
+		t.Fatalf("a header with a line break: %v", diags.Err())
 	}
 }
 

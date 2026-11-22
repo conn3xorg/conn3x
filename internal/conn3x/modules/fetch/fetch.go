@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
@@ -60,7 +61,13 @@ type Download struct {
 	// NetrcFile is a netrc file on the host with the login for the URL's
 	// server, for a download that needs one.
 	NetrcFile string
+	// Headers are sent with the request, such as Authorization. They reach
+	// curl on stdin, never its command line, and only the URL's origin gets
+	// them: a redirect to another host goes on without them.
+	Headers map[string]string
 }
+
+var headerName = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 // Validate checks a Download before anything reaches the host.
 func (d Download) Validate() error {
@@ -76,11 +83,54 @@ func (d Download) Validate() error {
 	if d.Mode != "" && !modeOctal.MatchString(d.Mode) {
 		return fmt.Errorf("mode %q must be four octal digits, like \"0644\"", d.Mode)
 	}
+	for k, v := range d.Headers {
+		if !headerName.MatchString(k) {
+			return fmt.Errorf("header name %q isn't a valid HTTP header name", k)
+		}
+		if strings.ContainsAny(v, "\r\n\x00") {
+			return fmt.Errorf("header %s has a line break or NUL in its value", k)
+		}
+	}
 	if d.NetrcFile != "" {
 		return absolute("netrc_file", d.NetrcFile)
 	}
 	return nil
 }
+
+// headerConfig is the headers as a curl config file, one header line each
+// in curl's quoting, sorted so the text is the same every time.
+func (d Download) headerConfig() string {
+	keys := make([]string, 0, len(d.Headers))
+	for k := range d.Headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		v := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(d.Headers[k])
+		fmt.Fprintf(&b, "header = \"%s: %s\"\n", k, v)
+	}
+	return b.String()
+}
+
+// fetchWithHeaders follows redirects itself, instead of curl -L, so the
+// headers stop at the first hop to another origin: curl alone drops only
+// Authorization and Cookie there, and would pass on a PRIVATE-TOKEN or any
+// other header. The headers come from stdin, read once into cfg, and reach
+// each curl through printf, a builtin, so they're never on a command line.
+const fetchWithHeaders = `cfg=$(cat)
+origin() { printf '%%s\n' "$1" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://[^/?#]*).*#\1#' | tr 'A-Z' 'a-z'; }
+home=$(origin "$url"); at=$url; hops=0; send=1
+while :; do
+  if [ "$send" = 1 ]; then next=$(printf '%%s' "$cfg" | curl -q -fsS --retry 3%[1]s --config - -o "$tmp" -w '%%{redirect_url}' -- "$at")
+  else next=$(curl -q -fsS --retry 3%[1]s -o "$tmp" -w '%%{redirect_url}' -- "$at"); fi
+  [ -z "$next" ] && break
+  hops=$((hops+1))
+  if [ "$hops" -gt 10 ]; then echo "more than 10 redirects from $url" >&2; exit 1; fi
+  case "$at" in https://*) case "$next" in https://*) ;; *) echo "$at redirects to $next, which isn't https" >&2; exit 1;; esac;; esac
+  [ "$(origin "$next")" = "$home" ] || send=0
+  at=$next
+done`
 
 // ReadDownload returns the SHA-256 of the file at dest, or "" if it is missing.
 func ReadDownload(ctx context.Context, r modules.Runner, dest string) (string, error) {
@@ -106,10 +156,16 @@ func ApplyDownload(ctx context.Context, r modules.Runner, d Download) error {
 	// -q and --no-config keep curl and wget from reading the settings of
 	// whoever the script runs as. BusyBox wget has neither option nor file.
 	routes := []modules.Route{modules.Parent(d.Dest)}
-	netrc := ""
+	netrc, needsCurl := "", ""
 	if d.NetrcFile != "" {
 		netrc = " --netrc-file " + ssh.Quote(d.NetrcFile)
 		routes = append(routes, modules.Follow(d.NetrcFile))
+		needsCurl = "netrc_file"
+	}
+	get := `curl -q -fsSL --retry 3` + netrc + ` -o "$tmp" -- "$url"`
+	if len(d.Headers) > 0 {
+		get = fmt.Sprintf(fetchWithHeaders, netrc)
+		needsCurl = "headers"
 	}
 	script := fmt.Sprintf(`set -e
 p=%[1]s
@@ -118,8 +174,8 @@ want=%[3]s
 mkdir -p -- "$(dirname -- "$p")"
 tmp=$(mktemp "$(dirname -- "$p")/.conn3x.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
-if command -v curl >/dev/null 2>&1; then curl -q -fsSL --retry 3%[6]s -o "$tmp" -- "$url"
-elif [ -n %[7]s ]; then echo "netrc_file needs curl on the host; add a package step for it first" >&2; exit 1
+if command -v curl >/dev/null 2>&1; then %[8]s
+elif [ -n %[7]s ]; then echo "netrc_file and headers need curl on the host; add a package step for it first" >&2; exit 1
 elif command -v wget >/dev/null 2>&1; then
   noconfig=; if wget --no-config --version >/dev/null 2>&1; then noconfig=--no-config; fi
   wget $noconfig -q -O "$tmp" -- "$url"
@@ -132,8 +188,12 @@ chmod %[4]s "$tmp"
 trap - EXIT
 `+file.SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
-		ssh.Quote(d.Dest), ssh.Quote(d.URL), d.SHA256, mode, file.Ownership(d.Owner, d.Group), netrc, ssh.Quote(d.NetrcFile))
-	res, err := r.Run(ctx, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group, Path: d.Dest}, routes...), nil)
+		ssh.Quote(d.Dest), ssh.Quote(d.URL), d.SHA256, mode, file.Ownership(d.Owner, d.Group), netrc, ssh.Quote(needsCurl), get)
+	var stdin []byte
+	if len(d.Headers) > 0 {
+		stdin = []byte(d.headerConfig())
+	}
+	res, err := r.Run(ctx, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group, Path: d.Dest}, routes...), stdin)
 	return check(res, err)
 }
 

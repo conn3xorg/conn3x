@@ -272,3 +272,71 @@ func TestGitKeyFile(t *testing.T) {
 		t.Error("a git step without key_file sets GIT_SSH_COMMAND")
 	}
 }
+
+// Headers reach the URL's origin and a redirect on it, but never another
+// origin, whatever their names, and never the command line (#1181).
+func TestDownloadSendsHeadersOnlyToItsOrigin(t *testing.T) {
+	for _, tool := range []string{"curl", "sha256sum"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip("needs " + tool)
+		}
+	}
+	var elsewhere http.Header
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere = r.Header.Clone()
+		_, _ = w.Write([]byte("test"))
+	}))
+	defer other.Close()
+	home := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Private-Token") != `s3cret "q" \ ok` || r.Header.Get("Authorization") != "Bearer t0ken" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/same":
+			http.Redirect(w, r, "/a", http.StatusFound)
+		case "/away":
+			http.Redirect(w, r, other.URL+"/a", http.StatusFound)
+		default:
+			_, _ = w.Write([]byte("test"))
+		}
+	}))
+	defer home.Close()
+	dir := t.TempDir()
+	headers := map[string]string{"PRIVATE-TOKEN": `s3cret "q" \ ok`, "Authorization": "Bearer t0ken"}
+
+	d := Download{URL: home.URL + "/a", Dest: filepath.Join(dir, "a"), SHA256: sum}
+	if err := ApplyDownload(context.Background(), moduletest.Local{}, d); err == nil {
+		t.Fatal("downloaded without the headers")
+	}
+	for _, path := range []string{"/a", "/same"} {
+		d := Download{URL: home.URL + path, Dest: filepath.Join(dir, "x"+path[1:]), SHA256: sum, Headers: headers}
+		if err := ApplyDownload(context.Background(), moduletest.Local{}, d); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if got, _ := os.ReadFile(d.Dest); string(got) != "test" {
+			t.Fatalf("%s: dest holds %q", path, got)
+		}
+	}
+	d = Download{URL: home.URL + "/away", Dest: filepath.Join(dir, "away"), SHA256: sum, Headers: headers}
+	if err := ApplyDownload(context.Background(), moduletest.Local{}, d); err != nil {
+		t.Fatal(err)
+	}
+	if elsewhere == nil || elsewhere.Get("Private-Token") != "" || elsewhere.Get("Authorization") != "" {
+		t.Fatalf("the other origin got %v", elsewhere)
+	}
+
+	r := &scriptRunner{}
+	_ = ApplyDownload(context.Background(), r, Download{URL: "https://example.com/a", Dest: "/opt/a", SHA256: sum, Headers: headers})
+	if strings.Contains(r.script, "s3cret") || strings.Contains(r.script, "t0ken") {
+		t.Fatalf("a header value is in the script:\n%s", r.script)
+	}
+}
+
+func TestDownloadHeaderValidation(t *testing.T) {
+	for _, h := range []map[string]string{{"Bad Name": "x"}, {"X-A": "a\r\nInjected: 1"}, {"X:A": "x"}} {
+		if err := (Download{URL: "https://example.com/a", Dest: "/opt/a", SHA256: sum, Headers: h}).Validate(); err == nil {
+			t.Errorf("accepted %q", h)
+		}
+	}
+}
