@@ -32,3 +32,7 @@ step "uplink" {
   }
 }
 ```
+
+## From Ansible
+
+`conn3x convert ansible` turns `junipernetworks.junos.junos_interfaces` tasks into a `junos_interface` step per interface in `config`, with `name`, `description`, `mtu` and `enabled`. Ansible defaults `enabled` to true, so a task without it converts with `enabled = true`. Only `state: merged`, the default, converts, and any other setting stays a TODO.

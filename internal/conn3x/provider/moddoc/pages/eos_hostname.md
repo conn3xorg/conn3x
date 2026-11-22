@@ -11,3 +11,7 @@ step "name" {
   }
 }
 ```
+
+## From Ansible
+
+`conn3x convert ansible` turns `arista.eos.eos_hostname` tasks into `eos_hostname` steps, with `config.hostname` as `name`. `state: merged` and `replaced` convert; `deleted`, `overridden`, `gathered`, `rendered` and `parsed` stay TODOs.

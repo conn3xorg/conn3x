@@ -54,3 +54,7 @@ Shutting down the interface whose address Conn3x connects to is refused before a
 ## Removal
 
 With `on_remove = "forget"` (the default), removing the step leaves the interface as it is. With `"delete"`, the settings the step owns go back to EOS's defaults; the interface itself stays.
+
+## From Ansible
+
+`conn3x convert ansible` turns `arista.eos.eos_interfaces` tasks into an `eos_interface` step per interface in `config`, with `name`, `description`, `mtu` and `enabled`. Only `state: merged`, the default, converts. Any other setting, such as `speed` or `mode`, stays a TODO, since Ansible's `mode` is layer 2 or 3, not this step's access or trunk.

@@ -16,3 +16,7 @@ step "lan" {
   }
 }
 ```
+
+## From Ansible
+
+`conn3x convert ansible` turns `vyos.vyos.vyos_interfaces` tasks into a `vyos_interface` step per interface in `config`, with `name`, `description`, `mtu` and `enabled` (or its alias `enable`). Ansible defaults `enabled` to true, so a task without it converts with `enabled = true`. `vyos.vyos.vyos_l3_interfaces` becomes `addresses`, its `ipv4` and `ipv6` addresses in one list; `vifs` stay a TODO. Only `state: merged`, the default, converts.

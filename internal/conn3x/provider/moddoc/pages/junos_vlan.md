@@ -25,3 +25,7 @@ step "vlans" {
   }
 }
 ```
+
+## From Ansible
+
+`conn3x convert ansible` turns `junipernetworks.junos.junos_vlans` tasks into a `junos_vlan` step per VLAN in `config`, with `name` and `vlan_id`, both needed. Only `state: merged`, the default, converts. A VLAN with `l3_interface` stays a TODO.
