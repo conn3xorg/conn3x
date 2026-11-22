@@ -245,7 +245,8 @@ func validateIOSVLAN(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func iosStaticRouteFrom(v cty.Value) ios.StaticRoute {
-	r := ios.StaticRoute{Prefix: stringOr(v.GetAttr("prefix"), "")}
+	var r ios.StaticRoute
+	r.Prefix = stringOr(v.GetAttr("prefix"), "")
 	if l := v.GetAttr("next_hops"); known(l) {
 		r.NextHops = stringList(l)
 	}

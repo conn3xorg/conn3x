@@ -37,6 +37,10 @@ step "backup" {
 
 **Options on a line.** Options after the distance, such as `name` or `tag`, are left on the line. They don't make it out of sync.
 
+**Matching.** Lines are compared on what they mean, not how they're written. IOS prints IPv6 addresses in upper case, as in `ipv6 route 2001:DB8:20::/48 2001:DB8::1`, and that matches `2001:db8:20::/48`.
+
+**The management route.** Nothing stops a change to the route Conn3x itself reaches the device by, usually `0.0.0.0/0` on a management network. Adding before removing makes losing it unlikely, and if it happens, the revert timer brings the old route back. That takes the full wait, though, so test a change to that route on a lab device first.
+
 ## Removal
 
 By default, deleting an `ios_static_route` step stops tracking the route and leaves it on the device. With `on_remove = "delete"`, Conn3x removes every next hop of the route.
