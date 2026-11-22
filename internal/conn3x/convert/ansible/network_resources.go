@@ -527,6 +527,11 @@ func networkStaticRoutes(platform string) func(*input) ([]step, string) {
 		if len(steps) == 0 {
 			return nil, "sets no routes"
 		}
+		if ipv6 {
+			// IOS's and EOS's replaced also removes the address family's
+			// other static routes, which one step per route leaves alone.
+			steps[0].notes = append(steps[0].notes, "TODO(convert): Ansible's replaced also removed the other static routes in this task's address families. These steps leave them, so add a step with on_remove = \"delete\" for any route that should still go.")
+		}
 		return steps, ""
 	}
 }

@@ -187,3 +187,19 @@ func TestConvertNetworkRoutesAndUsers(t *testing.T) {
 		}
 	}
 }
+
+// IOS's and EOS's replaced removes the address family's other routes too,
+// which the converted steps don't, so the first step says so.
+func TestConvertNetworkRoutesReplacedNote(t *testing.T) {
+	res := convertString(t, netPlay+"    - cisco.ios.ios_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hops: [{forward_router_address: 192.0.2.1}]}, {dest: 10.0.0.0/8, next_hops: [{forward_router_address: 192.0.2.2}]}]}]}], state: replaced}\n")
+	if res.Converted != 1 || len(res.Notes) != 1 || !strings.Contains(res.Notes[0].Reason, "on_remove") {
+		t.Errorf("converted %d, notes %+v\n%s", res.Converted, res.Notes, res.HCL)
+	}
+	if n := strings.Count(string(res.HCL), "other static routes"); n != 1 {
+		t.Errorf("the note appears %d times:\n%s", n, res.HCL)
+	}
+	junos := convertString(t, netPlay+"    - junipernetworks.junos.junos_static_routes: {config: [{address_families: [{afi: ipv4, routes: [{dest: 0.0.0.0/0, next_hop: [{forward_router_address: 192.0.2.1}]}]}]}], state: replaced}\n")
+	if len(junos.Notes) != 0 {
+		t.Errorf("junos's replaced only touches the named routes, but got %+v", junos.Notes)
+	}
+}
