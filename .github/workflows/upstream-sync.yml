@@ -17,6 +17,8 @@ jobs:
     # A fork has none of the credentials this needs.
     if: github.repository == 'conn3xorg/conn3x'
     runs-on: ubuntu-24.04
+    # Its secrets live in an environment that only main can use.
+    environment: scheduled
     permissions:
       contents: read
       issues: write # to report a scheduled run that failed
