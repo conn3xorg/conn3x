@@ -32,7 +32,7 @@ step "desk" {
 
 **Names.** Write the interface the way `show running-config` prints it, in full: `GigabitEthernet1/0/1`, not `Gi1/0/1`, and `Port-channel10` with a lowercase c. `mode`, `access_vlan` and `allowed_vlans` are for Ethernet ports and port channels; a `Vlan` or `Loopback` interface has no switchport.
 
-**Trunks.** `allowed_vlans` is compared as a set. IOS prints a long list over several lines, the later ones starting `switchport trunk allowed vlan add`, and Conn3x reads them all, so `[30, 10, 20]` and a list IOS wrapped both read as in sync. A change sends the whole list in one command, which replaces what was there. Some Catalyst images need `switchport trunk encapsulation dot1q` before a port can be a trunk; set that line with [`ios_config`](/modules/ios_config).
+**Trunks.** `allowed_vlans` is compared as a set. IOS prints a long list over several lines, the later ones starting `switchport trunk allowed vlan add`, and Conn3x reads them all, so `[30, 10, 20]` and a list IOS wrapped both read as in sync. A change replaces the whole list. A long one goes in the way IOS prints it: a first part, then `add` lines for the rest, so no command runs past 200 characters of VLANs. Some Catalyst images need `switchport trunk encapsulation dot1q` before a port can be a trunk; set that line with [`ios_config`](/modules/ios_config).
 
 **The guard.** Shutting down the interface whose `ip address` is the one Conn3x connects to is refused before anything is sent. The revert timer would bring it back, but only after the full wait.
 
@@ -40,4 +40,4 @@ step "desk" {
 
 ## Removal
 
-By default, deleting an `ios_interface` step stops tracking it and leaves the port as it is. With `on_remove = "delete"`, Conn3x takes each setting it owns back to IOS's default with its `no` form, such as `no description` or `no switchport mode`. The interface itself stays.
+By default, deleting an `ios_interface` step stops tracking it and leaves the port as it is. With `on_remove = "delete"`, Conn3x takes each setting it owns back to IOS's default with its `no` form, such as `no description` or `no switchport mode`. The interface itself stays. That includes `no shutdown`: a step with `enabled = false` and `on_remove = "delete"` brings the port back up when you delete it.

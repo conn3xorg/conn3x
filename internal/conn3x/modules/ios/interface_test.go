@@ -69,6 +69,25 @@ func TestInterfaceAllowedVLANsAcrossAddLines(t *testing.T) {
 	if got := i.Commands(interfaces); !slices.Equal(got, []string{"interface GigabitEthernet1/0/2", " switchport trunk allowed vlan 10,20-22,30-35,40-84,100,200"}) {
 		t.Errorf("one more VLAN: Commands = %q", got)
 	}
+	// Every odd VLAN is 9,710 bytes of list: it goes in as IOS prints it,
+	// a first part and add lines, and reads back as in sync.
+	var odd []int
+	for v := 1; v <= 4093; v += 2 {
+		odd = append(odd, v)
+	}
+	big := Interface{Name: "GigabitEthernet1/0/9", AllowedVLANs: odd}
+	cmds := big.Commands("")
+	if len(cmds) < 3 || cmds[1] == "" || !strings.HasPrefix(cmds[2], " switchport trunk allowed vlan add ") {
+		t.Fatalf("Commands = %q", cmds[:min(3, len(cmds))])
+	}
+	for _, c := range cmds[1:] {
+		if len(c) > len(" "+allowedPrefix+"add ")+trunkLine || strings.HasSuffix(c, ",") {
+			t.Errorf("line of %d bytes: %q", len(c), c)
+		}
+	}
+	if !big.InSync(strings.Join(cmds, "\n")) {
+		t.Error("the commands, read back, aren't in sync")
+	}
 	if got := (Interface{Name: "GigabitEthernet1/0/2", AllowedVLANs: []int{10}}).InSync("interface GigabitEthernet1/0/2\n switchport trunk allowed vlan none\n"); got {
 		t.Error("none read as VLAN 10")
 	}

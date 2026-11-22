@@ -167,6 +167,27 @@ func vlanRanges(vlans []int) string {
 	return strings.Join(parts, ",")
 }
 
+// trunkLine is how much of a VLAN list one command carries. IOS's input
+// limit isn't known, so a list goes in the way IOS prints it back: the
+// first part replaces the old list, and add lines carry the rest.
+const trunkLine = 200
+
+func trunkCommands(list string) []string {
+	var cmds []string
+	verb := allowedPrefix
+	for list != "" {
+		part := list
+		if len(part) > trunkLine {
+			cut := strings.LastIndex(part[:trunkLine], ",")
+			part = part[:cut]
+		}
+		cmds = append(cmds, verb+part)
+		list = strings.TrimPrefix(list[len(part):], ",")
+		verb = allowedPrefix + "add "
+	}
+	return cmds
+}
+
 // parseVLANs reads a list such as 10,20-22 back into VLANs.
 func parseVLANs(list string) ([]int, error) {
 	var vlans []int
@@ -213,8 +234,7 @@ func (i Interface) InSync(config string) bool {
 	return true
 }
 
-// Commands are what makes the interface have what i owns, or nil. A new
-// trunk list replaces the old one in one command, add lines and all.
+// Commands are what makes the interface have what i owns, or nil.
 func (i Interface) Commands(config string) []string {
 	lines, found := section(config, i.parents())
 	var cmds []string
@@ -223,6 +243,8 @@ func (i Interface) Commands(config string) []string {
 		case got == s.want:
 		case s.want == "":
 			cmds = append(cmds, s.reset())
+		case s.prefix == allowedPrefix:
+			cmds = append(cmds, trunkCommands(strings.TrimPrefix(s.want, allowedPrefix))...)
 		default:
 			cmds = append(cmds, s.want)
 		}
