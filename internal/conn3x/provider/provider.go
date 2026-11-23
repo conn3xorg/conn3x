@@ -68,6 +68,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_file_capabilities":    {capsSchema, validateCaps, planCaps, readCaps, applyCaps, upgradeWith(capsSchema)},
 	"conn3x_fetch":                {fetchSchema, validateFetch, planFetch, readFetch, applyFetch, upgradeWith(fetchSchema)},
 	"conn3x_supervisor_program":   {supervisorSchema, validateSupervisor, planSupervisor, readSupervisor, applySupervisor, upgradeWith(supervisorSchema)},
+	"conn3x_patch":                {patchSchema, validatePatch, planPatch, readPatch, applyPatch, upgradeWith(patchSchema)},
 	"conn3x_uri":                  {uriSchema, validateURI, planURI, readURI, applyURI, upgradeWith(uriSchema)},
 	"conn3x_sysctl":               {sysctlSchema, validateSysctl, planSysctl, readSysctl, applySysctl, upgradeWith(sysctlSchema)},
 	"conn3x_debconf":              {debconfSchema, validateDebconf, planDebconf, readDebconf, applyDebconf, upgradeWith(debconfSchema)},

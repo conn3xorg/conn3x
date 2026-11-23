@@ -28,6 +28,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/fsobj"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/kmod"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/patch"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/storage"
@@ -641,6 +642,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"apk":                     packageModule,
 	"fetch":                   fetchModule,
 	"supervisorctl":           supervisorctlModule,
+	"patch":                   patchModule,
 	"zypper":                  packageModule,
 	"pip":                     pipModule,
 	"npm":                     npmModule,
@@ -1200,6 +1202,81 @@ func supervisorctlModule(in *input) ([]step, string) {
 	}
 	in.ignore("wait")
 	return one("supervisor_program", attrs, notes...)
+}
+
+// patchModule turns ansible.posix.patch into a patch step. A src on the
+// controller, Ansible's default, is read from files/ into content; with
+// remote_src it stays a path on the host. Both dry-run the reverse first
+// and fail on a patch that fits neither way, so the step does what the
+// task does.
+func patchModule(in *input) ([]step, string) {
+	p := patch.Patch{
+		Dest:             in.str("dest", "originalfile"),
+		Basedir:          in.str("basedir"),
+		IgnoreWhitespace: in.bool("ignore_whitespace", false),
+		Binary:           in.bool("binary", false),
+		State:            patch.State(cmp.Or(in.str("state"), "present")),
+	}
+	src := in.str("src", "patchfile")
+	if in.has("strip") {
+		n, err := strconv.Atoi(in.str("strip"))
+		if err != nil {
+			return nil, "has a strip that isn't a whole number"
+		}
+		p.Strip = n
+	}
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	switch {
+	case src == "":
+		return nil, "has no src"
+	case p.Dest != "" && p.Basedir != "":
+		return nil, "sets both dest and basedir; a patch step takes one, so pick dest for one file or basedir for the patch's own file names"
+	case strings.Contains(src+p.Dest+p.Basedir, "\x00"):
+		return nil, "builds a path from a variable; write the paths out in a patch step"
+	}
+	attrs := []attr{}
+	if in.bool("remote_src", false) {
+		p.Src = src
+	} else {
+		local := in.local("files", src)
+		if local == "" {
+			return nil, in.problem
+		}
+		if in.role != nil {
+			in.copy(local)
+		}
+		// Validate needs to know there's content; file() reads it at plan.
+		p.Content = "file"
+		attrs = append(attrs, attr{key: "content", raw: "file(" + moduleFile(local) + ")"})
+	}
+	if err := p.Validate(); err != nil {
+		return nil, "can't be a patch step: " + err.Error()
+	}
+	for _, a := range [][2]string{{"src", p.Src}, {"dest", p.Dest}, {"basedir", p.Basedir}} {
+		if a[1] != "" {
+			attrs = append(attrs, s(a[0], a[1]))
+		}
+	}
+	if p.Strip != 0 {
+		attrs = append(attrs, attr{key: "strip", val: cty.NumberIntVal(int64(p.Strip))})
+	}
+	if p.IgnoreWhitespace {
+		attrs = append(attrs, attr{key: "ignore_whitespace", val: cty.True})
+	}
+	if p.Binary {
+		attrs = append(attrs, attr{key: "binary", val: cty.True})
+	}
+	if p.State == patch.Absent {
+		attrs = append(attrs, s("state", "absent"))
+	}
+	var notes []string
+	if in.bool("backup", false) {
+		notes = append(notes, "backup dropped: the plan shows when the patch goes in or comes out, and the step writes no .orig file.")
+	}
+	in.ignore("backup", "remote_src")
+	return one("patch", attrs, notes...)
 }
 
 func packageModule(in *input) ([]step, string) {
