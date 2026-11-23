@@ -40,7 +40,7 @@ func TestSUSEApplyAndHold(t *testing.T) {
 		want string
 	}{
 		"install":    {Desired{Name: "tree", State: Present}, "zypper -n -q install 'tree'"},
-		"pin":        {Desired{Name: "tree", State: Present, Version: "1.7.0"}, "zypper -n -q install 'tree=1.7.0'"},
+		"pin":        {Desired{Name: "tree", State: Present, Version: "1.7.0"}, "zypper -n -q install --oldpackage 'tree=1.7.0'"},
 		"recommends": {Desired{Name: "tree", State: Present, InstallRecommends: &yes}, "zypper -n -q install --recommends 'tree'"},
 		"latest":     {Desired{Name: "tree", State: Latest}, "zypper -n -q update 'tree'"},
 		"remove":     {Desired{Name: "tree", State: Absent}, "zypper -n -q remove 'tree'"},

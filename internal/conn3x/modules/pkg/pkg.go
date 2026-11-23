@@ -352,21 +352,22 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		}
 		return err
 	case SUSE:
-		const zypper = "zypper -n -q "
 		switch d.State {
 		case Absent:
-			return Run(ctx, r, zypper+"remove "+ssh.Quote(d.Name))
+			return zypper(ctx, r, "remove "+ssh.Quote(d.Name))
 		case Latest:
-			if err := Run(ctx, r, zypper+"install"+d.recommends(family)+" "+ssh.Quote(d.Name)); err != nil {
+			if err := zypper(ctx, r, "install"+d.recommends(family)+" "+ssh.Quote(d.Name)); err != nil {
 				return err
 			}
-			return Run(ctx, r, zypper+"update"+d.recommends(family)+" "+ssh.Quote(d.Name))
+			return zypper(ctx, r, "update"+d.recommends(family)+" "+ssh.Quote(d.Name))
 		default:
-			spec := d.Name
+			spec, old := d.Name, ""
 			if d.Version != "" {
-				spec += "=" + d.Version
+				// Without --oldpackage, a pin below the installed version is
+				// "Nothing to do." and exit 0, as Ansible's zypper knows.
+				spec, old = spec+"="+d.Version, " --oldpackage"
 			}
-			return Run(ctx, r, zypper+"install"+d.recommends(family)+" "+ssh.Quote(spec))
+			return zypper(ctx, r, "install"+old+d.recommends(family)+" "+ssh.Quote(spec))
 		}
 	case APK:
 		if d.InstallRecommends != nil {
@@ -470,6 +471,13 @@ func Run(ctx context.Context, r modules.Runner, cmd string) error {
 		case <-time.After(lockPoll):
 		}
 	}
+}
+
+// zypper runs zypper with args. Exit 102 is success that wants a reboot,
+// and 103 is zypper having updated itself, so it runs again once.
+func zypper(ctx context.Context, r modules.Runner, args string) error {
+	c := "zypper -n -q " + args
+	return Run(ctx, r, c+"; rc=$?; if [ $rc = 103 ]; then "+c+"; rc=$?; fi; [ $rc = 102 ] && rc=0; exit $rc")
 }
 
 func lockHeld(err error) bool {

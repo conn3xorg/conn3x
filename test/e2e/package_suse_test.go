@@ -46,6 +46,20 @@ func TestPackageSUSE(t *testing.T) {
 		t.Fatalf("plan with version %s:\n%s", vars.Version, out)
 	}
 
+	// A pin below the installed version downgrades, as with Ansible's
+	// zypper, which adds --oldpackage. Leap has tree from its oss and its
+	// update repositories, so the oss release is the older one.
+	editions := h.exec("", "sh", "-c", `zypper -n -q -x search -s --match-exact -t package tree | grep -o 'edition="[^"]*"' | cut -d'"' -f2 | sort -V | head -1`)
+	vars.Version = strings.TrimSpace(editions)
+	w.writeAs("main.circuit.hcl", vars)
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := rpmq(); !strings.HasPrefix(got, "tree-"+vars.Version+".") {
+		t.Fatalf("after pinning the older %s: %q", vars.Version, got)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("plan with version %s:\n%s", vars.Version, out)
+	}
+
 	vars.State, vars.Version, vars.Hold, vars.HoldState = "latest", "", true, "held"
 	w.writeAs("main.circuit.hcl", vars)
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
