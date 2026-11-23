@@ -165,7 +165,9 @@ func InSync(state State, procs []Process) bool {
 }
 
 // Apply brings p to its state. update runs supervisorctl update for its
-// group first, which rereads its file and restarts it if that changed.
+// group first, which rereads its file and restarts it if that changed;
+// a started program is then restarted anyway, so a trigger always acts,
+// as on every other step, such as new code under an unchanged file.
 func Apply(ctx context.Context, r modules.Runner, p Program, update bool) error {
 	if err := p.Validate(); err != nil {
 		return err
@@ -208,6 +210,9 @@ func Apply(ctx context.Context, r modules.Runner, p Program, update bool) error 
 		}
 	}
 	switch {
+	// restart, not start: restart prints ERROR (not running) for a stopped one.
+	case p.State == Started && update && allActive(procs):
+		return p.run(ctx, r, "restart", p.Name)
 	case p.State == Started && !allActive(procs):
 		return p.run(ctx, r, "start", p.Name)
 	case p.State == Stopped && anyActive(procs):

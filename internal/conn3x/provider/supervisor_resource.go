@@ -26,7 +26,7 @@ func supervisorSchema() providers.Schema {
 			"config":             {Type: cty.String, Optional: true, Description: "supervisorctl's configuration file, absolute, passed as -c. When supervisord asks for a login, put username and password in its [supervisorctl] section."},
 			"server_url":         {Type: cty.String, Optional: true, Description: "Where supervisord listens, such as \"http://127.0.0.1:9001\", passed as -s. It can't hold a login."},
 			"supervisorctl_path": {Type: cty.String, Optional: true, Description: "supervisorctl, absolute. Found on PATH when unset."},
-			"triggers":           {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value, such as the revision of the step that writes the program's file; whenever it changes, the step runs supervisorctl update for the program, which rereads its file and restarts it if that changed."},
+			"triggers":           {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value, such as the revision of the step that writes the program's file; whenever it changes, the step runs supervisorctl update for the program, which rereads its file, and restarts it when its state is started."},
 			"on_remove":          {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the program, \"delete\" stops it and removes it from supervisord."},
 			"processes":          {Type: cty.Map(cty.String), Computed: true, Description: "Each process supervisorctl status listed at the last refresh, with its state, such as { app = \"RUNNING\" }."},
 			"in_sync":            {Type: cty.Bool, Computed: true, Description: "Whether the program was in its state at the last refresh."},

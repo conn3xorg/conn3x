@@ -45,7 +45,7 @@ step "workers" {
 
 **Drift.** Every refresh runs `supervisorctl status NAME`. A program someone stopped by hand, or one that crashed into `FATAL`, shows as out of sync, and `processes` shows each process's state. The next apply starts it again.
 
-**A changed file.** The program's `[program:x]` file is a `file` step, as it is in Ansible. Give its revision to `triggers` and the step runs `supervisorctl update` for the program whenever it changes, which rereads the file and restarts the program if its settings changed.
+**A changed file.** The program's `[program:x]` file is a `file` step, as it is in Ansible. Give its revision to `triggers` and whenever it changes the step runs `supervisorctl update` for the program, which rereads the file, then restarts it when `state` is `started`. So a trigger on new code, under an unchanged file, restarts the program too. With `stopped` or `present`, only `update` runs, so a program meant to stay stopped isn't started.
 
 **Reaching supervisord.** `config` and `server_url` go to `supervisorctl` as `-c` and `-s`. Unset, `supervisorctl` reads its own configuration, `/etc/supervisor/supervisord.conf` on Debian and Ubuntu.
 

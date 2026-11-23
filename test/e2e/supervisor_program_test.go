@@ -11,8 +11,8 @@ import (
 )
 
 type supervisorVars struct {
-	Port, KeyFile, KnownHosts, Seconds string
-	Program                            bool
+	Port, KeyFile, KnownHosts, Seconds, Code string
+	Program                                  bool
 }
 
 // supervisor_program loads and starts a program supervisord didn't know,
@@ -26,7 +26,7 @@ func TestSupervisorProgram(t *testing.T) {
 	}
 	pid := func() string { return strings.TrimSpace(h.exec("", "sh", "-c", "supervisorctl pid demo")) }
 	w := newWorkdir(t, "supervisor_program")
-	vars := supervisorVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Seconds: "86400", Program: true}
+	vars := supervisorVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Seconds: "86400", Code: "1", Program: true}
 	w.writeAs("main.circuit.hcl", vars)
 	w.mustConn3x("init", "-no-color")
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
@@ -54,6 +54,15 @@ func TestSupervisorProgram(t *testing.T) {
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	if got := status(); !strings.Contains(got, "RUNNING") || pid() == before {
 		t.Fatalf("a changed file didn't restart it: %q, pid %s was %s", got, pid(), before)
+	}
+
+	// New code under the same file: update alone wouldn't restart it.
+	before = pid()
+	vars.Code = "2"
+	w.writeAs("main.circuit.hcl", vars)
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := status(); !strings.Contains(got, "RUNNING") || pid() == before {
+		t.Fatalf("a changed trigger didn't restart it: %q, pid %s was %s", got, pid(), before)
 	}
 
 	vars.Program = false

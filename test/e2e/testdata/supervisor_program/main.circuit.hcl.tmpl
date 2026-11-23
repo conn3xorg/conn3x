@@ -38,7 +38,7 @@ circuit "sup" {
     supervisor_program {
       name      = "demo"
       state     = "started"
-      triggers  = { conf = conn3x_file.sup__conf[each.key].revision }
+      triggers  = { conf = conn3x_file.sup__conf[each.key].revision, code = "{{.Code}}" }
       on_remove = "delete"
     }
   }
