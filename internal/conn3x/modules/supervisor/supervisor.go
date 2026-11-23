@@ -29,9 +29,11 @@ const (
 )
 
 // Conn is how supervisorctl reaches supervisord. Empty fields are left to
-// supervisorctl's own defaults.
+// supervisorctl's own defaults. There's no username or password: those
+// belong in the [supervisorctl] section of Config, so they stay out of
+// state and off the command line.
 type Conn struct {
-	Config, ServerURL, Username, Password, Path string
+	Config, ServerURL, Path string
 }
 
 // Program is a program, or a group when Name ends in a colon, and the
@@ -68,10 +70,11 @@ func (p Program) Validate() error {
 			return fmt.Errorf("%s %q must be an absolute path", what, v)
 		}
 	}
-	for what, v := range map[string]string{"server_url": p.ServerURL, "username": p.Username, "password": p.Password} {
-		if strings.ContainsAny(v, "\r\n\x00") {
-			return fmt.Errorf("%s can't hold a line break or NUL", what)
-		}
+	if strings.ContainsAny(p.ServerURL, "\r\n\x00") {
+		return errors.New("server_url can't hold a line break or NUL")
+	}
+	if strings.Contains(p.ServerURL, "@") {
+		return errors.New("server_url can't hold a login; put username and password in the [supervisorctl] section of the config file and point config at it")
 	}
 	return nil
 }
@@ -86,7 +89,7 @@ func (c Conn) command(args ...string) string {
 	if c.Path != "" {
 		parts[0] = ssh.Quote(c.Path)
 	}
-	for _, f := range [][2]string{{"-c", c.Config}, {"-s", c.ServerURL}, {"-u", c.Username}, {"-p", c.Password}} {
+	for _, f := range [][2]string{{"-c", c.Config}, {"-s", c.ServerURL}} {
 		if f[1] != "" {
 			parts = append(parts, f[0], ssh.Quote(f[1]))
 		}
@@ -215,7 +218,7 @@ func Apply(ctx context.Context, r modules.Runner, p Program, update bool) error 
 
 // run runs one supervisorctl action. supervisorctl reports some failures,
 // such as "app: ERROR (spawn error)", with exit status 0. The error names
-// the action, never the command, which can hold the password.
+// the action, never the whole command.
 func (p Program) run(ctx context.Context, r modules.Runner, args ...string) error {
 	res, err := r.Run(ctx, p.command(args...), nil)
 	if err != nil {

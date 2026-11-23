@@ -55,7 +55,7 @@ func TestInSync(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	for _, good := range []Program{{Name: "app", State: Started}, {Name: "web:", State: Stopped}, {Name: "a.b-c_1", State: Present, Conn: Conn{Config: "/etc/supervisor/supervisord.conf", Path: "/usr/bin/supervisorctl", Password: "it's"}}} {
+	for _, good := range []Program{{Name: "app", State: Started}, {Name: "web:", State: Stopped}, {Name: "a.b-c_1", State: Present, Conn: Conn{Config: "/etc/supervisor/supervisord.conf", Path: "/usr/bin/supervisorctl", ServerURL: "http://127.0.0.1:9001"}}} {
 		if err := good.Validate(); err != nil {
 			t.Errorf("%+v: %v", good, err)
 		}
@@ -63,7 +63,8 @@ func TestValidate(t *testing.T) {
 	for _, bad := range []Program{
 		{Name: "all", State: Started}, {Name: "all:", State: Started}, {Name: "-c", State: Started}, {Name: "a b", State: Started},
 		{Name: "web:web_00", State: Started}, {Name: "app", State: "restarted"}, {Name: "app", State: Started, Conn: Conn{Config: "supervisord.conf"}},
-		{Name: "app", State: Started, Conn: Conn{Password: "a\nb"}},
+		{Name: "app", State: Started, Conn: Conn{ServerURL: "http://a\nb"}},
+		{Name: "app", State: Started, Conn: Conn{ServerURL: "http://admin:s3cret@127.0.0.1:9001"}},
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("%+v: no error", bad)
@@ -73,8 +74,8 @@ func TestValidate(t *testing.T) {
 
 // Every value reaches the shell as one quoted word.
 func TestCommandQuotes(t *testing.T) {
-	c := Conn{Config: "/etc/s.conf", ServerURL: "http://127.0.0.1:9001", Username: "u", Password: "p'w $x", Path: "/opt/bin/supervisorctl"}
-	want := `'/opt/bin/supervisorctl' -c '/etc/s.conf' -s 'http://127.0.0.1:9001' -u 'u' -p 'p'\''w $x' 'status' 'app'`
+	c := Conn{Config: "/etc/it's $x.conf", ServerURL: "http://127.0.0.1:9001", Path: "/opt/bin/supervisorctl"}
+	want := `'/opt/bin/supervisorctl' -c '/etc/it'\''s $x.conf' -s 'http://127.0.0.1:9001' 'status' 'app'`
 	if got := c.command("status", "app"); got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
@@ -147,11 +148,12 @@ func TestApplyGroup(t *testing.T) {
 	}
 }
 
-// supervisorctl reports a failed start with exit status 0.
+// supervisorctl reports a failed start with exit status 0. The error names
+// the action, not the command with its options.
 func TestRunErrorInOutput(t *testing.T) {
 	r := runFunc(func(cmd string) ssh.Result { return ssh.Result{Stdout: []byte("app: ERROR (spawn error)\n")} })
-	err := Program{Name: "app", Conn: Conn{Password: "hunter2"}}.run(context.Background(), r, "start", "app")
-	if err == nil || !strings.Contains(err.Error(), "spawn error") || strings.Contains(err.Error(), "hunter2") {
+	err := Program{Name: "app", Conn: Conn{Config: "/etc/supervisor/login.conf"}}.run(context.Background(), r, "start", "app")
+	if err == nil || !strings.Contains(err.Error(), "spawn error") || strings.Contains(err.Error(), "login.conf") {
 		t.Errorf("got %v", err)
 	}
 }

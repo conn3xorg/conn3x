@@ -1138,6 +1138,11 @@ func fetchModule(in *input) ([]step, string) {
 // says. On absent it fails for a running program unless
 // stop_before_removing, where the step stops it, so that stays for review.
 func supervisorctlModule(in *input) ([]step, string) {
+	// The password's value is never read.
+	if in.has("username") || in.has("password") {
+		in.ignore("username", "password")
+		return nil, "logs in with username/password; put them in the [supervisorctl] section of the config file and point config at it, so they stay out of state and the process list"
+	}
 	st := in.str("state")
 	switch st {
 	case "restarted", "signalled":
@@ -1151,7 +1156,7 @@ func supervisorctlModule(in *input) ([]step, string) {
 	p := supervisor.Program{
 		Name:  in.str("name"),
 		State: supervisor.State(st),
-		Conn:  supervisor.Conn{Config: in.str("config"), ServerURL: in.str("server_url"), Username: in.str("username"), Path: in.str("supervisorctl_path")},
+		Conn:  supervisor.Conn{Config: in.str("config"), ServerURL: in.str("server_url"), Path: in.str("supervisorctl_path")},
 	}
 	if in.problem != "" {
 		return nil, in.problem
@@ -1159,14 +1164,14 @@ func supervisorctlModule(in *input) ([]step, string) {
 	if p.Name == "all" {
 		return nil, "acts on every program with name: all; give each program its own supervisor_program step"
 	}
-	if strings.Contains(p.Name+p.Config+p.ServerURL+p.Username+p.Path, "\x00") {
+	if strings.Contains(p.Name+p.Config+p.ServerURL+p.Path, "\x00") {
 		return nil, "builds an argument from a variable; write the values out in a supervisor_program step"
 	}
 	if err := p.Validate(); err != nil {
 		return nil, "can't be a supervisor_program step: " + err.Error()
 	}
 	attrs := []attr{s("name", p.Name), s("state", st)}
-	for _, a := range [][2]string{{"config", p.Config}, {"server_url", p.ServerURL}, {"username", p.Username}, {"supervisorctl_path", p.Path}} {
+	for _, a := range [][2]string{{"config", p.Config}, {"server_url", p.ServerURL}, {"supervisorctl_path", p.Path}} {
 		if a[1] != "" {
 			attrs = append(attrs, s(a[0], a[1]))
 		}
@@ -1179,10 +1184,6 @@ func supervisorctlModule(in *input) ([]step, string) {
 		notes = append(notes, "wait dropped: supervisorctl start waits for the program's startsecs, and the step fails on one that doesn't start.")
 	}
 	in.ignore("wait")
-	if in.has("password") {
-		notes = append(notes, "TODO(convert): Set password from a sensitive variable holding the task's password. It isn't copied here.")
-	}
-	in.ignore("password")
 	return one("supervisor_program", attrs, notes...)
 }
 

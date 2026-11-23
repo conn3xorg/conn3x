@@ -47,7 +47,18 @@ step "workers" {
 
 **A changed file.** The program's `[program:x]` file is a `file` step, as it is in Ansible. Give its revision to `triggers` and the step runs `supervisorctl update` for the program whenever it changes, which rereads the file and restarts the program if its settings changed.
 
-**Reaching supervisord.** `config`, `server_url`, `username` and `password` go to `supervisorctl` as `-c`, `-s`, `-u` and `-p`. Unset, `supervisorctl` reads its own configuration, `/etc/supervisor/supervisord.conf` on Debian and Ubuntu. The password stays in state, since every refresh needs it, and it's on `supervisorctl`'s command line while that runs, as it is with Ansible. Put it in the configuration file's `[supervisorctl]` section instead to keep it off both.
+**Reaching supervisord.** `config` and `server_url` go to `supervisorctl` as `-c` and `-s`. Unset, `supervisorctl` reads its own configuration, `/etc/supervisor/supervisord.conf` on Debian and Ubuntu.
+
+**A login.** When supervisord asks for a username and password, the step doesn't take them. Every refresh would need them, so they'd sit in state, and `supervisorctl -p` shows the password to anyone running `ps`. Put them in the `[supervisorctl]` section of a file only root can read, and point `config` at it:
+
+```ini
+[supervisorctl]
+serverurl = http://127.0.0.1:9001
+username  = admin
+password  = s3cret
+```
+
+Write that file with a `file` step whose content comes from a write-only or ephemeral value, so the password never reaches state there either. `server_url` can't carry a login, as in `http://admin:pw@host`, for the same reason.
 
 **The tools.** `supervisorctl` comes with the `supervisor` package. When it's missing, the step says so. Put a `package` step before it.
 

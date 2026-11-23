@@ -4,6 +4,7 @@
 package ansible
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -16,8 +17,8 @@ func TestConvertSupervisorctl(t *testing.T) {
 		"supervisorctl: {name: app, state: stopped, config: /etc/supervisor/supervisord.conf}": {`state  = "stopped"`, `config = "/etc/supervisor/supervisord.conf"`},
 		"supervisorctl: {name: 'workers:', state: present}":                                    {`name  = "workers:"`, `state = "present"`},
 		"supervisorctl: {name: app, state: absent, stop_before_removing: true}":                {`state = "absent"`},
-		"supervisorctl: {name: app, state: started, server_url: 'http://127.0.0.1:9001', username: admin, password: s3cret, supervisorctl_path: /usr/local/bin/supervisorctl, wait: true}": {
-			`server_url         = "http://127.0.0.1:9001"`, `username           = "admin"`, `supervisorctl_path = "/usr/local/bin/supervisorctl"`, "TODO(convert): Set password", "wait dropped",
+		"supervisorctl: {name: app, state: started, server_url: 'http://127.0.0.1:9001', supervisorctl_path: /usr/local/bin/supervisorctl, wait: true}": {
+			`server_url         = "http://127.0.0.1:9001"`, `supervisorctl_path = "/usr/local/bin/supervisorctl"`, "wait dropped",
 		},
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
@@ -30,22 +31,26 @@ func TestConvertSupervisorctl(t *testing.T) {
 				t.Errorf("%s: missing %q:\n%s", task, w, res.HCL)
 			}
 		}
-		if strings.Contains(string(res.HCL), "s3cret") {
-			t.Errorf("%s: the password was copied:\n%s", task, res.HCL)
-		}
 	}
 	for task, reason := range map[string]string{
-		"supervisorctl: {name: app, state: restarted}":                         "an action rather than a state",
-		"supervisorctl: {name: app, state: signalled, signal: USR1}":           "an action rather than a state",
-		"supervisorctl: {name: app, state: absent}":                            "without stop_before_removing",
-		"supervisorctl: {name: all, state: started}":                           "name: all",
-		"supervisorctl: {name: 'web:web_00', state: started}":                  "can't be a supervisor_program step",
-		"supervisorctl: {name: app, state: started, config: supervisord.conf}": "must be an absolute path",
-		"supervisorctl: {name: '{{ app_name }}', state: started}":              "variable",
+		"supervisorctl: {name: app, state: restarted}":                                                                       "an action rather than a state",
+		"supervisorctl: {name: app, state: signalled, signal: USR1}":                                                         "an action rather than a state",
+		"supervisorctl: {name: app, state: absent}":                                                                          "without stop_before_removing",
+		"supervisorctl: {name: all, state: started}":                                                                         "name: all",
+		"supervisorctl: {name: 'web:web_00', state: started}":                                                                "can't be a supervisor_program step",
+		"supervisorctl: {name: app, state: started, config: supervisord.conf}":                                               "must be an absolute path",
+		"supervisorctl: {name: '{{ app_name }}', state: started}":                                                            "variable",
+		"supervisorctl: {name: app, state: started, server_url: 'http://127.0.0.1:9001', username: admin, password: s3cret}": "logs in with username/password",
+		"supervisorctl: {name: app, state: started, password: s3cret}":                                                       "[supervisorctl] section",
+		"supervisorctl: {name: app, state: started, server_url: 'http://admin@127.0.0.1:9001'}":                              "can't hold a login",
 	} {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || !strings.Contains(reasons(res), reason) {
 			t.Errorf("%s: converted %d, review %q, want %q", task, res.Converted, reasons(res), reason)
+		}
+		// The password never reaches anything convert writes.
+		if out := fmt.Sprintf("%s %+v %+v", res.HCL, res.Review, res.Notes); strings.Contains(out, "s3cret") {
+			t.Errorf("%s: the password is in the output: %s", task, out)
 		}
 	}
 }

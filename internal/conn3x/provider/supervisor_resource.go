@@ -23,10 +23,8 @@ func supervisorSchema() providers.Schema {
 			"revision":           revisionAttr(),
 			"name":               {Type: cty.String, Required: true, Description: "The program, such as \"app\", or a group with a trailing colon, such as \"web:\", as supervisorctl takes it."},
 			"state":              {Type: cty.String, Required: true, Description: "\"started\", \"stopped\", \"present\" (loaded, left running or stopped as it is) or \"absent\" (stopped and removed from supervisord)."},
-			"config":             {Type: cty.String, Optional: true, Description: "supervisorctl's configuration file, absolute, passed as -c."},
-			"server_url":         {Type: cty.String, Optional: true, Description: "Where supervisord listens, such as \"http://127.0.0.1:9001\", passed as -s."},
-			"username":           {Type: cty.String, Optional: true, Description: "The user supervisord asks for, passed as -u."},
-			"password":           {Type: cty.String, Optional: true, Sensitive: true, Description: "The password supervisord asks for, passed as -p. It's kept in state, since every refresh needs it."},
+			"config":             {Type: cty.String, Optional: true, Description: "supervisorctl's configuration file, absolute, passed as -c. When supervisord asks for a login, put username and password in its [supervisorctl] section."},
+			"server_url":         {Type: cty.String, Optional: true, Description: "Where supervisord listens, such as \"http://127.0.0.1:9001\", passed as -s. It can't hold a login."},
 			"supervisorctl_path": {Type: cty.String, Optional: true, Description: "supervisorctl, absolute. Found on PATH when unset."},
 			"triggers":           {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value, such as the revision of the step that writes the program's file; whenever it changes, the step runs supervisorctl update for the program, which rereads its file and restarts it if that changed."},
 			"on_remove":          {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the program, \"delete\" stops it and removes it from supervisord."},
@@ -44,8 +42,6 @@ func supervisorFrom(v cty.Value) supervisor.Program {
 		Conn: supervisor.Conn{
 			Config:    stringOr(v.GetAttr("config"), ""),
 			ServerURL: stringOr(v.GetAttr("server_url"), ""),
-			Username:  stringOr(v.GetAttr("username"), ""),
-			Password:  stringOr(v.GetAttr("password"), ""),
 			Path:      stringOr(v.GetAttr("supervisorctl_path"), ""),
 		},
 	}
