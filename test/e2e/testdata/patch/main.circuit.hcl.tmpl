@@ -1,0 +1,35 @@
+circuit "pt" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tools" {
+    package {
+      name = "patch"
+    }
+  }
+
+  step "conf" {
+    command {
+      command = "printf 'a\\nb\\nc\\n' > /etc/demo.conf"
+      creates = "/etc/demo.conf"
+    }
+  }
+{{if .State}}
+  step "fix" {
+    depends_on = [conn3x_package.pt__tools, conn3x_command.pt__conf]
+
+    patch {
+      content   = "--- demo.conf\n+++ demo.conf\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n"
+      dest      = "/etc/demo.conf"
+      state     = "{{.State}}"
+      on_remove = "delete"
+    }
+  }
+{{end}}
+}

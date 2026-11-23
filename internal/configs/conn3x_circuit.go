@@ -53,6 +53,7 @@ var circuitModules = map[string]string{
 	"file_capabilities":    "conn3x_file_capabilities",
 	"fetch":                "conn3x_fetch",
 	"supervisor_program":   "conn3x_supervisor_program",
+	"patch":                "conn3x_patch",
 	"hostname":             "conn3x_hostname",
 	"timezone":             "conn3x_timezone",
 	"locale":               "conn3x_locale",

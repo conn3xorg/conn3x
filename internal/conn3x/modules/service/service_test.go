@@ -249,6 +249,8 @@ func TestHandlerReloadsSystemdWhenUnitChanged(t *testing.T) {
 	}{
 		{func(c context.Context, h *host, n string) error { return Restart(c, h, n) }, "restart"},
 		{func(c context.Context, h *host, n string) error { return Reload(c, h, n) }, "reload"},
+		{func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) }, "try-restart"},
+		{func(c context.Context, h *host, n string) error { return TryReload(c, h, n) }, "try-reload-or-restart"},
 	} {
 		for _, changed := range []string{"yes", "no"} {
 			h := &host{show: show("loaded", "active", "enabled", changed)}
@@ -351,5 +353,33 @@ func TestReloadStartsAStoppedUnit(t *testing.T) {
 		if got := h.ran[len(h.ran)-1]; got != "systemctl "+want+" -- 'web.service'" {
 			t.Errorf("%s on a stopped unit ran %q", verb, got)
 		}
+	}
+}
+
+// The try- verbs go to systemctl as they are, so a stopped unit stays
+// stopped: unlike reload, they aren't turned into a start.
+func TestTryActionsLeaveStoppedUnitStopped(t *testing.T) {
+	for verb, fn := range map[string]func(context.Context, *host, string) error{
+		"try-restart":           func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) },
+		"try-reload-or-restart": func(c context.Context, h *host, n string) error { return TryReload(c, h, n) },
+	} {
+		h := &host{show: show("loaded", "inactive", "enabled", "no")}
+		if err := fn(ctx, h, "web"); err != nil {
+			t.Fatal(err)
+		}
+		all := strings.Join(h.ran, "\n")
+		if !strings.HasSuffix(all, "systemctl "+verb+" -- 'web.service'") || strings.Contains(all, "systemctl start") {
+			t.Errorf("%s on a stopped unit ran:\n%s", verb, all)
+		}
+	}
+}
+
+func TestDaemonReload(t *testing.T) {
+	h := &host{show: show("loaded", "active", "enabled", "no")}
+	if err := DaemonReload(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(h.ran, "\n") != "systemctl daemon-reload" {
+		t.Errorf("ran %q", h.ran)
 	}
 }

@@ -6,6 +6,8 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/zclconf/go-cty/cty"
@@ -27,8 +29,8 @@ func serviceActionSchema() providers.Schema {
 			Attributes: map[string]*configschema.Attribute{
 				"id":       {Type: cty.String, Computed: true},
 				"revision": revisionAttr(),
-				"name":     {Type: cty.String, Required: true, Description: "Unit name."},
-				"action":   {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default) or \"reload\". A reload of a unit that isn't running starts it."},
+				"name":     {Type: cty.String, Optional: true, Description: "Unit name. Required, except with action = \"daemon-reload\", which takes none."},
+				"action":   {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
 				"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the action runs again whenever it changes."},
 				"serial":   {Type: cty.Bool, Optional: true, Description: "Act on one host at a time, waiting for systemctl to return before the next."},
 			},
@@ -42,10 +44,18 @@ func validateServiceAction(cfg cty.Value) tfdiags.Diagnostics {
 	if cfg.IsNull() {
 		return diags
 	}
-	if a := cfg.GetAttr("action"); known(a) && a.AsString() != "restart" && a.AsString() != "reload" {
-		diags = diags.Append(attrError("action", fmt.Sprintf("action must be \"restart\" or \"reload\", not %q", a.AsString())))
+	a, n := cfg.GetAttr("action"), cfg.GetAttr("name")
+	if known(a) && !slices.Contains(serviceActions, a.AsString()) {
+		diags = diags.Append(attrError("action", fmt.Sprintf("action must be one of %s, not %q", strings.Join(serviceActions, ", "), a.AsString())))
 	}
-	if n := cfg.GetAttr("name"); known(n) {
+	daemonReload := known(a) && a.AsString() == "daemon-reload"
+	switch {
+	case daemonReload && !n.IsNull():
+		diags = diags.Append(attrError("name", "daemon-reload acts on systemd itself, not a unit, so it takes no name"))
+	case !daemonReload && a.IsKnown() && n.IsNull():
+		diags = diags.Append(attrError("name", "name is required, except with action = \"daemon-reload\""))
+	}
+	if known(n) {
 		if err := (service.Desired{Name: n.AsString()}).Validate(); err != nil {
 			diags = diags.Append(attrError("name", err.Error()))
 		}
@@ -63,7 +73,9 @@ func planServiceAction(req providers.PlanResourceChangeRequest) providers.PlanRe
 	if vals["action"].IsNull() {
 		vals["action"] = cty.StringVal("restart")
 	}
-	if name := vals["name"]; name.IsKnown() {
+	if name := vals["name"]; name.IsNull() {
+		vals["id"] = planID(req, "service-action", "daemon-reload")
+	} else if name.IsKnown() {
 		vals["id"] = planID(req, "service-action", service.Unit(name.AsString()))
 	} else {
 		vals["id"] = cty.UnknownVal(cty.String)
@@ -97,15 +109,27 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 		resp.Diagnostics = resp.Diagnostics.Append(attrError("ssh", err.Error()))
 		return resp
 	}
+	action := req.PlannedState.GetAttr("action").AsString()
+	if action == "daemon-reload" {
+		if err := service.DaemonReload(ctx, host); err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("systemctl daemon-reload: %w", err))
+		}
+		return resp
+	}
 	name := req.PlannedState.GetAttr("name").AsString()
 	if s := req.PlannedState.GetAttr("serial"); !s.IsNull() && s.True() {
 		mu := serialLock(name)
 		mu.Lock()
 		defer mu.Unlock()
 	}
-	if req.PlannedState.GetAttr("action").AsString() == "reload" {
+	switch action {
+	case "reload":
 		err = service.Reload(ctx, host, name)
-	} else {
+	case "try-restart":
+		err = service.TryRestart(ctx, host, name)
+	case "try-reload":
+		err = service.TryReload(ctx, host, name)
+	default:
 		err = service.Restart(ctx, host, name)
 	}
 	if err != nil {
@@ -113,6 +137,9 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 	}
 	return resp
 }
+
+// serviceActions are the actions a service_action step takes.
+var serviceActions = []string{"restart", "reload", "try-restart", "try-reload", "daemon-reload"}
 
 var serialLocks sync.Map // unit name => *sync.Mutex
 

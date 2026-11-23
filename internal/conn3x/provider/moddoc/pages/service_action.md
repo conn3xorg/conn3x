@@ -40,12 +40,30 @@ step "reload_nginx" {
   }
 }
 ```
+
+Have systemd reread a drop-in that the unit picks up at its next start, without restarting anything:
+
+```hcl
+step "limits" {
+  file {
+    path    = "/etc/systemd/system/backup.service.d/limits.conf"
+    content = "[Service]\nMemoryMax=512M\n"
+  }
+}
+
+step "reread" {
+  service_action {
+    action   = "daemon-reload"
+    triggers = { limits = conn3x_file.docs__limits[each.key].revision }
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
 **When it runs.** The step runs its action when it's created, and again whenever `triggers` changes, which replaces it. A plan that changes nothing else leaves it alone. Refresh never finds drift: an action leaves nothing on the host to compare.
 
-**Applying.** `action = "restart"`, the default, runs `systemctl restart`. `"reload"` runs `systemctl reload`, and starts the unit instead when it isn't running, since a reload asks for the new configuration to be in use. If the unit file changed since systemd last loaded it, Conn3x runs `systemctl daemon-reload` first. `serial = true` acts on one host at a time.
+**Applying.** `action = "restart"`, the default, runs `systemctl restart`. `"reload"` runs `systemctl reload`, and starts the unit instead when it isn't running, since a reload asks for the new configuration to be in use. `"try-restart"` and `"try-reload"` act only on a unit that's running, and leave a stopped one stopped: they run `systemctl try-restart` and `systemctl try-reload-or-restart`, which restarts a unit that can't reload. If the unit file changed since systemd last loaded it, Conn3x runs `systemctl daemon-reload` first. `"daemon-reload"` runs only that, with no `name`, for a unit file or drop-in a unit picks up at its next start. `serial = true` acts on one host at a time.
 
 **When systemd re-executes.** An upgrade of libc6 or systemd makes systemd re-execute itself, and while it does, `systemctl` can't reach it for a moment. A `service_action` step tries again for up to 30 seconds when that happens. A `command` step that runs `systemctl restart` fails instead, which is why [`conn3x lint`](/reference/cli/lint) warns about one (C3X103).
 
