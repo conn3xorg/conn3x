@@ -124,6 +124,7 @@ var verbatim = map[string][]string{
 	"blockinfile":     {"block", "content"},
 	"package":         {"name", "pkg"},
 	"dnf":             {"name", "pkg"},
+	"dnf5":            {"name", "pkg"},
 	"yum":             {"name", "pkg"},
 	"apt":             {"name", "pkg"},
 	"apk":             {"name"},
@@ -187,7 +188,7 @@ func pathOK(v string, rules []string) bool {
 	return !slices.Contains(rules, "noslash") || !strings.HasSuffix(v, "/")
 }
 
-var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true, "apk": true, "zypper": true}
+var packageModules = map[string]bool{"package": true, "dnf": true, "dnf5": true, "yum": true, "apt": true, "apk": true, "zypper": true}
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
 
@@ -629,6 +630,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"template":                templateModule,
 	"package":                 packageModule,
 	"dnf":                     packageModule,
+	"dnf5":                    packageModule,
 	"yum":                     packageModule,
 	"apt":                     packageModule,
 	"apk":                     packageModule,
