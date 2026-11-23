@@ -104,7 +104,12 @@ done
 // the cached agent. It then keeps the new agent and the newest other one.
 const uploadScript = helpers + `d=%s name=%s want=%s
 usable "$d" || { echo "$d is not a private directory" >&2; exit 1; }
-if command -v flock >/dev/null 2>&1; then exec 9>>"$d/.lock" && flock -w 120 9 || exit 1; fi
+if command -v flock >/dev/null 2>&1; then
+  exec 9>>"$d/.lock" || exit 1
+  # BusyBox's flock, on Alpine, has no -w: there it waits as long as it takes.
+  w=; flock --help 2>&1 | grep -q -- '-w' && w='-w 120'
+  flock $w 9 || exit 1
+fi
 find "$d" -maxdepth 1 \( -name '.agent.*' -o -name '.canary.*' \) -mmin +60 -exec rm -f {} + 2>/dev/null
 t=$(mktemp "$d/.agent.XXXXXX") || exit 1
 trap 'rm -f "$t"' EXIT
