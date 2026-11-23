@@ -68,7 +68,7 @@ To take a release only once it has been out for a week, use `conn3xorg/tap/conn3
 Or download a release:
 
 ```sh
-VERSION=0.29.0 OS=linux ARCH=amd64   # or darwin / arm64
+VERSION=0.30.0 OS=linux ARCH=amd64   # or darwin / arm64
 curl -fsSLO "https://github.com/conn3xorg/conn3x/releases/download/v${VERSION}/conn3x_${VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf "conn3x_${VERSION}_${OS}_${ARCH}.tar.gz" conn3x && sudo install conn3x /usr/local/bin/
 ```
@@ -85,7 +85,7 @@ scoop install conn3x/conn3x
 Or take the zip, which holds `conn3x.exe`, and put it somewhere on your `PATH`:
 
 ```powershell
-$v = "0.29.0"
+$v = "0.30.0"
 Invoke-WebRequest "https://github.com/conn3xorg/conn3x/releases/download/v$v/conn3x_${v}_windows_amd64.zip" -OutFile conn3x.zip
 Expand-Archive conn3x.zip -DestinationPath conn3x
 ```
