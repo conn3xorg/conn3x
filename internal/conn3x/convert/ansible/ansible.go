@@ -93,8 +93,10 @@ type converter struct {
 	// csrs are the play's openssl_csr tasks' arguments, by the path each
 	// writes, for an x509_certificate that names it as its csr_path.
 	csrs map[string]map[string]*yaml.Node
-	inv  *Inventory
-	role *role // set while converting a role
+	// capPaths counts the play's capabilities tasks by the path each sets.
+	capPaths map[string]int
+	inv      *Inventory
+	role     *role // set while converting a role
 	// roleCalls is Options.Roles. roles are those converted so far, by
 	// their path, roleDirs and modules the names used, and callWhy why a
 	// role call couldn't convert, for flatten to leave it for review.
@@ -449,10 +451,14 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	}
 	used := map[string]int{}
 	c.jsonPairs(tasks)
-	c.csrs = map[string]map[string]*yaml.Node{}
+	c.csrs, c.capPaths = map[string]map[string]*yaml.Node{}, map[string]int{}
 	for _, t := range tasks {
-		if mod, args := moduleOf(mapping(t.node)); mod == "openssl_csr" && scalar(args["path"]) != "" {
+		mod, args := moduleOf(mapping(t.node))
+		if mod == "openssl_csr" && scalar(args["path"]) != "" {
 			c.csrs[scalar(args["path"])] = args
+		}
+		if mod == "capabilities" {
+			c.capPaths[scalar(args["path"])]++
 		}
 	}
 	c.findProbes(tasks, vars)
@@ -920,7 +926,7 @@ func sameForAnyUser(mod string, args map[string]*yaml.Node) bool {
 	case "package", "dnf", "yum", "apt", "service", "systemd", "systemd_service",
 		"user", "group", "authorized_key", "known_hosts", "sysctl", "hostname", "timezone",
 		"firewalld", "ufw", "seboolean", "sefcontext", "selinux", "alternatives", "snap", "mount", "debug", "ping", "win_ping", "setup", "service_facts", "package_facts",
-		"apt_repository", "yum_repository", "zypper_repository":
+		"apt_repository", "yum_repository", "zypper_repository", "capabilities":
 		return true
 	case "cron":
 		return args["user"] != nil // otherwise it's the crontab of whoever runs it
@@ -1186,6 +1192,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		in.wait = wait
 		in.jsonEdits, in.jsonWhy = c.jsonEdits[node], c.jsonWhy[node]
 		in.csrs = c.csrs
+		in.capTasks = c.capPaths[scalar(args["path"])]
 		in.env = t["environment"]
 		steps, reason := m(in)
 		if reason == "" && items != nil {

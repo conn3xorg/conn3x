@@ -26,3 +26,16 @@ step "nginx_low_ports" {
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the capabilities. `on_remove = "delete"` takes them all off with `setcap -r`.
+
+## From Ansible
+
+`community.general.capabilities` adds or takes off the one capability it names and keeps the file's others. A `file_capabilities` step owns the whole set, so a converted step would take off anything a package or another play gave the file. `conn3x convert ansible` leaves each `capabilities` task for review, with a reason that names the step to write. Gather every capability the file should end with into one step:
+
+```hcl
+step "ping_raw" {
+  file_capabilities {
+    path         = "/usr/bin/ping"
+    capabilities = ["cap_net_raw+ep"]
+  }
+}
+```
