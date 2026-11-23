@@ -47,6 +47,7 @@ func TestDetectFamily(t *testing.T) {
 		"ID=debian\n": Deb,
 		"ID=fedora\n": RPM,
 		"ID=almalinux\nID_LIKE=\"rhel centos fedora\"\n": RPM,
+		"ID=alpine\nVERSION_ID=3.22.7\n":                 APK,
 	} {
 		h := &scriptedHost{answers: []answer{{"/etc/os-release", ok(release)}}}
 		got, err := DetectFamily(ctx, h)
@@ -54,8 +55,8 @@ func TestDetectFamily(t *testing.T) {
 			t.Errorf("DetectFamily(%q) = %v, %v; want %v", release, got, err, want)
 		}
 	}
-	h := &scriptedHost{answers: []answer{{"/etc/os-release", ok("ID=alpine\n")}}}
-	if _, err := DetectFamily(ctx, h); err == nil || !strings.Contains(err.Error(), "alpine") {
+	h := &scriptedHost{answers: []answer{{"/etc/os-release", ok("ID=arch\n")}}}
+	if _, err := DetectFamily(ctx, h); err == nil || !strings.Contains(err.Error(), "arch") {
 		t.Errorf("unsupported distro error = %v", err)
 	}
 }

@@ -5,6 +5,7 @@ package pkg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -39,8 +40,14 @@ var (
 	dnf5Lock = regexp.MustCompile(`^Package name: (\S+)$`)
 )
 
+// errAPKHold is the answer on Alpine, where a pin is how a version is held.
+var errAPKHold = errors.New("package_hold doesn't manage Alpine: set version on the package step instead, which apk keeps as a pin in /etc/apk/world")
+
 // ReadHold reports whether the package is held.
 func ReadHold(ctx context.Context, r modules.Runner, family Family, name string) (bool, error) {
+	if family == APK {
+		return false, errAPKHold
+	}
 	cmd := "apt-mark showhold"
 	if family == RPM {
 		cmd = "dnf -q versionlock list"
@@ -86,6 +93,9 @@ func holdError(family Family, out string, code int) error {
 func ApplyHold(ctx context.Context, r modules.Runner, family Family, h Hold) error {
 	if err := h.Validate(); err != nil {
 		return err
+	}
+	if family == APK {
+		return errAPKHold
 	}
 	if h.Held {
 		a, err := Read(ctx, r, family, h.Name, false)

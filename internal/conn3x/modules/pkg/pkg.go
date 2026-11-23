@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // Package pkg installs, upgrades and removes OS packages with dnf on the
-// Red Hat family and apt on Debian and Ubuntu.
+// Red Hat family, apt on Debian and Ubuntu, and apk on Alpine.
 package pkg
 
 import (
@@ -24,6 +24,7 @@ type Family string
 const (
 	RPM Family = "rpm"
 	Deb Family = "deb"
+	APK Family = "apk"
 )
 
 // State is what should be true of the package.
@@ -123,9 +124,11 @@ func DetectFamily(ctx context.Context, r modules.Runner) (Family, error) {
 			return RPM, nil
 		case "debian", "ubuntu":
 			return Deb, nil
+		case "alpine":
+			return APK, nil
 		}
 	}
-	return "", fmt.Errorf("%s is not supported yet; Conn3x manages packages on the Red Hat family and on Debian and Ubuntu", fields["ID"])
+	return "", fmt.Errorf("%s is not supported yet; Conn3x manages packages on the Red Hat family, on Debian and Ubuntu, and on Alpine", fields["ID"])
 }
 
 // Read reports whether the package is installed. With candidate set it also
@@ -194,10 +197,43 @@ func Read(ctx context.Context, r modules.Runner, family Family, name string, can
 				}
 			}
 		}
+	case APK:
+		res, err := r.Run(ctx, "apk list -I "+q, nil)
+		if err != nil {
+			return a, err
+		}
+		if v := apkVersion(string(res.Stdout), name); v != "" {
+			a = Actual{Installed: true, Version: v}
+		}
+		if candidate {
+			// apk list reads the index, which a fresh host hasn't fetched.
+			res, err := r.Run(ctx, "apk update -q >/dev/null 2>&1; apk list "+q, nil)
+			if err != nil {
+				return a, err
+			}
+			a.Candidate = apkVersion(string(res.Stdout), name)
+		}
 	default:
 		return a, fmt.Errorf("unknown package family %q", family)
 	}
 	return a, nil
+}
+
+// apkVersion is name's version in apk list's output, whose lines start
+// "name-version-rN arch", or "". A line for another package whose name
+// starts the same, such as tree-doc for tree, isn't name's: what follows
+// the name and its dash must start with a digit.
+func apkVersion(out, name string) string {
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		if v, ok := strings.CutPrefix(f[0], name+"-"); ok && v != "" && v[0] >= '0' && v[0] <= '9' {
+			return v
+		}
+	}
+	return ""
 }
 
 // NeedsChange reports whether Apply would change anything.
@@ -278,6 +314,24 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			err = Run(ctx, r, install)
 		}
 		return err
+	case APK:
+		if d.InstallRecommends != nil {
+			return errors.New("install_recommends doesn't apply on Alpine: apk has no recommended packages")
+		}
+		// --no-cache fetches the index each time, so a fresh host needs no
+		// apk update first, and nothing is left in /var/cache/apk.
+		switch d.State {
+		case Absent:
+			return Run(ctx, r, "apk del -q "+ssh.Quote(d.Name))
+		case Latest:
+			return Run(ctx, r, "apk add -q --no-cache --upgrade "+ssh.Quote(d.Name))
+		default:
+			spec := d.Name
+			if d.Version != "" {
+				spec += "=" + d.Version
+			}
+			return Run(ctx, r, "apk add -q --no-cache "+ssh.Quote(spec))
+		}
 	}
 	return fmt.Errorf("unknown package family %q", family)
 }

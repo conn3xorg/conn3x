@@ -126,6 +126,7 @@ var verbatim = map[string][]string{
 	"dnf":             {"name", "pkg"},
 	"yum":             {"name", "pkg"},
 	"apt":             {"name", "pkg"},
+	"apk":             {"name"},
 	"service":         {"name"},
 	"systemd":         {"name"},
 	"systemd_service": {"name"},
@@ -185,7 +186,7 @@ func pathOK(v string, rules []string) bool {
 	return !slices.Contains(rules, "noslash") || !strings.HasSuffix(v, "/")
 }
 
-var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true}
+var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true, "apk": true}
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
 
@@ -629,6 +630,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"dnf":                     packageModule,
 	"yum":                     packageModule,
 	"apt":                     packageModule,
+	"apk":                     packageModule,
 	"pip":                     pipModule,
 	"npm":                     npmModule,
 	"service":                 serviceModule,
@@ -1097,6 +1099,11 @@ func packageModule(in *input) ([]step, string) {
 		st = alias
 	}
 	var notes []string
+	if in.mod == "apk" {
+		// The step installs with apk add --no-cache already, and available
+		// only picks between what's installed and what's offered.
+		in.ignore("no_cache", "available")
+	}
 	if in.has("update_cache") {
 		in.ignore("update_cache", "cache_valid_time")
 		notes = append(notes, "update_cache dropped: Conn3x refreshes the package lists when a package isn't found.")

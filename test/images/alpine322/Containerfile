@@ -1,0 +1,11 @@
+# Alpine 3.22 with sshd, used as a managed host in the package tests. It has
+# no systemd: sshd runs as the container's process, which is enough for
+# steps that don't manage services.
+FROM docker.io/library/alpine:3.22
+
+RUN apk add --no-cache openssh \
+ && ssh-keygen -A \
+ && mkdir -p -m 700 /root/.ssh
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]

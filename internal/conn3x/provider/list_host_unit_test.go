@@ -76,9 +76,9 @@ func TestListHostSurfacesFailures(t *testing.T) {
 		}
 	}
 	// A family the package steps don't manage stops at detection.
-	alpine := cty.ObjectVal(unitHost(t, (&unitScripts{}).on("cat /etc/os-release", "ID=alpine\n").answer))
-	if _, _, err := ListHost(ctx, "packages", alpine); err == nil || !strings.Contains(err.Error(), "alpine is not supported") {
-		t.Errorf("alpine: %v", err)
+	arch := cty.ObjectVal(unitHost(t, (&unitScripts{}).on("cat /etc/os-release", "ID=arch\n").answer))
+	if _, _, err := ListHost(ctx, "packages", arch); err == nil || !strings.Contains(err.Error(), "arch is not supported") {
+		t.Errorf("arch: %v", err)
 	}
 	// So does a package list the provider can't read.
 	torn := cty.ObjectVal(unitHost(t, (&unitScripts{}).on("cat /etc/os-release", "ID=rocky\n").on("rpm -qa", "!rpm: database locked").answer))

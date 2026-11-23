@@ -55,8 +55,23 @@ func (r Repo) Validate(family pkg.Family) error {
 	return nil
 }
 
-// Files returns the files the repository needs, by path.
+// errAlpine is the answer on Alpine, whose repositories are lines in a file.
+var errAlpine = errors.New("repository and package_sources don't manage Alpine: its repositories are lines in /etc/apk/repositories, which a line step keeps")
+
+// alpine refuses a family whose repositories this package doesn't write.
+func alpine(family pkg.Family) error {
+	if family == pkg.APK {
+		return errAlpine
+	}
+	return nil
+}
+
+// Files returns the files the repository needs, by path, and none on
+// Alpine, which keeps no repository files of this kind.
 func (r Repo) Files(family pkg.Family) map[string]string {
+	if family == pkg.APK {
+		return nil
+	}
 	if family == pkg.RPM {
 		keyPath := "/etc/pki/rpm-gpg/RPM-GPG-KEY-conn3x-" + r.Name
 		return map[string]string{
@@ -83,6 +98,9 @@ func (r Repo) Files(family pkg.Family) map[string]string {
 
 // InSync reports whether every file the repository needs is in place.
 func InSync(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) (bool, error) {
+	if err := alpine(family); err != nil {
+		return false, err
+	}
 	for path, want := range r.Files(family) {
 		a, err := file.Read(ctx, h, path)
 		if err != nil {
@@ -98,6 +116,9 @@ func InSync(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) (b
 // Apply writes the files, then refreshes apt's package lists, so the next
 // package step can install from the repository.
 func Apply(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) error {
+	if err := alpine(family); err != nil {
+		return err
+	}
 	if err := r.Validate(family); err != nil {
 		return err
 	}
@@ -116,6 +137,9 @@ func Apply(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) err
 
 // Delete removes the files and refreshes apt's package lists.
 func Delete(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) error {
+	if err := alpine(family); err != nil {
+		return err
+	}
 	for path := range r.Files(family) {
 		if err := file.Delete(ctx, h, path); err != nil {
 			return err

@@ -77,7 +77,7 @@ func TestReadEdges(t *testing.T) {
 	if a, err := Read(ctx, h, Deb, "bash", true); err != nil || a.Installed || a.Candidate != "" {
 		t.Errorf("deb with no candidate: %+v, %v", a, err)
 	}
-	if _, err := Read(ctx, h, "apk", "bash", false); err == nil || !strings.Contains(err.Error(), `unknown package family "apk"`) {
+	if _, err := Read(ctx, h, "pacman", "bash", false); err == nil || !strings.Contains(err.Error(), `unknown package family "pacman"`) {
 		t.Errorf("unknown family: %v", err)
 	}
 	if _, err := Read(ctx, h, Deb, "-x", false); err == nil {
@@ -148,7 +148,7 @@ func TestHoldFailures(t *testing.T) {
 }
 
 func TestInventoryEdges(t *testing.T) {
-	if _, err := Inventory(ctx, down{}, "apk"); err == nil || err.Error() != `unknown package family "apk"` {
+	if _, err := Inventory(ctx, down{}, "pacman"); err == nil || err.Error() != `unknown package family "pacman"` {
 		t.Errorf("unknown family: %v", err)
 	}
 	h := &scriptedHost{answers: []answer{{"dpkg", ssh.Result{ExitCode: 2, Stderr: []byte("dpkg: error\n")}}}}

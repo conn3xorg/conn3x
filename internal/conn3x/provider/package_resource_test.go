@@ -97,6 +97,20 @@ func TestPackagePlanLatestUpgrades(t *testing.T) {
 	}
 }
 
+// Going from present to latest with the package already newest: the refresh
+// read no latest_version for "present", so the plan leaves it unknown for
+// the apply to fill in, or OpenTofu calls the apply's value inconsistent.
+func TestPackagePlanStateToLatest(t *testing.T) {
+	prior := packageObj(t, map[string]cty.Value{
+		"id": cty.StringVal("h:package:nginx"), "name": cty.StringVal("nginx"), "state": cty.StringVal("present"),
+		"on_remove": cty.StringVal("forget"), "installed_version": cty.StringVal("1.1-1"),
+	})
+	cfg := packageObj(t, map[string]cty.Value{"name": cty.StringVal("nginx"), "state": cty.StringVal("latest")})
+	if planPkg(t, prior, cfg).GetAttr("latest_version").IsKnown() {
+		t.Fatal("latest_version was planned as known, though the refresh never read it")
+	}
+}
+
 func TestPackagePlanCreateAbsent(t *testing.T) {
 	cfg := packageObj(t, map[string]cty.Value{"name": cty.StringVal("telnet"), "state": cty.StringVal("absent")})
 	planned := planPkg(t, cty.NullVal(cfg.Type()), cfg)

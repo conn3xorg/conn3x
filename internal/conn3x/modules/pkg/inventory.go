@@ -18,6 +18,9 @@ import (
 var inventoryCmd = map[Family]string{
 	Deb: `dpkg --print-architecture && dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${Architecture}\t${Version}\n' | awk -F '\t' 'substr($1, 2, 1) == "i" { print $2 "\t" $3 "\t" $4 }'`,
 	RPM: `uname -m && rpm -qa --qf '%{NAME}\t%{ARCH}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n'`,
+	// apk list -I prints "name-version-rN arch {origin} (license) [installed]";
+	// the name is what comes before the last two dashes.
+	APK: `apk --print-arch && apk list -I | awk '{ n = $1; sub(/-[^-]+-r[0-9]+$/, "", n); print n "\t" $2 "\t" substr($1, length(n) + 2) }'`,
 }
 
 // Inventory returns every installed package's versions, oldest first, by
@@ -187,6 +190,9 @@ func rpmvercmp(a, b string) int {
 var manualCmd = map[Family]string{
 	Deb: `apt-mark showmanual && echo @@@ && dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${Essential}\t${Priority}\t${Depends}, ${Pre-Depends}, ${Recommends}\n'`,
 	RPM: `command -v dnf >/dev/null || { echo "listing hand-installed packages needs dnf" >&2; exit 1; }; dnf -q repoquery --userinstalled --qf '%{name}\n'`,
+	// /etc/apk/world is what was asked for, each perhaps with a version
+	// constraint such as nginx=1.26.2-r0.
+	APK: `sed -e 's/[=<>~].*//' /etc/apk/world`,
 }
 
 // Manual returns the names of the packages installed by hand, as the tool

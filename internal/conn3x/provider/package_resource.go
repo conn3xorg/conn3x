@@ -115,7 +115,9 @@ func planPackage(req providers.PlanResourceChangeRequest) providers.PlanResource
 	default:
 		// Refresh already recorded what is on the host; plan a change only
 		// when it differs from what is wanted.
-		if pkg.NeedsChange(desiredPackage(planned), actualPackage(req.PriorState)) {
+		// A new state also counts: the refresh read latest_version only for
+		// the old one, so going to "latest" learns it at apply.
+		if pkg.NeedsChange(desiredPackage(planned), actualPackage(req.PriorState)) || !req.PriorState.GetAttr("state").RawEquals(vals["state"]) {
 			unknownInstall()
 		} else {
 			vals["installed_version"] = req.PriorState.GetAttr("installed_version")

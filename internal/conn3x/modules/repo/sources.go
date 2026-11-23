@@ -117,6 +117,9 @@ done`, ssh.Quote(SourcesDir(family)), glob, ssh.Quote(managed), owners)
 
 // ReadSources lists the host's added package sources and its os-release ID.
 func ReadSources(ctx context.Context, r modules.Runner, family pkg.Family) (id string, files []SourceFile, err error) {
+	if err := alpine(family); err != nil {
+		return "", nil, err
+	}
 	res, err := r.Run(ctx, listScript(family), nil)
 	if err != nil {
 		return "", nil, err
@@ -142,6 +145,9 @@ func parseSources(out string) (string, []SourceFile, error) {
 // Disable moves the named files into DisabledDir, keeping an older file of
 // the same name as a numbered backup, then refreshes apt's package lists.
 func Disable(ctx context.Context, h modules.Runner, family pkg.Family, names []string) error {
+	if err := alpine(family); err != nil {
+		return err
+	}
 	if len(names) == 0 {
 		return nil
 	}
