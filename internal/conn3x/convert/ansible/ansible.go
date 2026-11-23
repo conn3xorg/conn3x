@@ -920,7 +920,7 @@ func sameForAnyUser(mod string, args map[string]*yaml.Node) bool {
 	case "package", "dnf", "yum", "apt", "service", "systemd", "systemd_service",
 		"user", "group", "authorized_key", "known_hosts", "sysctl", "hostname", "timezone",
 		"firewalld", "ufw", "seboolean", "sefcontext", "selinux", "alternatives", "snap", "mount", "debug", "ping", "win_ping", "setup", "service_facts", "package_facts",
-		"apt_repository", "yum_repository":
+		"apt_repository", "yum_repository", "deb822_repository":
 		return true
 	case "cron":
 		return args["user"] != nil // otherwise it's the crontab of whoever runs it
