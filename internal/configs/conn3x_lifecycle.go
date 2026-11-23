@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // A step's lifecycle block is decoded by upstream's own resource decoder,
@@ -139,24 +140,43 @@ func renameTemplateIgnores(lc *hclsyntax.Block, r *Resource) {
 	if body, ok := r.Config.(*hclsyntax.Body); ok && body.Attributes["content_wo"] != nil {
 		content = "content_wo" // upstream then explains write-only arguments can't be ignored
 	}
-	// shortcut: only bare names are renamed, not the legacy quoted form; upstream reports a quoted "source" as unknown.
 	for _, e := range list.Exprs {
-		t, ok := e.(*hclsyntax.ScopeTraversalExpr)
-		if !ok || len(t.Traversal) == 0 {
-			continue
+		switch expr := e.(type) {
+		case *hclsyntax.ScopeTraversalExpr:
+			if len(expr.Traversal) == 0 {
+				continue
+			}
+			root, ok := expr.Traversal[0].(hcl.TraverseRoot)
+			if !ok {
+				continue
+			}
+			to, ok := templateLowered[root.Name]
+			if !ok {
+				continue
+			}
+			if to == "content" {
+				to = content
+			}
+			root.Name = to
+			expr.Traversal[0] = root
+		case *hclsyntax.TemplateExpr:
+			// A quoted name, e.g. ignore_changes = ["source"]: Terraform 0.11 and
+			// earlier required quotes here, and some configs still carry them.
+			if len(expr.Parts) != 1 {
+				continue
+			}
+			lit, ok := expr.Parts[0].(*hclsyntax.LiteralValueExpr)
+			if !ok || lit.Val.Type() != cty.String {
+				continue
+			}
+			to, ok := templateLowered[lit.Val.AsString()]
+			if !ok {
+				continue
+			}
+			if to == "content" {
+				to = content
+			}
+			lit.Val = cty.StringVal(to)
 		}
-		root, ok := t.Traversal[0].(hcl.TraverseRoot)
-		if !ok {
-			continue
-		}
-		to, ok := templateLowered[root.Name]
-		if !ok {
-			continue
-		}
-		if to == "content" {
-			to = content
-		}
-		root.Name = to
-		t.Traversal[0] = root
 	}
 }

@@ -149,6 +149,26 @@ func TestTemplateStepIgnoreChangesUsesStepNames(t *testing.T) {
 	}
 }
 
+// The quoted legacy form of a name is renamed the same as the bare form.
+func TestTemplateStepIgnoreChangesQuotedNamesUseStepNames(t *testing.T) {
+	mod, diags := loadCircuitModule(t, map[string]string{
+		"main.circuit.hcl": lifecycleCircuit(`template {
+      source      = "motd.tftpl"
+      destination = "/etc/motd"
+    }`, `ignore_changes = ["source", "vars", "destination", "mode"]`),
+	})
+	if diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	var got []string
+	for _, tr := range mod.ManagedResources["conn3x_file.web__s"].Managed.IgnoreChanges {
+		got = append(got, traversalString(tr))
+	}
+	if strings.Join(got, ",") != "content,content,path,mode" {
+		t.Fatalf("ignore_changes = %v", got)
+	}
+}
+
 // In a looping step, each and item inside a condition mean the host and the
 // item, as they do in the module block.
 func TestLoopingStepConditionRefsRewritten(t *testing.T) {
