@@ -94,10 +94,23 @@ func (f File) Validate() error {
 	if len(f.Caps) == 0 {
 		return errors.New("capabilities must name at least one; delete the step with on_remove = \"delete\" to take them all off")
 	}
-	for name := range f.Caps {
+	effective := 0
+	for name, flags := range f.Caps {
 		if !capName.MatchString(name) {
 			return fmt.Errorf("%q isn't a capability name", name)
 		}
+		if strings.Contains(flags, "e") {
+			effective++
+			// e only raises what p or i brings in; alone it grants nothing,
+			// and setcap stores nothing for it.
+			if flags == "e" {
+				return fmt.Errorf("%s has e without p or i, which grants nothing; write %s+ep", name, name)
+			}
+		}
+	}
+	// The kernel keeps one effective bit for the whole file.
+	if effective != 0 && effective != len(f.Caps) {
+		return errors.New("e is one flag for the whole file: give it to every capability or none")
 	}
 	return nil
 }
@@ -128,7 +141,13 @@ func parseGetcap(out, file string) (Set, error) {
 		if !ok {
 			continue
 		}
-		return Parse(strings.TrimPrefix(strings.TrimSpace(rest), "= "))
+		// A bare "=" is an empty set, as for a file whose capability
+		// attribute holds none.
+		rest = strings.TrimSpace(rest)
+		if rest == "=" {
+			return Set{}, nil
+		}
+		return Parse(strings.TrimPrefix(rest, "= "))
 	}
 	return Set{}, nil
 }

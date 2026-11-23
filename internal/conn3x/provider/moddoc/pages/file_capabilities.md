@@ -17,6 +17,8 @@ step "nginx_low_ports" {
 
 **Owned whole.** The file ends up with exactly `capabilities`. One it has that isn't listed is taken off. Write each the way `setcap` takes it, as `cap_net_raw+ep` or `cap_net_bind_service,cap_net_raw=ep`. They're compared by what they grant, so `cap_net_raw+ep` matches `cap_net_raw=ep`, which newer `getcap` prints.
 
+**The effective flag.** The kernel keeps one `e` bit for the whole file, so every capability has `e` or none does. A mix is refused before anything reaches the host. So is `e` without `p` or `i`, which grants nothing, and `setcap` stores nothing for it.
+
 **Drift.** A package upgrade that replaces the file drops its capabilities. The next plan shows the step out of sync and sets them again.
 
 **The tools.** `getcap` and `setcap` come from `libcap2-bin` on Debian and Ubuntu, and from `libcap` on the Red Hat family. When they're missing, the step says which package to add. Put a `package` step before it.

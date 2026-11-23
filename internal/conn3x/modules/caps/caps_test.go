@@ -33,6 +33,7 @@ func TestParseGetcap(t *testing.T) {
 		"/usr/bin/ping cap_net_raw=ep\n":   "cap_net_raw=ep",
 		"":                                 "",
 		"/usr/bin/pingx cap_net_raw=ep\n":  "",
+		"/usr/bin/ping =\n":                "",
 	} {
 		s, err := parseGetcap(out, "/usr/bin/ping")
 		if err != nil || s.String() != want {
@@ -43,12 +44,16 @@ func TestParseGetcap(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	ok, _ := Parse("cap_net_bind_service+ep")
-	if err := (File{Path: "/usr/sbin/nginx", Caps: ok}).Validate(); err != nil {
-		t.Error(err)
+	for _, good := range []Set{ok, {"cap_net_raw": "ep", "cap_net_bind_service": "ei"}, {"cap_net_raw": "p", "cap_sys_nice": "i"}} {
+		if err := (File{Path: "/usr/sbin/nginx", Caps: good}).Validate(); err != nil {
+			t.Errorf("%v: %v", good, err)
+		}
 	}
 	for name, bad := range map[string]File{
 		"relative": {Path: "usr/bin/ping", Caps: ok},
 		"none":     {Path: "/usr/bin/ping", Caps: Set{}},
+		"mixed e":  {Path: "/usr/bin/ping", Caps: Set{"cap_net_raw": "ep", "cap_net_bind_service": "p"}},
+		"e alone":  {Path: "/usr/bin/ping", Caps: Set{"cap_net_raw": "e"}},
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("%s: no error", name)
