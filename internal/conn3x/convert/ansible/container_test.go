@@ -50,10 +50,77 @@ func TestConvertContainers(t *testing.T) {
 	}
 
 	for task, want := range map[string]string{
-		"docker_container: { name: web, image: nginx, state: present }":               `state "present"`,
-		"docker_container: { name: web, image: nginx, networks: [{name: x}] }":        "sets networks",
-		"docker_container: { name: web, image: nginx, command: \"sh -c 'echo hi'\" }": "write it as a list",
-		"docker_container: { name: web, image: nginx, published_ports: [\"80\"] }":    "must be host:container",
+		"docker_container: { name: web, image: nginx, state: present }":                      `state "present"`,
+		"docker_container: { name: web, image: nginx, networks: [{name: x, aliases: [y]}] }": "sets networks with aliases",
+		"podman_container: { name: web, image: nginx, network: host }":                       "host and none are network modes",
+		"docker_container: { name: web, image: nginx, command: \"sh -c 'echo hi'\" }":        "write it as a list",
+		"docker_container: { name: web, image: nginx, published_ports: [\"80\"] }":           "must be host:container",
+	} {
+		res := convertString(t, "- hosts: app\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, want) {
+			t.Errorf("%s: converted %d, review %+v, want %q", task, res.Converted, res.Review, want)
+		}
+	}
+}
+
+// A compose-style play: an image, a network and a volume, and a container
+// on both.
+func TestConvertContainerObjects(t *testing.T) {
+	res := convertString(t, `- hosts: app
+  tasks:
+    - community.docker.docker_image: { name: docker.io/library/nginx, tag: "1.27", source: pull }
+    - community.docker.docker_network: { name: app, ipam_config: [{ subnet: 10.89.0.0/24 }] }
+    - community.docker.docker_volume: { volume_name: data }
+    - community.docker.docker_container:
+        name: web
+        image: docker.io/library/nginx:1.27
+        networks: [{ name: app }]
+        volumes: ["data:/data"]
+    - containers.podman.podman_image: { name: "ghcr.io/example/worker:2.4.1", tag: ignored }
+    - containers.podman.podman_network: { name: back, driver: macvlan, subnet: 10.90.0.0/24 }
+    - containers.podman.podman_volume: { name: cache, driver: local }
+    - containers.podman.podman_container: { name: worker, image: "ghcr.io/example/worker:2.4.1", network: [app, back] }
+`)
+	hcl := string(res.HCL)
+	for _, want := range []string{
+		"container_image {", `name   = "docker.io/library/nginx"`, `tag    = "1.27"`,
+		"container_network {", `subnet = "10.89.0.0/24"`, `driver = "macvlan"`,
+		"container_volume {", `name   = "data"`, `name   = "cache"`,
+		`networks = ["app"]`, `networks = ["app", "back"]`, `name   = "ghcr.io/example/worker:2.4.1"`,
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %s:\n%s", want, hcl)
+		}
+	}
+	if strings.Contains(hcl, "ignored") {
+		t.Errorf("a tag in name wins, as in Ansible:\n%s", hcl)
+	}
+	if res.Converted != 8 || len(res.Review) != 0 {
+		t.Errorf("converted %d, review %v", res.Converted, res.Review)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.circuit.hcl"), res.HCL, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, diags := configs.NewParser(afero.NewOsFs()).LoadConfigDir(dir); diags.HasErrors() {
+		t.Errorf("the circuit doesn't load: %s\n%s", diags, hcl)
+	}
+
+	for task, want := range map[string]string{
+		"docker_image: { name: app, source: build, build: { path: . } }":                               "builds the image",
+		"docker_image: { name: app, source: local }":                                                   "source: local",
+		"docker_image: { name: nginx, state: absent }":                                                 `state "absent"`,
+		"docker_image: { name: nginx, force_source: yes }":                                             "sets force_source",
+		"podman_image: { name: nginx, pull: no }":                                                      "pull: false",
+		"podman_image: { name: app, build: { file: Containerfile } }":                                  "builds the image",
+		"docker_network: { name: app, ipam_config: [{ subnet: 10.1.0.0/24 }, { subnet: fd00::/64 }] }": "2 entries",
+		"docker_network: { name: app, ipam_config: [{ subnet: 10.1.0.0/24, gateway: 10.1.0.1 }] }":     "ipam_config gateway",
+		"docker_network: { name: app, driver: overlay, scope: swarm }":                                 "Swarm",
+		"docker_network: { name: app, internal: yes }":                                                 "sets internal",
+		"docker_network: { name: app, ipam_config: [{ subnet: 10.1.0.1/24 }] }":                        "must be written 10.1.0.0/24",
+		"podman_network: { name: app, gateway: 10.1.0.1 }":                                             "sets gateway",
+		"docker_volume: { name: data, driver_options: { type: nfs } }":                                 "sets driver_options",
+		"podman_volume: { name: data, state: absent }":                                                 `state "absent"`,
 	} {
 		res := convertString(t, "- hosts: app\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, want) {

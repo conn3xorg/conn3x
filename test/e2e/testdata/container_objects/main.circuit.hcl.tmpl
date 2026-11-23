@@ -1,0 +1,69 @@
+variable "present" {
+  type    = bool
+  default = true
+}
+
+variable "web" {
+  type    = bool
+  default = true
+}
+
+circuit "app" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "podman" {
+    package {
+      name = "podman"
+    }
+  }
+
+  step "image" {
+    when = var.present
+    container_image {
+      name      = "docker.io/library/busybox"
+      tag       = "1.37"
+      engine    = "podman"
+      on_remove = "delete"
+    }
+  }
+
+  step "network" {
+    when = var.present
+    container_network {
+      name      = "app"
+      subnet    = "10.89.7.0/24"
+      engine    = "podman"
+      on_remove = "delete"
+    }
+  }
+
+  step "volume" {
+    when = var.present
+    container_volume {
+      name      = "data"
+      engine    = "podman"
+      on_remove = "delete"
+    }
+  }
+
+  step "web" {
+    when = var.present && var.web
+    container {
+      name      = "web"
+      image     = "docker.io/library/busybox:1.37"
+      command   = ["sh", "-c", "echo hello > /data/greeting && exec sleep 3600"]
+      networks  = ["app"]
+      volumes   = ["data:/data"]
+      engine    = "podman"
+      on_remove = "delete"
+    }
+  }
+}
