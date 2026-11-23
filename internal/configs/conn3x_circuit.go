@@ -51,6 +51,7 @@ var circuitModules = map[string]string{
 	"debconf":              "conn3x_debconf",
 	"acl":                  "conn3x_acl",
 	"file_capabilities":    "conn3x_file_capabilities",
+	"fetch":                "conn3x_fetch",
 	"hostname":             "conn3x_hostname",
 	"timezone":             "conn3x_timezone",
 	"locale":               "conn3x_locale",
@@ -359,8 +360,9 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 			// earlier step is about to change, since that step can leave a
 			// reboot pending after the plan read the marker. So does a file
 			// system that grows with its device, which an earlier step can
-			// grow after the plan read its size.
-			if body, ok := r.Config.(*hclsyntax.Body); ok && len(earlier) > 0 && (r.Type == "conn3x_windows_reboot" || r.Type == "conn3x_filesystem" && body.Attributes["resize"] != nil) {
+			// grow after the plan read its size, and a fetch, whose file an
+			// earlier step can write.
+			if body, ok := r.Config.(*hclsyntax.Body); ok && len(earlier) > 0 && (r.Type == "conn3x_windows_reboot" || r.Type == "conn3x_fetch" || r.Type == "conn3x_filesystem" && body.Attributes["resize"] != nil) {
 				rng := step.DefRange
 				body.Attributes["earlier_revisions"] = &hclsyntax.Attribute{Name: "earlier_revisions", Expr: hostRevisions(earlier, rng), SrcRange: rng, NameRange: rng, EqualsRange: rng}
 			}
