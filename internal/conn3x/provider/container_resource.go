@@ -23,6 +23,7 @@ func containerSchema() providers.Schema {
 			"image":     {Type: cty.String, Required: true, Description: "The image, such as docker.io/library/nginx:1.30. Write it in full: a new tag recreates the container, and a new digest behind the same tag doesn't."},
 			"ports":     {Type: cty.List(cty.String), Optional: true, Description: "Published ports, each host:container, such as 8080:80, optionally with an address in front and /tcp, /udp or /sctp after."},
 			"volumes":   {Type: cty.List(cty.String), Optional: true, Description: "Mounts, each source:destination[:options], with an absolute host path or a volume name as the source. Options are ro, rw, z and Z."},
+			"networks":  {Type: cty.List(cty.String), Optional: true, Description: "Networks to join, by name, such as one a container_network step made. Unset, the container is on the engine's default network."},
 			"env":       {Type: cty.Map(cty.String), Optional: true, Sensitive: true, Description: "Environment variables. Passed on standard input, not the command line, so they don't show in the host's process list. Only the ones you set are compared."},
 			"restart":   {Type: cty.String, Optional: true, Description: "Restart policy: \"no\" (default), \"always\", \"unless-stopped\" or \"on-failure\". With Podman, always and unless-stopped also enable podman-restart.service, so the container starts after a reboot."},
 			"command":   {Type: cty.List(cty.String), Optional: true, Description: "The command to run instead of the image's own, one argument per entry."},
@@ -37,7 +38,7 @@ func containerSchema() providers.Schema {
 func containerFrom(v cty.Value) container.Container {
 	c := container.Container{
 		Name: v.GetAttr("name").AsString(), Image: v.GetAttr("image").AsString(),
-		Ports: stringList(v.GetAttr("ports")), Volumes: stringList(v.GetAttr("volumes")), Command: stringList(v.GetAttr("command")),
+		Ports: stringList(v.GetAttr("ports")), Volumes: stringList(v.GetAttr("volumes")), Command: stringList(v.GetAttr("command")), Networks: stringList(v.GetAttr("networks")),
 		Restart: stringOr(v.GetAttr("restart"), ""), Engine: stringOr(v.GetAttr("engine"), ""),
 	}
 	if env := v.GetAttr("env"); env.IsKnown() && !env.IsNull() {
@@ -50,7 +51,7 @@ func containerFrom(v cty.Value) container.Container {
 }
 
 func planContainer(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "container", []string{"name"}, []string{"image", "ports", "volumes", "env", "restart", "command", "engine"})
+	return planSynced(req, "container", []string{"name"}, []string{"image", "ports", "volumes", "networks", "env", "restart", "command", "engine"})
 }
 
 func readContainer(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

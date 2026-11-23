@@ -126,6 +126,7 @@ var verbatim = map[string][]string{
 	"blockinfile":     {"block", "content"},
 	"package":         {"name", "pkg"},
 	"dnf":             {"name", "pkg"},
+	"dnf5":            {"name", "pkg"},
 	"yum":             {"name", "pkg"},
 	"apt":             {"name", "pkg"},
 	"apk":             {"name"},
@@ -189,7 +190,7 @@ func pathOK(v string, rules []string) bool {
 	return !slices.Contains(rules, "noslash") || !strings.HasSuffix(v, "/")
 }
 
-var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true, "apk": true, "zypper": true}
+var packageModules = map[string]bool{"package": true, "dnf": true, "dnf5": true, "yum": true, "apt": true, "apk": true, "zypper": true}
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
 
@@ -631,6 +632,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"template":                templateModule,
 	"package":                 packageModule,
 	"dnf":                     packageModule,
+	"dnf5":                    packageModule,
 	"yum":                     packageModule,
 	"apt":                     packageModule,
 	"apk":                     packageModule,
@@ -694,6 +696,12 @@ var modules = map[string]func(*input) ([]step, string){
 	"lvol":                    lvolModule,
 	"docker_container":        containerModule("docker", "published_ports", "ports", "volumes"),
 	"podman_container":        containerModule("podman", "publish", "ports", "volume", "volumes"),
+	"docker_image":            containerImageModule("docker"),
+	"podman_image":            containerImageModule("podman"),
+	"docker_network":          containerNetworkModule("docker"),
+	"podman_network":          containerNetworkModule("podman"),
+	"docker_volume":           containerVolumeModule("docker"),
+	"podman_volume":           containerVolumeModule("podman"),
 	"command":                 commandModule,
 	"shell":                   commandModule,
 	"reboot":                  rebootModule,
@@ -708,6 +716,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"apt_repository":          aptRepositoryModule,
 	"yum_repository":          yumRepositoryModule,
 	"apache2_module":          apache2ModuleModule,
+	"deb822_repository":       deb822RepositoryModule,
 	"capabilities":            capabilitiesModule,
 	"locale_gen":              localeGenModule,
 	"dpkg_selections":         dpkgSelectionsModule,
@@ -2542,6 +2551,22 @@ func containerModule(engine string, keys ...string) func(*input) ([]step, string
 				c.Env[k] = in.render("env", v.Value)
 			}
 		}
+		// Docker's networks are maps; Podman's network is a list of names.
+		if n, ok := in.args["networks"]; ok {
+			in.used["networks"] = true
+			for _, e := range seq(n) {
+				m := mapping(e)
+				for _, k := range sortedKeys(m) {
+					if k != "name" {
+						return nil, "sets networks with " + k + ", which a container step doesn't have; it joins networks by name"
+					}
+				}
+				c.Networks = append(c.Networks, in.render("networks", scalar(m["name"])))
+			}
+		}
+		if in.has("network") {
+			c.Networks = in.list("network")
+		}
 		if err := c.Validate(); err != nil {
 			return nil, err.Error()
 		}
@@ -2559,6 +2584,7 @@ func containerModule(engine string, keys ...string) func(*input) ([]step, string
 		strs("ports", c.Ports)
 		strs("volumes", c.Volumes)
 		strs("command", c.Command)
+		strs("networks", c.Networks)
 		if len(c.Env) > 0 {
 			vals := map[string]cty.Value{}
 			for k, v := range c.Env {
@@ -2570,6 +2596,90 @@ func containerModule(engine string, keys ...string) func(*input) ([]step, string
 			attrs = append(attrs, s("restart", c.Restart))
 		}
 		return one("container", attrs)
+	}
+}
+
+// containerImageModule translates docker_image and podman_image tasks
+// that pull an image.
+func containerImageModule(engine string) func(*input) ([]step, string) {
+	return func(in *input) ([]step, string) {
+		in.state("present", "present")
+		if in.has("build") {
+			in.used["build"] = true
+			return nil, "builds the image, which Conn3x doesn't do yet; build it in CI, push it to a registry, and pull it with a container_image step"
+		}
+		if src := in.str("source"); src != "" && src != "pull" {
+			return nil, "sets source: " + src + "; a container_image step only pulls"
+		}
+		if !in.bool("pull", true) {
+			return nil, "sets pull: false, which only checks the image is there; a container_image step pulls it"
+		}
+		i := container.Image{Engine: engine, Name: in.str("name"), Tag: in.str("tag")}
+		// Ansible ignores tag when name has one, or a digest.
+		if container.HasTag(i.Name) {
+			i.Tag = ""
+		}
+		if err := i.Validate(); err != nil {
+			return nil, err.Error()
+		}
+		attrs := []attr{s("name", i.Name)}
+		if i.Tag != "" {
+			attrs = append(attrs, s("tag", i.Tag))
+		}
+		return one("container_image", append(attrs, s("engine", engine)))
+	}
+}
+
+// containerNetworkModule translates docker_network and podman_network.
+// Docker gives the subnet in ipam_config, Podman in subnet.
+func containerNetworkModule(engine string) func(*input) ([]step, string) {
+	return func(in *input) ([]step, string) {
+		in.state("present", "present")
+		n := container.Network{Engine: engine, Name: in.str("name"), Driver: in.str("driver"), Subnet: in.str("subnet")}
+		if ipam, ok := in.args["ipam_config"]; ok {
+			in.used["ipam_config"] = true
+			entries := seq(ipam)
+			if len(entries) != 1 {
+				return nil, fmt.Sprintf("sets ipam_config with %d entries; a container_network step has one subnet", len(entries))
+			}
+			m := mapping(entries[0])
+			for _, k := range sortedKeys(m) {
+				if k != "subnet" {
+					return nil, "sets ipam_config " + k + "; a container_network step sets only the subnet"
+				}
+			}
+			n.Subnet = in.render("ipam_config", scalar(m["subnet"]))
+		}
+		if n.Driver == "overlay" {
+			return nil, "uses the overlay driver, which is Swarm's, and Conn3x doesn't manage Swarm"
+		}
+		if err := n.Validate(); err != nil {
+			return nil, err.Error()
+		}
+		attrs := []attr{s("name", n.Name)}
+		if n.Driver != "" {
+			attrs = append(attrs, s("driver", n.Driver))
+		}
+		if n.Subnet != "" {
+			attrs = append(attrs, s("subnet", n.Subnet))
+		}
+		return one("container_network", append(attrs, s("engine", engine)))
+	}
+}
+
+// containerVolumeModule translates docker_volume and podman_volume.
+func containerVolumeModule(engine string) func(*input) ([]step, string) {
+	return func(in *input) ([]step, string) {
+		in.state("present", "present")
+		v := container.Volume{Engine: engine, Name: in.str("volume_name", "name"), Driver: in.str("driver")}
+		if err := v.Validate(); err != nil {
+			return nil, err.Error()
+		}
+		attrs := []attr{s("name", v.Name)}
+		if v.Driver != "" {
+			attrs = append(attrs, s("driver", v.Driver))
+		}
+		return one("container_volume", append(attrs, s("engine", engine)))
 	}
 }
 

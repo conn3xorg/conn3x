@@ -22,14 +22,15 @@ import (
 
 // Container is one container, by name.
 type Container struct {
-	Engine  string // "docker", "podman", or "" for whichever is installed
-	Name    string
-	Image   string
-	Ports   []string // [ip:]host:container[/proto]
-	Volumes []string // source:destination[:options]
-	Env     map[string]string
-	Restart string // "no" when unset
-	Command []string
+	Engine   string // "docker", "podman", or "" for whichever is installed
+	Name     string
+	Image    string
+	Ports    []string // [ip:]host:container[/proto]
+	Volumes  []string // source:destination[:options]
+	Env      map[string]string
+	Restart  string // "no" when unset
+	Command  []string
+	Networks []string // the engine's default network when empty
 }
 
 var (
@@ -87,13 +88,25 @@ func (c Container) Validate() error {
 	if !slices.Contains(restarts, c.restart()) {
 		return fmt.Errorf("restart %q must be one of %s", c.Restart, strings.Join(restarts, ", "))
 	}
+	for i, n := range c.Networks {
+		if !nameRe.MatchString(n) || n == "host" || n == "none" {
+			return fmt.Errorf("networks %q must name a network, starting with a letter or digit and holding only letters, digits and _ . -; host and none are network modes, which this step doesn't set", n)
+		}
+		if slices.Contains(c.Networks[:i], n) {
+			return fmt.Errorf("networks lists %s twice", n)
+		}
+	}
 	return nil
 }
 
 // engine is the shell that picks the engine into $e.
-func (c Container) engine() string {
-	if c.Engine != "" {
-		return "e=" + c.Engine + "\ncommand -v " + c.Engine + ` >/dev/null 2>&1 || { echo "` + c.Engine + ` isn't installed on this host" >&2; exit 1; }` + "\n"
+func (c Container) engine() string { return pickEngine(c.Engine) }
+
+// pickEngine is the shell that puts engine into $e, or whichever is
+// installed when engine is "".
+func pickEngine(engine string) string {
+	if engine != "" {
+		return "e=" + engine + "\ncommand -v " + engine + ` >/dev/null 2>&1 || { echo "` + engine + ` isn't installed on this host" >&2; exit 1; }` + "\n"
 	}
 	return `if command -v docker >/dev/null 2>&1; then e=docker
 elif command -v podman >/dev/null 2>&1; then e=podman
@@ -103,15 +116,16 @@ else echo "neither docker nor podman is installed on this host; add a package st
 
 // Actual is what the engine reports for the container's name.
 type Actual struct {
-	Engine  string
-	Exists  bool
-	Running bool
-	Image   string
-	Env     map[string]string
-	Ports   []string // normalised, sorted
-	Mounts  []string // normalised, sorted
-	Restart string
-	Command []string
+	Engine   string
+	Exists   bool
+	Running  bool
+	Image    string
+	Env      map[string]string
+	Ports    []string // normalised, sorted
+	Mounts   []string // normalised, sorted
+	Restart  string
+	Command  []string
+	Networks []string // sorted
 }
 
 // inspected is the part of inspect's output Conn3x reads; Docker and
@@ -131,6 +145,7 @@ type inspected struct {
 		Type, Name, Source, Destination string
 		RW                              bool
 	}
+	NetworkSettings struct{ Networks map[string]json.RawMessage }
 }
 
 // Read inspects the container named c.Name.
@@ -181,6 +196,10 @@ func Read(ctx context.Context, r modules.Runner, c Container) (Actual, error) {
 		a.Mounts = append(a.Mounts, mountKey(src, m.Destination, !m.RW))
 	}
 	sort.Strings(a.Mounts)
+	for n := range in.NetworkSettings.Networks {
+		a.Networks = append(a.Networks, n)
+	}
+	sort.Strings(a.Networks)
 	a.Restart = in.HostConfig.RestartPolicy.Name
 	if a.Restart == "" {
 		a.Restart = "no"
@@ -276,6 +295,9 @@ func (c Container) Differences(a Actual) []string {
 	if len(c.Command) > 0 && !slices.Equal(a.Command, c.Command) {
 		out = append(out, "its command differs")
 	}
+	if want := slices.Sorted(slices.Values(c.Networks)); len(want) > 0 && !slices.Equal(a.Networks, want) {
+		out = append(out, "its networks are "+strings.Join(a.Networks, ", "))
+	}
 	return out
 }
 
@@ -307,6 +329,9 @@ func Apply(ctx context.Context, r modules.Runner, c Container) error {
 		for _, v := range c.Volumes {
 			args = append(args, "-v", v)
 		}
+		if len(c.Networks) > 0 {
+			args = append(args, "--network", c.Networks[0])
+		}
 		if len(c.Env) > 0 {
 			// Values on the command line would show in the host's process list.
 			args = append(args, "--env-file", "/dev/stdin")
@@ -325,7 +350,12 @@ func Apply(ctx context.Context, r modules.Runner, c Container) error {
 		if a.Exists {
 			script += e + " rm -f -- " + name + " >/dev/null || exit 1\n"
 		}
-		script += e + " " + quoteAll(args) + " >/dev/null"
+		script += e + " " + quoteAll(args) + " >/dev/null || exit 1"
+		// One network at run, which every Docker and Podman takes; the rest
+		// are joined after.
+		for _, n := range c.Networks[min(1, len(c.Networks)):] {
+			script += "\n" + e + " network connect -- " + ssh.Quote(n) + " " + name + " >/dev/null || exit 1"
+		}
 		if a.Engine == "podman" && (c.restart() == "always" || c.restart() == "unless-stopped") {
 			// Podman has no daemon to restart containers after a reboot; its
 			// podman-restart service does that.

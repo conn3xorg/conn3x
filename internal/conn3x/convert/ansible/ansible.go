@@ -923,10 +923,10 @@ func (c *converter) filesChangeUser(p map[string]*yaml.Node, become bool) string
 // isn't here only because it needs no help: it proves its own user.
 func sameForAnyUser(mod string, args map[string]*yaml.Node) bool {
 	switch mod {
-	case "package", "dnf", "yum", "apt", "service", "systemd", "systemd_service",
+	case "package", "dnf", "dnf5", "yum", "apt", "service", "systemd", "systemd_service",
 		"user", "group", "authorized_key", "known_hosts", "sysctl", "hostname", "timezone",
 		"firewalld", "ufw", "seboolean", "sefcontext", "selinux", "alternatives", "snap", "mount", "debug", "ping", "win_ping", "setup", "service_facts", "package_facts",
-		"apt_repository", "yum_repository", "capabilities":
+		"apt_repository", "yum_repository", "deb822_repository", "capabilities":
 		return true
 	case "cron":
 		return args["user"] != nil // otherwise it's the crontab of whoever runs it
