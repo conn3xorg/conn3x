@@ -27,11 +27,11 @@ func TestConvertArchive(t *testing.T) {
 	}
 
 	for task, want := range map[string][]string{
-		"community.general.archive: {path: /var/log/app, dest: /backup/app.tgz, format: gz}":             {"pack {", `paths  = ["/var/log/app"]`, `dest   = "/backup/app.tgz"`, `format = "gz"`, "0600"},
-		"archive: {path: /var/log/app, dest: /backup/app.tar.gz, mode: '0640', owner: root, group: adm}": {`paths = ["/var/log/app"]`, `mode  = "0640"`, `owner = "root"`, `group = "adm"`},
-		"archive: {path: [/etc/nginx, /etc/ssl/*.pem], dest: /backup/etc.zip, format: zip}":              {`paths  = ["/etc/nginx", "/etc/ssl/*.pem"]`, `format = "zip"`},
-		"archive: {path: /etc/app, dest: /backup/app.xz, format: xz, force_archive: true}":               {`format = "xz"`},
-		"archive: {path: /var/log/app, dest: /backup/app.tgz, exclude_path: [/var/log/app/old], exclusion_patterns: ['*.gz', 'app/cache', /tmp/x]}": {
+		"community.general.archive: {path: /var/log/app, dest: /backup/app.tgz, format: gz, force_archive: true}":            {"pack {", `paths  = ["/var/log/app"]`, `dest   = "/backup/app.tgz"`, `format = "gz"`, "0600"},
+		"archive: {path: /var/log/app, dest: /backup/app.tar.gz, force_archive: yes, mode: '0640', owner: root, group: adm}": {`paths = ["/var/log/app"]`, `mode  = "0640"`, `owner = "root"`, `group = "adm"`},
+		"archive: {path: [/etc/nginx, /etc/ssl/*.pem], dest: /backup/etc.zip, format: zip}":                                  {`paths  = ["/etc/nginx", "/etc/ssl/*.pem"]`, `format = "zip"`},
+		"archive: {path: /etc/app, dest: /backup/app.xz, format: xz, force_archive: true}":                                   {`format = "xz"`},
+		"archive: {path: /var/log/app, dest: /backup/app.tgz, force_archive: true, exclude_path: [/var/log/app/old], exclusion_patterns: ['*.gz', 'app/cache', /tmp/x]}": {
 			`exclude = ["/var/log/app/old", "/var/log/*.gz", "/var/log/app/cache", "/tmp/x"]`,
 		},
 		"archive: {path: /srv/data, dest: /backup/d.tar, format: tar, remove: false, unsafe_writes: true}": {`format = "tar"`},
@@ -47,23 +47,25 @@ func TestConvertArchive(t *testing.T) {
 			}
 		}
 	}
-	if res := convert("archive: {path: /a/b, dest: /c.tgz, mode: '0644'}"); strings.Contains(string(res.HCL), "Set mode") {
+	if res := convert("archive: {path: /a/b, dest: /c.tgz, force_archive: true, mode: '0644'}"); strings.Contains(string(res.HCL), "Set mode") {
 		t.Errorf("mode set, still a TODO:\n%s", res.HCL)
 	}
 
 	for task, reason := range map[string]string{
-		"archive: {path: /var/log/app, dest: /backup/app.tgz, remove: true}": "remove: true",
-		"archive: {path: /var/log/app.log, dest: /backup/app.log.gz}":        "doesn't say which",
-		"archive: {path: /var/log/app.log}":                                  "has no dest",
-		"archive: {dest: /backup/a.tgz}":                                     "has no path",
-		"archive: {path: /var/log/app/, dest: /backup/app.tgz}":              "trailing slash",
-		"archive: {path: /var/*/app, dest: /backup/app.tgz}":                 "only the last part",
-		"archive: {path: 'var/log', dest: /backup/app.tgz}":                  "absolute path",
-		"archive: {path: '/var/log/[ab]*', dest: /backup/app.tgz}":           "has a [",
-		"archive: {path: /var/log, dest: /backup/a.rar, format: rar}":        `format "rar"`,
-		"archive: {path: /var/log, dest: /backup/a.tgz, mode: 'u+rw'}":       "not an octal mode",
-		"archive: {path: /var/log, dest: '{{ backup_dir }}/a.tgz'}":          "variable",
-		"archive: {path: /var/log, dest: /backup/a.tgz, attributes: +i}":     "attributes",
+		"archive: {path: /var/log/app, dest: /backup/app.tgz, remove: true}":                        "remove: true",
+		"archive: {path: /var/log/app.log, dest: /backup/app.log.gz}":                               "only force_archive says which",
+		"archive: {path: /var/log/app, dest: /backup/app.tgz, format: gz}":                          "a dest named like a tar archive doesn't",
+		"archive: {path: /var/log/app, dest: /backup/app.tar.xz, format: xz, force_archive: false}": "set force_archive: true",
+		"archive: {path: /var/log/app.log}":                                                         "has no dest",
+		"archive: {dest: /backup/a.tgz}":                                                            "has no path",
+		"archive: {path: /var/log/app/, dest: /backup/app.tgz}":                                     "trailing slash",
+		"archive: {path: /var/*/app, dest: /backup/app.tgz}":                                        "only the last part",
+		"archive: {path: 'var/log', dest: /backup/app.tgz}":                                         "absolute path",
+		"archive: {path: '/var/log/[ab]*', dest: /backup/app.tgz}":                                  "has a [",
+		"archive: {path: /var/log, dest: /backup/a.rar, format: rar}":                               `format "rar"`,
+		"archive: {path: /var/log, dest: /backup/a.tgz, mode: 'u+rw'}":                              "not an octal mode",
+		"archive: {path: /var/log, dest: '{{ backup_dir }}/a.tgz'}":                                 "variable",
+		"archive: {path: /var/log, dest: /backup/a.tgz, force_archive: true, attributes: +i}":       "attributes",
 	} {
 		res := convert(task)
 		if res.Converted != 0 || !strings.Contains(reasons(res), reason) {

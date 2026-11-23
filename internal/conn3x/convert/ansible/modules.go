@@ -2158,9 +2158,6 @@ func unarchiveModule(in *input) ([]step, string) {
 	return one("archive", []attr{s("src", in.str("src")), s("dest", in.str("dest")), s("creates", in.str("creates"))})
 }
 
-// tarName matches a dest that names a tar archive, compressed or not.
-var tarName = regexp.MustCompile(`(?i)\.(tar|tar\.(gz|bz2|xz|zst)|tgz|tbz2|txz|tzst)$`)
-
 // archiveModule turns community.general.archive into a pack step. Ansible
 // matches exclusion_patterns against names inside the archive, so they're
 // anchored at the pack step's root; exclude_path is already absolute. Both
@@ -2221,10 +2218,10 @@ func archiveModule(in *input) ([]step, string) {
 	if err := p.Validate(); err != nil {
 		return nil, "can't be a pack step: " + err.Error()
 	}
-	// Ansible gzips a lone file on its own but tars a directory. A dest named
-	// as a tar archive says which the play means; force_archive says so too.
-	if len(paths) == 1 && !strings.ContainsAny(paths[0], "*?") && format != "tar" && format != "zip" && !in.bool("force_archive", false) && !tarName.MatchString(dest) {
-		return nil, "packs one path, which Ansible compresses on its own if it's a file and tars if it's a directory, and the play doesn't say which; a pack step always makes a tar archive. Set force_archive: true, or name dest .tar." + format + ", if that's meant"
+	// Ansible gzips a lone file on its own but tars a directory. Only
+	// force_archive says which; a dest named like a tarball doesn't.
+	if len(paths) == 1 && !strings.ContainsAny(paths[0], "*?") && format != "tar" && format != "zip" && !in.bool("force_archive", false) {
+		return nil, "packs one path, which Ansible compresses on its own if it's a file and tars if it's a directory, and only force_archive says which; a dest named like a tar archive doesn't. A pack step always makes a tar archive, so set force_archive: true if the path is a directory"
 	}
 	in.ignore("force_archive", "remove", "unsafe_writes")
 	return one("pack", attrs, notes...)

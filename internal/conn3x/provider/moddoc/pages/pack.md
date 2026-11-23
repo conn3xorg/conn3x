@@ -51,7 +51,7 @@ step "etc_backup" {
 What stays for review:
 
 - `remove: true`, which deletes the files once they're packed. No plan can show that, and a `pack` step never deletes them.
-- One path without a wildcard and a compressing format, unless `force_archive: true` is set or `dest` is named as a tar archive, such as `.tar.gz` or `.tgz`. Ansible compresses a lone file on its own but tars a directory, and the play doesn't say which this is.
+- One path without a wildcard and a compressing format, unless `force_archive: true` is set. Ansible compresses a lone file on its own but tars a directory, and only `force_archive` says which this is. A `dest` named like a tarball, such as `.tgz`, doesn't count: if the path is a file, Ansible still writes plain gzip.
 - No `dest`, a path with a trailing slash, a wildcard before a path's last part, or a `[` anywhere, which Ansible reads as a wildcard.
 - `attributes` and the SELinux options.
 
