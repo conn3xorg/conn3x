@@ -191,8 +191,9 @@ var manualCmd = map[Family]string{
 	Deb: `apt-mark showmanual && echo @@@ && dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${Essential}\t${Priority}\t${Depends}, ${Pre-Depends}, ${Recommends}\n'`,
 	RPM: `command -v dnf >/dev/null || { echo "listing hand-installed packages needs dnf" >&2; exit 1; }; dnf -q repoquery --userinstalled --qf '%{name}\n'`,
 	// /etc/apk/world is what was asked for, each perhaps with a version
-	// constraint such as nginx=1.26.2-r0.
-	APK: `sed -e 's/[=<>~].*//' /etc/apk/world`,
+	// constraint such as nginx=1.26.2-r0 or a repository tag such as
+	// nginx@edge.
+	APK: `sed -e 's/[=<>~@].*//' /etc/apk/world`,
 }
 
 // Manual returns the names of the packages installed by hand, as the tool

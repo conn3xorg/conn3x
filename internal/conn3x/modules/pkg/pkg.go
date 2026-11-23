@@ -326,9 +326,15 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		case Latest:
 			return Run(ctx, r, "apk add -q --no-cache --upgrade "+ssh.Quote(d.Name))
 		default:
+			// = wants the whole version, -rN included; ~ takes a version
+			// without it, such as 2.2.1 for 2.2.1-r0.
 			spec := d.Name
-			if d.Version != "" {
+			switch {
+			case d.Version == "":
+			case strings.Contains(d.Version, "-r"):
 				spec += "=" + d.Version
+			default:
+				spec += "~" + d.Version
 			}
 			return Run(ctx, r, "apk add -q --no-cache "+ssh.Quote(spec))
 		}

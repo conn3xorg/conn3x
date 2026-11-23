@@ -30,10 +30,11 @@ func TestAPKApply(t *testing.T) {
 		d    Desired
 		want string
 	}{
-		"install": {Desired{Name: "tree", State: Present}, "apk add -q --no-cache 'tree'"},
-		"pin":     {Desired{Name: "tree", State: Present, Version: "2.2.1-r0"}, "apk add -q --no-cache 'tree=2.2.1-r0'"},
-		"latest":  {Desired{Name: "tree", State: Latest}, "apk add -q --no-cache --upgrade 'tree'"},
-		"remove":  {Desired{Name: "tree", State: Absent}, "apk del -q 'tree'"},
+		"install":   {Desired{Name: "tree", State: Present}, "apk add -q --no-cache 'tree'"},
+		"pin":       {Desired{Name: "tree", State: Present, Version: "2.2.1-r0"}, "apk add -q --no-cache 'tree=2.2.1-r0'"},
+		"short pin": {Desired{Name: "tree", State: Present, Version: "2.2.1"}, "apk add -q --no-cache 'tree~2.2.1'"},
+		"latest":    {Desired{Name: "tree", State: Latest}, "apk add -q --no-cache --upgrade 'tree'"},
+		"remove":    {Desired{Name: "tree", State: Absent}, "apk del -q 'tree'"},
 	} {
 		h := &scriptedHost{answers: []answer{{"apk", ok("")}}}
 		if err := Apply(ctx, h, APK, tc.d); err != nil {
