@@ -15,7 +15,14 @@ step "fix_conf" {
   depends_on = [conn3x_package.docs__tools]
 
   patch {
-    content = file("${path.module}/files/app-conf.patch")
+    # Usually file("${path.module}/files/app-conf.patch"), kept with the circuit.
+    content = <<-EOT
+      --- app.conf
+      +++ app.conf
+      @@ -1 +1 @@
+      -workers = 2
+      +workers = 8
+    EOT
     dest    = "/etc/app/app.conf"
   }
 }
@@ -28,7 +35,14 @@ Apply a patch that touches several files in a tree, made with `diff -ru a/ b/` o
 ```hcl
 step "backport" {
   patch {
-    content = file("${path.module}/files/backport.patch")
+    # Usually file("${path.module}/files/backport.patch").
+    content = <<-EOT
+      --- a/src/main.c
+      +++ b/src/main.c
+      @@ -1 +1 @@
+      -int retries = 3;
+      +int retries = 5;
+    EOT
     basedir = "/opt/app"
     strip   = 1
     state   = "absent"
