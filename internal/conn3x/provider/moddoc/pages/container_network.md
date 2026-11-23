@@ -28,7 +28,7 @@ step "web" {
 <!-- reference -->
 ## How it works
 
-**Reading.** On every plan, Conn3x runs `docker network inspect`, or Podman's, and compares the driver, and the subnet if you set one. Docker and Podman print a network differently, and Conn3x reads both. A network deleted by hand shows as out of sync, and the next apply makes it again.
+**Reading.** On every plan, Conn3x runs `docker network inspect`, or Podman's, and compares the driver, and the subnet if you set one. Docker and Podman print a network differently, and Conn3x reads both, from Podman 4 on. Podman 3's older format isn't read, so there a network with a `subnet` would look different on every plan. A network deleted by hand shows as out of sync, and the next apply makes it again.
 
 **Changes.** A network's driver and subnet can't change in place, so a difference means Conn3x removes the network and makes it again. The engine refuses while a container is on it, and the apply says so: remove the container, or change its step too, so it's made again on the new network.
 
