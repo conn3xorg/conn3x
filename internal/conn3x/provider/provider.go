@@ -126,7 +126,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_vyos_user":            {vyosUserSchema, validateVyOSUser, planVyOSUser, vyosUserKind.read, applyVyOSUser, upgradeWith(vyosUserSchema)},
 	"conn3x_vyos_commit":          vyosCommitTypes["conn3x_vyos_commit"],
 	"conn3x_vyos_removals":        vyosCommitTypes["conn3x_vyos_removals"],
-	"conn3x_ios_config":           iosConfigKind.entry(iosConfigSchema, validateIOSConfig),
+	"conn3x_ios_config":           {iosConfigSchema, validateIOSConfig, planIOSConfig, iosConfigKind.read, applyIOSConfig, upgradeWith(iosConfigSchema)},
 	"conn3x_ios_hostname":         iosHostnameKind.entry(iosHostnameSchema, validateIOSHostname),
 	"conn3x_ios_interface":        iosInterfaceKind.entry(iosInterfaceSchema, validateIOSInterface),
 	"conn3x_ios_vlan":             iosVLANKind.entry(iosVLANSchema, validateIOSVLAN),

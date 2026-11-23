@@ -77,7 +77,7 @@ func validateIOSSSH(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func iosConfigFrom(v cty.Value) ios.Config {
-	c := ios.Config{Lines: stringList(v.GetAttr("lines")), Match: stringOr(v.GetAttr("match"), ios.MatchLines)}
+	c := ios.Config{Lines: stringList(v.GetAttr("lines")), Match: stringOr(v.GetAttr("match"), ios.MatchLines), Prefixes: stringList(v.GetAttr("lines_wo_prefixes"))}
 	if p := v.GetAttr("parents"); known(p) {
 		c.Parents = stringList(p)
 	}
@@ -88,7 +88,7 @@ var iosConfigKind = cliKind{
 	p:        iosPlatform,
 	name:     "config",
 	keys:     []string{"parents"},
-	settings: []string{"lines", "match"},
+	settings: []string{"lines", "match", "lines_hmac", "lines_wo_prefixes"},
 	config:   func(v cty.Value) cliWant { return iosConfigFrom(v) },
 	remove:   func(v cty.Value, running string) []string { return iosConfigFrom(v).RemoveCommands(running) },
 }
@@ -97,14 +97,17 @@ func iosConfigSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: iosExperimental + "Lines of a Cisco IOS XE device's running configuration, under parent blocks or at the top level. Only the lines named here are owned; with match = \"block\" the block must be exactly these.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":        {Type: cty.String, Computed: true},
-			"revision":  revisionAttr(),
-			"parents":   {Type: cty.List(cty.String), Optional: true, Description: "The blocks the lines sit in, outermost first, as show running-config prints them, such as [\"interface GigabitEthernet1\"]. Unset is the top level."},
-			"lines":     {Type: cty.List(cty.String), Optional: true, Description: "The lines, exactly as show running-config prints them without their indent, such as \"description uplink\". A line the device prints differently never shows as in sync."},
-			"match":     {Type: cty.String, Optional: true, Description: "\"lines\" (default): these lines must be there, and others are left alone. \"block\": the block under parents must be exactly these lines, so others are removed. Needs parents."},
-			"on_remove": {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the device when this resource is removed: \"forget\" (default) leaves the lines, \"delete\" removes them with their \"no\" form."},
-			"in_sync":   {Type: cty.Bool, Computed: true, Description: "Whether the device had these lines at the last refresh."},
-			"circuit":   eosCircuitAttr(),
+			"id":                {Type: cty.String, Computed: true},
+			"revision":          revisionAttr(),
+			"parents":           {Type: cty.List(cty.String), Optional: true, Description: "The blocks the lines sit in, outermost first, as show running-config prints them, such as [\"interface GigabitEthernet1\"]. Unset is the top level."},
+			"lines":             {Type: cty.List(cty.String), Optional: true, Description: "The lines, exactly as show running-config prints them without their indent, such as \"description uplink\". A line the device prints differently never shows as in sync. State keeps them, so put lines holding a secret in lines_wo."},
+			"lines_wo":          {Type: cty.List(cty.String), Optional: true, Sensitive: true, WriteOnly: true, Description: "Write-only: lines that hold a secret, such as \"tacacs-server key MyKey\", \"key MyKey\" under a tacacs server, or \"ntp authentication-key 1 md5 MyKey\", never kept in state. The device shows these encrypted or hashed, so each is matched by its start, the line up to its secret (\"tacacs-server key\", \"ntp authentication-key 1\"): it owns every line under the parents that starts that way, and is in sync when one is there. A change to any of them sends them all again, and IOS replaces each in place. snmp-server community lines are refused, since the community is its own name."},
+			"lines_hmac":        {Type: cty.String, Computed: true, Description: "An HMAC of lines_wo, keyed outside state, so a change plans an update."},
+			"lines_wo_prefixes": {Type: cty.List(cty.String), Computed: true, Description: "How each lines_wo line starts, up to its secret, such as \"tacacs-server key\". A refresh checks these are there, and a removal takes them out."},
+			"match":             {Type: cty.String, Optional: true, Description: "\"lines\" (default): these lines must be there, and others are left alone. \"block\": the block under parents must be exactly these lines, so others are removed. Needs parents."},
+			"on_remove":         {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the device when this resource is removed: \"forget\" (default) leaves the lines, \"delete\" removes them with their \"no\" form."},
+			"in_sync":           {Type: cty.Bool, Computed: true, Description: "Whether the device had these lines at the last refresh."},
+			"circuit":           eosCircuitAttr(),
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 	}}
@@ -116,11 +119,20 @@ func validateIOSConfig(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	if err := iosConfigFrom(cfg).Validate(); err != nil {
+	c := iosConfigFrom(cfg)
+	c.Secrets = stringList(cfg.GetAttr("lines_wo"))
+	if err := c.Validate(); err != nil {
 		diags = diags.Append(attrError("lines", err.Error()))
 	}
 	return diags
 }
+
+var planIOSConfig, applyIOSConfig = cliLinesWO(iosConfigKind, linesWO{kind: "ios_config", block: "parents", start: ios.SecretPrefix},
+	func(v cty.Value, secrets, prefixes []string, resend bool) cliWant {
+		c := iosConfigFrom(v)
+		c.Secrets, c.Prefixes, c.Resend = secrets, prefixes, resend
+		return c
+	})
 
 var iosHostnameKind = cliKind{
 	p:        iosPlatform,

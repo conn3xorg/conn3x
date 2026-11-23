@@ -177,8 +177,8 @@ func validateSetLinesWO(cfg cty.Value, c setcfg.Config, norm func(string) string
 	return diags
 }
 
-// cliLinesWO are a Junos or VyOS config step's plan and apply with lines_wo.
-func cliLinesWO(k cliKind, w linesWO, from func(cty.Value) setcfg.Config) (
+// cliLinesWO are a Junos, VyOS or IOS config step's plan and apply with lines_wo.
+func cliLinesWO(k cliKind, w linesWO, with func(v cty.Value, secrets, starts []string, resend bool) cliWant) (
 	func(providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse,
 	func(context.Context, providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse) {
 	plan := func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
@@ -193,11 +193,7 @@ func cliLinesWO(k cliKind, w linesWO, from func(cty.Value) setcfg.Config) (
 		}
 		kk := k
 		if wo.lines != nil {
-			kk.config = func(v cty.Value) cliWant {
-				c := from(v)
-				c.Secrets, c.Paths, c.Resend = wo.lines, wo.starts, wo.resend
-				return c
-			}
+			kk.config = func(v cty.Value) cliWant { return with(v, wo.lines, wo.starts, wo.resend) }
 		}
 		return wo.finish(kk.apply(ctx, req))
 	}

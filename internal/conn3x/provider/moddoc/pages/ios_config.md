@@ -69,6 +69,18 @@ step "mgmt_acl" {
   }
 }
 ```
+
+Lines that hold a secret go in `lines_wo`, which state never keeps:
+
+```hcl
+step "aaa" {
+  ios_config {
+    parents  = ["tacacs server ise1"]
+    lines    = ["address ipv4 192.0.2.5"]
+    lines_wo = ["key use-an-ephemeral-variable-here"]
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
@@ -80,9 +92,21 @@ step "mgmt_acl" {
 
 **What's refused.** A line that would leave configuration mode or act outside it, such as `end`, `exit`, `do`, `write`, `copy` or a short form of them, or one with a leading space, a newline, a control character or a `?`, which the IOS command line takes as a request for help instead of typing it. Conn3x enters configuration mode, confirms and saves on its own.
 
+## Secrets in lines_wo
+
+`lines_wo` is write-only, so a secret line never lands in state or in the plan. State keeps two things instead: `lines_hmac`, an HMAC of the lines keyed outside state, and `lines_wo_prefixes`, where each line starts up to its secret, such as `tacacs-server key`.
+
+IOS prints most secrets encrypted or hashed, as `key 7 <hash>` with `service password-encryption` on, so Conn3x can't compare them with yours. A refresh checks something smaller: that a line starting with each prefix is there. If you change a secret, the HMAC changes and the plan shows an update, and the apply sends your lines again. IOS replaces a key or secret in place when its command is typed again, and applies each line as it arrives. So Conn3x never removes the old line first: that would leave the device without the secret for a moment, and removing it afterwards would take off the new one. If you remove the line by hand, the step shows as out of sync. But a secret changed by hand on the device still looks in sync, because the device can't show which secret it holds.
+
+A prefix owns every line under the parents that starts with it. A number before an algorithm counts as part of the line's name, so `ntp authentication-key 1 md5 MyKey` has the prefix `ntp authentication-key 1`, and the `7` IOS prints at the end of that line doesn't change it. An encryption type such as the `7` in `tacacs-server key 7 <hash>` doesn't count either. Each line in `lines_wo` needs its own prefix, and no line in `lines` can start with one.
+
+`snmp-server community` lines are refused, since the community is both its name and its secret. Use an SNMPv3 user instead. A line in `lines_wo` must hold a secret Conn3x knows, a key, secret or password; other lines belong in `lines`. Planning `lines_wo` needs the HMAC key, `CONN3X_HMAC_KEY` or `~/.config/conn3x/hmac.key`. Pass the secret through a variable file or `TF_VAR_`, not `-var`, since OpenTofu logs its command line.
+
+Secrets have been tested against parsed configurations only so far, not yet on a lab device with and without `service password-encryption`.
+
 ## Removal
 
-`on_remove = "forget"`, the default, leaves the lines. `on_remove = "delete"` removes each line with its `no` form, and leaves the parent blocks.
+`on_remove = "forget"`, the default, leaves the lines. `on_remove = "delete"` removes each line with its `no` form, and leaves the parent blocks. A `lines_wo` line is removed as the device prints it, such as `no tacacs-server key 7 <hash>`.
 
 ## From Ansible
 

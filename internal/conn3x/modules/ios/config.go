@@ -119,11 +119,20 @@ type Config struct {
 	Parents []string
 	Lines   []string
 	Match   string
+	// Secrets are lines that hold a secret, known only at apply. The device
+	// prints them encrypted or hashed, so each is matched by its prefix,
+	// the line up to its secret: it owns every line under the parent that
+	// starts that way.
+	Secrets  []string
+	Prefixes []string // the Secrets' prefixes, which state keeps
+	// Resend sends every secret line, as when one of them changed: the
+	// device can't show which secret it holds.
+	Resend bool
 }
 
 // Validate checks a Config before anything reaches the device.
 func (c Config) Validate() error {
-	if len(c.Lines) == 0 && c.Match != MatchBlock {
+	if len(c.Lines) == 0 && len(c.Secrets) == 0 && c.Match != MatchBlock {
 		return errors.New("lines must not be empty")
 	}
 	if c.Match != "" && c.Match != MatchLines && c.Match != MatchBlock {
@@ -137,7 +146,7 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
-	return nil
+	return c.validateSecrets()
 }
 
 // modeWords leave configuration mode, run something outside it, or save or
@@ -178,23 +187,25 @@ func (c Config) InSync(config string) bool { return c.Commands(config) == nil }
 // Nil when nothing needs to change.
 func (c Config) Commands(config string) []string {
 	have, found := section(config, c.Parents)
+	plain := c.plain(have)
 	var missing, extra []string
 	for _, w := range c.Lines {
-		if !slices.Contains(have, w) {
+		if !slices.Contains(plain, w) {
 			missing = append(missing, w)
 		}
 	}
 	if c.Match == MatchBlock {
-		for _, h := range have {
+		for _, h := range plain {
 			if !slices.Contains(c.Lines, h) {
 				extra = append(extra, negate(h))
 			}
 		}
 	}
-	if found && len(missing) == 0 && len(extra) == 0 {
+	secrets := c.secretCommands(have)
+	if found && len(missing) == 0 && len(extra) == 0 && len(secrets) == 0 {
 		return nil
 	}
-	return c.indented(append(extra, missing...))
+	return c.indented(append(append(extra, missing...), secrets...))
 }
 
 // RemoveCommands take out the lines c owns that config still has, leaving
@@ -205,6 +216,11 @@ func (c Config) RemoveCommands(config string) []string {
 	for _, l := range c.Lines {
 		if slices.Contains(have, l) {
 			lines = append(lines, negate(l))
+		}
+	}
+	for _, h := range have {
+		if c.secretLine(h) {
+			lines = append(lines, negate(h))
 		}
 	}
 	if lines == nil {

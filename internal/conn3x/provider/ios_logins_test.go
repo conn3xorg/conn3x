@@ -5,6 +5,8 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/ios"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
+	"github.com/opentofu/opentofu/internal/providers"
 )
 
 // countedLogin is one fresh login: it counts how many are open at once.
@@ -149,5 +152,45 @@ func TestIOSStaticRouteValidate(t *testing.T) {
 	ok := map[string]cty.Value{"prefix": cty.StringVal("0.0.0.0/0"), "next_hops": hops("192.0.2.1", "192.0.2.2"), "distance": cty.NumberIntVal(10)}
 	if diags := r.validate(objFor(r.schema(), ok)); diags.HasErrors() {
 		t.Error(diags.Err())
+	}
+}
+
+// lines_wo on ios_config: the plan keeps each line's start, never the
+// secret, and validate refuses what the step can't own.
+func TestIOSConfigLinesWO(t *testing.T) {
+	t.Setenv(hmacKeyEnv, strings.Repeat("k", 32))
+	r := resourceTypes["conn3x_ios_config"]
+	secret := "S3cretK3y"
+	cfg := objFor(r.schema(), map[string]cty.Value{
+		"lines":    cty.ListVal([]cty.Value{cty.StringVal("tacacs-server host 192.0.2.5")}),
+		"lines_wo": cty.ListVal([]cty.Value{cty.StringVal("tacacs-server key " + secret), cty.StringVal("ntp authentication-key 1 md5 " + secret)}),
+	})
+	if diags := r.validate(cfg); diags.HasErrors() {
+		t.Fatal(diags.Err())
+	}
+	plan := r.plan(providers.PlanResourceChangeRequest{PriorState: cty.NullVal(cfg.Type()), Config: cfg, ProposedNewState: cfg})
+	if err := plan.Diagnostics.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := cty.ListVal([]cty.Value{cty.StringVal("tacacs-server key"), cty.StringVal("ntp authentication-key 1")})
+	if p := plan.PlannedState.GetAttr("lines_wo_prefixes"); p.IsKnown() && !p.Equals(want).True() {
+		t.Errorf("lines_wo_prefixes %#v", p)
+	}
+	if !plan.PlannedState.GetAttr("lines_wo").IsNull() || strings.Contains(fmt.Sprintf("%#v", plan.PlannedState), secret) {
+		t.Errorf("the planned state holds the secret: %#v", plan.PlannedState)
+	}
+	for name, lines := range map[string][]string{
+		"community":  {"snmp-server community public RO"},
+		"no secret":  {"ntp server 192.0.2.1"},
+		"same start": {"tacacs-server key A1", "tacacs-server key B2"},
+	} {
+		var v []cty.Value
+		for _, l := range lines {
+			v = append(v, cty.StringVal(l))
+		}
+		bad := objFor(r.schema(), map[string]cty.Value{"lines_wo": cty.ListVal(v)})
+		if diags := r.validate(bad); !diags.HasErrors() {
+			t.Errorf("%s: no error", name)
+		}
 	}
 }

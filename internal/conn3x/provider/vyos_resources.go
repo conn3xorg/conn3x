@@ -79,7 +79,12 @@ var vyosConfigKind = cliKind{
 	warn:     func(_ cty.Value, config string) string { return vyosWarnReboot(config) },
 }
 
-var planVyOSConfig, applyVyOSConfig = cliLinesWO(vyosConfigKind, linesWO{kind: "vyos_config", block: "prefix", start: setcfg.SecretPath, norm: vyos.Normalize}, vyosConfigFrom)
+var planVyOSConfig, applyVyOSConfig = cliLinesWO(vyosConfigKind, linesWO{kind: "vyos_config", block: "prefix", start: setcfg.SecretPath, norm: vyos.Normalize},
+	func(v cty.Value, secrets, paths []string, resend bool) cliWant {
+		c := vyosConfigFrom(v)
+		c.Secrets, c.Paths, c.Resend = secrets, paths, resend
+		return c
+	})
 
 func vyosConfigSchema() providers.Schema {
 	return setLinesWO(providers.Schema{Block: &configschema.Block{

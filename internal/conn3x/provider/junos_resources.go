@@ -76,7 +76,12 @@ var junosConfigKind = cliKind{
 	remove:   func(v cty.Value, running string) []string { return junosConfigFrom(v).RemoveCommands(running) },
 }
 
-var planJunosConfig, applyJunosConfig = cliLinesWO(junosConfigKind, linesWO{kind: "junos_config", block: "prefix", start: setcfg.SecretPath}, junosConfigFrom)
+var planJunosConfig, applyJunosConfig = cliLinesWO(junosConfigKind, linesWO{kind: "junos_config", block: "prefix", start: setcfg.SecretPath},
+	func(v cty.Value, secrets, paths []string, resend bool) cliWant {
+		c := junosConfigFrom(v)
+		c.Secrets, c.Paths, c.Resend = secrets, paths, resend
+		return c
+	})
 
 func junosConfigSchema() providers.Schema {
 	return setLinesWO(providers.Schema{Block: &configschema.Block{
