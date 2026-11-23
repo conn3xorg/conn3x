@@ -25,6 +25,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/container"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/firewall"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/fsobj"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/kmod"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
@@ -686,6 +687,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"timezone":                nameOnly("timezone"),
 	"firewalld":               firewalldModule,
 	"ufw":                     ufwModule,
+	"iptables":                iptablesModule,
 	"seboolean":               sebooleanModule,
 	"sefcontext":              sefcontextModule,
 	"nmcli":                   nmcliModule,
@@ -2053,6 +2055,126 @@ func ufwModule(in *input) ([]step, string) {
 	attrs := []attr{s("action", in.str("rule")), s("port", port)}
 	attrs = in.optional(attrs, "from", "from_ip", "from", "src")
 	return one("ufw", attrs)
+}
+
+// iptablesUnmodelled are ansible.builtin.iptables arguments an
+// iptables_rule step can't do yet, with why.
+var iptablesUnmodelled = []struct{ key, why string }{
+	{"policy", "sets a chain's policy, which changes the whole chain; iptables_rule keeps one rule, so set the policy with a command step"},
+	{"flush", "flushes a chain, which changes the whole chain; iptables_rule keeps one rule"},
+	{"chain_management", "creates or deletes a chain; iptables_rule keeps one rule in a chain that's already there"},
+	{"goto", "uses goto, which iptables_rule doesn't offer yet; jump to the chain instead if it can return"},
+	{"to_ports", "sets to_ports, a NAT target option iptables_rule doesn't carry yet"},
+	{"to_destination", "sets to_destination, a NAT target option iptables_rule doesn't carry yet"},
+	{"to_source", "sets to_source, a NAT target option iptables_rule doesn't carry yet"},
+	{"limit", "sets limit, which iptables_rule doesn't offer yet"},
+	{"limit_burst", "sets limit_burst, which iptables_rule doesn't offer yet"},
+}
+
+// iptablesModule turns ansible.builtin.iptables into an iptables_rule
+// step, or two for ip_version: both. Both check the rule with -C and add
+// it with -A or -I; the step's Validate runs on what the task sets, so a
+// task the step would refuse stays for review.
+func iptablesModule(in *input) ([]step, string) {
+	for _, u := range iptablesUnmodelled {
+		if in.has(u.key) {
+			return nil, u.why
+		}
+	}
+	if in.state("present", "present", "absent") == "absent" {
+		return nil, "deletes a rule with state: absent; an iptables_rule step keeps one, and deletes it when the step goes"
+	}
+	str := map[string]string{}
+	for _, k := range []string{"table", "chain", "protocol", "source", "destination", "source_port", "destination_port", "in_interface", "out_interface", "jump", "comment"} {
+		str[k] = in.str(k)
+		if strings.HasPrefix(strings.TrimSpace(str[k]), "!") {
+			return nil, fmt.Sprintf("negates %s with !, which iptables_rule doesn't offer yet", k)
+		}
+	}
+	r := firewall.IPTablesRule{
+		Table: str["table"], Chain: str["chain"], Protocol: str["protocol"], Source: str["source"], Destination: str["destination"],
+		SourcePort: str["source_port"], DestinationPort: str["destination_port"], DestinationPorts: in.list("destination_ports"),
+		InInterface: str["in_interface"], OutInterface: str["out_interface"], CTState: in.list("ctstate"), Jump: str["jump"], Comment: str["comment"],
+	}
+	switch a := cmp.Or(in.str("action"), "append"); a {
+	case "append":
+	case "insert":
+		r.Insert = true
+		if in.has("rule_num") {
+			n, err := strconv.Atoi(in.str("rule_num"))
+			if err != nil {
+				return nil, "has a rule_num that isn't a whole number"
+			}
+			r.RuleNum = n
+		}
+	default:
+		return nil, fmt.Sprintf("has action %q; Ansible takes append or insert", a)
+	}
+	// A match that only names what another argument loads anyway changes
+	// nothing; any other has options of its own the step can't carry.
+	implied := map[string]bool{r.Protocol: r.Protocol != "", "multiport": len(r.DestinationPorts) > 0, "conntrack": len(r.CTState) > 0, "comment": r.Comment != ""}
+	for _, m := range in.list("match") {
+		if !implied[m] {
+			return nil, fmt.Sprintf("has match %s, a match module with options of its own; iptables_rule doesn't take free-form matches yet", m)
+		}
+	}
+	var versions []string
+	switch v := cmp.Or(in.str("ip_version"), "ipv4"); v {
+	case "ipv4", "ipv6":
+		versions = []string{v}
+	case "both":
+		versions = []string{"ipv4", "ipv6"}
+	default:
+		return nil, fmt.Sprintf("has ip_version %q; Ansible takes ipv4, ipv6 or both", v)
+	}
+	in.ignore("wait", "rule_num")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	var steps []step
+	for _, v := range versions {
+		r.IPv6 = v == "ipv6"
+		if err := r.Validate(); err != nil {
+			return nil, "can't be an iptables_rule step: " + err.Error()
+		}
+		var attrs []attr
+		if len(versions) > 1 || r.IPv6 {
+			attrs = append(attrs, s("ip_version", v))
+		}
+		for _, k := range []string{"table", "chain", "protocol", "source", "destination", "source_port", "destination_port"} {
+			if str[k] != "" {
+				attrs = append(attrs, s(k, str[k]))
+			}
+		}
+		if len(r.DestinationPorts) > 0 {
+			attrs = append(attrs, attr{key: "destination_ports", val: strList(r.DestinationPorts)})
+		}
+		for _, k := range []string{"in_interface", "out_interface"} {
+			if str[k] != "" {
+				attrs = append(attrs, s(k, str[k]))
+			}
+		}
+		if len(r.CTState) > 0 {
+			attrs = append(attrs, attr{key: "ctstate", val: strList(r.CTState)})
+		}
+		for _, k := range []string{"jump", "comment"} {
+			if str[k] != "" {
+				attrs = append(attrs, s(k, str[k]))
+			}
+		}
+		if r.Insert {
+			attrs = append(attrs, s("position", "insert"))
+		}
+		if r.RuleNum > 0 {
+			attrs = append(attrs, attr{key: "rule_num", val: cty.NumberIntVal(int64(r.RuleNum))})
+		}
+		st := step{module: "iptables_rule", attrs: attrs}
+		if len(versions) > 1 {
+			st.suffix = v
+		}
+		steps = append(steps, st)
+	}
+	return steps, ""
 }
 
 func sebooleanModule(in *input) ([]step, string) {

@@ -61,6 +61,7 @@ var circuitModules = map[string]string{
 	"ufw":                  "conn3x_ufw_rule",
 	"ufw_settings":         "conn3x_ufw_settings",
 	"nftables":             "conn3x_nftables",
+	"iptables_rule":        "conn3x_iptables_rule",
 	"selinux_boolean":      "conn3x_selinux_boolean",
 	"selinux_fcontext":     "conn3x_selinux_fcontext",
 	"selinux_mode":         "conn3x_selinux_mode",

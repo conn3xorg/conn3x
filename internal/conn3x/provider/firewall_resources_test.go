@@ -50,8 +50,9 @@ func merge(a, b map[string]cty.Value) map[string]cty.Value {
 
 func TestFirewallValidate(t *testing.T) {
 	for rt, cfg := range map[string]map[string]cty.Value{
-		"conn3x_firewalld": {"service": cty.StringVal("http"), "port": cty.StringVal("80/tcp")},
-		"conn3x_ufw_rule":  {"action": cty.StringVal("allow"), "port": cty.StringVal("1000:2000")},
+		"conn3x_firewalld":     {"service": cty.StringVal("http"), "port": cty.StringVal("80/tcp")},
+		"conn3x_ufw_rule":      {"action": cty.StringVal("allow"), "port": cty.StringVal("1000:2000")},
+		"conn3x_iptables_rule": {"chain": cty.StringVal("INPUT"), "destination_port": cty.StringVal("22")},
 	} {
 		if diags := resourceTypes[rt].validate(objFor(resourceTypes[rt].schema(), cfg)); !diags.HasErrors() {
 			t.Errorf("%s accepted %v", rt, cfg)
@@ -61,8 +62,9 @@ func TestFirewallValidate(t *testing.T) {
 
 func TestFirewallConfirmAfter(t *testing.T) {
 	for rt, cfg := range map[string]map[string]cty.Value{
-		"conn3x_firewalld": {"service": cty.StringVal("ssh")},
-		"conn3x_ufw_rule":  {"action": cty.StringVal("allow"), "port": cty.StringVal("22/tcp")},
+		"conn3x_firewalld":     {"service": cty.StringVal("ssh")},
+		"conn3x_ufw_rule":      {"action": cty.StringVal("allow"), "port": cty.StringVal("22/tcp")},
+		"conn3x_iptables_rule": {"chain": cty.StringVal("INPUT"), "protocol": cty.StringVal("tcp"), "destination_port": cty.StringVal("22"), "jump": cty.StringVal("ACCEPT")},
 	} {
 		r := resourceTypes[rt]
 		cfg["confirm_after"] = cty.StringVal("60s")

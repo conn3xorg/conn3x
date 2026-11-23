@@ -1,7 +1,7 @@
 // Copyright (c) The Conn3x Authors
 // SPDX-License-Identifier: MPL-2.0
 
-// Package firewall opens and closes ports with firewalld or ufw.
+// Package firewall opens and closes ports with firewalld, ufw or iptables.
 package firewall
 
 import (

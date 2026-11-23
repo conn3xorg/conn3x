@@ -944,7 +944,7 @@ func sameForAnyUser(mod string, args map[string]*yaml.Node) bool {
 	switch mod {
 	case "package", "dnf", "dnf5", "yum", "apt", "service", "systemd", "systemd_service",
 		"user", "group", "authorized_key", "known_hosts", "sysctl", "hostname", "timezone",
-		"firewalld", "ufw", "seboolean", "sefcontext", "selinux", "alternatives", "snap", "mount", "debug", "ping", "win_ping", "setup", "service_facts", "package_facts",
+		"firewalld", "ufw", "iptables", "seboolean", "sefcontext", "selinux", "alternatives", "snap", "mount", "debug", "ping", "win_ping", "setup", "service_facts", "package_facts",
 		"apt_repository", "yum_repository", "zypper_repository", "capabilities", "deb822_repository":
 		return true
 	case "cron":

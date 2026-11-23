@@ -1,0 +1,44 @@
+circuit "ipt" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tools" {
+    for_each = [{{.Packages}}]
+    package {
+      name = item.value
+    }
+  }
+{{if .Rules}}
+  step "ssh" {
+    depends_on = [conn3x_package.ipt__tools]
+
+    iptables_rule {
+      chain            = "INPUT"
+      protocol         = "tcp"
+      destination_port = "22"
+      jump             = "ACCEPT"
+      comment          = "it's \"ssh\" $HOME"
+      persist          = true
+      confirm_after    = "15s"
+    }
+  }
+
+  step "replies" {
+    depends_on = [conn3x_iptables_rule.ipt__ssh]
+
+    iptables_rule {
+      chain    = "INPUT"
+      ctstate  = ["ESTABLISHED", "RELATED"]
+      jump     = "ACCEPT"
+      position = "insert"
+      persist  = true
+    }
+  }
+{{end}}
+}

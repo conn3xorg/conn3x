@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -274,6 +275,122 @@ func applyNftables(ctx context.Context, req providers.ApplyResourceChangeRequest
 			}
 			if err := guardRule(ctx, h, v, undo, change); err != nil {
 				return fmt.Errorf("nftables %s %s: %w", t.Family, t.Name, err)
+			}
+			return nil
+		}
+	}
+	return applyPathResource(ctx, req,
+		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
+			if err := set(true)(ctx, h, planned); err != nil {
+				return cty.NilVal, err
+			}
+			return withSync(planned, true), nil
+		}, set(false))
+}
+
+// iptablesKeys are the arguments that make up the rule itself, so changing
+// one replaces it: the old rule is deleted and the new one added.
+var iptablesKeys = []string{"ip_version", "table", "chain", "protocol", "source", "destination", "source_port", "destination_port", "destination_ports", "in_interface", "out_interface", "ctstate", "jump", "comment"}
+
+func iptablesRuleSchema() providers.Schema {
+	return providers.Schema{Block: &configschema.Block{
+		Description: "One iptables or ip6tables rule in one chain, checked with iptables -C, added with -A or -I and deleted with -D. The rest of the chain is left alone.",
+		Attributes: map[string]*configschema.Attribute{
+			"id":                {Type: cty.String, Computed: true},
+			"revision":          revisionAttr(),
+			"table":             {Type: cty.String, Optional: true, Description: "filter (default), nat, mangle, raw or security."},
+			"chain":             {Type: cty.String, Required: true, Description: "The chain, such as INPUT, FORWARD or a chain of your own. It must already exist."},
+			"protocol":          {Type: cty.String, Optional: true, Description: "tcp, udp, icmp, all or another protocol iptables knows, as -p. Ports need tcp, udp, udplite, sctp or dccp."},
+			"source":            {Type: cty.String, Optional: true, Description: "An address or CIDR network the packet comes from, as -s."},
+			"destination":       {Type: cty.String, Optional: true, Description: "An address or CIDR network the packet goes to, as -d."},
+			"source_port":       {Type: cty.String, Optional: true, Description: "A port, such as 53, or a range, such as 1024:65535, as --sport."},
+			"destination_port":  {Type: cty.String, Optional: true, Description: "A port, such as 22, or a range, such as 6000:6007, as --dport. Set this or destination_ports."},
+			"destination_ports": {Type: cty.List(cty.String), Optional: true, Description: "Up to 15 ports or ranges, as -m multiport --dports. Set this or destination_port."},
+			"in_interface":      {Type: cty.String, Optional: true, Description: "The interface the packet comes in on, as -i. A trailing + matches a prefix, such as eth+."},
+			"out_interface":     {Type: cty.String, Optional: true, Description: "The interface the packet goes out on, as -o."},
+			"ctstate":           {Type: cty.List(cty.String), Optional: true, Description: "Connection states, such as [\"ESTABLISHED\", \"RELATED\"], as -m conntrack --ctstate."},
+			"jump":              {Type: cty.String, Optional: true, Description: "The target, such as ACCEPT, DROP, REJECT or a chain of your own, as -j. Unset, the rule only counts packets."},
+			"comment":           {Type: cty.String, Optional: true, Description: "A comment kept with the rule, as -m comment --comment, so iptables -L shows who added it. It's part of the rule."},
+			"ip_version":        {Type: cty.String, Optional: true, Description: "\"ipv4\" (default) uses iptables, \"ipv6\" uses ip6tables. For both, use two steps."},
+			"position":          {Type: cty.String, Optional: true, Description: "\"append\" (default) adds the rule at the end of the chain, \"insert\" at the top, or at rule_num. Only used when the rule is added: a rule that's there anywhere in the chain counts."},
+			"rule_num":          {Type: cty.Number, Optional: true, Description: "With position = \"insert\", where the rule goes, from 1 at the top."},
+			"persist":           {Type: cty.Bool, Optional: true, Description: "Save the whole table after every change, so it comes back at boot: iptables-save to /etc/iptables/rules.v4 (rules.v6) for iptables-persistent on Debian and Ubuntu, or /etc/sysconfig/iptables (ip6tables) for iptables-services on the Red Hat family. Fails when neither is installed."},
+			"on_remove":         {Type: cty.String, Optional: true, Computed: true, Description: "\"delete\" (default) deletes the rule when the step is removed or replaced, \"forget\" leaves it."},
+			"in_sync":           {Type: cty.Bool, Computed: true, Description: "Whether iptables -C found the rule at the last refresh."},
+			"confirm_after":     ruleConfirmAfter(),
+		},
+		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
+	}}
+}
+
+func iptablesRuleFrom(v cty.Value) firewall.IPTablesRule {
+	return firewall.IPTablesRule{
+		Table:            stringOr(v.GetAttr("table"), ""),
+		Chain:            stringOr(v.GetAttr("chain"), ""),
+		Protocol:         stringOr(v.GetAttr("protocol"), ""),
+		Source:           stringOr(v.GetAttr("source"), ""),
+		Destination:      stringOr(v.GetAttr("destination"), ""),
+		SourcePort:       stringOr(v.GetAttr("source_port"), ""),
+		DestinationPort:  stringOr(v.GetAttr("destination_port"), ""),
+		DestinationPorts: stringList(v.GetAttr("destination_ports")),
+		InInterface:      stringOr(v.GetAttr("in_interface"), ""),
+		OutInterface:     stringOr(v.GetAttr("out_interface"), ""),
+		CTState:          stringList(v.GetAttr("ctstate")),
+		Jump:             stringOr(v.GetAttr("jump"), ""),
+		Comment:          stringOr(v.GetAttr("comment"), ""),
+		IPv6:             stringOr(v.GetAttr("ip_version"), "") == "ipv6",
+		Insert:           stringOr(v.GetAttr("position"), "") == "insert",
+		RuleNum:          intOr(v.GetAttr("rule_num"), 0),
+		Persist:          boolOr(v.GetAttr("persist")),
+	}
+}
+
+func validateIPTablesRule(cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		return diags
+	}
+	diags = diags.Append(validateOnRemove(cfg))
+	diags = diags.Append(validateRuleConfirmAfter(cfg))
+	if v := stringOr(cfg.GetAttr("ip_version"), "ipv4"); v != "ipv4" && v != "ipv6" {
+		diags = diags.Append(attrError("ip_version", fmt.Sprintf(`ip_version must be "ipv4" or "ipv6", not %q; for both, use two steps`, v)))
+	}
+	if p := stringOr(cfg.GetAttr("position"), "append"); p != "append" && p != "insert" {
+		diags = diags.Append(attrError("position", fmt.Sprintf(`position must be "append" or "insert", not %q`, p)))
+	}
+	if n := cfg.GetAttr("rule_num"); !n.IsNull() && !n.AsBigFloat().IsInt() {
+		diags = diags.Append(attrError("rule_num", "rule_num must be a whole number"))
+	}
+	if err := iptablesRuleFrom(cfg).Validate(); err != nil {
+		diags = diags.Append(attrError("chain", err.Error()))
+	}
+	return diags
+}
+
+func planIPTablesRule(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	return planSynced(deleteByDefault(req), "iptables", iptablesKeys, []string{"position", "rule_num", "persist"})
+}
+
+func readIPTablesRule(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
+		ok, err := firewall.ReadIPTables(ctx, h, iptablesRuleFrom(prior))
+		if err != nil {
+			return cty.NilVal, err
+		}
+		return withSync(prior, ok), nil
+	})
+}
+
+func applyIPTablesRule(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	set := func(present bool) func(context.Context, *hostConn, cty.Value) error {
+		return func(ctx context.Context, h *hostConn, v cty.Value) error {
+			r := iptablesRuleFrom(v)
+			undo := func() ([]string, error) {
+				had, err := firewall.ReadIPTables(ctx, h, r)
+				return r.Undo(present, had), err
+			}
+			if err := guardRule(ctx, h, v, undo, func() error { return firewall.ApplyIPTables(ctx, h, r, present) }); err != nil {
+				return fmt.Errorf("iptables_rule %s %s: %w", r.Chain, strings.Join(r.Spec(), " "), err)
 			}
 			return nil
 		}

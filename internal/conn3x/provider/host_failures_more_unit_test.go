@@ -29,6 +29,7 @@ var brHostSteps = map[string]map[string]cty.Value{
 	"conn3x_git":                 {"dest": cty.StringVal("/srv/app"), "repo": cty.StringVal("https://example.com/app.git")},
 	"conn3x_hostname":            {"name": cty.StringVal("web1")},
 	"conn3x_ini":                 {"option": cty.StringVal("x"), "path": cty.StringVal("/etc/a.ini"), "section": cty.StringVal("s"), "value": cty.StringVal("1")},
+	"conn3x_iptables_rule":       {"chain": cty.StringVal("INPUT"), "jump": cty.StringVal("ACCEPT")},
 	"conn3x_json_value":          {"key": cty.StringVal("a"), "path": cty.StringVal("/etc/a.json"), "value": cty.StringVal("1")},
 	"conn3x_known_hosts":         {"host": cty.StringVal("git.example"), "key": cty.StringVal(brKeyA)},
 	"conn3x_limit":               {"domain": cty.StringVal("*"), "item": cty.StringVal("nofile"), "path": cty.StringVal("/etc/security/limits.d/90.conf"), "type": cty.StringVal("soft"), "value": cty.StringVal("1024")},
