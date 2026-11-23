@@ -72,11 +72,16 @@ func TestClassify(t *testing.T) {
 // statuses, and records every other patch it runs.
 type host struct {
 	reverse, forward int
+	missing          bool // dest doesn't exist
 	ran              []string
 	stdin            []string
 }
 
 func (h *host) Run(_ context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	switch {
+	case cmd == "test -e '/etc/app.conf'":
+		return ssh.Result{ExitCode: map[bool]int{true: 1, false: 0}[h.missing]}, nil
+	}
 	h.stdin = append(h.stdin, string(stdin))
 	switch {
 	case strings.HasSuffix(cmd, "--dry-run --reverse '/etc/app.conf'"):
@@ -138,3 +143,16 @@ func TestMissingPatch(t *testing.T) {
 type runFunc func(string) ssh.Result
 
 func (f runFunc) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error) { return f(cmd), nil }
+
+// A dest that isn't there reads as a conflict to patch; Apply says the
+// file is missing instead of that it moved on.
+func TestApplyMissingDest(t *testing.T) {
+	h := &host{reverse: 1, forward: 1, missing: true}
+	err := Apply(context.Background(), h, Patch{Content: "x", Dest: "/etc/app.conf", State: Present})
+	if err == nil || !strings.Contains(err.Error(), "/etc/app.conf doesn't exist") || strings.Contains(err.Error(), "moved on") {
+		t.Errorf("got %v", err)
+	}
+	if len(h.ran) != 0 {
+		t.Errorf("ran %q", h.ran)
+	}
+}

@@ -154,6 +154,17 @@ func Apply(ctx context.Context, r modules.Runner, p Patch) error {
 		return err
 	}
 	if st == Conflict {
+		// patch treats a missing file as empty, so its hunks fail as if
+		// the file had changed; say what's really wrong.
+		if p.Dest != "" {
+			res, err := r.Run(ctx, "test -e "+ssh.Quote(p.Dest), nil)
+			if err != nil {
+				return err
+			}
+			if res.ExitCode != 0 {
+				return fmt.Errorf("%s doesn't exist, so there's nothing for the patch to apply to; create it first, such as with the package that ships it", p.Dest)
+			}
+		}
 		return fmt.Errorf("the patch neither applies nor reverses cleanly, so %s has moved on since it was written; patch says: %s", p.target(), out)
 	}
 	if InSync(p.State, st) {

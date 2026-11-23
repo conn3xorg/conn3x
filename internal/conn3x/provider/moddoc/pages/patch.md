@@ -58,7 +58,7 @@ step "backport" {
 
 **Applied or not.** Every refresh dry-runs the patch both ways. If it reverses cleanly, it's in and `status` is `applied`. If it applies cleanly, it's out and `status` is `not_applied`. A file someone reverted by hand shows as `not_applied`, out of sync, and the next apply puts the patch back.
 
-**Neither.** When the patch fits neither way, `status` is `conflict`: the file has changed since the patch was written, perhaps by a package upgrade. Apply then fails with the hunks `patch` couldn't place, and changes nothing. It never forces a patch in or writes `.rej` and `.orig` files beside yours. Update the patch, or the file, and apply again.
+**Neither.** When the patch fits neither way, `status` is `conflict`: the file has changed since the patch was written, perhaps by a package upgrade. Apply then fails with the hunks `patch` couldn't place, and changes nothing. A `dest` that doesn't exist reads as a conflict too, since `patch` takes a missing file as empty, and apply says the file is missing. It never forces a patch in or writes `.rej` and `.orig` files beside yours. Update the patch, or the file, and apply again.
 
 **Options.** `ignore_whitespace` and `binary` go to `patch` as `--ignore-whitespace` and `--binary`, for every dry run and apply. `patch` keeps its default fuzz, as Ansible does.
 
