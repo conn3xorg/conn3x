@@ -14,7 +14,7 @@ func TestConvertsDeb822Repository(t *testing.T) {
 			`name       = "docker"`, `url        = "https://download.docker.com/linux/ubuntu"`,
 			`key        = file("${path.module}/files/docker.asc")`, `suites     = ["noble"]`, `components = ["stable"]`,
 		},
-		"deb822_repository: {name: d, uris: 'https://example.com/r', suites: [noble], components: [main], signed_by: /etc/apt/keyrings/docker.asc, install_python_debian: true}":          {`key        = file(`},
+		"deb822_repository: {name: d, uris: 'https://example.com/r', suites: [noble], components: [main], signed_by: /etc/apt/keyrings/docker.asc, install_python_debian: true}":            {`key        = file(`},
 		"deb822_repository:\n        name: d\n        uris: 'https://example.com/r'\n        suites: [noble]\n        components: [main]\n        signed_by: |\n          " + inline + "\n": {`key        = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nabc\n`},
 	} {
 		res := convertWithKey(t, "    - "+task+"\n")
