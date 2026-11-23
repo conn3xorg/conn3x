@@ -215,13 +215,17 @@ func ParseTimer(name, service, timer string) (Timer, string) {
 	return t, ""
 }
 
-// DropIns are the drop-in directories, holding a .conf, for the timer and
-// its service. systemd applies them over the units, so with any there the
-// units aren't what runs (#850).
+// DropIns are the drop-in directories for the timer and its service holding
+// a .conf that sets what the step writes: when it runs, what or as whom.
+// systemd applies them over the units, so the units aren't what runs (#850).
+// A drop-in that only adds, such as RandomizedDelaySec or sandboxing, leaves
+// the step's settings as written, and circuits write those on purpose.
 func (t Timer) DropIns(ctx context.Context, r modules.Runner) ([]string, error) {
 	res, err := r.Run(ctx, fmt.Sprintf(`for d in /etc/systemd/system /run/systemd/system; do
   for u in %s.timer %s.service; do
-    ls "$d/$u.d/"*.conf >/dev/null 2>&1 && echo "$d/$u.d"
+    for f in "$d/$u.d/"*.conf; do
+      [ -f "$f" ] && grep -qE '^[[:space:]]*(On[A-Za-z]+|Persistent|Unit|Exec[A-Za-z]*|User|Group|Type)[[:space:]]*=' "$f" && { echo "$d/$u.d"; break; }
+    done
   done
 done; true`, t.Name, t.Name), nil)
 	if err != nil {

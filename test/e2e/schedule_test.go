@@ -45,6 +45,13 @@ func TestCronAndTimer(t *testing.T) {
 			}
 			w.mustConn3x("apply", "-auto-approve", "-no-color")
 
+			// A drop-in that only adds, as circuits write for a random delay
+			// or sandboxing, leaves the step's settings alone: not drift.
+			h.exec("", "sh", "-c", "mkdir -p /etc/systemd/system/conn3x-report.timer.d /etc/systemd/system/conn3x-report.service.d && printf '[Timer]\\nRandomizedDelaySec=1min\\n' > /etc/systemd/system/conn3x-report.timer.d/delay.conf && printf '[Service]\\nProtectSystem=strict\\n' > /etc/systemd/system/conn3x-report.service.d/sandbox.conf && systemctl daemon-reload")
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+				t.Fatalf("an additive drop-in shouldn't be drift:\n%s", out)
+			}
+
 			// A drop-in from systemctl edit retimes the job behind the step:
 			// that's drift, and apply refuses rather than pretend (#850).
 			h.exec("", "sh", "-c", "mkdir -p /etc/systemd/system/conn3x-report.timer.d && printf '[Timer]\\nOnCalendar=\\nOnCalendar=hourly\\n' > /etc/systemd/system/conn3x-report.timer.d/override.conf")
