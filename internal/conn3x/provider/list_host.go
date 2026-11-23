@@ -84,7 +84,7 @@ func ListHost(ctx context.Context, kind string, conn cty.Value) (names []string,
 		}
 		for n := range got {
 			key := n
-			if family == pkg.RPM {
+			if family == pkg.RPM || family == pkg.SUSE {
 				key = pkg.BareName(n) // dnf's list has no architectures
 			}
 			if manual == nil || manual[key] {

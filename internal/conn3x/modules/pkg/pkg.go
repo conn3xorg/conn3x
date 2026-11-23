@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // Package pkg installs, upgrades and removes OS packages with dnf on the
-// Red Hat family, apt on Debian and Ubuntu, and apk on Alpine.
+// Red Hat family, zypper on SUSE, apt on Debian and Ubuntu, and apk on
+// Alpine.
 package pkg
 
 import (
@@ -25,6 +26,8 @@ const (
 	RPM Family = "rpm"
 	Deb Family = "deb"
 	APK Family = "apk"
+	// SUSE is RPM underneath, with zypper rather than dnf.
+	SUSE Family = "suse"
 )
 
 // State is what should be true of the package.
@@ -55,6 +58,9 @@ func (d Desired) recommends(family Family) string {
 	}
 	if family == RPM {
 		return map[bool]string{true: " --setopt=install_weak_deps=True", false: " --setopt=install_weak_deps=False"}[*d.InstallRecommends]
+	}
+	if family == SUSE {
+		return map[bool]string{true: " --recommends", false: " --no-recommends"}[*d.InstallRecommends]
 	}
 	return map[bool]string{true: " -o APT::Install-Recommends=yes", false: " -o APT::Install-Recommends=no"}[*d.InstallRecommends]
 }
@@ -126,9 +132,11 @@ func DetectFamily(ctx context.Context, r modules.Runner) (Family, error) {
 			return Deb, nil
 		case "alpine":
 			return APK, nil
+		case "suse", "opensuse", "sles", "sled", "opensuse-leap", "opensuse-tumbleweed":
+			return SUSE, nil
 		}
 	}
-	return "", fmt.Errorf("%s is not supported yet; Conn3x manages packages on the Red Hat family, on Debian and Ubuntu, and on Alpine", fields["ID"])
+	return "", fmt.Errorf("%s is not supported yet; Conn3x manages packages on the Red Hat family, SUSE, Debian and Ubuntu, and Alpine", fields["ID"])
 }
 
 // Read reports whether the package is installed. With candidate set it also
@@ -140,7 +148,7 @@ func Read(ctx context.Context, r modules.Runner, family Family, name string, can
 	q := ssh.Quote(name)
 	var a Actual
 	switch family {
-	case RPM:
+	case RPM, SUSE:
 		const qf = "--qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\\n' -- "
 		res, err := r.Run(ctx, "rpm -q "+qf+q, nil)
 		if err == nil && res.ExitCode != 0 {
@@ -161,7 +169,13 @@ func Read(ctx context.Context, r modules.Runner, family Family, name string, can
 				a = Actual{Installed: true, Version: last}
 			}
 		}
-		if candidate {
+		if candidate && family == SUSE {
+			res, err := r.Run(ctx, "zypper -n -q refresh >/dev/null 2>&1; zypper -n -q -x search -s --match-exact -t package "+q, nil)
+			if err != nil {
+				return a, err
+			}
+			a.Candidate = zypperNewest(string(res.Stdout), name)
+		} else if candidate {
 			res, err := r.Run(ctx, "dnf -q repoquery --latest-limit 1 --qf '%{epoch}:%{version}-%{release}' -- "+q, nil)
 			if err != nil {
 				return a, err
@@ -217,6 +231,29 @@ func Read(ctx context.Context, r modules.Runner, family Family, name string, can
 		return a, fmt.Errorf("unknown package family %q", family)
 	}
 	return a, nil
+}
+
+// zypperEdition is one solvable in zypper -x search's output.
+var zypperEdition = regexp.MustCompile(`<solvable [^>]*name="([^"]+)"[^>]*edition="([^"]+)"`)
+
+// zypperNewest is the newest edition of name that zypper -x search lists,
+// one per repository, as epoch:version-release, the form rpm -q gives, or
+// "".
+func zypperNewest(out, name string) string {
+	newest := ""
+	for _, m := range zypperEdition.FindAllStringSubmatch(out, -1) {
+		if m[1] != name {
+			continue
+		}
+		e := m[2]
+		if !strings.Contains(e, ":") {
+			e = "0:" + e
+		}
+		if newest == "" || rpmCompare(e, newest) > 0 {
+			newest = e
+		}
+	}
+	return newest
 }
 
 // apkVersion is name's version in apk list's output, whose lines start
@@ -314,6 +351,24 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			err = Run(ctx, r, install)
 		}
 		return err
+	case SUSE:
+		switch d.State {
+		case Absent:
+			return zypper(ctx, r, "remove "+ssh.Quote(d.Name))
+		case Latest:
+			if err := zypper(ctx, r, "install"+d.recommends(family)+" "+ssh.Quote(d.Name)); err != nil {
+				return err
+			}
+			return zypper(ctx, r, "update"+d.recommends(family)+" "+ssh.Quote(d.Name))
+		default:
+			spec, old := d.Name, ""
+			if d.Version != "" {
+				// Without --oldpackage, a pin below the installed version is
+				// "Nothing to do." and exit 0, as Ansible's zypper knows.
+				spec, old = spec+"="+d.Version, " --oldpackage"
+			}
+			return zypper(ctx, r, "install"+old+d.recommends(family)+" "+ssh.Quote(spec))
+		}
 	case APK:
 		if d.InstallRecommends != nil {
 			return errors.New("install_recommends doesn't apply on Alpine: apk has no recommended packages")
@@ -418,9 +473,17 @@ func Run(ctx context.Context, r modules.Runner, cmd string) error {
 	}
 }
 
+// zypper runs zypper with args. Exit 102 is success that wants a reboot,
+// and 103 is zypper having updated itself, so it runs again once.
+func zypper(ctx context.Context, r modules.Runner, args string) error {
+	c := "zypper -n -q " + args
+	return Run(ctx, r, c+"; rc=$?; if [ $rc = 103 ]; then "+c+"; rc=$?; fi; [ $rc = 102 ] && rc=0; exit $rc")
+}
+
 func lockHeld(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "Could not get lock") || strings.Contains(msg, "transaction lock")
+	return strings.Contains(msg, "Could not get lock") || strings.Contains(msg, "transaction lock") ||
+		strings.Contains(msg, "System management is locked")
 }
 
 func runOnce(ctx context.Context, r modules.Runner, cmd string) error {

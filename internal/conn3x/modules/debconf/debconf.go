@@ -101,7 +101,7 @@ func Apply(ctx context.Context, r modules.Runner, s Selection) error {
 		return err
 	}
 	if family != pkg.Deb {
-		return errors.New("debconf presets the questions Debian and Ubuntu packages ask; this host is in the Red Hat family, which has no debconf, so drop the step for it")
+		return errors.New("debconf presets the questions Debian and Ubuntu packages ask; this host isn't Debian or Ubuntu, so it has no debconf: drop the step for it")
 	}
 	line := strings.Join([]string{s.Package, s.Question, s.Type, s.Value}, " ")
 	res, err := run(ctx, r, "DEBIAN_FRONTEND=noninteractive debconf-set-selections", []byte(line+"\n"))

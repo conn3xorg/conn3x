@@ -127,6 +127,7 @@ var verbatim = map[string][]string{
 	"yum":             {"name", "pkg"},
 	"apt":             {"name", "pkg"},
 	"apk":             {"name"},
+	"zypper":          {"name", "pkg"},
 	"service":         {"name"},
 	"systemd":         {"name"},
 	"systemd_service": {"name"},
@@ -186,7 +187,7 @@ func pathOK(v string, rules []string) bool {
 	return !slices.Contains(rules, "noslash") || !strings.HasSuffix(v, "/")
 }
 
-var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true, "apk": true}
+var packageModules = map[string]bool{"package": true, "dnf": true, "yum": true, "apt": true, "apk": true, "zypper": true}
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
 
@@ -632,6 +633,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"apt":                     packageModule,
 	"apk":                     packageModule,
 	"fetch":                   fetchModule,
+	"zypper":                  packageModule,
 	"pip":                     pipModule,
 	"npm":                     npmModule,
 	"service":                 serviceModule,
@@ -1140,6 +1142,20 @@ func packageModule(in *input) ([]step, string) {
 		// only picks between what's installed and what's offered.
 		in.ignore("no_cache", "available")
 	}
+	var recommends *attr
+	if in.mod == "zypper" {
+		if t := in.str("type"); t != "" && t != "package" {
+			return nil, "installs a " + t + ", and a package step installs packages only"
+		}
+		in.ignore("type")
+		// Ansible's zypper leaves recommended packages out unless told not to.
+		recommends = &attr{key: "install_recommends", val: cty.BoolVal(!in.bool("disable_recommends", true))}
+		in.ignore("disable_recommends")
+		if in.has("update_cache") {
+			in.ignore("update_cache")
+			notes = append(notes, "update_cache dropped: zypper refreshes a repository itself when its metadata expires.")
+		}
+	}
 	if in.has("update_cache") {
 		in.ignore("update_cache", "cache_valid_time")
 		notes = append(notes, "update_cache dropped: Conn3x refreshes the package lists when a package isn't found.")
@@ -1166,6 +1182,9 @@ func packageModule(in *input) ([]step, string) {
 			if in.has(k) {
 				attrs = append(attrs, attr{key: "install_recommends", val: cty.BoolVal(in.bool(k, true))})
 			}
+		}
+		if recommends != nil && st != "absent" {
+			attrs = append(attrs, *recommends)
 		}
 		steps = append(steps, step{module: "package", attrs: attrs, notes: notes, suffix: n})
 		notes = nil

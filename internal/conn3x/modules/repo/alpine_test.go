@@ -35,3 +35,17 @@ func TestAlpineRefused(t *testing.T) {
 		t.Errorf("Disable: %v", err)
 	}
 }
+
+func TestSUSERefused(t *testing.T) {
+	ctx := context.Background()
+	r := Repo{Name: "extra", URL: "https://example.com/suse", Key: "key"}
+	if r.Files(pkg.SUSE) != nil {
+		t.Error("Files on SUSE")
+	}
+	if err := Apply(ctx, nil, pkg.SUSE, r); !errors.Is(err, errSUSE) {
+		t.Errorf("Apply: %v", err)
+	}
+	if _, _, err := ReadSources(ctx, nil, pkg.SUSE); !errors.Is(err, errSUSE) {
+		t.Errorf("ReadSources: %v", err)
+	}
+}
