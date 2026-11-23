@@ -97,6 +97,8 @@ type input struct {
 	jsonWhy   string
 	// csrs are the play's openssl_csr tasks, by the path each writes.
 	csrs map[string]map[string]*yaml.Node
+	// capTasks is how many capabilities tasks in the play set this path.
+	capTasks int
 	// env is a command or shell task's environment mapping, if it has one.
 	env *yaml.Node
 	// itemVar names the role default a loop runs over, whose items the
@@ -704,6 +706,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"flatpak":                 flatpakModule,
 	"apt_repository":          aptRepositoryModule,
 	"yum_repository":          yumRepositoryModule,
+	"capabilities":            capabilitiesModule,
 	"locale_gen":              localeGenModule,
 	"dpkg_selections":         dpkgSelectionsModule,
 	"yum_versionlock":         versionlockModule,

@@ -26,3 +26,7 @@ step "nginx_low_ports" {
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the capabilities. `on_remove = "delete"` takes them all off with `setcap -r`.
+
+## From Ansible
+
+`conn3x convert ansible` turns a `capabilities` task with `state: present` into a `file_capabilities` step with that one capability, and a TODO to add any others the file needs, since the step owns the whole set where Ansible adds one. It stays a TODO with `state: absent`, a capability taken off with `-`, a loop, or when more than one `capabilities` task in the play sets the same path: write one step listing them all.
