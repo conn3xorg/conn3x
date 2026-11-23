@@ -29,4 +29,13 @@ step "nginx_low_ports" {
 
 ## From Ansible
 
-`conn3x convert ansible` turns a `capabilities` task with `state: present` into a `file_capabilities` step with that one capability, and a TODO to add any others the file needs, since the step owns the whole set where Ansible adds one. It stays a TODO with `state: absent`, a capability taken off with `-`, a loop, or when more than one `capabilities` task in the play sets the same path: write one step listing them all.
+`community.general.capabilities` adds or takes off the one capability it names and keeps the file's others. A `file_capabilities` step owns the whole set, so a converted step would take off anything a package or another play gave the file. `conn3x convert ansible` leaves each `capabilities` task for review, with a reason that names the step to write. Gather every capability the file should end with into one step:
+
+```hcl
+step "ping_raw" {
+  file_capabilities {
+    path         = "/usr/bin/ping"
+    capabilities = ["cap_net_raw+ep"]
+  }
+}
+```
