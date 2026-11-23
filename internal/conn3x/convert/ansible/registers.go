@@ -18,7 +18,7 @@ import (
 func cacheOnly(t map[string]*yaml.Node) bool {
 	mod, args := moduleOf(t)
 	switch mod {
-	case "apt", "yum", "dnf", "package":
+	case "apt", "yum", "dnf", "dnf5", "package":
 	default:
 		return false
 	}
