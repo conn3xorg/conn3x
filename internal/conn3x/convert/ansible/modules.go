@@ -3115,7 +3115,11 @@ func yumRepositoryModule(in *input) ([]step, string) {
 	if reason != "" {
 		return nil, reason
 	}
-	if err := (repo.Repo{Name: name, URL: urls[0], Key: key}).Validate(pkg.RPM); err != nil {
+	priority, why := in.repoPriority("dnf")
+	if why != "" {
+		return nil, why
+	}
+	if err := (repo.Repo{Name: name, URL: urls[0], Key: key, Priority: int(priority)}).Validate(pkg.RPM); err != nil {
 		return nil, "can't be a repository step: " + err.Error()
 	}
 	notes := []string{fmt.Sprintf("Check that %s is the key at %s.", keyFile, keys[0])}
@@ -3123,7 +3127,28 @@ func yumRepositoryModule(in *input) ([]step, string) {
 		in.ignore("description")
 		notes = append(notes, "description dropped: Conn3x labels the repository with its name.")
 	}
-	return one("repository", []attr{s("name", name), s("url", urls[0]), {key: "key", raw: "file(" + moduleFile(keyFile) + ")"}}, notes...)
+	attrs := []attr{s("name", name), s("url", urls[0]), {key: "key", raw: "file(" + moduleFile(keyFile) + ")"}}
+	if priority != 0 {
+		attrs = append(attrs, attr{key: "priority", val: cty.NumberIntVal(priority)})
+	}
+	return one("repository", attrs, notes...)
+}
+
+// repoPriority reads a repository task's priority, 0 when unset. Below 1,
+// the package manager reads it as its default, so it's left for review.
+func (in *input) repoPriority(manager string) (int64, string) {
+	if !in.has("priority") {
+		return 0, ""
+	}
+	p := in.number("priority")
+	if in.problem != "" {
+		return 0, in.problem
+	}
+	priority, _ := p.val.AsBigFloat().Int64()
+	if priority < 1 {
+		return 0, "sets a priority below 1, which " + manager + " reads as its default; leave priority out instead"
+	}
+	return priority, ""
 }
 
 // zypperRepositoryModule converts a repository zypper adds by URL. The task
@@ -3154,15 +3179,9 @@ func zypperRepositoryModule(in *input) ([]step, string) {
 	if !in.bool("auto_import_keys", false) {
 		return nil, "doesn't set auto_import_keys: yes, so the key comes from elsewhere, such as an rpm_key task; a repository step imports the key it holds with rpm --import, so write it by hand with that key"
 	}
-	priority := int64(0)
-	if in.has("priority") {
-		p := in.number("priority")
-		if in.problem != "" {
-			return nil, in.problem
-		}
-		if priority, _ = p.val.AsBigFloat().Int64(); priority < 1 {
-			return nil, "sets a priority below 1, which zypper reads as its default; leave priority out instead"
-		}
+	priority, why := in.repoPriority("zypper")
+	if why != "" {
+		return nil, why
 	}
 	keyURL := strings.TrimSuffix(source, "/") + "/repodata/repomd.xml.key"
 	key, keyFile, reason := in.repoKey(keyURL, name+".key")
