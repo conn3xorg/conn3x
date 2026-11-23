@@ -1,6 +1,8 @@
 // Copyright (c) The Conn3x Authors
 // SPDX-License-Identifier: MPL-2.0
 
+//go:build e2e
+
 package e2e
 
 import (
