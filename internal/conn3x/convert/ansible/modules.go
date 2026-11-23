@@ -97,6 +97,8 @@ type input struct {
 	jsonWhy   string
 	// csrs are the play's openssl_csr tasks, by the path each writes.
 	csrs map[string]map[string]*yaml.Node
+	// keyFrom is the key an apt_key task before this apt_repository imports.
+	keyFrom string
 	// env is a command or shell task's environment mapping, if it has one.
 	env *yaml.Node
 	// itemVar names the role default a loop runs over, whose items the
@@ -704,6 +706,8 @@ var modules = map[string]func(*input) ([]step, string){
 	"flatpak":                 flatpakModule,
 	"apt_repository":          aptRepositoryModule,
 	"yum_repository":          yumRepositoryModule,
+	"apt_key":                 aptKeyModule,
+	"rpm_key":                 rpmKeyModule,
 	"locale_gen":              localeGenModule,
 	"dpkg_selections":         dpkgSelectionsModule,
 	"yum_versionlock":         versionlockModule,
@@ -2845,7 +2849,10 @@ func aptRepositoryModule(in *input) ([]step, string) {
 		}
 		signedBy = v
 	}
-	if !strings.HasPrefix(signedBy, "/") {
+	if signedBy == "" && in.keyFrom != "" {
+		signedBy = in.keyFrom
+	}
+	if !strings.HasPrefix(signedBy, "/") && in.keyFrom == "" {
 		return nil, "doesn't name a key file with signed-by=/path; a repository step trusts one key for this repository only, and the converter can't tell which"
 	}
 	source, suite, components := m[2], m[3], strings.Fields(m[4])
