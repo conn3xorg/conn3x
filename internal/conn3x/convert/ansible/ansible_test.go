@@ -278,6 +278,7 @@ func TestConvertsRepositoriesAndLocale(t *testing.T) {
 			`key  = file("${path.module}/files/docker.asc")`,
 			"description dropped",
 		},
+		"yum_repository: {name: d, baseurl: 'https://example.com/', gpgcheck: true, gpgkey: 'https://example.com/docker.asc', priority: 10}":                              {`priority = 10`},
 		"community.general.yum_repository: {name: d, file: d, enabled: yes, baseurl: [ 'http://example.com/' ], gpgcheck: yes, gpgkey: [ 'file:///etc/pki/docker.asc' ]}": {`name = "d"`},
 	} {
 		res := convertWithKey(t, "    - "+task+"\n")
@@ -315,7 +316,7 @@ func TestRefusesRepositoriesAndLocalesItCantProve(t *testing.T) {
 		"gpgcheck: yes":           "yum_repository: {name: d, baseurl: 'http://example.com/', gpgkey: 'http://example.com/docker.asc'}",
 		"other than name":         "yum_repository: {" + yum + ", file: other}",
 		"exactly one gpgkey":      "yum_repository: {name: d, baseurl: 'http://example.com/', gpgcheck: true}",
-		"sets priority":           "yum_repository: {" + yum + ", priority: 10}",
+		"priority below 1":        "yum_repository: {" + yum + ", priority: 0}",
 		"may only use letters":    "yum_repository: {name: 'a b', baseurl: 'http://example.com/', gpgcheck: true, gpgkey: 'http://example.com/docker.asc'}",
 		"no usable file name":     "yum_repository: {name: d, baseurl: 'http://example.com/', gpgcheck: true, gpgkey: 'http://example.com/a\"b'}",
 	} {
