@@ -86,7 +86,7 @@ func TestDebconfRefusesRedHat(t *testing.T) {
 	w.writeAs("main.circuit.hcl", debconfVars{h.port, h.keyFile, h.knownHosts, "Internet Site"})
 	w.env = append(w.env, "TF_VAR_db_password=Pr3seed-S3cret")
 	w.mustConn3x("init", "-no-color")
-	if out, code := w.conn3x("apply", "-auto-approve", "-no-color"); code == 0 || !strings.Contains(out, "Red Hat family, which has no debconf") {
+	if out, code := w.conn3x("apply", "-auto-approve", "-no-color"); code == 0 || !strings.Contains(out, "so it has no debconf") {
 		t.Fatalf("apply on rocky exited %d:\n%s", code, out)
 	}
 }

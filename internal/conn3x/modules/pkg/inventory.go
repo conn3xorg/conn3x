@@ -16,8 +16,9 @@ import (
 // version for each installed package, tab-separated, in the form Read
 // gives versions in. dpkg lists only what's installed, held or not.
 var inventoryCmd = map[Family]string{
-	Deb: `dpkg --print-architecture && dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${Architecture}\t${Version}\n' | awk -F '\t' 'substr($1, 2, 1) == "i" { print $2 "\t" $3 "\t" $4 }'`,
-	RPM: `uname -m && rpm -qa --qf '%{NAME}\t%{ARCH}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n'`,
+	Deb:  `dpkg --print-architecture && dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${Architecture}\t${Version}\n' | awk -F '\t' 'substr($1, 2, 1) == "i" { print $2 "\t" $3 "\t" $4 }'`,
+	RPM:  `uname -m && rpm -qa --qf '%{NAME}\t%{ARCH}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n'`,
+	SUSE: `uname -m && rpm -qa --qf '%{NAME}\t%{ARCH}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n'`,
 	// apk list -I prints "name-version-rN arch {origin} (license) [installed]";
 	// the name is what comes before the last two dashes.
 	APK: `apk --print-arch && apk list -I | awk '{ n = $1; sub(/-[^-]+-r[0-9]+$/, "", n); print n "\t" $2 "\t" substr($1, length(n) + 2) }'`,
@@ -190,6 +191,9 @@ func rpmvercmp(a, b string) int {
 var manualCmd = map[Family]string{
 	Deb: `apt-mark showmanual && echo @@@ && dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${Essential}\t${Priority}\t${Depends}, ${Pre-Depends}, ${Recommends}\n'`,
 	RPM: `command -v dnf >/dev/null || { echo "listing hand-installed packages needs dnf" >&2; exit 1; }; dnf -q repoquery --userinstalled --qf '%{name}\n'`,
+	// zypper records what it installed as a dependency, so the rest of
+	// what rpm has was asked for, by hand or by the image.
+	SUSE: `rpm -qa --qf '%{NAME}\n' | sort -u | { if [ -s /var/lib/zypp/AutoInstalled ]; then grep -vxF -f /var/lib/zypp/AutoInstalled; else cat; fi; }`,
 	// /etc/apk/world is what was asked for, each perhaps with a version
 	// constraint such as nginx=1.26.2-r0 or a repository tag such as
 	// nginx@edge.

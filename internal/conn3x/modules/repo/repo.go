@@ -58,10 +58,16 @@ func (r Repo) Validate(family pkg.Family) error {
 // errAlpine is the answer on Alpine, whose repositories are lines in a file.
 var errAlpine = errors.New("repository and package_sources don't manage Alpine: its repositories are lines in /etc/apk/repositories, which a line step keeps")
 
+// errSUSE is the answer on SUSE, until zypper's repositories are written.
+var errSUSE = errors.New("repository and package_sources don't manage SUSE yet: add a repository with a file step in /etc/zypp/repos.d, after importing its key with rpm --import")
+
 // alpine refuses a family whose repositories this package doesn't write.
 func alpine(family pkg.Family) error {
-	if family == pkg.APK {
+	switch family {
+	case pkg.APK:
 		return errAlpine
+	case pkg.SUSE:
+		return errSUSE
 	}
 	return nil
 }
@@ -69,7 +75,7 @@ func alpine(family pkg.Family) error {
 // Files returns the files the repository needs, by path, and none on
 // Alpine, which keeps no repository files of this kind.
 func (r Repo) Files(family pkg.Family) map[string]string {
-	if family == pkg.APK {
+	if family == pkg.APK || family == pkg.SUSE {
 		return nil
 	}
 	if family == pkg.RPM {

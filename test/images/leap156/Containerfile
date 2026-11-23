@@ -1,0 +1,13 @@
+# openSUSE Leap 15.6 with sshd, used as a managed host in the package
+# tests. It runs sshd as the container's process, without systemd, which is
+# enough for steps that don't manage services.
+FROM registry.opensuse.org/opensuse/leap:15.6
+
+RUN zypper -n -q refresh \
+ && zypper -n -q install openssh \
+ && zypper -n -q clean -a \
+ && ssh-keygen -A \
+ && mkdir -p -m 700 /root/.ssh
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]

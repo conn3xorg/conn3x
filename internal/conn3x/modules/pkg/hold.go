@@ -49,8 +49,11 @@ func ReadHold(ctx context.Context, r modules.Runner, family Family, name string)
 		return false, errAPKHold
 	}
 	cmd := "apt-mark showhold"
-	if family == RPM {
+	switch family {
+	case RPM:
 		cmd = "dnf -q versionlock list"
+	case SUSE:
+		cmd = "zypper -n -q locks"
 	}
 	res, err := r.Run(ctx, cmd, nil)
 	if err != nil {
@@ -67,6 +70,13 @@ func heldIn(family Family, out, name string) bool {
 		line = strings.TrimSpace(line)
 		if family == Deb {
 			if line == name {
+				return true
+			}
+			continue
+		}
+		if family == SUSE {
+			// zypper locks prints "1 | name | package | (any) | comment".
+			if f := strings.Split(line, "|"); len(f) >= 3 && strings.TrimSpace(f[1]) == name && strings.TrimSpace(f[2]) == "package" {
 				return true
 			}
 			continue
@@ -112,6 +122,10 @@ func ApplyHold(ctx context.Context, r modules.Runner, family Family, h Hold) err
 		cmd = "apt-mark hold "
 	case family == Deb:
 		cmd = "apt-mark unhold "
+	case family == SUSE && h.Held:
+		cmd = "zypper -n -q addlock "
+	case family == SUSE:
+		cmd = "zypper -n -q removelock "
 	case h.Held:
 		cmd = "dnf -q versionlock add "
 	default:
