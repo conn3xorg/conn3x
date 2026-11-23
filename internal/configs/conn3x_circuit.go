@@ -78,6 +78,7 @@ var circuitModules = map[string]string{
 	"container_image":      "conn3x_container_image",
 	"container_network":    "conn3x_container_network",
 	"container_volume":     "conn3x_container_volume",
+	"compose_project":      "conn3x_compose_project",
 	"mount":                "conn3x_mount",
 	"swap":                 "conn3x_swap",
 	"alternatives":         "conn3x_alternatives",

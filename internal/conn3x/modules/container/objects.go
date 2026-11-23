@@ -73,14 +73,7 @@ func inspect(ctx context.Context, r modules.Runner, engine, kind, name string, o
 
 // change runs script on the host, saying what failed in terms of what.
 func change(ctx context.Context, r modules.Runner, what, script string) error {
-	res, err := r.Run(ctx, script, nil)
-	if err != nil {
-		return err
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("%s: %s", what, strings.TrimSpace(string(res.Stderr)+string(res.Stdout)))
-	}
-	return nil
+	return runWith(ctx, r, what, script, nil)
 }
 
 // Image is an image kept on the host.

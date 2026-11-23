@@ -706,6 +706,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"podman_network":          containerNetworkModule("podman"),
 	"docker_volume":           containerVolumeModule("docker"),
 	"podman_volume":           containerVolumeModule("podman"),
+	"docker_compose_v2":       composeModule,
 	"command":                 commandModule,
 	"shell":                   commandModule,
 	"reboot":                  rebootModule,
@@ -2743,6 +2744,77 @@ func containerVolumeModule(engine string) func(*input) ([]step, string) {
 		}
 		return one("container_volume", append(attrs, s("engine", engine)))
 	}
+}
+
+// composeModule translates docker_compose_v2. What the step doesn't do,
+// such as building or removing volumes, stays for review, so the circuit
+// never does more than the play.
+func composeModule(in *input) ([]step, string) {
+	if in.has("state") && in.str("state") == "restarted" {
+		return nil, "sets state: restarted, which is an action rather than a state; restart the project in a handler, notified by the change that needs it"
+	}
+	st := in.state("present", "present", "stopped", "absent")
+	if in.has("definition") {
+		in.used["definition"] = true
+		return nil, "sets definition, which Ansible writes to a temporary directory and deletes; a compose_project step reads its file in a directory on the host, so move the definition into content and pick a project_dir"
+	}
+	// The defaults, which the step does too.
+	for k, def := range map[string]string{"recreate": "auto", "build": "policy"} {
+		if in.has(k) && in.str(k) == def {
+			in.ignore(k)
+		} else if in.has(k) {
+			return nil, "sets " + k + ": " + in.str(k) + ", which a compose_project step doesn't have"
+		}
+	}
+	if !in.bool("dependencies", true) {
+		return nil, "sets dependencies: false, and a compose_project step always starts the services a service depends on"
+	}
+	if in.bool("remove_volumes", false) {
+		return nil, "sets remove_volumes, and a compose_project step never removes volumes; remove them by hand once their data isn't needed"
+	}
+	c := container.Compose{
+		Engine: "docker", ProjectDir: in.str("project_src"), ProjectName: in.str("project_name"),
+		Files: in.list("files"), EnvFiles: in.list("env_files"), Profiles: in.list("profiles"), Services: in.list("services"),
+		Pull: in.str("pull"), RemoveOrphans: in.bool("remove_orphans", false), Wait: in.bool("wait", false),
+	}
+	if st != "present" {
+		c.State = st
+	}
+	if c.ProjectDir == "" {
+		return nil, "sets no project_src; a compose_project step needs the directory holding the Compose file"
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err.Error()
+	}
+	attrs := []attr{s("project_dir", c.ProjectDir)}
+	if c.ProjectName != "" {
+		attrs = append(attrs, s("project_name", c.ProjectName))
+	}
+	for _, l := range []struct {
+		key string
+		vs  []string
+	}{{"files", c.Files}, {"env_files", c.EnvFiles}, {"profiles", c.Profiles}, {"services", c.Services}} {
+		if len(l.vs) == 0 {
+			continue
+		}
+		vals := make([]cty.Value, len(l.vs))
+		for i, v := range l.vs {
+			vals[i] = cty.StringVal(v)
+		}
+		attrs = append(attrs, attr{key: l.key, val: cty.ListVal(vals)})
+	}
+	for _, kv := range [][2]string{{"state", c.State}, {"pull", c.Pull}} {
+		if kv[1] != "" {
+			attrs = append(attrs, s(kv[0], kv[1]))
+		}
+	}
+	if c.RemoveOrphans {
+		attrs = append(attrs, attr{key: "remove_orphans", val: cty.True})
+	}
+	if c.Wait {
+		attrs = append(attrs, attr{key: "wait", val: cty.True})
+	}
+	return one("compose_project", append(attrs, s("engine", "docker")))
 }
 
 // commandLine is a command or shell task's command as /bin/sh runs it, in

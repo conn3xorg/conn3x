@@ -32,6 +32,7 @@ var unitHostSteps = map[string]map[string]cty.Value{
 	"conn3x_container_image":   {"name": cty.StringVal("nginx"), "tag": cty.StringVal("1.27")},
 	"conn3x_container_network": {"name": cty.StringVal("app")},
 	"conn3x_container_volume":  {"name": cty.StringVal("data")},
+	"conn3x_compose_project":   {"project_dir": cty.StringVal("/opt/app")},
 	"conn3x_modprobe":          {"name": cty.StringVal("br_netfilter")},
 	"conn3x_swap":              {"path": cty.StringVal("/swapfile"), "size": cty.StringVal("1G")},
 	"conn3x_sysctl":            {"name": cty.StringVal("vm.swappiness"), "value": cty.StringVal("10")},

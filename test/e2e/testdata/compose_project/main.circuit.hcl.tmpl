@@ -1,0 +1,58 @@
+variable "present" {
+  type    = bool
+  default = true
+}
+
+variable "worker_sleep" {
+  type    = string
+  default = "3601"
+}
+
+circuit "app" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "epel" {
+    package {
+      name = "epel-release"
+    }
+  }
+
+  step "podman" {
+    package {
+      name = "podman"
+    }
+  }
+
+  step "podman-compose" {
+    package {
+      name = "podman-compose"
+    }
+  }
+
+  step "app" {
+    when = var.present
+    compose_project {
+      project_dir  = "/opt/app"
+      project_name = "app"
+      engine       = "podman"
+      on_remove    = "delete"
+      content      = <<-EOT
+        services:
+          web:
+            image: docker.io/library/busybox:1.37
+            command: ["sleep", "3600"]
+          worker:
+            image: docker.io/library/busybox:1.37
+            command: ["sleep", "${var.worker_sleep}"]
+      EOT
+    }
+  }
+}

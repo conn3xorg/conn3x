@@ -48,7 +48,7 @@ step "worker" {
 
 **Changes.** Changing anything but `name` recreates the container. Changing `name` replaces the step, and `on_remove` decides what happens to the old container.
 
-**Networks.** `networks` joins networks by name, such as one a [`container_network`](container_network.md) step made: the first as the container starts, the rest straight after. Unset, the container is on the engine's default network, and which one isn't compared. `host` and `none` are network modes, not networks, and this step doesn't set them. Images and named volumes have steps of their own too: [`container_image`](container_image.md) and [`container_volume`](container_volume.md).
+**Networks.** `networks` joins networks by name, such as one a [`container_network`](container_network.md) step made: the first as the container starts, the rest straight after. Unset, the container is on the engine's default network, and which one isn't compared. `host` and `none` are network modes, not networks, and this step doesn't set them. Images and named volumes have steps of their own too: [`container_image`](container_image.md) and [`container_volume`](container_volume.md). A whole Compose file is a [`compose_project`](compose_project.md) step.
 
 **Not yet.** Health checks and resource limits aren't settings of this step.
 

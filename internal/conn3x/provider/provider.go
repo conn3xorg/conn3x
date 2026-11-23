@@ -98,6 +98,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_container_image":      {containerImageSchema, validateWith("name", func(v cty.Value) error { return containerImageFrom(v).Validate() }), planContainerImage, readContainerImage, applyContainerImage, upgradeWith(containerImageSchema)},
 	"conn3x_container_network":    {containerNetworkSchema, validateWith("name", func(v cty.Value) error { return containerNetworkFrom(v).Validate() }), planContainerNetwork, readContainerNetwork, applyContainerNetwork, upgradeWith(containerNetworkSchema)},
 	"conn3x_container_volume":     {containerVolumeSchema, validateWith("name", func(v cty.Value) error { return containerVolumeFrom(v).Validate() }), planContainerVolume, readContainerVolume, applyContainerVolume, upgradeWith(containerVolumeSchema)},
+	"conn3x_compose_project":      {composeProjectSchema, validateWith("project_dir", func(v cty.Value) error { return composeProjectFrom(v).Validate() }), planComposeProject, readComposeProject, applyComposeProject, upgradeWith(composeProjectSchema)},
 	"conn3x_nm_connection":        {nmConnectionSchema, validateNMConnection, planNMConnection, readNMConnection, applyNMConnection, upgradeWith(nmConnectionSchema)},
 	"conn3x_directory_copy":       {dircopySchema, validateDircopy, planDircopy, readDircopy, applyDircopy, upgradeWith(dircopySchema)},
 	"conn3x_mount":                {mountSchema, validateMount, planMount, readMount, applyMount, upgradeWith(mountSchema)},
