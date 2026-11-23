@@ -178,8 +178,13 @@ func checkLine(l string) error {
 	return nil
 }
 
-// InSync reports whether config has what c wants.
-func (c Config) InSync(config string) bool { return c.Commands(config) == nil }
+// InSync reports whether config has what c wants. A refresh knows the
+// secrets only by their prefixes, since lines_wo is write-only, so each
+// prefix must have a line too.
+func (c Config) InSync(config string) bool {
+	have, _ := section(config, c.Parents)
+	return c.Commands(config) == nil && len(c.secretsMissing(have)) == 0
+}
 
 // Commands are what to type in configuration mode to bring config in line,
 // each indented to its depth, as show running-config would print it: each

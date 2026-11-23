@@ -24,6 +24,19 @@ func TestConfigSecrets(t *testing.T) {
 	if !top.InSync(secretConfig) {
 		t.Errorf("an encrypted key the device holds reads as out of sync: %q", top.Commands(secretConfig))
 	}
+	// A refresh has only the prefixes, since lines_wo is write-only: a key
+	// removed by hand still reads as out of sync.
+	refresh := Config{Prefixes: []string{"tacacs-server key"}}
+	if refresh.InSync("hostname r1\n!\n") {
+		t.Error("the key is gone, but a refresh reads it as in sync")
+	}
+	if !refresh.InSync(secretConfig) {
+		t.Error("a refresh with the key there reads as out of sync")
+	}
+	// The apply after it has the lines again and sends the missing one.
+	if got := top.Commands("hostname r1\n!\n"); !slices.Equal(got, []string{"tacacs-server key NewKey"}) {
+		t.Errorf("after the key went: %q", got)
+	}
 	// A rotation sends the line again; IOS replaces the key in place, so
 	// the old line is never taken off first.
 	top.Resend = true
