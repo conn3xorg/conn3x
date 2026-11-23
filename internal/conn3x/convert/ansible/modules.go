@@ -631,6 +631,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"yum":                     packageModule,
 	"apt":                     packageModule,
 	"apk":                     packageModule,
+	"fetch":                   fetchModule,
 	"pip":                     pipModule,
 	"npm":                     npmModule,
 	"service":                 serviceModule,
@@ -1087,6 +1088,41 @@ func templateModule(in *input) ([]step, string) {
 		attrs = append(attrs, attr{key: "backup", val: cty.True})
 	}
 	return one("template", in.owners(attrs), in.modeNote()...)
+}
+
+// fetchModule turns fetch into a fetch step. Without flat, Ansible puts
+// the copy at dest/<host>/<src>, and each.key is the host here.
+func fetchModule(in *input) ([]step, string) {
+	src, dest := in.str("src"), in.str("dest")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if src == "" || dest == "" {
+		return nil, "needs src and dest"
+	}
+	if strings.Contains(src+dest, "\x00") {
+		return nil, "builds src or dest from a variable; write the paths out in a fetch step"
+	}
+	if !strings.HasPrefix(src, "/") {
+		return nil, "fetches a relative src, which Ansible finds from the login directory; give the path from /"
+	}
+	in.ignore("validate_checksum")
+	attrs := []attr{s("src", src)}
+	var notes []string
+	switch {
+	case !in.bool("flat", false):
+		attrs = append(attrs, attr{key: "dest", raw: `"` + quoted(strings.TrimSuffix(dest, "/")) + `/${each.key}` + quoted(src) + `"`})
+	case strings.HasSuffix(dest, "/"):
+		attrs = append(attrs, s("dest", dest+path.Base(src)))
+		notes = append(notes, "flat: every host writes the same dest, so with more than one host, put ${each.key} in it.")
+	default:
+		attrs = append(attrs, s("dest", dest))
+		notes = append(notes, "flat: every host writes the same dest, so with more than one host, put ${each.key} in it.")
+	}
+	if !in.bool("fail_on_missing", true) {
+		attrs = append(attrs, attr{key: "fail_on_missing", val: cty.False})
+	}
+	return one("fetch", attrs, notes...)
 }
 
 func packageModule(in *input) ([]step, string) {

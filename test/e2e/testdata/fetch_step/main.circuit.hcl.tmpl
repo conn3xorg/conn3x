@@ -1,0 +1,37 @@
+circuit "fetch" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "token" {
+    file {
+      path    = "/root/join-token"
+      content = "{{.Token}}\n"
+      mode    = "0600"
+    }
+  }
+{{if .Fetch}}
+  step "bring_back" {
+    depends_on = [conn3x_file.fetch__token]
+
+    fetch {
+      src       = "/root/join-token"
+      dest      = "fetched/${each.key}.token"
+      on_remove = "delete"
+    }
+  }
+
+  step "missing" {
+    fetch {
+      src             = "/root/not-there"
+      dest            = "fetched/${each.key}.missing"
+      fail_on_missing = false
+    }
+  }
+{{end}}
+}
