@@ -1,8 +1,8 @@
 // Copyright (c) The Conn3x Authors
 // SPDX-License-Identifier: MPL-2.0
 
-// Package repo adds third-party package repositories: a dnf .repo file or a
-// deb822 .sources file, each with its signing key beside it.
+// Package repo adds third-party package repositories: a dnf or zypper .repo
+// file or a deb822 .sources file, each with its signing key beside it.
 package repo
 
 import (
@@ -28,6 +28,7 @@ var (
 type Repo struct {
 	Name, URL, Key     string
 	Suites, Components []string // apt only; components default to main
+	Priority           int      // dnf and zypper only; 0 leaves their default, 99
 }
 
 // Validate checks a Repo for the host's package manager family.
@@ -41,8 +42,14 @@ func (r Repo) Validate(family pkg.Family) error {
 	if !strings.Contains(r.Key, "-----BEGIN PGP PUBLIC KEY BLOCK-----") {
 		return errors.New("key must be an ASCII-armored public key (-----BEGIN PGP PUBLIC KEY BLOCK-----)")
 	}
+	if r.Priority < 0 {
+		return fmt.Errorf("priority %d must be 1 or more, the lowest number winning", r.Priority)
+	}
 	if family != pkg.Deb {
 		return nil
+	}
+	if r.Priority != 0 {
+		return errors.New("priority is for dnf and zypper; apt ranks repositories by pinning in /etc/apt/preferences.d, which a file step writes")
 	}
 	if len(r.Suites) == 0 {
 		return errors.New("suites is required on Debian and Ubuntu, such as [\"noble\"]")
@@ -58,33 +65,37 @@ func (r Repo) Validate(family pkg.Family) error {
 // errAlpine is the answer on Alpine, whose repositories are lines in a file.
 var errAlpine = errors.New("repository and package_sources don't manage Alpine: its repositories are lines in /etc/apk/repositories, which a line step keeps")
 
-// errSUSE is the answer on SUSE, until zypper's repositories are written.
-var errSUSE = errors.New("repository and package_sources don't manage SUSE yet: add a repository with a file step in /etc/zypp/repos.d, after importing its key with rpm --import")
-
 // alpine refuses a family whose repositories this package doesn't write.
 func alpine(family pkg.Family) error {
-	switch family {
-	case pkg.APK:
+	if family == pkg.APK {
 		return errAlpine
-	case pkg.SUSE:
-		return errSUSE
 	}
 	return nil
 }
 
+// keyPath is where the Red Hat family and SUSE get the repository's key.
+func (r Repo) keyPath() string { return "/etc/pki/rpm-gpg/RPM-GPG-KEY-conn3x-" + r.Name }
+
 // Files returns the files the repository needs, by path, and none on
 // Alpine, which keeps no repository files of this kind.
 func (r Repo) Files(family pkg.Family) map[string]string {
-	if family == pkg.APK || family == pkg.SUSE {
+	if family == pkg.APK {
 		return nil
 	}
-	if family == pkg.RPM {
-		keyPath := "/etc/pki/rpm-gpg/RPM-GPG-KEY-conn3x-" + r.Name
-		return map[string]string{
-			keyPath: r.Key,
-			"/etc/yum.repos.d/" + r.Name + ".repo": fmt.Sprintf("# Managed by Conn3x.\n[%s]\nname=%s\nbaseurl=%s\nenabled=1\ngpgcheck=1\ngpgkey=file://%s\n",
-				r.Name, r.Name, r.URL, keyPath),
+	if family == pkg.RPM || family == pkg.SUSE {
+		dir, extra := "/etc/yum.repos.d/", ""
+		if family == pkg.SUSE {
+			dir, extra = "/etc/zypp/repos.d/", "autorefresh=1\n"
 		}
+		body := fmt.Sprintf("# Managed by Conn3x.\n[%s]\nname=%s\nbaseurl=%s\nenabled=1\n%sgpgcheck=1\ngpgkey=file://%s\n",
+			r.Name, r.Name, r.URL, extra, r.keyPath())
+		if family == pkg.SUSE {
+			body += "type=rpm-md\n"
+		}
+		if r.Priority != 0 {
+			body += fmt.Sprintf("priority=%d\n", r.Priority)
+		}
+		return map[string]string{r.keyPath(): r.Key, dir + r.Name + ".repo": body}
 	}
 	keyPath := "/etc/apt/keyrings/conn3x-" + r.Name + ".asc"
 	src := fmt.Sprintf("# Managed by Conn3x.\nTypes: deb\nURIs: %s\nSuites: %s\n", r.URL, strings.Join(r.Suites, " "))
@@ -119,8 +130,9 @@ func InSync(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) (b
 	return true, nil
 }
 
-// Apply writes the files, then refreshes apt's package lists, so the next
-// package step can install from the repository.
+// Apply writes the files, then refreshes apt's package lists, or on SUSE
+// imports the key and refreshes the repository, so the next package step
+// can install from it.
 func Apply(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) error {
 	if err := alpine(family); err != nil {
 		return err
@@ -138,7 +150,26 @@ func Apply(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) err
 			return err
 		}
 	}
+	if family == pkg.SUSE {
+		return zypperRefresh(ctx, h, r)
+	}
 	return refresh(ctx, h, family)
+}
+
+// zypperRefresh imports the key into rpm's keyring, which zypper checks
+// signatures against, and refreshes the repository. Importing a key rpm
+// already has changes nothing.
+func zypperRefresh(ctx context.Context, h modules.Runner, r Repo) error {
+	for _, cmd := range []string{"rpm --import " + ssh.Quote(r.keyPath()), "zypper --non-interactive refresh " + ssh.Quote(r.Name)} {
+		res, err := h.Run(ctx, cmd, nil)
+		if err != nil {
+			return err
+		}
+		if res.ExitCode != 0 {
+			return fmt.Errorf("%s: %s", cmd, strings.TrimSpace(string(res.Stderr)+"\n"+string(res.Stdout)))
+		}
+	}
+	return nil
 }
 
 // Delete removes the files and refreshes apt's package lists.

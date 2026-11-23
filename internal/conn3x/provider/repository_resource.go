@@ -6,6 +6,8 @@ package provider
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/big"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -18,7 +20,7 @@ import (
 
 func repositorySchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "A package repository and its signing key: a .repo file for dnf, or a .sources file for apt, which then refreshes its package lists.",
+		Description: "A package repository and its signing key: a .repo file for dnf or zypper, or a .sources file for apt, which then refreshes its package lists.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":         {Type: cty.String, Computed: true},
 			"revision":   revisionAttr(),
@@ -27,6 +29,7 @@ func repositorySchema() providers.Schema {
 			"key":        {Type: cty.String, Required: true, Description: "ASCII-armored public key the repository is signed with."},
 			"suites":     {Type: cty.List(cty.String), Optional: true, Description: "apt suites, such as [\"noble\"]. Required on Debian and Ubuntu."},
 			"components": {Type: cty.List(cty.String), Optional: true, Description: "apt components. Defaults to [\"main\"]."},
+			"priority":   {Type: cty.Number, Optional: true, Description: "dnf and zypper priority, from 1; the lowest number wins. Unset leaves their default, 99. Refused on Debian and Ubuntu."},
 			"on_remove":  {Type: cty.String, Optional: true, Computed: true, Description: "\"forget\" (default) leaves the repository, \"delete\" removes its files."},
 			"in_sync":    {Type: cty.Bool, Computed: true, Description: "Whether the repository's files match."},
 		},
@@ -45,8 +48,13 @@ func repoFrom(v cty.Value) repo.Repo {
 		}
 		return out
 	}
-	return repo.Repo{Name: v.GetAttr("name").AsString(), URL: v.GetAttr("url").AsString(), Key: v.GetAttr("key").AsString(),
+	r := repo.Repo{Name: v.GetAttr("name").AsString(), URL: v.GetAttr("url").AsString(), Key: v.GetAttr("key").AsString(),
 		Suites: list(v.GetAttr("suites")), Components: list(v.GetAttr("components"))}
+	if p := v.GetAttr("priority"); !p.IsNull() {
+		n, _ := p.AsBigFloat().Int64()
+		r.Priority = int(n)
+	}
+	return r
 }
 
 func validateRepository(cfg cty.Value) tfdiags.Diagnostics {
@@ -55,6 +63,11 @@ func validateRepository(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
+	if p := cfg.GetAttr("priority"); !p.IsNull() {
+		if n, acc := p.AsBigFloat().Int64(); acc != big.Exact || n < 1 || n > math.MaxInt32 {
+			return diags.Append(attrError("priority", "priority must be a whole number from 1"))
+		}
+	}
 	// The host's family is not known until apply; check what both share,
 	// and the apt fields whenever they are set.
 	r := repoFrom(cfg)
@@ -69,7 +82,7 @@ func validateRepository(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planRepository(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "repository", []string{"name"}, []string{"url", "key", "suites", "components"})
+	return planSynced(req, "repository", []string{"name"}, []string{"url", "key", "suites", "components", "priority"})
 }
 
 func readRepository(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

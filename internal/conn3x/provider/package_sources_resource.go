@@ -19,7 +19,7 @@ import (
 
 func packageSourcesSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "Keeps a host to the distribution's package sources, those repository steps wrote, and keep: any other file in /etc/apt/sources.list.d or /etc/yum.repos.d is moved to " + repo.DisabledDir + ".",
+		Description: "Keeps a host to the distribution's package sources, those repository steps wrote, and keep: any other file in /etc/apt/sources.list.d, /etc/yum.repos.d or /etc/zypp/repos.d is moved to " + repo.DisabledDir + ".",
 		Attributes: map[string]*configschema.Attribute{
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),

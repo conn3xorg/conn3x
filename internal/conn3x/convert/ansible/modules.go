@@ -705,6 +705,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"flatpak":                 flatpakModule,
 	"apt_repository":          aptRepositoryModule,
 	"yum_repository":          yumRepositoryModule,
+	"zypper_repository":       zypperRepositoryModule,
 	"locale_gen":              localeGenModule,
 	"dpkg_selections":         dpkgSelectionsModule,
 	"yum_versionlock":         versionlockModule,
@@ -2827,13 +2828,15 @@ var keyFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.+-]*$`)
 
 // repoKey finds the armored key a playbook names by URL or host path. Conn3x
 // needs the key itself, and the converter doesn't download anything, so it has
-// to be beside the playbook under the same file name.
-func (in *input) repoKey(from string) (key, file, reason string) {
+// to be beside the playbook under the same file name, or under base when set.
+func (in *input) repoKey(from, base string) (key, file, reason string) {
 	u, err := url.Parse(from)
 	if err != nil {
 		return "", "", fmt.Sprintf("names the signing key %q, which the converter can't read as a path or URL", from)
 	}
-	base := path.Base(u.Path)
+	if base == "" {
+		base = path.Base(u.Path)
+	}
 	if !keyFileName.MatchString(base) {
 		return "", "", fmt.Sprintf("names the signing key %q, which has no usable file name", from)
 	}
@@ -2893,7 +2896,7 @@ func aptRepositoryModule(in *input) ([]step, string) {
 	if err != nil {
 		return nil, fmt.Sprintf("has the URL %q, which the converter can't read", source)
 	}
-	key, keyFile, reason := in.repoKey(signedBy)
+	key, keyFile, reason := in.repoKey(signedBy, "")
 	if reason != "" {
 		return nil, reason
 	}
@@ -2937,7 +2940,7 @@ func yumRepositoryModule(in *input) ([]step, string) {
 	if len(keys) != 1 {
 		return nil, "doesn't set exactly one gpgkey; a repository step has one key"
 	}
-	key, keyFile, reason := in.repoKey(keys[0])
+	key, keyFile, reason := in.repoKey(keys[0], "")
 	if reason != "" {
 		return nil, reason
 	}
@@ -2950,6 +2953,66 @@ func yumRepositoryModule(in *input) ([]step, string) {
 		notes = append(notes, "description dropped: Conn3x labels the repository with its name.")
 	}
 	return one("repository", []attr{s("name", name), s("url", urls[0]), {key: "key", raw: "file(" + moduleFile(keyFile) + ")"}}, notes...)
+}
+
+// zypperRepositoryModule converts a repository zypper adds by URL. The task
+// names no key: with auto_import_keys, zypper trusts the one the repository
+// serves as repodata/repomd.xml.key, looked for as files/NAME.key so that
+// two repositories never share one.
+func zypperRepositoryModule(in *input) ([]step, string) {
+	if in.loop {
+		return nil, "loops over repositories, which the converter can't translate yet; write one task for each"
+	}
+	in.state("present", "present")
+	name, source := in.str("name"), in.str("repo")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if strings.HasSuffix(source, ".repo") {
+		return nil, fmt.Sprintf("adds the .repo file %s, whose settings the converter can't see; write a repository step from what it holds", source)
+	}
+	if !in.bool("enabled", true) {
+		return nil, "sets enabled: no; Conn3x always enables the repository"
+	}
+	if in.bool("disable_gpg_check", false) {
+		return nil, "sets disable_gpg_check: yes; Conn3x always checks signatures"
+	}
+	if !in.bool("autorefresh", true) || !in.bool("refresh", true) {
+		return nil, "sets autorefresh: no; Conn3x always turns autorefresh on"
+	}
+	if !in.bool("auto_import_keys", false) {
+		return nil, "doesn't set auto_import_keys: yes, so the key comes from elsewhere, such as an rpm_key task; a repository step imports the key it holds with rpm --import, so write it by hand with that key"
+	}
+	priority := int64(0)
+	if in.has("priority") {
+		p := in.number("priority")
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		if priority, _ = p.val.AsBigFloat().Int64(); priority < 1 {
+			return nil, "sets a priority below 1, which zypper reads as its default; leave priority out instead"
+		}
+	}
+	keyURL := strings.TrimSuffix(source, "/") + "/repodata/repomd.xml.key"
+	key, keyFile, reason := in.repoKey(keyURL, name+".key")
+	if reason != "" {
+		return nil, reason
+	}
+	if err := (repo.Repo{Name: name, URL: source, Key: key, Priority: int(priority)}).Validate(pkg.SUSE); err != nil {
+		return nil, "can't be a repository step: " + err.Error()
+	}
+	attrs := []attr{s("name", name), s("url", source), {key: "key", raw: "file(" + moduleFile(keyFile) + ")"}}
+	if priority != 0 {
+		attrs = append(attrs, attr{key: "priority", val: cty.NumberIntVal(priority)})
+	}
+	notes := []string{fmt.Sprintf("Check that %s is the key at %s, which zypper imported for this repository.", keyFile, keyURL)}
+	if in.has("description") {
+		in.ignore("description")
+		notes = append(notes, "description dropped: Conn3x labels the repository with its name.")
+	}
+	// The step always refreshes; zypper would on its next run anyway, with autorefresh on.
+	in.ignore("runrefresh")
+	return one("repository", attrs, notes...)
 }
 
 // A locale step also sets the host's LANG, which locale_gen doesn't, so

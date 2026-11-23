@@ -37,9 +37,17 @@ func TestRepositoryValidate(t *testing.T) {
 		{"name": cty.StringVal("x"), "url": cty.StringVal("https://example.com"), "key": cty.StringVal("nope")},
 		{"name": cty.StringVal("x"), "url": cty.StringVal("https://example.com"), "key": cty.StringVal(testKey),
 			"suites": cty.ListVal([]cty.Value{cty.StringVal("noble\nTypes: deb-src")})},
+		{"name": cty.StringVal("x"), "url": cty.StringVal("https://example.com"), "key": cty.StringVal(testKey), "priority": cty.NumberIntVal(0)},
+		{"name": cty.StringVal("x"), "url": cty.StringVal("https://example.com"), "key": cty.StringVal(testKey), "priority": cty.NumberFloatVal(1.5)},
+		{"name": cty.StringVal("x"), "url": cty.StringVal("https://example.com"), "key": cty.StringVal(testKey), "priority": cty.NumberIntVal(10),
+			"suites": cty.ListVal([]cty.Value{cty.StringVal("noble")})},
 	} {
 		if !r.validate(objFor(r.schema(), attrs)).HasErrors() {
 			t.Errorf("accepted %v", attrs)
 		}
+	}
+	ok := map[string]cty.Value{"name": cty.StringVal("x"), "url": cty.StringVal("https://example.com"), "key": cty.StringVal(testKey), "priority": cty.NumberIntVal(90)}
+	if diags := r.validate(objFor(r.schema(), ok)); diags.HasErrors() {
+		t.Errorf("priority 90: %v", diags.Err())
 	}
 }

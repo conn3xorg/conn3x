@@ -1,4 +1,4 @@
-Use `package_sources` to keep a host to the package sources you've chosen: the distribution's own, the ones [`repository`](/modules/repository) steps added, and any you name in `keep`. Conn3x moves every other source file aside, where apt and dnf no longer read it. It's for "this host takes packages only from the repositories we list", which a security team checks for.
+Use `package_sources` to keep a host to the package sources you've chosen: the distribution's own, the ones [`repository`](/modules/repository) steps added, and any you name in `keep`. Conn3x moves every other source file aside, where apt, dnf and zypper no longer read it. It's for "this host takes packages only from the repositories we list", which a security team checks for.
 
 ## Example usage
 
@@ -26,10 +26,11 @@ step "only_our_sources" {
 **What it reads.** Every plan lists the files the package manager reads added sources from:
 - **Debian and Ubuntu:** the `.list` and `.sources` files in `/etc/apt/sources.list.d`. `/etc/apt/sources.list` itself is left alone.
 - **Red Hat family:** the `.repo` files in `/etc/yum.repos.d`. Fedora keeps its own repositories in `/usr/share/dnf5/repos.d`, which is left alone too.
+- **openSUSE and SUSE Linux Enterprise:** the `.repo` files in `/etc/zypp/repos.d`.
 
 **What stays.** A file stays when it's one of these:
 - **Conn3x's.** Its first line is `# Managed by Conn3x.`, which every `repository` step writes, from any circuit. So a step here never fights the repositories other circuits add.
-- **The distribution's.** On Debian and Ubuntu, `<ID>.sources`, such as `ubuntu.sources`, with `ID` from `/etc/os-release`. On the Red Hat family, a file owned by a package whose name starts with `<ID>-repos`, such as `rocky-repos` or `fedora-repos-modular`. On RHEL, `redhat.repo` too, which subscription-manager writes.
+- **The distribution's.** On Debian and Ubuntu, `<ID>.sources`, such as `ubuntu.sources`, with `ID` from `/etc/os-release`. On the Red Hat family, a file owned by a package whose name starts with `<ID>-repos`, such as `rocky-repos` or `fedora-repos-modular`. On RHEL, `redhat.repo` too, which subscription-manager writes. On SUSE, a `repo-*.repo` file, such as openSUSE's `repo-oss.repo`, which the installer and images write; a file owned by a package whose name starts with `openSUSE-` or `SLE`, such as `openSUSE-release`; and a file with a `service=` line, which a zypper service such as SUSEConnect's writes and would write again.
 - **In `keep`.**
 
 `remove` names a distribution file that should go anyway. Naming a file a `repository` step wrote is refused, since the two steps would undo each other on every apply: delete that step instead.
