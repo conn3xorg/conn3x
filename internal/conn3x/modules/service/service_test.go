@@ -383,3 +383,20 @@ func TestDaemonReload(t *testing.T) {
 		t.Errorf("ran %q", h.ran)
 	}
 }
+
+// A try- action on a unit that isn't installed does nothing, where
+// systemctl would fail with "Unit not found".
+func TestTryActionsSkipMissingUnit(t *testing.T) {
+	for _, fn := range []func(context.Context, *host, string) error{
+		func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) },
+		func(c context.Context, h *host, n string) error { return TryReload(c, h, n) },
+	} {
+		h := &host{show: show("not-found", "inactive", "", "no")}
+		if err := fn(ctx, h, "systemd-resolved"); err != nil {
+			t.Fatal(err)
+		}
+		if all := strings.Join(h.ran, "\n"); strings.Contains(all, "try-") {
+			t.Errorf("ran a try- action on a missing unit:\n%s", all)
+		}
+	}
+}

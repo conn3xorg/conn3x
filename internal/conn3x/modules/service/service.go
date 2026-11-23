@@ -241,6 +241,11 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 	if err != nil {
 		return err
 	}
+	// systemctl refuses try-restart on a unit that isn't installed, but
+	// "only if running" means there's nothing to do.
+	if strings.HasPrefix(verb, "try-") && !a.Exists {
+		return nil
+	}
 	if a.NeedsReload {
 		if err := run(ctx, r, "systemctl daemon-reload"); err != nil {
 			return err
