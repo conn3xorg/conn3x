@@ -1,0 +1,46 @@
+circuit "sup" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tools" {
+    package {
+      name = "supervisor"
+    }
+  }
+
+  step "supervisord" {
+    depends_on = [conn3x_package.sup__tools]
+
+    service {
+      name  = "supervisor"
+      state = "started"
+    }
+  }
+
+  step "conf" {
+    depends_on = [conn3x_service.sup__supervisord]
+
+    file {
+      path    = "/etc/supervisor/conf.d/demo.conf"
+      content = "[program:demo]\ncommand=/bin/sleep {{.Seconds}}\nautostart=false\n"
+    }
+  }
+{{if .Program}}
+  step "demo" {
+    depends_on = [conn3x_file.sup__conf]
+
+    supervisor_program {
+      name      = "demo"
+      state     = "started"
+      triggers  = { conf = conn3x_file.sup__conf[each.key].revision, code = "{{.Code}}" }
+      on_remove = "delete"
+    }
+  }
+{{end}}
+}

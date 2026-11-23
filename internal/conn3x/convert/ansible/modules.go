@@ -32,6 +32,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/storage"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sudoers"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/supervisor"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/system"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -637,6 +638,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"apt":                     packageModule,
 	"apk":                     packageModule,
 	"fetch":                   fetchModule,
+	"supervisorctl":           supervisorctlModule,
 	"zypper":                  packageModule,
 	"pip":                     pipModule,
 	"npm":                     npmModule,
@@ -716,6 +718,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"apt_repository":          aptRepositoryModule,
 	"yum_repository":          yumRepositoryModule,
 	"zypper_repository":       zypperRepositoryModule,
+	"apache2_module":          apache2ModuleModule,
 	"deb822_repository":       deb822RepositoryModule,
 	"capabilities":            capabilitiesModule,
 	"locale_gen":              localeGenModule,
@@ -1138,6 +1141,61 @@ func fetchModule(in *input) ([]step, string) {
 		attrs = append(attrs, attr{key: "fail_on_missing", val: cty.False})
 	}
 	return one("fetch", attrs, notes...)
+}
+
+// supervisorctlModule turns community.general.supervisorctl into a
+// supervisor_program step. Ansible fails on started or stopped for a
+// program supervisord hasn't loaded, where the step loads it, which a note
+// says. On absent it fails for a running program unless
+// stop_before_removing, where the step stops it, so that stays for review.
+func supervisorctlModule(in *input) ([]step, string) {
+	// The password's value is never read.
+	if in.has("username") || in.has("password") {
+		in.ignore("username", "password")
+		return nil, "logs in with username/password; put them in the [supervisorctl] section of the config file and point config at it, so they stay out of state and the process list"
+	}
+	st := in.str("state")
+	switch st {
+	case "restarted", "signalled":
+		return nil, "is state " + st + ", an action rather than a state; supervisor_program keeps a state, so give it the revision of the step that changes the program's file as triggers, or run supervisorctl from a command step"
+	case "absent":
+		if !in.bool("stop_before_removing", false) {
+			return nil, "removes the program without stop_before_removing, so Ansible fails on a running one, where supervisor_program stops it first; add stop_before_removing: true if that's what you want"
+		}
+	}
+	in.ignore("stop_before_removing")
+	p := supervisor.Program{
+		Name:  in.str("name"),
+		State: supervisor.State(st),
+		Conn:  supervisor.Conn{Config: in.str("config"), ServerURL: in.str("server_url"), Path: in.str("supervisorctl_path")},
+	}
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if p.Name == "all" {
+		return nil, "acts on every program with name: all; give each program its own supervisor_program step"
+	}
+	if strings.Contains(p.Name+p.Config+p.ServerURL+p.Path, "\x00") {
+		return nil, "builds an argument from a variable; write the values out in a supervisor_program step"
+	}
+	if err := p.Validate(); err != nil {
+		return nil, "can't be a supervisor_program step: " + err.Error()
+	}
+	attrs := []attr{s("name", p.Name), s("state", st)}
+	for _, a := range [][2]string{{"config", p.Config}, {"server_url", p.ServerURL}, {"supervisorctl_path", p.Path}} {
+		if a[1] != "" {
+			attrs = append(attrs, s(a[0], a[1]))
+		}
+	}
+	var notes []string
+	if st == "started" || st == "stopped" {
+		notes = append(notes, "Ansible fails on a program supervisord hasn't loaded; supervisor_program runs supervisorctl reread and add for it first.")
+	}
+	if in.bool("wait", false) {
+		notes = append(notes, "wait dropped: supervisorctl start waits for the program's startsecs, and the step fails on one that doesn't start.")
+	}
+	in.ignore("wait")
+	return one("supervisor_program", attrs, notes...)
 }
 
 func packageModule(in *input) ([]step, string) {
