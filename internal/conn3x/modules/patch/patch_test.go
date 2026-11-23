@@ -78,8 +78,7 @@ type host struct {
 }
 
 func (h *host) Run(_ context.Context, cmd string, stdin []byte) (ssh.Result, error) {
-	switch {
-	case cmd == "test -e '/etc/app.conf'":
+	if cmd == "test -e '/etc/app.conf'" {
 		return ssh.Result{ExitCode: map[bool]int{true: 1, false: 0}[h.missing]}, nil
 	}
 	h.stdin = append(h.stdin, string(stdin))
