@@ -704,6 +704,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"flatpak":                 flatpakModule,
 	"apt_repository":          aptRepositoryModule,
 	"yum_repository":          yumRepositoryModule,
+	"apache2_module":          apache2ModuleModule,
 	"locale_gen":              localeGenModule,
 	"dpkg_selections":         dpkgSelectionsModule,
 	"yum_versionlock":         versionlockModule,
