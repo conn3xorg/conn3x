@@ -1,4 +1,4 @@
-Use `container` to keep a container running with Docker or Podman: its image, ports, volumes, environment and restart policy. Each step is one container, by name. The host needs Docker or Podman installed: a `package` step before this one.
+Use `container` to keep a container running with Docker or Podman: its image, ports, volumes, networks, environment and restart policy. Each step is one container, by name. The host needs Docker or Podman installed: a `package` step before this one.
 
 ## Example usage
 
@@ -34,7 +34,7 @@ step "worker" {
 <!-- reference -->
 ## How it works
 
-**Reading.** On every plan, Conn3x runs `docker container inspect`, or Podman's, and compares the container with the step: its image, published ports, mounts, restart policy, the `command` if you set one, and the `env` you set. `inspect` also lists variables the image sets itself, so only the keys in `env` are compared. `in_sync` is true when all of those match and the container is running.
+**Reading.** On every plan, Conn3x runs `docker container inspect`, or Podman's, and compares the container with the step: its image, published ports, mounts, restart policy, the `command` and `networks` if you set them, and the `env` you set. `inspect` also lists variables the image sets itself, so only the keys in `env` are compared. `in_sync` is true when all of those match and the container is running.
 
 **Images.** Write the image in full, such as `docker.io/library/nginx:1.30`. Docker keeps a short name as written, Podman stores the full reference, and Conn3x compares the two as the same when the short name means Docker Hub. A short name that Podman resolves to another registry shows as a difference on every plan. A tag that now points at a newer image doesn't change anything: the image as written is what's compared. To roll forward, change the tag.
 
@@ -48,7 +48,9 @@ step "worker" {
 
 **Changes.** Changing anything but `name` recreates the container. Changing `name` replaces the step, and `on_remove` decides what happens to the old container.
 
-**Not yet.** Networks, health checks and resource limits aren't settings of this step.
+**Networks.** `networks` joins networks by name, such as one a [`container_network`](container_network.md) step made: the first as the container starts, the rest straight after. Unset, the container is on the engine's default network, and which one isn't compared. `host` and `none` are network modes, not networks, and this step doesn't set them. Images and named volumes have steps of their own too: [`container_image`](container_image.md) and [`container_volume`](container_volume.md).
+
+**Not yet.** Health checks and resource limits aren't settings of this step.
 
 ## Removal
 
@@ -56,4 +58,4 @@ When you delete a `container` step, `on_remove` decides what happens on the host
 
 ## From Ansible
 
-`conn3x convert ansible` turns `community.docker.docker_container` and `containers.podman.podman_container` tasks with `state: started` into `container` steps, with `engine` set to match. `published_ports`, `publish` and `ports` become `ports`; `volumes` and `volume` become `volumes`; `restart_policy` becomes `restart`; `env` and `command` carry over. A `command` written as one string with quotes or shell characters, any other `state`, and arguments the step doesn't have, such as `networks` or `healthcheck`, stay a TODO.
+`conn3x convert ansible` turns `community.docker.docker_container` and `containers.podman.podman_container` tasks with `state: started` into `container` steps, with `engine` set to match. `published_ports`, `publish` and `ports` become `ports`; `volumes` and `volume` become `volumes`; `restart_policy` becomes `restart`; `env` and `command` carry over; Docker's `networks`, each with only a `name`, and Podman's `network` become `networks`. A `command` written as one string with quotes or shell characters, any other `state`, and arguments the step doesn't have, such as `healthcheck` or a network's `aliases`, stay a TODO.
