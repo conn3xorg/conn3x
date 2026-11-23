@@ -22,6 +22,10 @@ const managed = "# Managed by Conn3x."
 // keep. Neither apt nor dnf reads anything there.
 const DisabledDir = "/var/lib/conn3x/disabled-sources"
 
+// zypperService stands in for an owner of a SUSE file a zypper service
+// wrote. It can't be a package name, which has no spaces or parentheses.
+const zypperService = "(zypper-service)"
+
 // Sources keeps a host to the distribution's package sources, Conn3x's,
 // and Keep; Remove names a distribution file that goes anyway.
 type Sources struct {
@@ -55,8 +59,11 @@ type SourceFile struct {
 // Fedora's own repositories are in /usr/share/dnf5/repos.d, which is the
 // distribution's and isn't touched.
 func SourcesDir(family pkg.Family) string {
-	if family == pkg.RPM {
+	switch family {
+	case pkg.RPM:
 		return "/etc/yum.repos.d"
+	case pkg.SUSE:
+		return "/etc/zypp/repos.d"
 	}
 	return "/etc/apt/sources.list.d"
 }
@@ -83,6 +90,14 @@ func distribution(family pkg.Family, id string, f SourceFile) bool {
 	if id == "" {
 		return false
 	}
+	if family == pkg.SUSE {
+		// openSUSE's installer and images write repo-*.repo, owned by no
+		// package or by openSUSE-release; a zypper service, such as
+		// SUSEConnect's on SLES, marks the files it writes with service=.
+		return strings.HasPrefix(f.Name, "repo-") || slices.ContainsFunc(f.Owners, func(o string) bool {
+			return o == zypperService || strings.HasPrefix(o, "openSUSE-") || strings.HasPrefix(o, "SLE")
+		})
+	}
 	if family != pkg.RPM {
 		return f.Name == id+".sources"
 	}
@@ -97,8 +112,12 @@ func distribution(family pkg.Family, id string, f SourceFile) bool {
 // its mark, since it could point at a FIFO.
 func listScript(family pkg.Family) string {
 	glob, owners := "*.list *.sources", `o=`
-	if family == pkg.RPM {
+	switch family {
+	case pkg.RPM:
 		glob, owners = "*.repo", `o=$(rpm -qf --qf '%{NAME} ' -- "$f" 2>/dev/null) || o=`
+	case pkg.SUSE:
+		glob, owners = "*.repo", `o=$(rpm -qf --qf '%{NAME} ' -- "$f" 2>/dev/null) || o=
+  [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^service=' -- "$f" && o="$o `+zypperService+`"`
 	}
 	return fmt.Sprintf(`id=$(. /etc/os-release 2>/dev/null && printf %%s "$ID")
 printf '%%s\0' "$id"

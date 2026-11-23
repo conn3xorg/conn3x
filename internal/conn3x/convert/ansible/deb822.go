@@ -55,7 +55,7 @@ func deb822RepositoryModule(in *input) ([]step, string) {
 	case strings.HasPrefix(signedBy, "-----BEGIN PGP PUBLIC KEY BLOCK-----"):
 		keyAttr = s("key", signedBy+"\n")
 	case strings.Contains(signedBy, "://") || strings.HasPrefix(signedBy, "/"):
-		key, file, reason := in.repoKey(signedBy)
+		key, file, reason := in.repoKey(signedBy, "")
 		if reason != "" {
 			return nil, reason
 		}

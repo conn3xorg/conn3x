@@ -1,0 +1,38 @@
+circuit "zrepo" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .Repo}}
+  step "shells" {
+    repository {
+      name      = "shells"
+      url       = "https://download.opensuse.org/repositories/shells/15.6/"
+      key       = file("${path.module}/shells.key")
+      priority  = 90
+      on_remove = "delete"
+    }
+  }
+{{end}}
+  step "posh" {
+{{- if .Repo}}
+    depends_on = [conn3x_repository.zrepo__shells]
+{{- end}}
+
+    package {
+      name = "posh"
+    }
+  }
+
+  step "only_our_sources" {
+{{- if .Repo}}
+    depends_on = [conn3x_repository.zrepo__shells]
+{{- end}}
+
+    package_sources {}
+  }
+}
