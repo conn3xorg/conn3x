@@ -68,8 +68,20 @@ func TestServiceActionReplacesWhenTriggersChange(t *testing.T) {
 }
 
 func TestServiceActionValidate(t *testing.T) {
-	if !validateServiceAction(actionObj(map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("bounce")})).HasErrors() {
-		t.Error("bad action accepted")
+	for name, c := range map[string]struct {
+		vals map[string]cty.Value
+		bad  bool
+	}{
+		"bad action":            {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("bounce")}, true},
+		"try-restart":           {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("try-restart")}, false},
+		"try-reload":            {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("try-reload")}, false},
+		"daemon-reload":         {map[string]cty.Value{"action": cty.StringVal("daemon-reload")}, false},
+		"daemon-reload, a name": {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("daemon-reload")}, true},
+		"restart, no name":      {map[string]cty.Value{}, true},
+	} {
+		if got := validateServiceAction(actionObj(c.vals)).HasErrors(); got != c.bad {
+			t.Errorf("%s: errors = %v, want %v", name, got, c.bad)
+		}
 	}
 }
 

@@ -214,6 +214,24 @@ func Reload(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "reload")
 }
 
+// TryRestart restarts the unit only if it's running; a stopped one stays
+// stopped.
+func TryRestart(ctx context.Context, r modules.Runner, name string) error {
+	return act(ctx, r, name, "try-restart")
+}
+
+// TryReload reloads the unit, or restarts it if it can't reload, only if
+// it's running.
+func TryReload(ctx context.Context, r modules.Runner, name string) error {
+	return act(ctx, r, name, "try-reload-or-restart")
+}
+
+// DaemonReload has systemd reread its unit files, for a change that a
+// unit picks up at its next start.
+func DaemonReload(ctx context.Context, r modules.Runner) error {
+	return run(ctx, r, "systemctl daemon-reload")
+}
+
 // act runs a handler's systemctl verb, reloading systemd first when the
 // unit file changed. A handler is notified by the step that changed it,
 // after the service step planned against the old file, so that step

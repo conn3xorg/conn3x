@@ -1,0 +1,61 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "units" {
+    file {
+      path    = "/etc/systemd/system/conn3x-up.service"
+      content = "[Service]\nExecStart=/bin/sleep infinity\n"
+    }
+  }
+
+  step "down_unit" {
+    file {
+      path    = "/etc/systemd/system/conn3x-down.service"
+      content = "[Service]\nExecStart=/bin/sleep infinity\n"
+    }
+  }
+
+  step "dropin" {
+    file {
+      path    = "/etc/systemd/system/conn3x-down.service.d/limits.conf"
+      content = "[Service]\nMemoryMax={{.Memory}}\n"
+    }
+  }
+
+  step "reread" {
+    service_action {
+      action   = "daemon-reload"
+      triggers = { dropin = conn3x_file.app__dropin[each.key].revision }
+    }
+  }
+
+  step "up" {
+    service {
+      name  = "conn3x-up"
+      state = "started"
+    }
+  }
+
+  step "try_up" {
+    service_action {
+      name     = "conn3x-up"
+      action   = "try-restart"
+      triggers = { n = "{{.Memory}}" }
+    }
+  }
+
+  step "try_down" {
+    service_action {
+      name     = "conn3x-down"
+      action   = "try-reload"
+      triggers = { n = "{{.Memory}}" }
+    }
+  }
+}
