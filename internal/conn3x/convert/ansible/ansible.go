@@ -462,10 +462,15 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	}
 	c.findProbes(tasks, vars)
 	c.findUnreadRegisters(tasks)
+	var key taskAt // a key task waiting on the repository task after it
 	for _, t := range tasks {
 		c.file = t.file
 		if t.reason != "" {
 			c.issue(cb, scalar(mapping(t.node)["name"]), t.node, t.reason)
+			if key.node != nil {
+				c.settleKey(cb, key, false)
+				key = taskAt{}
+			}
 			continue
 		}
 		if src, ok := c.jsonRead[t.node]; ok {
@@ -474,14 +479,17 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 			c.res.Converted++
 			continue
 		}
-		if from, ok := c.keyFolded[t.node]; ok {
-			cb.AppendNewline()
-			comment(cb, fmt.Sprintf("Task %q (%s line %d) imports %s, which the repository step after it takes as its key.", scalar(mapping(t.node)["name"]), t.file, t.node.Line, from))
-			c.res.Converted++
+		if _, ok := c.keyFolded[t.node]; ok {
+			key = t // settled by the repository task after it
 			continue
 		}
 		c.block = t
+		before := c.res.Converted
 		c.task(cb, t.node, become, vars, handlers, used)
+		if key.node != nil {
+			c.settleKey(cb, key, c.res.Converted > before)
+			key = taskAt{}
+		}
 	}
 	c.block = taskAt{}
 	for _, hb := range handlerBlocks {

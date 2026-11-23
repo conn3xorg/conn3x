@@ -13,7 +13,7 @@ func TestFoldsKeyTaskIntoRepository(t *testing.T) {
 		"apt_key then apt_repository": {
 			"    - ansible.builtin.apt_key: {url: 'https://example.com/docker.asc', state: present}\n" +
 				"    - apt_repository: {repo: 'deb https://example.com/r noble main'}\n",
-			[]string{`key        = file("${path.module}/files/docker.asc")`, "imports https://example.com/docker.asc, which the repository step after it takes"},
+			[]string{`key        = file("${path.module}/files/docker.asc")`, "imports https://example.com/docker.asc, which the repository step above takes"},
 		},
 		"rpm_key then yum_repository": {
 			"    - rpm_key: {key: 'https://example.com/docker.asc'}\n" +
@@ -51,6 +51,35 @@ func TestLeavesKeyTasksItCantFold(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s: no review with %q: %+v", name, c.reason, res.Review)
+		}
+	}
+}
+
+// A key task folds only when the repository task after it converts; when
+// that task stays for review, so does the key task, and nothing is counted.
+func TestKeyTaskStaysWhenRepositoryDoesnt(t *testing.T) {
+	const key = "    - apt_key: {url: 'https://example.com/docker.asc'}\n"
+	const rpm = "    - rpm_key: {key: 'https://example.com/docker.asc'}\n"
+	const yum = "name: d, baseurl: 'https://example.com/', gpgcheck: true, gpgkey: 'https://example.com/docker.asc'"
+	for name, tasks := range map[string]string{
+		"key file not saved":    "    - apt_key: {url: 'https://example.com/missing.asc'}\n    - apt_repository: {repo: 'deb https://example.com/r noble main'}\n",
+		"repository with when":  key + "    - apt_repository: {repo: 'deb https://example.com/r noble main'}\n      when: x\n",
+		"unknown option":        key + "    - apt_repository: {repo: 'deb https://example.com/r noble main', filename: docker}\n",
+		"yum_repository review": rpm + "    - yum_repository: {" + yum + ", priority: 10}\n",
+	} {
+		res := convertWithKey(t, tasks)
+		if res.Converted != 0 || len(res.Review) != 2 {
+			t.Errorf("%s: converted %d, review %+v", name, res.Converted, res.Review)
+		}
+		if strings.Contains(string(res.HCL), "takes as its key") {
+			t.Errorf("%s: output claims a fold:\n%s", name, res.HCL)
+		}
+		found := false
+		for _, r := range res.Review {
+			found = found || strings.Contains(r.Reason, "convert both together")
+		}
+		if !found {
+			t.Errorf("%s: key task not in review: %+v", name, res.Review)
 		}
 	}
 }

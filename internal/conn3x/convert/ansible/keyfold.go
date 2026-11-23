@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
 )
 
@@ -88,4 +89,20 @@ func keyOnlyHint(in *input) string {
 		return "; removing a key stays for a person"
 	}
 	return ""
+}
+
+// settleKey writes out a folded key task once the repository task after it
+// has run: a comment when that task became a step, or review when it didn't,
+// since then nothing took the key.
+func (c *converter) settleKey(cb *hclwrite.Body, key taskAt, converted bool) {
+	name, file := scalar(mapping(key.node)["name"]), c.file
+	c.file = key.file
+	defer func() { c.file = file }()
+	if !converted {
+		c.issue(cb, name, key.node, "imports the key the next task's repository is signed with; that task stays for review, so convert both together once it does")
+		return
+	}
+	cb.AppendNewline()
+	comment(cb, fmt.Sprintf("Task %q (%s line %d) imports %s, which the repository step above takes as its key.", name, key.file, key.node.Line, c.keyFolded[key.node]))
+	c.res.Converted++
 }
