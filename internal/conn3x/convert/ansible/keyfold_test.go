@@ -65,7 +65,7 @@ func TestKeyTaskStaysWhenRepositoryDoesnt(t *testing.T) {
 		"key file not saved":    "    - apt_key: {url: 'https://example.com/missing.asc'}\n    - apt_repository: {repo: 'deb https://example.com/r noble main'}\n",
 		"repository with when":  key + "    - apt_repository: {repo: 'deb https://example.com/r noble main'}\n      when: x\n",
 		"unknown option":        key + "    - apt_repository: {repo: 'deb https://example.com/r noble main', filename: docker}\n",
-		"yum_repository review": rpm + "    - yum_repository: {" + yum + ", priority: 10}\n",
+		"yum_repository review": rpm + "    - yum_repository: {" + yum + ", file: other}\n",
 	} {
 		res := convertWithKey(t, tasks)
 		if res.Converted != 0 || len(res.Review) != 2 {
