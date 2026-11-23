@@ -50,6 +50,7 @@ var circuitModules = map[string]string{
 	"sysctl":               "conn3x_sysctl",
 	"debconf":              "conn3x_debconf",
 	"acl":                  "conn3x_acl",
+	"file_capabilities":    "conn3x_file_capabilities",
 	"hostname":             "conn3x_hostname",
 	"timezone":             "conn3x_timezone",
 	"locale":               "conn3x_locale",

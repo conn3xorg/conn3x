@@ -1,0 +1,34 @@
+circuit "caps" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "tools" {
+    package {
+      name = "{{.Pkg}}"
+    }
+  }
+
+  step "demo" {
+    command {
+      command = "cp /bin/true /usr/local/bin/capdemo"
+      creates = "/usr/local/bin/capdemo"
+    }
+  }
+{{if .Caps}}
+  step "raw" {
+    depends_on = [conn3x_package.caps__tools, conn3x_command.caps__demo]
+
+    file_capabilities {
+      path         = "/usr/local/bin/capdemo"
+      capabilities = [{{.Caps}}]
+      on_remove    = "delete"
+    }
+  }
+{{end}}
+}
