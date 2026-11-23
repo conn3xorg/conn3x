@@ -10,9 +10,10 @@ import (
 	"testing"
 )
 
-// compose_project with podman-compose: up, a second plan clean, a service
-// stopped by hand and a file edited by hand both seen and put back, a
-// changed file recreating the project, and down on removal.
+// compose_project with podman-compose: up with a one-shot service that
+// exits 0, a second plan clean, a service stopped by hand and a file
+// edited by hand both seen and put back, a changed file recreating the
+// project, and down on removal.
 func TestComposeProject(t *testing.T) {
 	box := startHostWith(t, "rocky10", "--privileged")
 	// Podman inside a container keeps its images with the vfs driver; see
@@ -26,9 +27,15 @@ func TestComposeProject(t *testing.T) {
 		return strings.TrimSpace(box.exec("", "sh", "-c", `podman ps -a --filter label=io.podman.compose.project=app --format '{{.Names}} {{.State}} {{.Command}}' | sort | tr '\n' ';'`))
 	}
 
+	// A file already there with another mode gets 0600 too.
+	box.exec("", "sh", "-c", "mkdir -p /opt/app && touch /opt/app/compose.yaml && chmod 644 /opt/app/compose.yaml")
+	// migrate runs once and exits 0 before web starts: done, not down.
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
-	if got := running(); got != "app_web_1 running sleep 3600;app_worker_1 running sleep 3601;" {
+	if got := running(); got != "app_migrate_1 exited true;app_web_1 running sleep 3600;app_worker_1 running sleep 3601;" {
 		t.Fatalf("after the first apply: %q", got)
+	}
+	if got := strings.TrimSpace(box.exec("", "stat", "-c", "%a", "/opt/app/compose.yaml")); got != "600" {
+		t.Errorf("compose.yaml mode = %s", got)
 	}
 	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes") {
 		t.Errorf("a second plan should be clean:\n%s", out)
@@ -39,7 +46,7 @@ func TestComposeProject(t *testing.T) {
 		t.Errorf("a service stopped by hand should show:\n%s", out)
 	}
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
-	if got := running(); got != "app_web_1 running sleep 3600;app_worker_1 running sleep 3601;" {
+	if got := running(); got != "app_migrate_1 exited true;app_web_1 running sleep 3600;app_worker_1 running sleep 3601;" {
 		t.Fatalf("after the stopped service is started: %q", got)
 	}
 
@@ -47,7 +54,7 @@ func TestComposeProject(t *testing.T) {
 		t.Errorf("a changed file should plan an up:\n%s", out)
 	}
 	w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=worker_sleep=3602")
-	if got := running(); got != "app_web_1 running sleep 3600;app_worker_1 running sleep 3602;" {
+	if got := running(); got != "app_migrate_1 exited true;app_web_1 running sleep 3600;app_worker_1 running sleep 3602;" {
 		t.Fatalf("after the change: %q", got)
 	}
 

@@ -144,10 +144,10 @@ func (c Compose) hashed() []string {
 type ComposeActual struct {
 	Engine     string
 	NoDir      bool
-	Hash       string          // of the Compose and env files on the host
-	ConfigErr  string          // why compose config failed, if it did
-	Defined    []string        // the services the files enable
-	Containers map[string]bool // service => whether one of its containers runs
+	Hash       string            // of the Compose and env files on the host
+	ConfigErr  string            // why compose config failed, if it did
+	Defined    []string          // the services the files enable
+	Containers map[string]string // service => "running", "done" (exited 0) or "down", the best of its containers
 }
 
 func ReadCompose(ctx context.Context, r modules.Runner, c Compose) (ComposeActual, error) {
@@ -175,7 +175,7 @@ c $ps --format json || exit 1
 
 func parseCompose(out, stderr string) (ComposeActual, error) {
 	lines := strings.SplitN(out, "\n", 4)
-	a := ComposeActual{Engine: strings.TrimSpace(lines[0]), Containers: map[string]bool{}}
+	a := ComposeActual{Engine: strings.TrimSpace(lines[0]), Containers: map[string]string{}}
 	if len(lines) < 2 || lines[1] == "nodir" {
 		a.NoDir = true
 		return a, nil
@@ -197,12 +197,13 @@ func parseCompose(out, stderr string) (ComposeActual, error) {
 
 // parsePS reads compose ps --format json: one object a line from docker
 // compose, a podman ps array from podman-compose, whose service is only in
-// its labels.
-func parsePS(out string) (map[string]bool, error) {
+// its labels. A container that exited 0 is a one-shot service that's done.
+func parsePS(out string) (map[string]string, error) {
 	type entry struct {
-		Service string
-		State   string
-		Labels  json.RawMessage // a map from Podman, a string from Docker
+		Service  string
+		State    string
+		ExitCode int
+		Labels   json.RawMessage // a map from Podman, a string from Docker
 	}
 	var all []entry
 	out = strings.TrimSpace(out)
@@ -222,15 +223,26 @@ func parsePS(out string) (map[string]bool, error) {
 			all = append(all, e)
 		}
 	}
-	got := map[string]bool{}
+	rank := map[string]int{"down": 0, "done": 1, "running": 2}
+	got := map[string]string{}
 	for _, e := range all {
 		if e.Service == "" {
 			var labels map[string]string
 			_ = json.Unmarshal(e.Labels, &labels)
 			e.Service = labels["com.docker.compose.service"]
 		}
-		if e.Service != "" {
-			got[e.Service] = got[e.Service] || e.State == "running"
+		if e.Service == "" {
+			continue
+		}
+		st := "down"
+		switch {
+		case e.State == "running":
+			st = "running"
+		case e.State == "exited" && e.ExitCode == 0:
+			st = "done"
+		}
+		if old, ok := got[e.Service]; !ok || rank[st] > rank[old] {
+			got[e.Service] = st
 		}
 	}
 	return got, nil
@@ -265,9 +277,9 @@ func (c Compose) Differences(a ComposeActual, applied string) []string {
 		switch {
 		case !slices.Contains(a.Defined, s):
 			out = append(out, "service "+s+" isn't in its Compose files")
-		case c.state() == "present" && !a.Containers[s]:
+		case c.state() == "present" && a.Containers[s] != "running" && a.Containers[s] != "done":
 			out = append(out, "service "+s+" isn't running")
-		case c.state() == "stopped" && a.Containers[s]:
+		case c.state() == "stopped" && a.Containers[s] == "running":
 			out = append(out, "service "+s+" is running")
 		}
 	}
@@ -281,7 +293,7 @@ func (c Compose) Differences(a ComposeActual, applied string) []string {
 	return out
 }
 
-func sortedKeys(m map[string]bool) []string {
+func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -337,7 +349,7 @@ func ApplyCompose(ctx context.Context, r modules.Runner, c Compose) (string, err
 	var stdin []byte
 	script := ""
 	if c.Content != "" {
-		script = "mkdir -p -- " + ssh.Quote(c.ProjectDir) + " && (umask 077 && cat > " + ssh.Quote(c.file()) + ") || exit 1\n"
+		script = "mkdir -p -- " + ssh.Quote(c.ProjectDir) + " && (umask 077 && cat > " + ssh.Quote(c.file()) + ") && chmod 600 -- " + ssh.Quote(c.file()) + " || exit 1\n"
 		stdin = []byte(c.Content)
 	}
 	script += c.cli() + "cd -- " + ssh.Quote(c.ProjectDir) + " || exit 1\n"

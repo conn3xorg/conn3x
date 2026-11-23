@@ -13,23 +13,28 @@ import (
 )
 
 const (
-	dockerPS = `{"Name":"app-web-1","Service":"web","State":"running","Labels":"com.docker.compose.service=web"}
-{"Name":"app-worker-1","Service":"worker","State":"exited","Labels":"com.docker.compose.service=worker"}
+	dockerPS = `{"Name":"app-web-1","Service":"web","State":"running","ExitCode":0,"Labels":"com.docker.compose.service=web"}
+{"Name":"app-worker-1","Service":"worker","State":"exited","ExitCode":137,"Labels":"com.docker.compose.service=worker"}
+{"Name":"app-migrate-1","Service":"migrate","State":"exited","ExitCode":0,"Labels":"com.docker.compose.service=migrate"}
+{"Name":"app-idle-1","Service":"idle","State":"created","ExitCode":0,"Labels":"com.docker.compose.service=idle"}
 `
-	podmanPS = `[{"Names":["app_web_1"],"State":"running","Labels":{"com.docker.compose.service":"web"}},
- {"Names":["app_worker_1"],"State":"exited","Labels":{"com.docker.compose.service":"worker"}},
- {"Names":["app_old_1"],"State":"running","Labels":{"com.docker.compose.service":"old"}}]`
+	podmanPS = `[{"Names":["app_web_1"],"State":"running","ExitCode":0,"Exited":false,"Labels":{"com.docker.compose.service":"web"}},
+ {"Names":["app_worker_1"],"State":"exited","ExitCode":1,"Exited":true,"Labels":{"com.docker.compose.service":"worker"}},
+ {"Names":["app_migrate_1"],"State":"exited","ExitCode":0,"Exited":true,"Labels":{"com.docker.compose.service":"migrate"}},
+ {"Names":["app_old_1"],"State":"running","ExitCode":0,"Exited":false,"Labels":{"com.docker.compose.service":"old"}}]`
 )
 
 func TestParsePSBothEngines(t *testing.T) {
 	for name, tc := range map[string]struct {
 		out  string
-		want map[string]bool
+		want map[string]string
 	}{
-		"docker": {dockerPS, map[string]bool{"web": true, "worker": false}},
-		"podman": {podmanPS, map[string]bool{"web": true, "worker": false, "old": true}},
-		"none":   {"", map[string]bool{}},
-		"empty":  {"[]", map[string]bool{}},
+		"docker": {dockerPS, map[string]string{"web": "running", "worker": "down", "migrate": "done", "idle": "down"}},
+		"podman": {podmanPS, map[string]string{"web": "running", "worker": "down", "migrate": "done", "old": "running"}},
+		"none":   {"", map[string]string{}},
+		"empty":  {"[]", map[string]string{}},
+		// One of a scaled service still runs: it's up.
+		"scaled": {`{"Service":"web","State":"exited","ExitCode":2}` + "\n" + `{"Service":"web","State":"running"}`, map[string]string{"web": "running"}},
 	} {
 		got, err := parsePS(tc.out)
 		if err != nil || len(got) != len(tc.want) {
@@ -37,7 +42,7 @@ func TestParsePSBothEngines(t *testing.T) {
 		}
 		for k, v := range tc.want {
 			if got[k] != v {
-				t.Errorf("%s: %s = %v", name, k, got[k])
+				t.Errorf("%s: %s = %q, want %q", name, k, got[k], v)
 			}
 		}
 	}
@@ -48,7 +53,7 @@ func TestParsePSBothEngines(t *testing.T) {
 
 func TestComposeDifferences(t *testing.T) {
 	read := func(ps string) ComposeActual {
-		a, err := parseCompose("podman\nh1\nok\nweb\nworker\n--ps--\n"+ps, "")
+		a, err := parseCompose("podman\nh1\nok\nmigrate\nweb\nworker\n--ps--\n"+ps, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,6 +63,10 @@ func TestComposeDifferences(t *testing.T) {
 	c := Compose{ProjectDir: "/opt/app"}
 	if got := c.Differences(a, "h1"); !slices.Equal(got, []string{"service worker isn't running"}) {
 		t.Errorf("present: %v", got)
+	}
+	// migrate exited 0, a one-shot that's done; with no containers, none is.
+	if got := c.Differences(read(""), "h1"); len(got) != 3 || got[0] != "service migrate isn't running" {
+		t.Errorf("no containers: %v", got)
 	}
 	if got := c.Differences(a, "h0"); len(got) != 2 || !strings.Contains(got[0], "files changed") {
 		t.Errorf("changed files: %v", got)
@@ -157,7 +166,7 @@ func TestApplyComposeCommands(t *testing.T) {
 		t.Fatalf("hash %q, ran %v, %v", hash, f.ran, err)
 	}
 	for _, want := range []string{
-		`mkdir -p -- '/opt/my app' && (umask 077 && cat > '/opt/my app/compose.yaml')`,
+		`mkdir -p -- '/opt/my app' && (umask 077 && cat > '/opt/my app/compose.yaml') && chmod 600 -- '/opt/my app/compose.yaml' || exit 1`,
 		`c() { docker compose '-p' 'app' '-f' 'compose.yaml' "$@"; }`,
 		`c 'up' '-d' '--quiet-pull' '--pull' 'always' '--wait' '--remove-orphans' '--'`,
 	} {
