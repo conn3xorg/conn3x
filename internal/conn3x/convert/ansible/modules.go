@@ -28,6 +28,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/fsobj"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/kmod"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/pack"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/storage"
@@ -689,6 +690,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"seport":                  seportModule,
 	"get_url":                 getURLModule,
 	"unarchive":               unarchiveModule,
+	"archive":                 archiveModule,
 	"git":                     gitModule,
 	"mount":                   mountModule,
 	"modprobe":                modprobeModule,
@@ -2154,6 +2156,78 @@ func unarchiveModule(in *input) ([]step, string) {
 		return nil, "has no creates guard; Conn3x needs one to know when the archive is unpacked"
 	}
 	return one("archive", []attr{s("src", in.str("src")), s("dest", in.str("dest")), s("creates", in.str("creates"))})
+}
+
+// tarName matches a dest that names a tar archive, compressed or not.
+var tarName = regexp.MustCompile(`(?i)\.(tar|tar\.(gz|bz2|xz|zst)|tgz|tbz2|txz|tzst)$`)
+
+// archiveModule turns community.general.archive into a pack step. Ansible
+// matches exclusion_patterns against names inside the archive, so they're
+// anchored at the pack step's root; exclude_path is already absolute. Both
+// leave out a matching directory's contents too, which Ansible doesn't: the
+// step packs less, never more.
+func archiveModule(in *input) ([]step, string) {
+	paths := in.list("path")
+	dest := in.str("dest")
+	format := cmp.Or(in.str("format"), "gz")
+	exclude := in.list("exclude_path")
+	patterns := in.list("exclusion_patterns")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	switch {
+	case in.bool("remove", false):
+		return nil, "sets remove: true, which deletes the files once they're packed; a pack step never deletes them, and no plan can show that. Delete them in a step of their own if that's meant"
+	case len(paths) == 0:
+		return nil, "has no path"
+	case dest == "":
+		return nil, "has no dest; Ansible then compresses one file beside itself, which a pack step doesn't do"
+	}
+	for _, v := range slices.Concat(paths, exclude, patterns, []string{dest}) {
+		switch {
+		case strings.Contains(v, "\x00"):
+			return nil, "builds a path from a variable; write the paths out in a pack step"
+		case strings.Contains(v, "["):
+			return nil, "has a [ in a path or pattern, which Ansible reads as a wildcard and a pack step as itself"
+		}
+	}
+	p := pack.Pack{Paths: paths, Dest: dest, Format: format, Exclude: exclude}
+	root := pack.Root(paths)
+	for _, e := range patterns {
+		if !path.IsAbs(e) {
+			e = root + e
+		}
+		p.Exclude = append(p.Exclude, e)
+	}
+	attrs := []attr{{key: "paths", val: strList(p.Paths)}, s("dest", dest)}
+	if in.has("format") {
+		attrs = append(attrs, s("format", format))
+	}
+	if len(p.Exclude) > 0 {
+		attrs = append(attrs, attr{key: "exclude", val: strList(p.Exclude)})
+	}
+	attrs = in.owners(attrs)
+	p.Owner, p.Group = in.str("owner"), in.str("group")
+	var notes []string
+	if m, ok := in.mode("mode"); ok {
+		attrs = append(attrs, m)
+		p.Mode = m.val.AsString()
+	} else {
+		notes = append(notes, "TODO(convert): Set mode if others need to read the archive. The task set none, so Ansible left it to the umask, usually 0644; a pack step makes it 0600.")
+	}
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if err := p.Validate(); err != nil {
+		return nil, "can't be a pack step: " + err.Error()
+	}
+	// Ansible gzips a lone file on its own but tars a directory. A dest named
+	// as a tar archive says which the play means; force_archive says so too.
+	if len(paths) == 1 && !strings.ContainsAny(paths[0], "*?") && format != "tar" && format != "zip" && !in.bool("force_archive", false) && !tarName.MatchString(dest) {
+		return nil, "packs one path, which Ansible compresses on its own if it's a file and tars if it's a directory, and the play doesn't say which; a pack step always makes a tar archive. Set force_archive: true, or name dest .tar." + format + ", if that's meant"
+	}
+	in.ignore("force_archive", "remove", "unsafe_writes")
+	return one("pack", attrs, notes...)
 }
 
 func gitModule(in *input) ([]step, string) {

@@ -72,6 +72,7 @@ var circuitModules = map[string]string{
 	"tls_self_signed_cert": "conn3x_tls_self_signed_cert",
 	"tls_csr":              "conn3x_tls_csr",
 	"archive":              "conn3x_archive",
+	"pack":                 "conn3x_pack",
 	"git":                  "conn3x_git",
 	"modprobe":             "conn3x_modprobe",
 	"container":            "conn3x_container",

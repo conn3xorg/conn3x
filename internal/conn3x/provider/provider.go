@@ -91,6 +91,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_tls_self_signed_cert": {tlsCertSchema, validateWith("common_name", func(v cty.Value) error { return tlsCertFrom(v).Validate() }), planTLSCert, readTLSCert, applyTLSCert, upgradeWith(tlsCertSchema)},
 	"conn3x_download":             {downloadSchema, validateWith("url", func(v cty.Value) error { return downloadFrom(v).Validate() }), planDownload, readDownload, applyDownload, upgradeWith(downloadSchema)},
 	"conn3x_archive":              {archiveSchema, validateWith("src", func(v cty.Value) error { return archiveFrom(v).Validate() }), planArchive, readArchive, applyArchive, upgradeWith(archiveSchema)},
+	"conn3x_pack":                 {packSchema, validatePack, planPack, readPack, applyPack, upgradeWith(packSchema)},
 	"conn3x_git":                  {gitSchema, validateWith("repo", func(v cty.Value) error { return gitFrom(v).Validate() }), planGit, readGit, applyGit, upgradeWith(gitSchema)},
 	"conn3x_modprobe":             {modprobeSchema, validateModprobe, planModprobe, readModprobe, applyModprobe, upgradeWith(modprobeSchema)},
 	"conn3x_sudoers":              {sudoersSchema, validateWith("name", func(v cty.Value) error { return sudoersFrom(v).Validate() }), planSudoers, readSudoers, applySudoers, upgradeWith(sudoersSchema)},
