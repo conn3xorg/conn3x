@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
@@ -2121,6 +2122,16 @@ func firewalldModule(in *input) ([]step, string) {
 	attrs = in.optional(attrs, "port", "port")
 	attrs = in.optional(attrs, "rich_rule", "rich_rule")
 	attrs = in.optional(attrs, "source", "source")
+	f := firewall.Firewalld{Zone: in.str("zone"), Service: in.str("service"), Port: in.str("port"), RichRule: in.str("rich_rule"), Source: in.str("source")}
+	// A mark is a loop item or a variable; each written item is checked on its own.
+	if !strings.Contains(f.Zone+f.Service+f.Port+f.RichRule+f.Source, "\x00") {
+		if err := f.Validate(); err != nil {
+			if p, _, _ := strings.Cut(f.Port, "/"); strings.ContainsFunc(p, unicode.IsLetter) {
+				return nil, fmt.Sprintf("has port %q, a service name firewalld looks up in the host's /etc/services; write the port number, or use service for a firewalld service", f.Port)
+			}
+			return nil, "can't be a firewalld step: " + err.Error()
+		}
+	}
 	return one("firewalld", attrs)
 }
 
@@ -2166,8 +2177,27 @@ func ufwModule(in *input) ([]step, string) {
 			port += "/" + p
 		}
 	}
-	attrs := []attr{s("action", in.str("rule")), s("port", port)}
-	attrs = in.optional(attrs, "from", "from_ip", "from", "src")
+	r := firewall.UFWRule{Action: in.str("rule"), Port: port, From: in.str("from_ip", "from", "src")}
+	if r.From == "any" {
+		r.From = "" // Ansible's default for from_ip; the step leaves from out for anywhere
+	}
+	// A mark is a loop item or a variable; each written item is checked on its own.
+	if !strings.Contains(r.Action+r.Port+r.From, "\x00") {
+		if err := r.Validate(); err != nil {
+			p, _, _ := strings.Cut(port, "/")
+			switch {
+			case p == "":
+				return nil, "has no port; a ufw step allows, denies, rejects or limits one port or range"
+			case strings.ContainsFunc(p, unicode.IsLetter):
+				return nil, fmt.Sprintf("has port %q, a service name ufw looks up in the host's /etc/services; write the port number", port)
+			}
+			return nil, "can't be a ufw step: " + err.Error()
+		}
+	}
+	attrs := []attr{s("action", r.Action), s("port", r.Port)}
+	if r.From != "" {
+		attrs = append(attrs, s("from", r.From))
+	}
 	return one("ufw", attrs)
 }
 

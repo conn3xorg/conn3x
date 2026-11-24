@@ -83,4 +83,4 @@ When you delete a `firewalld` step, `on_remove` decides what happens on the host
 
 ## From Ansible
 
-`conn3x convert ansible` turns `ansible.posix.firewalld` tasks that set `service`, `port`, `rich_rule` or `source` into `firewalld` steps. A task must set both `permanent: true` and `immediate: true`, since Conn3x always changes both; one that doesn't stays a TODO, as does a task with a `state` other than `enabled` or with any other argument, such as `interface`.
+`conn3x convert ansible` turns `ansible.posix.firewalld` tasks that set `service`, `port`, `rich_rule` or `source` into `firewalld` steps. A task must set both `permanent: true` and `immediate: true`, since Conn3x always changes both; one that doesn't stays a TODO, as does a task with a `state` other than `enabled` or with any other argument, such as `interface`. A port given by service name, such as `http/tcp`, stays a TODO too: write the number, or use `service`. So does any task this step would refuse, such as one that sets both `service` and `port`.
