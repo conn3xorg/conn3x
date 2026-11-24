@@ -42,7 +42,7 @@ func TestConvertModuleArguments(t *testing.T) {
 		"get_url: { url: 'https://example.com/a.tgz', dest: /tmp/a.tgz, checksum: 'sha256:abc', mode: '0644' }": {
 			"download {", `sha256 = "abc"`, `mode   = "0644"`},
 		"unarchive: { src: /tmp/a.tgz, dest: /opt, remote_src: yes, creates: /opt/a }": {"archive {", `creates = "/opt/a"`},
-		"git: { repo: 'https://example.com/r.git', dest: /opt/r, version: v1 }":        {"git {", `ref  = "v1"`},
+		"git: { repo: 'https://example.com/r.git', dest: /opt/r, version: v1 }":        {"git {", `ref        = "v1"`},
 		"ansible.posix.mount: { path: /data, src: /dev/sdb1, fstype: xfs, opts: noatime, state: mounted }": {
 			"mount {", `fstype = "xfs"`, `opts   = "noatime"`},
 		"ansible.posix.mount: { path: /data, src: /dev/sdb1, fstype: xfs, dump: 1, passno: 2 }": {

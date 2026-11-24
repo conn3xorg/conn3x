@@ -38,8 +38,8 @@ func TestConvertModuleOptions(t *testing.T) {
 		"lvol: { vg: data, lv: app, size: 10g, resizefs: yes }":                                                                    {"TODO(convert): resizefs grew the file system"},
 		"filesystem: { dev: /dev/sdb1, fstype: xfs, opts: '-L data', resizefs: yes, force: yes }": {
 			`opts   = ["-L", "data"]`, "resize = true", "force  = true", "TODO(convert): force = true lets this step make"},
-		"git: { repo: 'https://example.com/a.git', dest: /opt/a }":                                                           {`dest = "/opt/a"`, "a git step discards changes to tracked files"},
-		"git: { repo: 'https://example.com/a.git', dest: /opt/a, version: main, depth: 1 }":                                  {`ref   = "main"`, "depth = 1"},
+		"git: { repo: 'https://example.com/a.git', dest: /opt/a }":                                                           {`dest       = "/opt/a"`, "a git step discards changes to tracked files"},
+		"git: { repo: 'https://example.com/a.git', dest: /opt/a, version: main, depth: 1 }":                                  {`ref        = "main"`, "depth      = 1"},
 		"git: { repo: 'https://example.com/a.git', dest: /opt/a, force: no }":                                                {"a git step discards changes to tracked files"},
 		"sysctl: { name: vm.swappiness, value: '10', sysctl_file: /etc/sysctl.d/99-x.conf }":                                 {`name  = "vm.swappiness"`, "Ansible kept this setting in /etc/sysctl.d/99-x.conf; a sysctl step keeps it in /etc/sysctl.d/90-conn3x-vm.swappiness.conf. Take the line out of /etc/sysctl.d/99-x.conf"},
 		"wait_for: { port: 22, timeout: 30 }":                                                                                {"wait_for {", `timeout = "30s"`, "port    = 22"},
@@ -47,7 +47,7 @@ func TestConvertModuleOptions(t *testing.T) {
 		"yum_versionlock: { name: [httpd, nginx], state: absent }":                                                           {`name  = "httpd"`, `state = "released"`},
 		"dpkg_selections: { name: nginx, selection: install }":                                                               {"package_hold {", `state = "released"`},
 		"selinux: { state: enforcing, policy: targeted }":                                                                    {"selinux_mode {", "policy dropped"},
-		"git: { repo: 'git@example.com:a.git', dest: /opt/a, key_file: /root/.ssh/deploy, accept_hostkey: yes, force: yes }": {`key_file = "/root/.ssh/deploy"`, "accept_hostkey dropped", "known_hosts step"},
+		"git: { repo: 'git@example.com:a.git', dest: /opt/a, key_file: /root/.ssh/deploy, accept_hostkey: yes, force: yes }": {`key_file   = "/root/.ssh/deploy"`, "accept_hostkey dropped", "known_hosts step"},
 		"acl: { path: /srv, etype: user, entity: app, permissions: r-x, default: yes, state: absent }": {
 			`permissions = "rx"`, "default     = true", `state       = "absent"`},
 		"debconf: { name: tzdata, question: tz, vtype: boolean, value: 'yes' }":                      {`value    = "true"`},
@@ -97,6 +97,37 @@ func TestConvertGitForce(t *testing.T) {
 	res := convertString(t, "- hosts: all\n  tasks:\n    - git: { repo: 'https://example.com/a.git', dest: /opt/a, force: true }\n")
 	if hcl := string(res.HCL); res.Converted != 1 || len(res.Review) != 0 || strings.Contains(hcl, "local changes") {
 		t.Errorf("converted %d, review %+v:\n%s", res.Converted, res.Review, hcl)
+	}
+}
+
+// Ansible's recursive defaults to yes, so a step checks out submodules
+// unless the task said not to; track_submodules: true stays for review, and
+// a repo the step would refuse isn't converted (#1348).
+func TestConvertGitSubmodules(t *testing.T) {
+	const base = "git: { repo: 'https://example.com/a.git', dest: /opt/a, force: yes"
+	for _, c := range []struct {
+		task, review string
+		submodules   bool
+	}{
+		{task: base + " }", submodules: true},
+		{task: base + ", recursive: yes }", submodules: true},
+		{task: base + ", recursive: false }"},
+		{task: base + ", recursive: yes, track_submodules: false }", submodules: true},
+		{task: base + ", track_submodules: true }", review: "sets track_submodules: true"},
+		{task: "git: { repo: 'http://example.com/a.git', dest: /opt/a, version: main }", review: "can't be a git step: repo \"http://example.com/a.git\" is plain http"},
+		{task: "git: { repo: 'https://example.com/a.git', dest: opt/a }", review: "can't be a git step: dest"},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+c.task+"\n")
+		hcl := string(res.HCL)
+		if c.review != "" {
+			if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, c.review) {
+				t.Errorf("%s: converted %d, review %+v, want review %q", c.task, res.Converted, res.Review, c.review)
+			}
+			continue
+		}
+		if res.Converted != 1 || len(res.Review) != 0 || strings.Contains(hcl, "submodules = true") != c.submodules {
+			t.Errorf("%s: converted %d, review %+v, want submodules %v:\n%s", c.task, res.Converted, res.Review, c.submodules, hcl)
+		}
 	}
 }
 

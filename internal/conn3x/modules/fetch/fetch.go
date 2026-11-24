@@ -264,6 +264,7 @@ type Git struct {
 	Ref        string // defaults to HEAD, the remote's default branch
 	Depth      int    // commits of history to fetch; 0 fetches all of it
 	KeyFile    string // private key on the host for an ssh repo, such as a deploy key
+	Submodules bool   // also check out submodules, recursively, at the commits the checkout pins
 }
 
 // Validate checks a Git before anything reaches the host.
@@ -371,8 +372,31 @@ func Checkout(ctx context.Context, r modules.Runner, dest string) (string, error
 	return strings.TrimSpace(string(res.Stdout)), nil
 }
 
+// SubmodulesInSync reports whether every submodule under dest, nested ones
+// included, is initialised and at the commit the checkout pins.
+func SubmodulesInSync(ctx context.Context, r modules.Runner, dest string) (bool, error) {
+	res, err := r.Run(ctx, modules.Guard(fmt.Sprintf("git -C %s submodule status --recursive", ssh.Quote(dest)), modules.Whole(dest+"/.git/config")), nil)
+	if err := check(res, err); err != nil {
+		return false, err
+	}
+	return submodulesClean(string(res.Stdout)), nil
+}
+
+// submodulesClean reads "git submodule status" output: a line starting with
+// "-" is a submodule not initialised, "+" one at another commit, and "U" one
+// with a merge conflict.
+func submodulesClean(status string) bool {
+	for _, line := range strings.Split(status, "\n") {
+		if line != "" && strings.ContainsAny(line[:1], "-+U") {
+			return false
+		}
+	}
+	return true
+}
+
 // ApplyGit clones the repository if dest has none, fetches, and checks out
-// commit, detached, discarding local changes to tracked files.
+// commit, detached, discarding local changes to tracked files. With
+// Submodules, it then checks out every submodule at its pinned commit.
 func ApplyGit(ctx context.Context, r modules.Runner, g Git, commit string) error {
 	if err := g.Validate(); err != nil {
 		return err
@@ -402,6 +426,13 @@ git -C "$dest" remote set-url origin %[3]s%[8]s
 git -C "$dest" cat-file -e %[4]s^{commit} 2>/dev/null || %[6]s
 git -C "$dest" cat-file -e %[4]s^{commit} 2>/dev/null || git -C "$dest" fetch --quiet%[7]s origin %[4]s
 git -C "$dest" checkout --quiet --force --detach %[4]s`, gitInstalled, ssh.Quote(g.Dest), ssh.Quote(g.Repo), commit, depth, fetchRef, depth, unshallow, g.sshEnv())
+	if g.Submodules {
+		// sync first, so a submodule whose URL changed in .gitmodules is
+		// fetched from the new one. The export above reaches these too.
+		script += fmt.Sprintf(`
+git -C "$dest" submodule --quiet sync --recursive
+git -C "$dest" submodule --quiet update --init --recursive --force%s`, depth)
+	}
 	res, err := r.Run(ctx, modules.Guard(script, modules.Whole(g.Dest+"/.git/config")), nil)
 	return check(res, err)
 }

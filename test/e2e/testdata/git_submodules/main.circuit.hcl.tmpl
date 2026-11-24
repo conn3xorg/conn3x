@@ -1,0 +1,28 @@
+circuit "subs" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "with" {
+    git {
+      repo       = "file:///srv/repos/app"
+      dest       = "/srv/with"
+      ref        = "main"
+      submodules = true
+    }
+  }
+
+  step "without" {
+    git {
+      repo       = "file:///srv/repos/app"
+      dest       = "/srv/without"
+      ref        = "main"
+      submodules = false
+    }
+  }
+}

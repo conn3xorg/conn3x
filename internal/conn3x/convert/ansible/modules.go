@@ -26,6 +26,7 @@ import (
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/container"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/edit"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/fetch"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/firewall"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/fsobj"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/kmod"
@@ -2578,6 +2579,28 @@ func gitModule(in *input) ([]step, string) {
 		attrs = append(attrs, in.number("depth"))
 	}
 	attrs = in.optional(attrs, "key_file", "key_file")
+	// Following each submodule's branch moves the checkout without the
+	// circuit changing, which a step that plans its changes can't do.
+	if in.bool("track_submodules", false) {
+		return nil, "sets track_submodules: true, which follows each submodule's branch rather than the commit the checkout pins; a git step checks out the pinned commits, so it never moves on its own"
+	}
+	// Ansible's recursive defaults to yes.
+	if in.bool("recursive", true) {
+		attrs = append(attrs, attr{key: "submodules", val: cty.True})
+	}
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	g := fetch.Git{Repo: in.str("repo"), Dest: in.str("dest"), Ref: in.str("version"), KeyFile: in.str("key_file")}
+	if in.has("depth") {
+		g.Depth, _ = strconv.Atoi(in.str("depth"))
+	}
+	// A mark is a loop item or a variable; each written item is checked on its own.
+	if !strings.Contains(g.Repo+g.Dest+g.Ref+g.KeyFile, "\x00") {
+		if err := g.Validate(); err != nil {
+			return nil, "can't be a git step: " + err.Error()
+		}
+	}
 	var notes []string
 	// Turning off the host key check is what a deploy key is meant to make
 	// safe, so it isn't carried over.
