@@ -132,7 +132,8 @@ func InSync(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) (b
 
 // Apply writes the files, then refreshes apt's package lists, or on SUSE
 // imports the key and refreshes the repository, so the next package step
-// can install from it.
+// can install from it. A refresh that fails puts the files back as they
+// were, so the next plan sees the repository out of sync and tries again.
 func Apply(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) error {
 	if err := alpine(family); err != nil {
 		return err
@@ -140,7 +141,16 @@ func Apply(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) err
 	if err := r.Validate(family); err != nil {
 		return err
 	}
-	for path, content := range r.Files(family) {
+	files := r.Files(family)
+	before := make(map[string]file.Actual, len(files))
+	for path := range files {
+		a, err := file.Read(ctx, h, path)
+		if err != nil {
+			return err
+		}
+		before[path] = a
+	}
+	for path, content := range files {
 		if res, err := h.Run(ctx, "mkdir -p -m 0755 "+ssh.Quote(filepath.Dir(path)), nil); err != nil {
 			return err
 		} else if res.ExitCode != 0 {
@@ -150,10 +160,36 @@ func Apply(ctx context.Context, h modules.Runner, family pkg.Family, r Repo) err
 			return err
 		}
 	}
+	var err error
 	if family == pkg.SUSE {
-		return zypperRefresh(ctx, h, r)
+		err = zypperRefresh(ctx, h, r)
+	} else {
+		err = refresh(ctx, h, family)
 	}
-	return refresh(ctx, h, family)
+	if err != nil {
+		if rbErr := rollback(ctx, h, before); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("putting the repository's files back: %w", rbErr))
+		}
+		return fmt.Errorf("%w\nthe repository's files are back as they were before this apply", err)
+	}
+	return nil
+}
+
+// rollback removes the files that weren't there before and writes back the
+// content, mode and owner of those that were.
+func rollback(ctx context.Context, h modules.Runner, before map[string]file.Actual) error {
+	for path, a := range before {
+		var err error
+		if a.Exists {
+			err = file.Apply(ctx, h, file.Desired{Path: path, Content: a.Content, Mode: a.Mode, Owner: a.Owner, Group: a.Group})
+		} else {
+			err = file.Delete(ctx, h, path)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // zypperRefresh imports the key into rpm's keyring, which zypper checks

@@ -21,10 +21,13 @@ type disk struct {
 	fail  string
 	err   error
 	ran   []string
+	in    []string // what each command in ran got on stdin
+	meta  string   // mode, owner and group a read reports; "644 root root" if unset
 }
 
-func (d *disk) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error) {
+func (d *disk) Run(_ context.Context, cmd string, stdin []byte) (ssh.Result, error) {
 	d.ran = append(d.ran, cmd)
+	d.in = append(d.in, string(stdin))
 	if d.err != nil {
 		return ssh.Result{}, d.err
 	}
@@ -32,9 +35,13 @@ func (d *disk) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error) 
 		return ssh.Result{ExitCode: 1, Stderr: []byte("denied\n")}, nil
 	}
 	if strings.Contains(cmd, "echo present") {
+		meta := d.meta
+		if meta == "" {
+			meta = "644 root root"
+		}
 		for p, c := range d.files {
 			if strings.Contains(cmd, "route_walk follow '"+p+"'") {
-				return ssh.Result{Stdout: []byte("present\n644 root root\n" + base64.StdEncoding.EncodeToString([]byte(c)))}, nil
+				return ssh.Result{Stdout: []byte("present\n" + meta + "\n" + base64.StdEncoding.EncodeToString([]byte(c)))}, nil
 			}
 		}
 		return ssh.Result{Stdout: []byte("missing\n")}, nil
@@ -49,6 +56,21 @@ func (d *disk) ranAny(s string) bool {
 		}
 	}
 	return false
+}
+
+// removed reports whether a file.Delete of path ran.
+func (d *disk) removed(path string) bool {
+	for _, c := range d.ran {
+		if isRemove(c, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// isRemove tells file.Delete's script from a write's, whose trap also has rm -f.
+func isRemove(cmd, path string) bool {
+	return strings.Contains(cmd, "rm -f -- ") && strings.Contains(cmd, path) && !strings.Contains(cmd, `cat > "$tmp"`) && !strings.Contains(cmd, "echo present")
 }
 
 var ctx = context.Background()
@@ -99,7 +121,7 @@ func TestApplyAndDelete(t *testing.T) {
 	if err := Apply(ctx, &disk{fail: "cat > \"$tmp\""}, pkg.Deb, deb); err == nil || err.Error() != "denied" {
 		t.Errorf("write fails: %v", err)
 	}
-	if err := Apply(ctx, &disk{fail: "update"}, pkg.Deb, deb); err == nil || err.Error() != "apt-get update: denied (exit status 1)" {
+	if err := Apply(ctx, &disk{fail: "update"}, pkg.Deb, deb); err == nil || err.Error() != "apt-get update: denied (exit status 1)\nthe repository's files are back as they were before this apply" {
 		t.Errorf("update fails: %v", err)
 	}
 	lost := errors.New("connection lost")
@@ -117,6 +139,75 @@ func TestApplyAndDelete(t *testing.T) {
 	if err := Delete(ctx, &disk{fail: "rm -f"}, pkg.RPM, rpm); err == nil {
 		t.Error("a failed delete passed")
 	}
+}
+
+// A refresh that fails leaves the host as it was: the file the apply
+// created is removed, the one it changed gets its old content back, and
+// the refresh's error is returned. A refresh that passes rolls back nothing.
+func TestApplyRollsBackFailedRefresh(t *testing.T) {
+	deb := Repo{Name: "nginx", URL: "https://nginx.org/packages/ubuntu", Key: key, Suites: []string{"noble"}}
+	suse := Repo{Name: "shells", URL: "https://download.opensuse.org/repositories/shells/15.6/", Key: key}
+	for _, c := range []struct {
+		name          string
+		family        pkg.Family
+		r             Repo
+		fail, kept    string // kept is the file there before, with old content
+		created, want string
+	}{
+		{"apt", pkg.Deb, deb, "apt-get -q", "/etc/apt/sources.list.d/nginx.sources", "/etc/apt/keyrings/conn3x-nginx.asc", "apt-get update: denied"},
+		{"apt key changed", pkg.Deb, deb, "apt-get -q", "/etc/apt/keyrings/conn3x-nginx.asc", "/etc/apt/sources.list.d/nginx.sources", "apt-get update: denied"},
+		{"zypper", pkg.SUSE, suse, "zypper --non-interactive refresh", "/etc/pki/rpm-gpg/RPM-GPG-KEY-conn3x-shells", "/etc/zypp/repos.d/shells.repo", "zypper --non-interactive refresh 'shells': denied"},
+		{"rpm import", pkg.SUSE, suse, "rpm --import", "/etc/zypp/repos.d/shells.repo", "/etc/pki/rpm-gpg/RPM-GPG-KEY-conn3x-shells", "rpm --import '/etc/pki/rpm-gpg/RPM-GPG-KEY-conn3x-shells': denied"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := &disk{files: map[string]string{c.kept: "old\n"}, meta: "600 www-data adm", fail: c.fail}
+			err := Apply(ctx, d, c.family, c.r)
+			if err == nil || !strings.HasPrefix(err.Error(), c.want) || !strings.HasSuffix(err.Error(), "\nthe repository's files are back as they were before this apply") {
+				t.Fatalf("err = %v", err)
+			}
+			if !d.removed(c.created) {
+				t.Errorf("%s, which the apply created, not removed: ran %q", c.created, d.ran)
+			}
+			if d.removed(c.kept) {
+				t.Errorf("%s, which was there before, was removed", c.kept)
+			}
+			// The last write is the rollback's, with the old content, mode and owner.
+			last := -1
+			for i, cmd := range d.ran {
+				if strings.Contains(cmd, c.kept) && strings.Contains(cmd, `cat > "$tmp"`) {
+					last = i
+				}
+			}
+			if last < 0 || d.in[last] != "old\n" || !strings.Contains(d.ran[last], `chmod 0600 "$tmp"`) || !strings.Contains(d.ran[last], "www-data") || !strings.Contains(d.ran[last], "adm") {
+				t.Errorf("%s not restored: last write %d of %q", c.kept, last, d.ran)
+			}
+		})
+	}
+
+	// The rollback failing too returns both errors.
+	d := &disk{fail: "apt-get -q"}
+	d2 := &failAfter{disk: d, path: "/etc/apt/keyrings/conn3x-nginx.asc"}
+	if err := Apply(ctx, d2, pkg.Deb, deb); err == nil || !strings.Contains(err.Error(), "apt-get update: denied") || !strings.Contains(err.Error(), "putting the repository's files back: read-only") {
+		t.Errorf("rollback fails: %v", err)
+	}
+
+	d = &disk{}
+	if err := Apply(ctx, d, pkg.Deb, deb); err != nil || d.removed("/etc/apt/keyrings/conn3x-nginx.asc") || d.removed("/etc/apt/sources.list.d/nginx.sources") {
+		t.Errorf("a refresh that passed: %v, ran %q", err, d.ran)
+	}
+}
+
+// failAfter is a disk on which removing path fails.
+type failAfter struct {
+	*disk
+	path string
+}
+
+func (f *failAfter) Run(ctx context.Context, cmd string, stdin []byte) (ssh.Result, error) {
+	if isRemove(cmd, f.path) {
+		return ssh.Result{ExitCode: 1, Stderr: []byte("read-only\n")}, nil
+	}
+	return f.disk.Run(ctx, cmd, stdin)
 }
 
 func TestReadSourcesAndDisable(t *testing.T) {
