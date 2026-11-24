@@ -19,6 +19,8 @@ func TestIPTablesValidate(t *testing.T) {
 		{Chain: "FORWARD", InInterface: "eth0", OutInterface: "wg+", CTState: []string{"ESTABLISHED", "RELATED"}, Jump: "ACCEPT"},
 		{Chain: "INPUT", Source: "2001:db8::/32", IPv6: true, Jump: "DROP", Insert: true, RuleNum: 2},
 		{Table: "nat", Chain: "POSTROUTING", OutInterface: "eth0", Jump: "MASQUERADE", Comment: "it's \"nat\" $HOME"},
+		{Chain: "INPUT", InInterface: "abcdefghijklmno"},
+		{Chain: "INPUT", InInterface: "abcdefghijklmn+"},
 	} {
 		if err := good.Validate(); err != nil {
 			t.Errorf("%+v: %v", good, err)
@@ -38,6 +40,8 @@ func TestIPTablesValidate(t *testing.T) {
 		{Chain: "INPUT", Source: "2001:db8::1"},
 		{Chain: "INPUT", Destination: "10.0.0.1", IPv6: true},
 		{Chain: "INPUT", InInterface: "eth0 lo"},
+		{Chain: "INPUT", InInterface: "abcdefghijklmno+"},
+		{Chain: "INPUT", OutInterface: "abcdefghijklmnop"},
 		{Chain: "INPUT", CTState: []string{"new"}},
 		{Chain: "INPUT", Jump: "ACCEPT --reject-with x"},
 		{Chain: "INPUT", Comment: "two\nlines"},
@@ -122,10 +126,23 @@ func TestApplyIPTables(t *testing.T) {
 	if _, err := ReadIPTables(context.Background(), &iptHost{code: 2}, r); err == nil || !strings.Contains(err.Error(), "unknown option") {
 		t.Errorf("exit 2: %v", err)
 	}
+	// iptables 1.8.11 says "Bad rule" for an absent rule and a missing
+	// chain alike, so both read as missing; any other exit 1 or 2 is an error.
+	for out, want := range map[string]string{
+		"iptables: Bad rule (does a matching rule exist in that chain?).": "",
+		"iptables: Resource temporarily unavailable.":                     "Resource temporarily unavailable",
+	} {
+		has, err := ReadIPTables(context.Background(), runFunc(func(string) ssh.Result {
+			return ssh.Result{ExitCode: 1, Stderr: []byte(out)}
+		}), r)
+		if want == "" && (has || err != nil) || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Errorf("exit 1 %q: has %v, err %v", out, has, err)
+		}
+	}
 	if _, err := ReadIPTables(context.Background(), runFunc(func(string) ssh.Result {
-		return ssh.Result{ExitCode: 1, Stderr: []byte("iptables: No chain/target/match by that name.")}
-	}), r); err == nil || !strings.Contains(err.Error(), "No chain") {
-		t.Errorf("missing chain: %v", err)
+		return ssh.Result{ExitCode: 2, Stderr: []byte("iptables v1.8.11 (nf_tables): Couldn't load target `NOPE'")}
+	}), r); err == nil || !strings.Contains(err.Error(), "Couldn't load target") {
+		t.Errorf("exit 2: %v", err)
 	}
 	if _, err := ReadIPTables(context.Background(), &iptHost{code: 127}, r); err == nil || !strings.Contains(err.Error(), "install the iptables package") {
 		t.Errorf("exit 127: %v", err)

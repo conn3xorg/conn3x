@@ -35,7 +35,7 @@ type IPTablesRule struct {
 
 var (
 	iptPort      = regexp.MustCompile(`^(\d+)(?::(\d+))?$`)
-	iptInterface = regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,15}\+?$`)
+	iptInterface = regexp.MustCompile(`^[A-Za-z0-9_.:@-]+\+?$`)
 	ctStates     = map[string]bool{"INVALID": true, "NEW": true, "ESTABLISHED": true, "RELATED": true, "UNTRACKED": true, "SNAT": true, "DNAT": true}
 	portProtos   = map[string]bool{"tcp": true, "udp": true, "udplite": true, "sctp": true, "dccp": true}
 )
@@ -86,6 +86,10 @@ func (r IPTablesRule) Validate() error {
 	for what, i := range map[string]string{"in_interface": r.InInterface, "out_interface": r.OutInterface} {
 		if i != "" && !iptInterface.MatchString(i) {
 			return fmt.Errorf("%s %q is not an interface name", what, i)
+		}
+		// iptables counts a trailing + toward its 15-character limit.
+		if len(i) > 15 {
+			return fmt.Errorf("%s %q is %d characters; iptables takes 15 at most, a trailing + included", what, i, len(i))
 		}
 	}
 	for _, s := range r.CTState {
@@ -195,7 +199,9 @@ func quoteAll(words []string) string {
 
 // ReadIPTables reports whether the running firewall has the rule, by the
 // exit status of iptables -C: 0 has it, 1 with "Bad rule" hasn't. Any
-// other failure, a missing chain among them, is an error, never a guess.
+// other failure is an error, never a guess. iptables says "Bad rule" for
+// a missing chain too, so that reads as a missing rule, and the apply
+// then fails at -A naming the chain.
 func ReadIPTables(ctx context.Context, r modules.Runner, rule IPTablesRule) (bool, error) {
 	if err := rule.Validate(); err != nil {
 		return false, err

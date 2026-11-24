@@ -55,7 +55,7 @@ The address is the step's resource address, `conn3x_package.CIRCUIT__STEP`, here
 <!-- reference -->
 ## How it works
 
-**Reading.** Every refresh runs `iptables -C` with the rule's own arguments, and its exit status says whether the rule is there. A rule deleted by hand shows as out of sync, and the next apply adds it back. `-C` fails when the chain doesn't exist, and so does the refresh, saying so.
+**Reading.** Every refresh runs `iptables -C` with the rule's own arguments, and its exit status says whether the rule is there. A rule deleted by hand shows as out of sync, and the next apply adds it back. iptables answers `-C` the same way for a chain that doesn't exist, so a missing chain reads as a missing rule, and the apply then fails naming the chain. Removing a step whose chain is gone succeeds.
 
 **Applying.** Conn3x adds the rule with `iptables -A`, at the end of the chain, or `iptables -I` with `position = "insert"`: at the top, or at `rule_num`. Where the rule goes only counts when it's added. A rule that's already somewhere in the chain is in sync, wherever it is. Every argument goes to `iptables` as one quoted word, so a `comment` with quotes or a `$` in it arrives as written. `-w` waits for the xtables lock, so the rules of a `for_each` step take turns.
 
