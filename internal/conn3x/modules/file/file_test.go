@@ -379,7 +379,7 @@ func TestApplyValidatePasses(t *testing.T) {
 
 func TestApplyValidateSeesFinalMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "f")
-	d := Desired{Path: path, Content: "x", Mode: "0440", ValidateCommand: `[ "$(stat -c %a %s)" = 440 ]`}
+	d := Desired{Path: path, Content: "x", Mode: "0440", ValidateCommand: `[ "$(stat -c %a %s 2>/dev/null || stat -f %Lp %s)" = 440 ]`}
 	if err := Apply(ctx, localRunner{}, d); err != nil {
 		t.Fatalf("validate didn't see the final mode on the temporary file: %v", err)
 	}

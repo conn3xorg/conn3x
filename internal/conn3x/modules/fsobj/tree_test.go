@@ -6,12 +6,16 @@ package fsobj
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 // A recursive mode counts and then changes every path under the directory,
 // files and directories each as X says, and never what a link points at.
 func TestTreeMode(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the tree module's own script is written for Linux hosts")
+	}
 	top := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside")
 	if err := os.WriteFile(outside, nil, 0o666); err != nil || os.Chmod(outside, 0o666) != nil {
@@ -69,6 +73,9 @@ func TestTreeMode(t *testing.T) {
 // find refuses -execdir with a relative or empty entry in PATH, which
 // Conn3x doesn't set, so the walk drops them.
 func TestTreeWithARelativePath(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the tree module's own script is written for Linux hosts")
+	}
 	top := t.TempDir()
 	if err := os.WriteFile(filepath.Join(top, "f"), nil, 0o600); err != nil {
 		t.Fatal(err)
