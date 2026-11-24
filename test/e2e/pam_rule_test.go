@@ -6,6 +6,7 @@
 package e2e
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -19,19 +20,42 @@ type pamVars struct {
 // pam_rule adds pam_faillock before pam_unix in Ubuntu's common-auth and
 // in a Rocky Linux service file authselect doesn't own, plans clean, puts
 // a rule taken out by hand back, adds and takes out arguments, and takes
-// its rules out again when the steps go. On Rocky it refuses system-auth,
-// which authselect owns.
+// its rules out again when the steps go. Between steps, pamtester logs a
+// test user in through the edited stack, with the right password and a
+// wrong one. On Rocky it refuses system-auth, which authselect owns.
 func TestPAMRule(t *testing.T) {
-	for _, c := range []struct{ image, service, control string }{
-		{"ubuntu2404", "common-auth", "[success=1 default=ignore]"},
-		{"rocky10", "c3x-demo", "sufficient"},
+	for _, c := range []struct{ image, service, control, login string }{
+		// login is the service a password login goes through: Ubuntu's sshd
+		// includes common-auth, and c3x-login stacks c3x-demo as sshd stacks
+		// password-auth.
+		{"ubuntu2404", "common-auth", "[success=1 default=ignore]", "sshd"},
+		{"rocky10", "c3x-demo", "sufficient", "c3x-login"},
 	} {
 		t.Run(c.image, func(t *testing.T) {
 			h := startHost(t, c.image)
 			file := "/etc/pam.d/" + c.service
 			if c.image == "rocky10" {
 				h.exec("", "cp", "/etc/authselect/system-auth", file)
+				h.exec("auth substack c3x-demo\naccount include c3x-demo\n", "sh", "-c", "cat > /etc/pam.d/c3x-login")
+				h.exec("", "sh", "-c", "dnf -y -q install epel-release && dnf -y -q install pamtester")
+			} else {
+				h.exec("", "sh", "-c", "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq pamtester")
 			}
+			h.exec("c3xpam:Pw-c3x-12345\n", "sh", "-c", "useradd c3xpam && chpasswd")
+			// A password login through the edited stack works with the right
+			// password and fails with a wrong one.
+			login := func(when string) {
+				t.Helper()
+				for pw, ok := range map[string]bool{"Pw-c3x-12345": true, "wrong-password": false} {
+					cmd := exec.Command("podman", "exec", "-i", h.container, "pamtester", c.login, "c3xpam", "authenticate")
+					cmd.Stdin = strings.NewReader(pw + "\n")
+					out, err := cmd.CombinedOutput()
+					if (err == nil) != ok {
+						t.Fatalf("%s: pamtester %s with the %v password: %v\n%s", when, c.login, map[bool]string{true: "right", false: "wrong"}[ok], err, out)
+					}
+				}
+			}
+			login("before any step")
 			read := func() string { return h.exec("", "cat", file) }
 			owner := func() string { return h.exec("", "stat", "-c", "%a %U %G", file) }
 			orig, origOwner := read(), owner()
@@ -55,6 +79,7 @@ func TestPAMRule(t *testing.T) {
 			if !strings.Contains(got, "pam_faillock.so preauth\n"+unixLine+"\n") || strings.Count(got, "\n") != strings.Count(orig, "\n")+1 {
 				t.Fatalf("faillock isn't just before pam_unix:\n%s", got)
 			}
+			login("after the faillock insert")
 			if o := owner(); o != origOwner {
 				t.Fatalf("mode and owner went from %q to %q", origOwner, o)
 			}
@@ -84,6 +109,7 @@ func TestPAMRule(t *testing.T) {
 			if !strings.Contains(read(), bare+" debug\n") {
 				t.Fatalf("args_absent didn't take nullok out:\n%s", read())
 			}
+			login("after args_present and args_absent")
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 				t.Fatalf("plan with three steps on one file:\n%s", out)
 			}
@@ -96,6 +122,7 @@ func TestPAMRule(t *testing.T) {
 			if want := strings.Replace(orig, unixLine, bare, 1); read() != want {
 				t.Fatalf("after removing the steps:\n%s\nwant:\n%s", read(), want)
 			}
+			login("after the steps went")
 
 			if c.image != "rocky10" {
 				return
