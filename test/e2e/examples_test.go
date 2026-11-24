@@ -31,7 +31,7 @@ func TestExamplesValidate(t *testing.T) {
 				t.Fatal(err)
 			}
 			// The digitalocean example reads the deploy user's key from here.
-			if err := os.WriteFile(filepath.Join(dir, "deploy.pub"), []byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyExampleOnlyExampleOnlyExampleOnly example\n"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "deploy.pub"), []byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIILc+83mA976fmgMJgeVAUrYDDN4Qw1yGMNAE5zZbqsj example\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			// The azure example encrypts state, so init needs its passphrase.
