@@ -58,6 +58,7 @@ var resourceTypes = map[string]resourceType{
 	"conn3x_replace":              {replaceKind.schema, replaceKind.validate, replaceKind.plan, replaceKind.read, replaceKind.apply, upgradeWith(replaceKind.schema)},
 	"conn3x_htpasswd":             {htpasswdKind.schema, htpasswdKind.validate, planHtpasswd, htpasswdKind.read, applyHtpasswd, upgradeWith(htpasswdKind.schema)},
 	"conn3x_limit":                {limitKind.schema, limitKind.validate, limitKind.plan, limitKind.read, limitKind.apply, upgradeWith(limitKind.schema)},
+	"conn3x_pam_rule":             {pamRuleKind.schema, pamRuleKind.validate, pamRuleKind.plan, pamRuleKind.read, pamRuleKind.apply, upgradeWith(pamRuleKind.schema)},
 	"conn3x_known_hosts":          {knownHostsSchema, validateKnownHosts, planKnownHosts, readKnownHosts, applyKnownHosts, upgradeWith(knownHostsSchema)},
 	"conn3x_authorized_key":       {authorizedKeySchema, validateAuthorizedKey, planAuthorizedKey, readAuthorizedKey, applyAuthorizedKey, upgradeWith(authorizedKeySchema)},
 	"conn3x_cron":                 {cronSchema, validateCron, planCron, readCron, applyCron, upgradeWith(cronSchema)},

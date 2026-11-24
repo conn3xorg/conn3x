@@ -38,6 +38,27 @@ type editKind struct {
 	// applyEdit, when set, is the edit an apply makes, which also knows the
 	// prior state; edit stays what a read compares against.
 	applyEdit func(planned, prior cty.Value) func(string) (string, error)
+	// file, when set, is the file to edit, for a kind whose path argument
+	// isn't the file itself.
+	file func(cty.Value) string
+	// hostCheck, when set, runs before every read and write of the file,
+	// to refuse one the step mustn't edit.
+	hostCheck func(ctx context.Context, h *hostConn, path string) error
+}
+
+// path is the file a step v edits.
+func (k editKind) path(v cty.Value) string {
+	if k.file != nil {
+		return k.file(v)
+	}
+	return v.GetAttr("path").AsString()
+}
+
+func (k editKind) checkHost(ctx context.Context, h *hostConn, v cty.Value) error {
+	if k.hostCheck == nil {
+		return nil
+	}
+	return k.hostCheck(ctx, h, k.path(v))
 }
 
 var lineKind = editKind{
@@ -335,7 +356,7 @@ func (k editKind) validate(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	if err := (file.Desired{Path: cfg.GetAttr("path").AsString(), Mode: "0644"}).Validate(); err != nil {
+	if err := (file.Desired{Path: k.path(cfg), Mode: "0644"}).Validate(); err != nil {
 		diags = diags.Append(attrError("path", err.Error()))
 	}
 	if err := k.check(cfg); err != nil {
@@ -357,8 +378,41 @@ func (k editKind) validate(cfg cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
+// planPath is planPathResource, or for a kind with a file func, the same
+// keyed by the file its service and path name: a step moved to another
+// file is replaced.
+func (k editKind) planPath(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	if k.file == nil {
+		return planPathResource(req, k.name, func(map[string]cty.Value) {})
+	}
+	resp := providers.PlanResourceChangeResponse{PlannedState: req.ProposedNewState}
+	if req.ProposedNewState.IsNull() {
+		return resp
+	}
+	vals := req.ProposedNewState.AsValueMap()
+	if vals["on_remove"].IsNull() {
+		vals["on_remove"] = cty.StringVal(defaultOnRemove)
+	}
+	vals["id"] = cty.UnknownVal(cty.String)
+	if vals["service"].IsKnown() && vals["path"].IsKnown() {
+		vals["id"] = planID(req, k.name, k.file(req.ProposedNewState))
+	}
+	resp.PlannedState = cty.ObjectVal(vals)
+	if !req.PriorState.IsNull() {
+		for _, name := range []string{"service", "path"} {
+			if !req.PriorState.GetAttr(name).RawEquals(vals[name]) {
+				resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath(name))
+			}
+		}
+		if !req.PriorState.GetAttr("ssh").GetAttr("host").RawEquals(req.ProposedNewState.GetAttr("ssh").GetAttr("host")) {
+			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("host"))
+		}
+	}
+	return resp
+}
+
 func (k editKind) plan(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	resp := planPathResource(req, k.name, func(map[string]cty.Value) {})
+	resp := k.planPath(req)
 	if resp.PlannedState.IsNull() {
 		return resp
 	}
@@ -387,7 +441,10 @@ func (k editKind) plan(req providers.PlanResourceChangeRequest) providers.PlanRe
 func (k editKind) read(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	return readPathResource(ctx, req, func(ctx context.Context, h *hostConn, prior cty.Value) (cty.Value, error) {
 		vals := prior.AsValueMap()
-		actual, err := file.Read(ctx, h, prior.GetAttr("path").AsString())
+		if err := k.checkHost(ctx, h, prior); err != nil {
+			return cty.NilVal, err
+		}
+		actual, err := file.Read(ctx, h, k.path(prior))
 		if err != nil {
 			return cty.NilVal, err
 		}
@@ -411,14 +468,17 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 		func(ctx context.Context, h *hostConn, planned cty.Value) (cty.Value, error) {
 			vals := planned.AsValueMap()
 			vals["in_sync"] = cty.True
+			if err := k.checkHost(ctx, h, planned); err != nil {
+				return cty.NilVal, err
+			}
 			if k.missingOK != nil && k.missingOK(planned) {
-				if actual, err := file.Read(ctx, h, planned.GetAttr("path").AsString()); err != nil {
+				if actual, err := file.Read(ctx, h, k.path(planned)); err != nil {
 					return cty.NilVal, err
 				} else if !actual.Exists {
 					return cty.ObjectVal(vals), nil
 				}
 			}
-			path := planned.GetAttr("path").AsString()
+			path := k.path(planned)
 			target, err := editTarget(ctx, h, path)
 			if err != nil {
 				return cty.NilVal, err
@@ -440,14 +500,17 @@ func (k editKind) apply(ctx context.Context, req providers.ApplyResourceChangeRe
 			return cty.ObjectVal(vals), nil
 		},
 		func(ctx context.Context, h *hostConn, prior cty.Value) error {
+			if err := k.checkHost(ctx, h, prior); err != nil {
+				return err
+			}
 			if k.missingOK != nil {
-				if actual, err := file.Read(ctx, h, prior.GetAttr("path").AsString()); err != nil {
+				if actual, err := file.Read(ctx, h, k.path(prior)); err != nil {
 					return err
 				} else if !actual.Exists {
 					return nil
 				}
 			}
-			path := prior.GetAttr("path").AsString()
+			path := k.path(prior)
 			target, err := editTarget(ctx, h, path)
 			if err != nil {
 				return err

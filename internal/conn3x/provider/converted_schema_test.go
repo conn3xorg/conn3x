@@ -37,6 +37,8 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
     - chocolatey.chocolatey.win_chocolatey: {name: git, version: 2.44.0, source: 'https://nuget.example.com/v3/index.json', pinned: true}
     - ansible.windows.win_lineinfile: {path: 'C:/app/app.ini', line: 'a=1', regexp: '^a=', insertbefore: '^b='}
     - ansible.builtin.get_url: {url: "https://example.com/a.tgz", dest: /opt/a.tgz, checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000", headers: {Accept: application/octet-stream}}
+    - community.general.pamd: {name: common-auth, type: auth, control: "[success=1 default=ignore]", module_path: pam_unix.so, state: before, new_type: auth, new_control: required, new_module_path: pam_faillock.so, backup: true}
+    - community.general.pamd: {name: system-auth, path: /etc/pam.d, type: password, control: sufficient, module_path: pam_unix.so, state: args_present, module_arguments: remember=5}
 - hosts: switches
   connection: network_cli
   tasks:
@@ -106,7 +108,7 @@ func TestConvertedStepsFitTheirSchemas(t *testing.T) {
 		}
 	}
 	walk(f.Body.(*hclsyntax.Body))
-	if checked < 41 {
+	if checked < 43 {
 		t.Errorf("checked %d steps, want every task's:\n%s", checked, res.HCL)
 	}
 }

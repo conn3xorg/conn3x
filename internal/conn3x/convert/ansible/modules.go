@@ -29,6 +29,7 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/kmod"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/mysql"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pack"
+	"github.com/opentofu/opentofu/internal/conn3x/modules/pam"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/patch"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
@@ -644,6 +645,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"fetch":                   fetchModule,
 	"supervisorctl":           supervisorctlModule,
 	"patch":                   patchModule,
+	"pamd":                    pamdModule,
 	"zypper":                  packageModule,
 	"pip":                     pipModule,
 	"npm":                     npmModule,
@@ -1205,6 +1207,118 @@ func supervisorctlModule(in *input) ([]step, string) {
 	}
 	in.ignore("wait")
 	return one("supervisor_program", attrs, notes...)
+}
+
+// pamdModule turns community.general.pamd into a pam_rule step. Each state
+// converts where the step does what pamd does or less: pamd leaves a file
+// where nothing matches alone, and the step fails there instead, naming the
+// rule. What could change more than the play stays for review.
+func pamdModule(in *input) ([]step, string) {
+	if why := exactTask(in); why != "" {
+		return nil, why
+	}
+	st := in.state("updated", "updated", "before", "after", "absent", "args_present", "args_absent")
+	old := pam.Ref{Type: in.str("type"), Control: in.str("control"), Module: in.str("module_path")}
+	newRef := pam.Ref{Type: cmp.Or(in.str("new_type"), old.Type), Control: cmp.Or(in.str("new_control"), old.Control), Module: cmp.Or(in.str("new_module_path"), old.Module)}
+	renames := newRef != old
+	// pamd splits each list item at spaces, keeping [...] whole, and an
+	// empty list takes every argument off.
+	var args []string
+	if in.has("module_arguments") {
+		args = []string{}
+		for _, a := range in.list("module_arguments") {
+			if strings.Contains(a, "[") {
+				return nil, "has a bracketed module argument, which pamd splits its own way; write the pam_rule step's arguments by hand"
+			}
+			args = append(args, strings.Fields(a)...)
+		}
+	}
+	in.ignore("backup")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if old.Type == "" || old.Control == "" || old.Module == "" {
+		return nil, "needs type, control and module_path to find the rule"
+	}
+	for _, c := range []string{old.Control, newRef.Control} {
+		if pam.NormalControl(c) != c {
+			return nil, fmt.Sprintf("has control %q, which pamd matches only as written; space it as [value=action value=action]", c)
+		}
+	}
+	r := pam.Rule{Ref: old, State: pam.Present}
+	if in.str("name") == "" {
+		return nil, "needs name, the service file"
+	}
+	var notes []string
+	if st != "absent" && st != "args_absent" {
+		notes = append(notes, "pamd leaves the file alone when the rule it looks for isn't there; this step fails instead, naming the rule.")
+	}
+	switch st {
+	case "updated":
+		if renames {
+			if args != nil {
+				return nil, "changes a rule and sets its arguments at once; pamd leaves a rule that's already the new one alone, and a pam_rule step would set its arguments, so write it by hand with replace and arguments"
+			}
+			r.Ref, r.Replace = newRef, old.String()
+		}
+		r.Arguments = args
+	case "before", "after":
+		if !in.has("new_type") || !in.has("new_control") || !in.has("new_module_path") {
+			return nil, "state " + st + " needs new_type, new_control and new_module_path, as pamd does"
+		}
+		if args != nil {
+			return nil, "sets module_arguments with state " + st + "; pamd gives them only to a rule it inserts and leaves one that's already next to the anchor as it is, and a pam_rule step would set them on that rule too, so write it by hand with arguments"
+		}
+		r.Ref = newRef
+		if st == "before" {
+			r.Before = old.String()
+		} else {
+			r.After = old.String()
+		}
+		notes = append(notes, "pamd inserts the rule at every match of the anchor unless it's already beside it; this step inserts it once, where the anchor is in the file once, and leaves a rule that's anywhere in the file where it is.")
+	case "absent":
+		r.State = pam.Absent
+	case "args_present", "args_absent":
+		if len(args) == 0 {
+			return nil, "state " + st + " needs module_arguments"
+		}
+		for _, a := range args {
+			if strings.Count(a, "=") > 1 {
+				return nil, fmt.Sprintf("has argument %q with more than one =, which pamd fails on", a)
+			}
+		}
+		r.State, r.Arguments = pam.State(st), args
+	}
+	if err := r.Validate(); err != nil {
+		return nil, "can't be a pam_rule step: " + err.Error()
+	}
+	attrs := []attr{s("service", in.str("name"))}
+	if p := in.str("path"); p != "" && p != "/etc/pam.d" {
+		attrs = append(attrs, s("path", p))
+	}
+	attrs = append(attrs, s("type", r.Type), s("control", r.Control), s("module", r.Module))
+	if r.Arguments != nil {
+		attrs = append(attrs, attr{key: "arguments", val: strListOrEmpty(r.Arguments)})
+	}
+	if r.State != pam.Present {
+		attrs = append(attrs, s("state", string(r.State)))
+	}
+	for _, a := range []attr{s("before", r.Before), s("after", r.After), s("replace", r.Replace)} {
+		if a.val.AsString() != "" {
+			attrs = append(attrs, a)
+		}
+	}
+	if in.bool("backup", false) {
+		attrs = append(attrs, attr{key: "backup", val: cty.True})
+	}
+	return one("pam_rule", attrs, notes...)
+}
+
+func strListOrEmpty(list []string) cty.Value {
+	if len(list) == 0 {
+		return cty.ListValEmpty(cty.String)
+	}
+	return strList(list)
 }
 
 // patchModule turns ansible.posix.patch into a patch step. A src on the

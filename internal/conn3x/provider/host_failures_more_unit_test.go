@@ -33,6 +33,7 @@ var brHostSteps = map[string]map[string]cty.Value{
 	"conn3x_known_hosts":         {"host": cty.StringVal("git.example"), "key": cty.StringVal(brKeyA)},
 	"conn3x_limit":               {"domain": cty.StringVal("*"), "item": cty.StringVal("nofile"), "path": cty.StringVal("/etc/security/limits.d/90.conf"), "type": cty.StringVal("soft"), "value": cty.StringVal("1024")},
 	"conn3x_line":                {"path": cty.StringVal("/etc/a"), "line": cty.StringVal("x=1")},
+	"conn3x_pam_rule":            {"service": cty.StringVal("sshd"), "type": cty.StringVal("auth"), "control": cty.StringVal("required"), "module": cty.StringVal("pam_faillock.so"), "before": cty.StringVal("auth sufficient pam_unix.so")},
 	"conn3x_link":                {"path": cty.StringVal("/usr/local/bin/app"), "target": cty.StringVal("/opt/app/bin/app")},
 	"conn3x_locale":              {"name": cty.StringVal("en_US.UTF-8")},
 	"conn3x_mount":               {"fstype": cty.StringVal("ext4"), "path": cty.StringVal("/data"), "src": cty.StringVal("/dev/vdb1")},

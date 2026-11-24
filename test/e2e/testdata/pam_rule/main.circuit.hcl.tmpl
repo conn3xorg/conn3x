@@ -1,0 +1,56 @@
+circuit "pam" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+{{if .Faillock}}
+  step "faillock" {
+    pam_rule {
+      service   = "{{.Service}}"
+      type      = "auth"
+      control   = "required"
+      module    = "pam_faillock.so"
+      arguments = ["preauth"]
+      before    = "{{.Unix}}"
+      on_remove = "delete"
+    }
+  }
+{{end}}{{if .Debug}}
+  step "unix_debug" {
+    pam_rule {
+      service   = "{{.Service}}"
+      type      = "auth"
+      control   = "{{.UnixControl}}"
+      module    = "pam_unix.so"
+      arguments = ["debug"]
+      state     = "args_present"
+      on_remove = "delete"
+    }
+  }
+{{end}}{{if .NoNullok}}
+  step "no_nullok" {
+    pam_rule {
+      service   = "{{.Service}}"
+      type      = "auth"
+      control   = "{{.UnixControl}}"
+      module    = "pam_unix.so"
+      arguments = ["nullok"]
+      state     = "args_absent"
+    }
+  }
+{{end}}{{if .Select}}
+  step "system_auth" {
+    pam_rule {
+      service = "system-auth"
+      type    = "auth"
+      control = "required"
+      module  = "pam_faillock.so"
+      before  = "auth sufficient pam_unix.so"
+    }
+  }
+{{end}}
+}
