@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -240,7 +242,8 @@ func (p *Provider) ValidateProviderConfig(_ context.Context, req providers.Valid
 
 func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.ValidateResourceConfigRequest) providers.ValidateResourceConfigResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
-		diags := rt.validate(req.Config)
+		diags := validateReadOnly(req.TypeName, rt.schema().Block, req.Config)
+		diags = diags.Append(rt.validate(req.Config))
 		diags = diags.Append(validateSSH(req.Config))
 		if strings.HasPrefix(req.TypeName, windowsTypePrefix) {
 			diags = diags.Append(validateWindowsSSH(req.Config))
@@ -259,6 +262,34 @@ func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.Valid
 		return providers.ValidateResourceConfigResponse{Diagnostics: diags}
 	}
 	return providers.ValidateResourceConfigResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
+}
+
+// readOnlyHints names the argument to set instead of a read-only attribute.
+var readOnlyHints = map[string]string{
+	"conn3x_service.running":    `To start or stop the unit, set state = "started" or state = "stopped".`,
+	"conn3x_service.is_enabled": "To start the unit at boot or not, set enabled.",
+	"conn3x_service.is_masked":  "To mask or unmask the unit, set masked.",
+}
+
+// validateReadOnly refuses a value for a computed-only attribute. OpenTofu
+// core leaves this check to the provider (the plugin SDKs do it there), so
+// without it a read-only attribute in a step or resource was silently ignored.
+func validateReadOnly(typeName string, schema *configschema.Block, cfg cty.Value) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+	if cfg.IsNull() || !cfg.IsKnown() {
+		return diags
+	}
+	for _, name := range slices.Sorted(maps.Keys(schema.Attributes)) {
+		if a := schema.Attributes[name]; !a.Computed || a.Optional || cfg.GetAttr(name).IsNull() {
+			continue
+		}
+		detail := fmt.Sprintf("%s is read-only: Conn3x works it out itself, so a configuration can't set it.", name)
+		if hint, ok := readOnlyHints[typeName+"."+name]; ok {
+			detail += " " + hint
+		}
+		diags = diags.Append(tfdiags.AttributeValue(tfdiags.Error, "Read-only attribute "+name, detail, cty.GetAttrPath(name)))
+	}
+	return diags
 }
 
 func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
