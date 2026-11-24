@@ -104,7 +104,8 @@ func TestRescueErrors(t *testing.T) {
 
 func TestConn3xRescues(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "main.circuit.hcl"), []byte(onceCircuit("", rescueSteps)), 0o644); err != nil {
+	// A .tf file: rescues there were skipped too (#1357).
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(onceCircuit("", rescueSteps)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got, diags := Conn3xRescues(dir)

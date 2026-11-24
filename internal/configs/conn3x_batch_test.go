@@ -6,6 +6,7 @@ package configs
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -51,7 +52,7 @@ func TestConn3xBatches(t *testing.T) {
 	files := map[string]string{
 		"web.circuit.hcl": strings.Replace(onceCircuit(`strategy = "per_host"`+"\n"+`batch_size = "40%"`+"\n"+`max_failures = 1`, batchStep), `"app"`, `"web"`, 1),
 		"db.circuit.hcl":  onceCircuit(`strategy = "per_host"`, batchStep),
-		"main.tf":         `circuit "ignored" { batch_size = 1 }`,
+		"main.tf.json":    `{"circuit": {"ignored": {"batch_size": 1}}}`, // JSON can't hold circuits
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o600); err != nil {
@@ -64,6 +65,23 @@ func TestConn3xBatches(t *testing.T) {
 	}
 	if b := got[0]; b != (Conn3xBatch{Circuit: "web", Percent: 40, MaxFailures: 1}) || b.Of(5) != 2 || b.Of(1) != 1 {
 		t.Errorf("got %+v, Of(5) = %d", b, b.Of(5))
+	}
+}
+
+// A circuit reads the same batches whichever file it's in: the config loader
+// lowers circuits from .tf and .tofu files too (#1357).
+func TestConn3xBatchesInEveryCircuitFile(t *testing.T) {
+	src := onceCircuit(`strategy = "per_host"`+"\n"+`batch_size = 2`+"\n"+`max_failures = 0`, batchStep)
+	want := []Conn3xBatch{{Circuit: "app", Size: 2}}
+	for _, name := range []string{"main.circuit.hcl", "main.tf", "main.tofu"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, diags := Conn3xBatches(dir)
+		if diags.HasErrors() || !slices.Equal(got, want) {
+			t.Errorf("%s: got %+v, %v, want %+v", name, got, diags, want)
+		}
 	}
 }
 

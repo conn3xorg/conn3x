@@ -43,7 +43,7 @@ func eachCommand() command.Command {
   conn3x each plan
   conn3x each plan -changed=origin/main
 
-A root configuration is a directory with .tf or .circuit.hcl files that no other configuration calls as a local module, or one with a backend block of its own.
+A root configuration is a directory with .tf, .tofu or .circuit.hcl files that no other configuration calls as a local module, or one with a backend block of its own.
 
 One configuration depends on another when its terraform_remote_state reads the state the other's backend writes: the same backend type, with the same bucket and key for s3, bucket and prefix for gcs, storage account, container and key for azurerm, or path for local. Both sides need literal settings for that. Where they aren't, such as a key from a variable or a backend set with -backend-config, it says so, and a conn3x.each.hcl beside the reading configuration names what it depends on:
 
@@ -369,7 +369,7 @@ func gitChanges(root, ref string) (files, gone []string, err error) {
 	}
 	dirs := map[string]bool{}
 	for _, l := range deleted {
-		if strings.HasSuffix(l, ".tf") || strings.HasSuffix(l, ".circuit.hcl") {
+		if strings.HasSuffix(l, ".tf") || strings.HasSuffix(l, ".tofu") || strings.HasSuffix(l, ".circuit.hcl") {
 			dirs[path.Dir(rel(l))] = true
 		}
 	}

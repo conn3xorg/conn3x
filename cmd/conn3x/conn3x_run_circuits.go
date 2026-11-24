@@ -17,6 +17,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 
+	"github.com/opentofu/opentofu/internal/configs"
 	"github.com/opentofu/opentofu/internal/conn3x/convert/ansible"
 )
 
@@ -32,19 +33,15 @@ var circuitSSHVars = map[string]string{
 	"timeout":          "conn3x_ssh_timeout",
 }
 
-// circuitInventory reads the circuits in dir's .tf and .circuit.hcl files
-// into an inventory: a group per circuit, named after it, holding its
+// circuitInventory reads the circuits in dir's .tf, .tofu and .circuit.hcl
+// files into an inventory: a group per circuit, named after it, holding its
 // hosts, each with the circuit's ssh settings and its own host object's.
 // Only literal values are read: hosts or ssh settings that need variables,
 // locals or functions to work out are an error, which names them.
 func circuitInventory(dir string) (*ansible.Inventory, error) {
-	var files []string
-	for _, pat := range []string{"*.tf", "*.circuit.hcl"} {
-		m, err := filepath.Glob(filepath.Join(dir, pat))
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, m...)
+	files, diags := configs.CircuitSourceFiles(dir)
+	if diags.HasErrors() {
+		return nil, diags
 	}
 	sort.Strings(files)
 	inv := ansible.NewInventory()
@@ -68,7 +65,7 @@ func circuitInventory(dir string) (*ansible.Inventory, error) {
 	}
 	if found == 0 {
 		abs, _ := filepath.Abs(dir)
-		return nil, fmt.Errorf("no circuit in %s's .tf or .circuit.hcl files", abs)
+		return nil, fmt.Errorf("no circuit in %s's .tf, .tofu or .circuit.hcl files", abs)
 	}
 	return inv, nil
 }

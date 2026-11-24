@@ -6,8 +6,6 @@ package configs
 import (
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -161,18 +159,14 @@ func batchRefusesRunOnce(steps hcl.Blocks) hcl.Diagnostics {
 // reads only what batching needs; the full checks run when the
 // configuration loads.
 func Conn3xBatches(dir string) ([]Conn3xBatch, hcl.Diagnostics) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "Can't read the configuration directory", Detail: err.Error()}}
+	paths, diags := CircuitSourceFiles(dir)
+	if diags.HasErrors() {
+		return nil, diags
 	}
 	var out []Conn3xBatch
-	var diags hcl.Diagnostics
 	p := hclparse.NewParser()
-	for _, e := range entries {
-		if e.IsDir() || circuitFileExtOf(e.Name()) == "" {
-			continue
-		}
-		f, fDiags := p.ParseHCLFile(filepath.Join(dir, e.Name()))
+	for _, path := range paths {
+		f, fDiags := p.ParseHCLFile(path)
 		diags = append(diags, fDiags...)
 		if f == nil {
 			continue

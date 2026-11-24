@@ -227,6 +227,26 @@ func TestBatchApply(t *testing.T) {
 	}
 }
 
+// The same circuit in a .tf file batches as it does in a .circuit.hcl file
+// (#1357).
+func TestBatchApplyInTfFile(t *testing.T) {
+	web1, web2, web10 := startHost(t, "rocky10"), startHost(t, "rocky10"), startHost(t, "rocky10")
+	knownFile := shareKey(t, web1, web2, web10)
+	w := newWorkdir(t, "batch")
+	w.write(chainVars{PortA: web1.port, PortB: web2.port, PortSlow: web10.port, Key: web1.keyFile, KnownHosts: knownFile})
+	w.mustConn3x("init", "-no-color")
+	out := w.mustConn3x("apply", "-auto-approve", "-no-color", "-var=run=1")
+	for _, want := range []string{"changes 3 hosts, which roll out in 3 batches of up to 1", "Batch 3 of 3: web10", "All 3 batches applied"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color", "-var=run=2", "-var=fail_on=web2")
+	if code == 0 || !strings.Contains(out, "1 host failed, more than max_failures = 0") || !strings.Contains(out, "Not reached: web10") {
+		t.Errorf("a failure should stop the rollout (exit %d):\n%s", code, out)
+	}
+}
+
 func TestBatchTwoCircuits(t *testing.T) {
 	web1, web2 := startHost(t, "rocky10"), startHost(t, "rocky10")
 	knownFile := shareKey(t, web1, web2)

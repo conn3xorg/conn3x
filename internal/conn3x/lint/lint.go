@@ -159,7 +159,7 @@ func Dir(dir string) ([]Finding, error) {
 				}
 				return nil
 			}
-			if ext := filepath.Ext(path); (ext != ".hcl" && ext != ".tf" && ext != ".sh") || linted[path] {
+			if ext := filepath.Ext(path); (ext != ".hcl" && ext != ".tf" && ext != ".tofu" && ext != ".sh") || linted[path] {
 				return nil
 			}
 			return lintFile(path)
@@ -215,7 +215,7 @@ func Dir(dir string) ([]Finding, error) {
 // moduleSources are the local directories the module blocks in one file
 // call, as written: the sources that start with ./ or ../.
 func moduleSources(path string, src []byte) []string {
-	if ext := filepath.Ext(path); ext != ".hcl" && ext != ".tf" {
+	if ext := filepath.Ext(path); ext != ".hcl" && ext != ".tf" && ext != ".tofu" {
 		return nil
 	}
 	f, diags := hclsyntax.ParseConfig(src, path, hcl.InitialPos)
@@ -280,7 +280,7 @@ func moduleConnections(mod string) ([]Finding, error) {
 	var paths []string
 	for _, e := range entries {
 		path := filepath.Join(mod, e.Name())
-		if ext := filepath.Ext(path); e.IsDir() || (ext != ".hcl" && ext != ".tf") {
+		if ext := filepath.Ext(path); e.IsDir() || (ext != ".hcl" && ext != ".tf" && ext != ".tofu") {
 			continue
 		}
 		src, err := os.ReadFile(path)
@@ -381,7 +381,7 @@ func File(path string, src []byte) []Finding {
 			continue
 		}
 		prose := proseLine.MatchString(l)
-		if (ext == ".hcl" || ext == ".tf") && !prose {
+		if (ext == ".hcl" || ext == ".tf" || ext == ".tofu") && !prose {
 			if !valueLine.MatchString(l) {
 				for _, loc := range image.FindAllStringIndex(l, -1) {
 					ref := l[loc[0]:loc[1]]
@@ -396,7 +396,7 @@ func File(path string, src []byte) []Finding {
 				}
 			}
 		}
-		if (ext == ".hcl" || ext == ".tf" || ext == ".sh") && !prose {
+		if (ext == ".hcl" || ext == ".tf" || ext == ".tofu" || ext == ".sh") && !prose {
 			for _, p := range privileged {
 				if loc := p.re.FindStringIndex(l); loc != nil {
 					if p.what == "writes to a predictable name in /tmp" && strings.Contains(l, "Exec=") {

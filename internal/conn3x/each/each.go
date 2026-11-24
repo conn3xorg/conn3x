@@ -74,7 +74,7 @@ type Tree struct {
 // skipDirs are directories that never hold a configuration of ours.
 var skipDirs = map[string]bool{".git": true, ".terraform": true, "node_modules": true}
 
-// Load reads every directory under root that holds .tf or .circuit.hcl
+// Load reads every directory under root that holds .tf, .tofu or .circuit.hcl
 // files.
 func Load(root string) (*Tree, error) {
 	t := &Tree{Root: root, Configs: map[string]*Config{}, Edges: map[string][]string{}}
@@ -112,7 +112,7 @@ func readDir(dir, rel string) (*Config, error) {
 	}
 	var files []string
 	for _, e := range entries {
-		if n := e.Name(); !e.IsDir() && (strings.HasSuffix(n, ".tf") || strings.HasSuffix(n, ".circuit.hcl")) {
+		if n := e.Name(); !e.IsDir() && (strings.HasSuffix(n, ".tf") || strings.HasSuffix(n, ".tofu") || strings.HasSuffix(n, ".circuit.hcl")) {
 			files = append(files, n)
 		}
 	}

@@ -167,6 +167,19 @@ func TestDirSkipsExamplesAndTests(t *testing.T) {
 	}
 }
 
+// A .tofu file can hold circuits as a .tf file can, so it's linted too.
+func TestDirLintsTofuFiles(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"main.tofu": "variable \"a\" {\n  default = \"0.0.0.0\"\n}\n"})
+	got, err := Dir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !strings.HasSuffix(got[0].File, "main.tofu") {
+		t.Fatalf("findings = %v", got)
+	}
+}
+
 func write(t *testing.T, root string, files map[string]string) {
 	t.Helper()
 	for name, src := range files {

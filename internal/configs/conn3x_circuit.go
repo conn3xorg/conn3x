@@ -223,6 +223,21 @@ func circuitFileExtOf(path string) string {
 	return ""
 }
 
+// CircuitSourceFiles lists the files in dir that the config loader reads
+// circuits from: every native-syntax configuration file, .tf, .tofu and
+// .circuit.hcl alike, picked the same way the loader picks them. JSON files
+// can't hold circuits, so they are left out.
+func CircuitSourceFiles(dir string) ([]string, hcl.Diagnostics) {
+	primary, override, _, diags := NewParser(nil).ConfigDirFiles(dir)
+	var out []string
+	for _, path := range append(primary, override...) {
+		if !strings.HasSuffix(path, ".json") {
+			out = append(out, path)
+		}
+	}
+	return out, diags
+}
+
 // decodeCircuitBlock lowers one circuit block to managed resources. seen
 // tracks circuit names already declared in the same file.
 func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resource, []*Import, hcl.Diagnostics) {
@@ -1256,7 +1271,7 @@ func nativeSyntaxRequired(rng hcl.Range) *hcl.Diagnostic {
 	return &hcl.Diagnostic{
 		Severity: hcl.DiagError,
 		Summary:  "Circuits need native syntax",
-		Detail:   "Circuits can be written in .circuit.hcl or .tf files, but not in JSON.",
+		Detail:   "Circuits can be written in .circuit.hcl, .tf or .tofu files, but not in JSON.",
 		Subject:  &rng,
 	}
 }

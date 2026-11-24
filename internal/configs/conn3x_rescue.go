@@ -5,8 +5,6 @@ package configs
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 
 	"github.com/hashicorp/hcl/v2"
@@ -272,18 +270,14 @@ var rescueKinds = []string{"rescue", "always", "prereq"}
 // in the root module in dir, by kind in rescueKinds' order. It reads only what conn3x apply needs; the full checks run when the
 // configuration loads.
 func Conn3xRescues(dir string) ([]Conn3xRescue, hcl.Diagnostics) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, hcl.Diagnostics{{Severity: hcl.DiagError, Summary: "Can't read the configuration directory", Detail: err.Error()}}
+	paths, diags := CircuitSourceFiles(dir)
+	if diags.HasErrors() {
+		return nil, diags
 	}
 	var out []Conn3xRescue
-	var diags hcl.Diagnostics
 	p := hclparse.NewParser()
-	for _, e := range entries {
-		if e.IsDir() || circuitFileExtOf(e.Name()) == "" {
-			continue
-		}
-		f, fDiags := p.ParseHCLFile(filepath.Join(dir, e.Name()))
+	for _, path := range paths {
+		f, fDiags := p.ParseHCLFile(path)
 		diags = append(diags, fDiags...)
 		if f == nil {
 			continue
