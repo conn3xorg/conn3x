@@ -220,7 +220,7 @@ func TestEOSTenStepsOneCommit(t *testing.T) {
 		t.Fatalf("plan should add ten steps, the commit and the removals commit:\n%s", out)
 	}
 	start := time.Now()
-	out = w.mustConn3x("apply", "-auto-approve", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	took := time.Since(start)
 	t.Logf("ten steps applied in %s with confirm_after %s", took.Round(100*time.Millisecond), sw.ConfirmAfter)
 	if took >= 30*time.Second { // one step per session would wait 100 s
@@ -419,7 +419,7 @@ func TestEOSInterface(t *testing.T) {
 	w.mustConn3x("init", "-no-color")
 	t.Cleanup(func() {
 		w.conn3x("destroy", "-auto-approve", "-no-color")
-		sw.cli(t, "configure\ndefault interface Ethernet1\nend\n")
+		_, _ = sw.cli(t, "configure\ndefault interface Ethernet1\nend\n")
 	})
 	sw.mustCLI(t, "configure\ninterface Ethernet1\n   load-interval 10\nend\n") // not the step's: must survive
 

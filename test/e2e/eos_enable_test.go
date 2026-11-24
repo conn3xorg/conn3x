@@ -24,7 +24,7 @@ func TestEOSEnable(t *testing.T) {
 	}
 	key := strings.Join(strings.Fields(string(pub))[:2], " ")
 	v.mustCLI(t, "configure\nenable password EnPass1\nusername ops privilege 1 nopassword\nusername ops ssh-key "+key+"\nno vlan 472\nend\n")
-	t.Cleanup(func() { v.cli(t, "configure\nno vlan 472\nno username ops\nno enable password\nend\n") })
+	t.Cleanup(func() { _, _ = v.cli(t, "configure\nno vlan 472\nno username ops\nno enable password\nend\n") })
 
 	dir := t.TempDir()
 	pw := filepath.Join(dir, "enable")
