@@ -115,7 +115,7 @@ func iosConfigSchema() providers.Schema {
 
 func validateIOSConfig(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
@@ -211,7 +211,7 @@ func iosInterfaceSchema() providers.Schema {
 
 func validateIOSInterface(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))

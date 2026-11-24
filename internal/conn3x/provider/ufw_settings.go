@@ -59,7 +59,7 @@ func sshPeer(ctx context.Context, h *hostConn) firewall.SSHPeer {
 
 func validateUFWSettings(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateRuleConfirmAfter(cfg))

@@ -537,7 +537,7 @@ func eosConfigSchema() providers.Schema {
 
 func validateEOSConfig(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
@@ -916,7 +916,7 @@ func eosInterfaceSchema() providers.Schema {
 
 func validateEOSInterface(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
@@ -1017,7 +1017,7 @@ func eosUserSchema() providers.Schema {
 
 func validateEOSUser(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))

@@ -39,7 +39,7 @@ func pgDatabaseFrom(v cty.Value) postgresql.Database {
 
 func validatePgDatabase(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
@@ -379,7 +379,7 @@ func pgExtensionFrom(v cty.Value) postgresql.Extension {
 
 func validatePgExtension(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
@@ -447,7 +447,7 @@ func pgSchemaFrom(v cty.Value) postgresql.Schema {
 
 func validatePgSchema(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
@@ -513,7 +513,7 @@ func pgSettingFrom(v cty.Value) postgresql.Setting {
 
 func validatePgSetting(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))

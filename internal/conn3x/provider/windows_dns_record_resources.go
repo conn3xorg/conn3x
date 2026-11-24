@@ -41,7 +41,7 @@ func winDNSRecordFrom(v cty.Value) windows.DNSRecord {
 }
 
 func validateWinDNSRecord(cfg cty.Value) tfdiags.Diagnostics {
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return nil
 	}
 	diags := validateOnRemove(cfg)

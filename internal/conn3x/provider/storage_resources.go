@@ -135,7 +135,7 @@ func validateForce(what string, check func(cty.Value) error, attr string) func(c
 	base := validateWith(attr, check)
 	return func(cfg cty.Value) tfdiags.Diagnostics {
 		diags := base(cfg)
-		if cfg.IsNull() || !cfg.IsWhollyKnown() || !boolOr(cfg.GetAttr("force")) {
+		if cfg.IsNull() || !settled(cfg) || !boolOr(cfg.GetAttr("force")) {
 			return diags
 		}
 		return diags.Append(tfdiags.AttributeValue(tfdiags.Warning, "force can destroy data",

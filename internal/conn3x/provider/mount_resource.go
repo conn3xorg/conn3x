@@ -48,7 +48,7 @@ func planMount(req providers.PlanResourceChangeRequest) providers.PlanResourceCh
 // than at path as every one of them used to be.
 func validateMount(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))

@@ -49,7 +49,7 @@ func debconfHMAC(key []byte, v cty.Value, value string) string {
 
 func validateDebconf(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	value, wo := cfg.GetAttr("value"), cfg.GetAttr("value_wo")

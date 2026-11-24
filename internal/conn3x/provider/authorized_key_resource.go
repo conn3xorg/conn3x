@@ -43,7 +43,7 @@ func keyExclusive(v cty.Value) bool { e := v.GetAttr("exclusive"); return known(
 
 func validateAuthorizedKey(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))

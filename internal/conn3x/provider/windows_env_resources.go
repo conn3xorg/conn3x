@@ -60,7 +60,7 @@ func winEnvFrom(v cty.Value) windows.EnvVar {
 }
 
 func validateWinEnv(cfg cty.Value) tfdiags.Diagnostics {
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return nil
 	}
 	diags := validateLevel(cfg, "level")
@@ -132,7 +132,7 @@ func winPathFrom(v cty.Value) windows.PathEntry {
 }
 
 func validateWinPath(cfg cty.Value) tfdiags.Diagnostics {
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return nil
 	}
 	diags := validateLevel(cfg, "scope")

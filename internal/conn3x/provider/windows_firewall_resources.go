@@ -239,7 +239,7 @@ func winFirewallProfileFrom(v cty.Value) windows.FirewallProfile {
 
 func validateWinFirewallProfile(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	if err := winFirewallProfileFrom(cfg).Validate(); err != nil {

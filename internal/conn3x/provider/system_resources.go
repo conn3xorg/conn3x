@@ -37,7 +37,7 @@ func sysctlFrom(v cty.Value) system.Sysctl {
 
 func validateSysctl(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
@@ -96,7 +96,7 @@ func singletonSchema(desc, nameDesc string) providers.Schema {
 
 func validateName(cfg cty.Value, check func(string) error) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	if err := check(cfg.GetAttr("name").AsString()); err != nil {

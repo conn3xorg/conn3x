@@ -82,7 +82,7 @@ func waitForFrom(v cty.Value) (lifecycle.WaitFor, error) {
 
 func validateWaitFor(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	w, err := waitForFrom(cfg)

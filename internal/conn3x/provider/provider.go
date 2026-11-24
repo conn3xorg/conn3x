@@ -294,6 +294,24 @@ func validateReadOnly(typeName string, schema *configschema.Block, cfg cty.Value
 	return diags
 }
 
+// settled reports whether a resource's own settings are all known, so its
+// checks can run. A circuit's step takes its ssh block from hosts and each,
+// and earlier_revisions from the steps before it, so neither is known at
+// validate; no step's checks read them (validateSSH checks ssh on its own),
+// so they don't hold the rest up. Any other unknown still skips the checks:
+// treating it as unset could fail a required or either-or setting.
+func settled(cfg cty.Value) bool {
+	if !cfg.IsKnown() {
+		return false
+	}
+	for name, v := range cfg.AsValueMap() {
+		if name != "ssh" && name != "earlier_revisions" && !v.IsWhollyKnown() {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *Provider) ValidateDataResourceConfig(_ context.Context, req providers.ValidateDataResourceConfigRequest) providers.ValidateDataResourceConfigResponse {
 	if req.TypeName == "conn3x_vyos_device" {
 		return providers.ValidateDataResourceConfigResponse{Diagnostics: validateSSH(req.Config).Append(validateVyOSSSH(req.Config))}

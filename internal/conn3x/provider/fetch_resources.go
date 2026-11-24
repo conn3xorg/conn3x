@@ -19,7 +19,7 @@ import (
 func validateWith(attr string, check func(cty.Value) error) func(cty.Value) tfdiags.Diagnostics {
 	return func(cfg cty.Value) tfdiags.Diagnostics {
 		var diags tfdiags.Diagnostics
-		if cfg.IsNull() || !cfg.IsWhollyKnown() {
+		if cfg.IsNull() || !settled(cfg) {
 			return diags
 		}
 		if cfg.Type().HasAttribute("on_remove") {

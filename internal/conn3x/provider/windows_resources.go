@@ -113,7 +113,7 @@ func winWaitForFrom(v cty.Value) (windows.WaitFor, error) {
 
 func validateWinWaitFor(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	w, err := winWaitForFrom(cfg)

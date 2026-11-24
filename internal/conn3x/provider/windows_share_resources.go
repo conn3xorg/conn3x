@@ -47,7 +47,7 @@ func winShareFrom(v cty.Value) windows.Share {
 }
 
 func validateWinShare(cfg cty.Value) tfdiags.Diagnostics {
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return nil
 	}
 	diags := validateOnRemove(cfg)

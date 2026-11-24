@@ -37,7 +37,7 @@ func mysqlDatabaseFrom(v cty.Value) mysql.Database {
 
 func validateMysqlDatabase(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
@@ -234,7 +234,7 @@ func mysqlVariableFrom(v cty.Value) mysql.Variable {
 
 func validateMysqlVariable(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))

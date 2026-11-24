@@ -270,7 +270,7 @@ func winServiceFrom(v cty.Value) windows.Service {
 
 func validateWinService(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	if err := winServiceFrom(cfg).Validate(); err != nil {
@@ -498,7 +498,7 @@ func winUpdateFrom(v cty.Value) windows.Update {
 
 func validateWinUpdate(cfg cty.Value) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
-	if cfg.IsNull() || !cfg.IsWhollyKnown() {
+	if cfg.IsNull() || !settled(cfg) {
 		return diags
 	}
 	if _, err := durationOr(cfg.GetAttr("timeout"), defaultUpdateTimeout); err != nil {
