@@ -339,9 +339,7 @@ func ufwTuples(file string) string {
 // listed before the delete and as it is now differ, or the end; a family
 // whose file didn't change is left alone, so a delete that never happened
 // isn't undone into a second copy. ufw numbers the IPv4 rules first, so an
-// IPv6 rule's number is its place plus the IPv4 count.
-// shortcut: counts tuple lines, which is off when an application profile
-// spans several tuples; count ufw's own numbering if profiles are managed.
+// IPv6 rule's number is its place plus the IPv4 rule count.
 func (u UFWRule) restore(rules [2]string) (string, error) {
 	if err := u.Validate(); err != nil {
 		return "", err
@@ -350,7 +348,17 @@ func (u UFWRule) restore(rules [2]string) (string, error) {
 	// The old listing reaches awk on stdin, from a heredoc in revert.sh, and
 	// ends at a marker line: an environment string or argument is capped at
 	// 128 KiB, which a blocklist of a few thousand rules passes.
-	const place = `awk 's == 0 { if ($0 == "### conn3x end") s = 1; else if ($0 != "") a[++n] = $0; next } /^### tuple/ { c++; if ($0 != a[c]) { print c; f = 1; exit } } END { if (!f && c < n) print "end" }' - `
+	// ufw numbers rules, not tuple lines: an application-profile rule is one
+	// tuple per protocol ("allow Multi" with 80,443/tcp|8080/udp is two), so
+	// consecutive tuples of one profile rule count once. A profile tuple has
+	// the direction in field 12 (fields 10 and 11 are the profile names); a
+	// plain rule's is field 10, with an optional comment= after it.
+	const ufwRuleNumber = `function key(l, f, m) { m = split(l, f, " "); return (m >= 12 && f[12] ~ /^(in|out|fwd)$/) ? f[4] " " f[7] " " f[9] " " f[10] " " f[11] " " f[12] " " f[13] : "" } function num(l, k) { k = key(l); if (k == "" || k != pk) r++; pk = k; return r } `
+	// Old tuples go in a[], with their rule numbers in rn[]. The first
+	// current tuple that differs is where the deleted rule sat, and its rule
+	// number is the place to insert it. A current file that only grew prints
+	// nothing, so nothing is put back.
+	const place = `awk '` + ufwRuleNumber + `s == 0 { if ($0 == "### conn3x end") s = 1; else if ($0 != "") { a[++n] = $0; rn[n] = num($0) }; next } /^### tuple/ { c++; if ($0 != a[c]) { if (c <= n) print rn[c]; f = 1; exit } } END { if (!f && c < n) print "end" }' - `
 	cmds := make([]string, 2)
 	for i, anywhere := range []string{"0.0.0.0/0", "::/0"} {
 		half := u
@@ -359,7 +367,7 @@ func (u UFWRule) restore(rules [2]string) (string, error) {
 		}
 		base := "0"
 		if i == 1 {
-			base = `$(awk '/^### tuple/ { c++ } END { print c + 0 }' ` + ssh.Quote(ufwFiles[0]) + ")"
+			base = `$(awk '` + ufwRuleNumber + `/^### tuple/ { num($0) } END { print r + 0 }' ` + ssh.Quote(ufwFiles[0]) + ")"
 		}
 		cmds[i] = fmt.Sprintf("p=$(%s%s <<'CONN3X_UFW_RULES'\n%s\n### conn3x end\nCONN3X_UFW_RULES\n) && case $p in '') ;; end) %s%s ;; *) %sinsert $((%s + p)) %s ;; esac",
 			place, ssh.Quote(ufwFiles[i]), rules[i], lock, half.Spec(), lock, base, half.Spec())

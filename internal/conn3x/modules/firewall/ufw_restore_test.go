@@ -30,6 +30,12 @@ func TestUFWRestorePosition(t *testing.T) {
 		web6   = "### tuple ### allow any 80 ::/0 any ::/0 in\n"
 		dns6   = "### tuple ### allow any 53 ::/0 any fd00::/8 in\n"
 		tail   = "\n### END RULES ###\nCOMMIT\n"
+		// "ufw allow Multi" with ports=80,443/tcp|8080/udp: one rule, two
+		// tuples per family, as ufw 0.36.2 writes it.
+		multi4 = "### tuple ### allow tcp 80,443 0.0.0.0/0 any 0.0.0.0/0 Multi - in\n### tuple ### allow udp 8080 0.0.0.0/0 any 0.0.0.0/0 Multi - in\n"
+		multi6 = "### tuple ### allow tcp 80,443 ::/0 any ::/0 Multi - in\n### tuple ### allow udp 8080 ::/0 any ::/0 Multi - in\n"
+		// Two plain rules with the same comment are still two rules.
+		noted4 = "### tuple ### allow tcp 80 0.0.0.0/0 any 0.0.0.0/0 in comment=776562\n### tuple ### allow tcp 443 0.0.0.0/0 any 0.0.0.0/0 in comment=776562\n"
 	)
 	ssh22 := UFWRule{Action: "allow", Port: "22/tcp"}
 	// A blocklist big enough that its listing passes the 128 KiB a single
@@ -75,6 +81,12 @@ func TestUFWRestorePosition(t *testing.T) {
 			allow4 + block.String(), "",
 			block.String(), "",
 			"insert 1 allow from 0.0.0.0/0 to any port 22 proto tcp\n"},
+		{"below a profile rule of two tuples", ssh22,
+			multi4 + allow4 + deny4, multi6 + allow6 + deny6,
+			multi4 + deny4, multi6 + deny6,
+			"insert 2 allow from 0.0.0.0/0 to any port 22 proto tcp\ninsert 5 allow from ::/0 to any port 22 proto tcp\n"},
+		{"below two commented rules", ssh22, noted4 + allow4 + deny4, "", noted4 + deny4, "",
+			"insert 3 allow from 0.0.0.0/0 to any port 22 proto tcp\n"},
 		{"never deleted", ssh22, allow4 + deny4, allow6 + deny6, allow4 + deny4, allow6 + deny6, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
