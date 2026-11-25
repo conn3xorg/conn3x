@@ -1,4 +1,4 @@
-Use `container` to keep a container running with Docker or Podman: its image, ports, volumes, networks, environment and restart policy. Each step is one container, by name. The host needs Docker or Podman installed: a `package` step before this one.
+Use `container` to keep a container running with Docker or Podman: its image, ports, volumes, networks, environment, restart policy, user, labels, resource limits and logging. Each step is one container, by name. The host needs Docker or Podman installed: a `package` step before this one.
 
 ## Example usage
 
@@ -31,10 +31,28 @@ step "worker" {
   }
 }
 ```
+
+Run an app behind Traefik as an unprivileged user, with a memory and CPU cap and log files that rotate at 10 MB:
+
+```hcl
+step "app" {
+  container {
+    name        = "app"
+    image       = "ghcr.io/example/app:1.4"
+    user        = "1000:1000"
+    labels      = { "traefik.enable" = "true" }
+    memory      = "512m"
+    cpus        = 1.5
+    log_driver  = "json-file"
+    log_options = { max-size = "10m", max-file = "3" }
+    restart     = "unless-stopped"
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
-**Reading.** On every plan, Conn3x runs `docker container inspect`, or Podman's, and compares the container with the step: its image, published ports, mounts, restart policy, the `command` and `networks` if you set them, and the `env` you set. `inspect` also lists variables the image sets itself, so only the keys in `env` are compared. `in_sync` is true when all of those match and the container is running.
+**Reading.** On every plan, Conn3x runs `docker container inspect`, or Podman's, and compares the container with the step: its image, published ports, mounts, restart policy, the `command`, `networks`, `user`, `memory`, `cpus` and `log_driver` if you set them, and the `env`, `labels` and `log_options` keys you set. `inspect` also lists variables the image sets itself, so only the keys in `env` are compared. `in_sync` is true when all of those match and the container is running.
 
 **Images.** Write the image in full, such as `docker.io/library/nginx:1.30`. Docker keeps a short name as written, Podman stores the full reference, and Conn3x compares the two as the same when the short name means Docker Hub. A short name that Podman resolves to another registry shows as a difference on every plan. A tag that now points at a newer image doesn't change anything: the image as written is what's compared. To roll forward, change the tag.
 
@@ -44,13 +62,15 @@ step "worker" {
 
 **Restarts after a reboot.** Docker's daemon starts containers again by their `restart` policy. Podman has no daemon, so with `restart` set to `always` or `unless-stopped`, Conn3x enables `podman-restart.service`, as root or with `systemctl --user` otherwise. If it can't, the apply says so.
 
-**Rules.** `name` starts with a letter or digit and holds letters, digits and `_ . -`. Each port is `host:container`, optionally with an address in front and `/tcp`, `/udp` or `/sctp` after. Each volume is `source:destination`, where the source is an absolute host path or a volume name, with options from `ro`, `rw`, `z` and `Z`. `env` keys are variable names, and values can't hold line breaks.
+**Rules.** `name` starts with a letter or digit and holds letters, digits and `_ . -`. Each port is `host:container`, optionally with an address in front and `/tcp`, `/udp` or `/sctp` after. Each volume is `source:destination`, where the source is an absolute host path or a volume name, with options from `ro`, `rw`, `z` and `Z`. `env` keys are variable names, and values can't hold line breaks. `user` is a name or id, optionally with `:group` after. Label keys can't hold `=`, spaces or control characters, log option keys are option names such as `max-size`, and neither kind of value can hold a line break.
 
 **Changes.** Changing anything but `name` recreates the container. Changing `name` replaces the step, and `on_remove` decides what happens to the old container.
 
 **Networks.** `networks` joins networks by name, such as one a [`container_network`](container_network.md) step made: the first as the container starts, the rest straight after. Unset, the container is on the engine's default network, and which one isn't compared. `host` and `none` are network modes, not networks, and this step doesn't set them. Images and named volumes have steps of their own too: [`container_image`](container_image.md) and [`container_volume`](container_volume.md). A whole Compose file is a [`compose_project`](compose_project.md) step.
 
-**Not yet.** Health checks and resource limits aren't settings of this step.
+**Limits and logging.** `memory` is a size such as `512m` or `2g`, read in powers of 1024 as `docker run --memory` reads it, and compared in bytes. `cpus` is compared as the engine stores it, in billionths of a CPU. Both engines add labels from the image, so only the label keys you set are compared, and a key the container lacks or holds with another value is drift. `log_options` needs `log_driver`. Docker shows every log option, so each key you set is compared. Podman shows only `path`, `tag` and `max-size`, so a hand change to another option, such as `max-file`, doesn't show as drift on Podman. Podman also takes `json-file` as another name for `k8s-file`, and Conn3x compares the two as the same there. A hand change such as `docker update --memory 256m app` shows as drift, and apply recreates the container with the step's settings. Removing one of these arguments from the step changes nothing until something else recreates the container.
+
+**Not yet.** Health checks, `privileged`, capabilities and devices aren't settings of this step.
 
 ## Removal
 
@@ -58,4 +78,4 @@ When you delete a `container` step, `on_remove` decides what happens on the host
 
 ## From Ansible
 
-`conn3x convert ansible` turns `community.docker.docker_container` and `containers.podman.podman_container` tasks with `state: started` into `container` steps, with `engine` set to match. `published_ports`, `publish` and `ports` become `ports`; `volumes` and `volume` become `volumes`; `restart_policy` becomes `restart`; `env` and `command` carry over; Docker's `networks`, each with only a `name`, and Podman's `network` become `networks`. A `command` written as one string with quotes or shell characters, any other `state`, and arguments the step doesn't have, such as `healthcheck` or a network's `aliases`, stay a TODO.
+`conn3x convert ansible` turns `community.docker.docker_container` and `containers.podman.podman_container` tasks with `state: started` into `container` steps, with `engine` set to match. `published_ports`, `publish` and `ports` become `ports`; `volumes` and `volume` become `volumes`; `restart_policy` becomes `restart`; `env`, `command`, `user`, `memory`, `cpus` and `log_driver` carry over; Docker's `labels` and `log_options`, and Podman's `label` and `log_opt`, become `labels` and `log_options`, with Podman's `max_size` written as `max-size`, the option it passes; `memory: "0"` and `cpus: 0`, which Ansible takes as no limit, are left out; Docker's `networks`, each with only a `name`, and Podman's `network` become `networks`. A `command` written as one string with quotes or shell characters, any other `state`, and arguments the step doesn't have, such as `healthcheck`, `privileged` or a network's `aliases`, stay a TODO. So does a `memory` that isn't a size, a `cpus` that isn't a number, and `log_options` without `log_driver`.

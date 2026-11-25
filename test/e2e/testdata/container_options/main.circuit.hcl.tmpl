@@ -1,0 +1,40 @@
+circuit "app" {
+  hosts = {
+    box = { address = "127.0.0.1", port = {{.PortA}} }
+  }
+
+  ssh {
+    user             = "root"
+    private_key_file = "{{.Key}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "engine" {
+    package {
+      name = "{{.Package}}"
+    }
+  }
+
+{{- if eq .Engine "docker"}}
+  step "dockerd" {
+    service {
+      name  = "docker"
+      state = "started"
+    }
+  }
+{{end}}
+  step "app" {
+    container {
+      name        = "app"
+      image       = "docker.io/library/busybox:1.37"
+      command     = ["sleep", "3600"]
+      engine      = "{{.Engine}}"
+      user        = "1000:1000"
+      labels      = { "traefik.enable" = "true" }
+      memory      = "512m"
+      cpus        = 1.5
+      log_driver  = "{{.LogDriver}}"
+      log_options = { max-size = "10m" }
+    }
+  }
+}

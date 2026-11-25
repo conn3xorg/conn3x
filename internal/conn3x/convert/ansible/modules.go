@@ -3041,15 +3041,52 @@ func containerModule(engine string, keys ...string) func(*input) ([]step, string
 				c.Command = in.list("command")
 			}
 		}
-		if n, ok := in.args["env"]; ok {
-			in.used["env"] = true
-			c.Env = map[string]string{}
-			for k, v := range mapping(n) {
-				if v.Kind != yaml.ScalarNode {
-					return nil, "sets env " + k + " to something other than one value"
+		// strMap reads a map of single values under the first of keys set;
+		// the rest are its aliases.
+		strMap := func(keys ...string) (map[string]string, string) {
+			for _, key := range keys {
+				n, ok := in.args[key]
+				if !ok {
+					continue
 				}
-				c.Env[k] = in.render("env", v.Value)
+				in.used[key] = true
+				out := map[string]string{}
+				for k, v := range mapping(n) {
+					if v.Kind != yaml.ScalarNode {
+						return nil, "sets " + key + " " + k + " to something other than one value"
+					}
+					out[k] = in.render(key, v.Value)
+				}
+				return out, ""
 			}
+			return nil, ""
+		}
+		var why string
+		if c.Env, why = strMap("env"); why != "" {
+			return nil, why
+		}
+		if c.Labels, why = strMap("labels", "label"); why != "" {
+			return nil, why
+		}
+		if c.LogOptions, why = strMap("log_options", "log_opt"); why != "" {
+			return nil, why
+		}
+		if v, ok := c.LogOptions["max_size"]; ok && engine == "podman" {
+			// podman_container writes max_size as --log-opt max-size.
+			delete(c.LogOptions, "max_size")
+			c.LogOptions["max-size"] = v
+		}
+		c.User, c.LogDriver = in.str("user"), in.str("log_driver")
+		// Ansible's memory "0" and cpus 0 mean no limit, as unset does.
+		if c.Memory = in.str("memory"); c.Memory == "0" {
+			c.Memory = ""
+		}
+		if v := in.str("cpus"); v != "" {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return nil, fmt.Sprintf("sets cpus %q, which isn't a number", v)
+			}
+			c.CPUs = f
 		}
 		// Docker's networks are maps; Podman's network is a list of names.
 		if n, ok := in.args["networks"]; ok {
@@ -3085,16 +3122,30 @@ func containerModule(engine string, keys ...string) func(*input) ([]step, string
 		strs("volumes", c.Volumes)
 		strs("command", c.Command)
 		strs("networks", c.Networks)
-		if len(c.Env) > 0 {
+		mapAttr := func(key string, m map[string]string) {
+			if len(m) == 0 {
+				return
+			}
 			vals := map[string]cty.Value{}
-			for k, v := range c.Env {
+			for k, v := range m {
 				vals[k] = cty.StringVal(v)
 			}
-			attrs = append(attrs, attr{key: "env", val: cty.MapVal(vals)})
+			attrs = append(attrs, attr{key: key, val: cty.MapVal(vals)})
 		}
+		mapAttr("env", c.Env)
 		if c.Restart != "" {
 			attrs = append(attrs, s("restart", c.Restart))
 		}
+		for _, kv := range []struct{ key, val string }{{"user", c.User}, {"memory", c.Memory}, {"log_driver", c.LogDriver}} {
+			if kv.val != "" {
+				attrs = append(attrs, s(kv.key, kv.val))
+			}
+		}
+		if c.CPUs > 0 {
+			attrs = append(attrs, attr{key: "cpus", val: cty.NumberFloatVal(c.CPUs)})
+		}
+		mapAttr("labels", c.Labels)
+		mapAttr("log_options", c.LogOptions)
 		return one("container", attrs)
 	}
 }

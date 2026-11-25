@@ -11,9 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
@@ -31,6 +34,14 @@ type Container struct {
 	Restart  string // "no" when unset
 	Command  []string
 	Networks []string // the engine's default network when empty
+
+	// These are compared only when set, as Env is.
+	User       string            // user[:group], by name or id
+	Labels     map[string]string // compared by key: the image adds its own
+	Memory     string            // such as 512m, as docker run --memory takes it
+	CPUs       float64           // 0 for no limit
+	LogDriver  string
+	LogOptions map[string]string // compared by key; needs LogDriver
 }
 
 var (
@@ -41,7 +52,57 @@ var (
 	envKeyRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	restarts  = []string{"no", "always", "unless-stopped", "on-failure"}
 	volumeOpt = []string{"ro", "rw", "z", "Z"}
+	userRe    = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?$`)
+	labelRe   = regexp.MustCompile(`^[^=\s\x00-\x1f\x7f]+$`)
+	logOptRe  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+	// sizeRe is the size format Docker and Podman both parse (go-units).
+	sizeRe = regexp.MustCompile(`^(\d+(?:\.\d+)?) ?([kKmMgGtTpP])?[iI]?[bB]?$`)
 )
+
+// sizeBytes reads a size the way docker run --memory does, in powers of
+// 1024, or with decimal in powers of 1000 as Podman reads --log-opt
+// max-size. ok is false when s isn't a size.
+func sizeBytes(s string, base float64) (n int64, ok bool) {
+	m := sizeRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	if m[2] != "" {
+		f *= math.Pow(base, float64(strings.Index("kmgtp", strings.ToLower(m[2]))+1))
+	}
+	return int64(f), true
+}
+
+// humanSize is how Podman's inspect shows a log max-size: go-units'
+// HumanSize, four significant digits in powers of 1000.
+func humanSize(n int64) string {
+	f, units := float64(n), []string{"B", "kB", "MB", "GB", "TB", "PB"}
+	i := 0
+	for f >= 1000 && i < len(units)-1 {
+		f /= 1000
+		i++
+	}
+	return strconv.FormatFloat(f, 'g', 4, 64) + units[i]
+}
+
+// cpuArg is CPUs as --cpus takes it.
+func (c Container) cpuArg() string { return strconv.FormatFloat(c.CPUs, 'f', -1, 64) }
+
+func checkMap(what string, m map[string]string, key *regexp.Regexp, keyRule string) error {
+	for k, v := range m {
+		if !key.MatchString(k) {
+			return fmt.Errorf("%s key %q must %s", what, k, keyRule)
+		}
+		if strings.ContainsAny(v, "\n\r\x00") {
+			return fmt.Errorf("%s %s can't hold a line break", what, k)
+		}
+	}
+	return nil
+}
 
 func (c Container) restart() string {
 	if c.Restart == "" {
@@ -88,6 +149,27 @@ func (c Container) Validate() error {
 	if !slices.Contains(restarts, c.restart()) {
 		return fmt.Errorf("restart %q must be one of %s", c.Restart, strings.Join(restarts, ", "))
 	}
+	if c.User != "" && !userRe.MatchString(c.User) {
+		return fmt.Errorf("user %q must be a user name or id, optionally with :group after, such as 1000:1000", c.User)
+	}
+	if err := checkMap("labels", c.Labels, labelRe, "be one or more characters without =, spaces or control characters, such as traefik.enable"); err != nil {
+		return err
+	}
+	if n, ok := sizeBytes(c.Memory, 1024); c.Memory != "" && (!ok || n <= 0) {
+		return fmt.Errorf("memory %q must be a size, such as 512m or 2g: a number with b, k, m, g, t or p after", c.Memory)
+	}
+	if c.CPUs < 0 || math.IsNaN(c.CPUs) || math.IsInf(c.CPUs, 0) {
+		return fmt.Errorf("cpus %s can't be below 0: it's how many CPUs the container can use, such as 1.5", c.cpuArg())
+	}
+	if c.LogDriver != "" && !driverRe.MatchString(c.LogDriver) {
+		return fmt.Errorf("log_driver %q must name a logging driver, such as json-file, journald or local", c.LogDriver)
+	}
+	if len(c.LogOptions) > 0 && c.LogDriver == "" {
+		return errors.New("log_options needs log_driver: the options belong to one driver")
+	}
+	if err := checkMap("log_options", c.LogOptions, logOptRe, "be an option name, such as max-size"); err != nil {
+		return err
+	}
 	for i, n := range c.Networks {
 		if !nameRe.MatchString(n) || n == "host" || n == "none" {
 			return fmt.Errorf("networks %q must name a network, starting with a letter or digit and holding only letters, digits and _ . -; host and none are network modes, which this step doesn't set", n)
@@ -126,20 +208,38 @@ type Actual struct {
 	Restart  string
 	Command  []string
 	Networks []string // sorted
+
+	User       string
+	Labels     map[string]string // the image's as well as the container's
+	Memory     int64             // bytes, 0 for no limit
+	NanoCPUs   int64             // 0 for no limit
+	LogDriver  string
+	LogOptions map[string]string // what the engine shows of them
 }
 
 // inspected is the part of inspect's output Conn3x reads; Docker and
 // Podman agree on these fields.
 type inspected struct {
 	Config struct {
-		Image string
-		Env   []string
-		Cmd   []string
+		Image  string
+		Env    []string
+		Cmd    []string
+		User   string
+		Labels map[string]string
 	}
 	State      struct{ Running bool }
 	HostConfig struct {
 		PortBindings  map[string][]struct{ HostIp, HostPort string }
 		RestartPolicy struct{ Name string }
+		Memory        int64
+		NanoCpus      int64
+		// Docker shows options in Config; Podman leaves it null and shows
+		// path, tag and max-size as fields of their own.
+		LogConfig struct {
+			Type            string
+			Config          map[string]string
+			Path, Tag, Size string
+		}
 	}
 	Mounts []struct {
 		Type, Name, Source, Destination string
@@ -200,6 +300,18 @@ func Read(ctx context.Context, r modules.Runner, c Container) (Actual, error) {
 		a.Networks = append(a.Networks, n)
 	}
 	sort.Strings(a.Networks)
+	a.User, a.Labels, a.Memory, a.NanoCPUs = in.Config.User, in.Config.Labels, in.HostConfig.Memory, in.HostConfig.NanoCpus
+	lc := in.HostConfig.LogConfig
+	a.LogDriver, a.LogOptions = lc.Type, lc.Config
+	if a.LogOptions == nil {
+		a.LogOptions = map[string]string{}
+		for k, v := range map[string]string{"path": lc.Path, "tag": lc.Tag, "max-size": lc.Size} {
+			// Podman shows -1B for no max-size.
+			if v != "" && v != "-1B" {
+				a.LogOptions[k] = v
+			}
+		}
+	}
 	a.Restart = in.HostConfig.RestartPolicy.Name
 	if a.Restart == "" {
 		a.Restart = "no"
@@ -298,7 +410,63 @@ func (c Container) Differences(a Actual) []string {
 	if want := slices.Sorted(slices.Values(c.Networks)); len(want) > 0 && !slices.Equal(a.Networks, want) {
 		out = append(out, "its networks are "+strings.Join(a.Networks, ", "))
 	}
+	if c.User != "" && a.User != c.User {
+		out = append(out, fmt.Sprintf("its user is %q", a.User))
+	}
+	if differ(c.Labels, a.Labels, nil) {
+		out = append(out, "its labels differ")
+	}
+	if want, _ := sizeBytes(c.Memory, 1024); c.Memory != "" && a.Memory != want {
+		out = append(out, fmt.Sprintf("its memory limit is %d bytes", a.Memory))
+	}
+	if c.CPUs > 0 && a.NanoCPUs != int64(math.Round(c.CPUs*1e9)) {
+		out = append(out, fmt.Sprintf("its cpus limit is %s", strconv.FormatFloat(float64(a.NanoCPUs)/1e9, 'f', -1, 64)))
+	}
+	if c.LogDriver != "" && logDriver(a.Engine, a.LogDriver) != logDriver(a.Engine, c.LogDriver) {
+		out = append(out, "its log driver is "+a.LogDriver)
+	}
+	if a.Engine == "podman" {
+		// Podman shows only path, tag and max-size, the last rounded.
+		if differ(c.LogOptions, a.LogOptions, func(k, v string) (string, bool) {
+			if k == "max-size" {
+				n, ok := sizeBytes(v, 1000)
+				return humanSize(n), ok
+			}
+			return v, k == "path" || k == "tag"
+		}) {
+			out = append(out, "its log options differ")
+		}
+	} else if differ(c.LogOptions, a.LogOptions, nil) {
+		out = append(out, "its log options differ")
+	}
 	return out
+}
+
+// differ reports whether any key of want has another value in got. shown,
+// when set, is the value the engine shows for one wanted, and false for a
+// key it doesn't show.
+func differ(want, got map[string]string, shown func(k, v string) (string, bool)) bool {
+	for k, v := range want {
+		if shown != nil {
+			var ok bool
+			if v, ok = shown(k, v); !ok {
+				continue
+			}
+		}
+		if g, ok := got[k]; !ok || g != v {
+			return true
+		}
+	}
+	return false
+}
+
+// logDriver is a driver name as the engine means it: Podman takes
+// json-file as another name for k8s-file.
+func logDriver(engine, d string) string {
+	if engine == "podman" && d == "json-file" {
+		return "k8s-file"
+	}
+	return d
 }
 
 // InSync reports whether the container exists as c says, and runs.
@@ -331,6 +499,24 @@ func Apply(ctx context.Context, r modules.Runner, c Container) error {
 		}
 		if len(c.Networks) > 0 {
 			args = append(args, "--network", c.Networks[0])
+		}
+		if c.User != "" {
+			args = append(args, "--user", c.User)
+		}
+		for _, k := range slices.Sorted(maps.Keys(c.Labels)) {
+			args = append(args, "--label", k+"="+c.Labels[k])
+		}
+		if c.Memory != "" {
+			args = append(args, "--memory", c.Memory)
+		}
+		if c.CPUs > 0 {
+			args = append(args, "--cpus", c.cpuArg())
+		}
+		if c.LogDriver != "" {
+			args = append(args, "--log-driver", c.LogDriver)
+		}
+		for _, k := range slices.Sorted(maps.Keys(c.LogOptions)) {
+			args = append(args, "--log-opt", k+"="+c.LogOptions[k])
 		}
 		if len(c.Env) > 0 {
 			// Values on the command line would show in the host's process list.

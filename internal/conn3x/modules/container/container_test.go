@@ -159,3 +159,118 @@ func TestPodmanRestartService(t *testing.T) {
 		t.Fatalf("%v, ran %q", err, f.ran)
 	}
 }
+
+// Shapes taken from docker 29.8 and podman 6.0 inspect of a container run
+// with --user 1000:1000 --label traefik.enable=true --memory 512m --cpus 1.5
+// --log-driver json-file --log-opt max-size=10m, on an image with a label
+// of its own.
+const dockerOptions = `docker
+[{"Config":{"Image":"nginx:1.27","User":"1000:1000","Labels":{"traefik.enable":"true","maintainer":"NGINX"}},
+  "State":{"Running":true},
+  "HostConfig":{"RestartPolicy":{"Name":"no"},"Memory":536870912,"NanoCpus":1500000000,"LogConfig":{"Type":"json-file","Config":{"max-size":"10m"}}}}]
+`
+
+const podmanOptions = `podman
+[{"Config":{"Image":"docker.io/library/nginx:1.27","User":"1000:1000","Labels":{"traefik.enable":"true","maintainer":"NGINX"}},
+  "State":{"Running":true},
+  "HostConfig":{"RestartPolicy":{"Name":"no"},"Memory":536870912,"NanoCpus":1500000000,"LogConfig":{"Type":"k8s-file","Config":null,"Path":"/var/lib/containers/x/ctr.log","Tag":"","Size":"10MB"}}}]
+`
+
+var opts = Container{Name: "web", Image: "nginx:1.27", User: "1000:1000", Labels: map[string]string{"traefik.enable": "true"}, Memory: "512m", CPUs: 1.5, LogDriver: "json-file", LogOptions: map[string]string{"max-size": "10m"}}
+
+func TestOptionsInSyncBothEngines(t *testing.T) {
+	for engine, out := range map[string]string{"docker": dockerOptions, "podman": podmanOptions} {
+		a, err := Read(context.Background(), &fakeEngine{inspect: out}, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !opts.InSync(a) {
+			t.Errorf("%s: differences %v", engine, opts.Differences(a))
+		}
+		// A step that sets none of them leaves whatever the container has.
+		if plain := (Container{Name: "web", Image: "nginx:1.27"}); !plain.InSync(a) {
+			t.Errorf("%s: unset options compared: %v", engine, plain.Differences(a))
+		}
+		changed := opts
+		changed.User, changed.Memory, changed.CPUs, changed.LogDriver = "0", "256m", 2, "local"
+		changed.Labels = map[string]string{"traefik.enable": "false"}
+		changed.LogOptions = map[string]string{"max-size": "20m"}
+		got := strings.Join(changed.Differences(a), "; ")
+		for _, want := range []string{`its user is "1000:1000"`, "its labels differ", "its memory limit is 536870912 bytes", "its cpus limit is 1.5", "its log driver is", "its log options differ"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: missing %q in %q", engine, want, got)
+			}
+		}
+		missing := opts
+		missing.Labels = map[string]string{"traefik.http.routers.app.rule": "Host(`a`)"}
+		if len(missing.Differences(a)) != 1 {
+			t.Errorf("%s: a label the container lacks is drift: %v", engine, missing.Differences(a))
+		}
+	}
+	// Podman doesn't show max-file, so it isn't compared there.
+	a, _ := Read(context.Background(), &fakeEngine{inspect: podmanOptions}, opts)
+	unseen := opts
+	unseen.LogOptions = map[string]string{"max-size": "10m", "max-file": "3"}
+	if !unseen.InSync(a) {
+		t.Errorf("podman: %v", unseen.Differences(a))
+	}
+}
+
+func TestSizes(t *testing.T) {
+	for in, want := range map[string]int64{"512m": 512 << 20, "1g": 1 << 30, "1.5G": 3 << 29, "100": 100, "64 MiB": 64 << 20, "2kb": 2048} {
+		if got, ok := sizeBytes(in, 1024); !ok || got != want {
+			t.Errorf("sizeBytes(%q) = %d, %v, want %d", in, got, ok, want)
+		}
+	}
+	// What podman 6.0 inspect showed for --log-opt max-size=...
+	for in, want := range map[string]string{"10m": "10MB", "1500k": "1.5MB", "1g": "1GB", "12345": "12.35kB", "10mb": "10MB"} {
+		n, _ := sizeBytes(in, 1000)
+		if got := humanSize(n); got != want {
+			t.Errorf("humanSize(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestValidateOptions(t *testing.T) {
+	if err := opts.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []Container{
+		{User: "root; id"},
+		{User: "1000:"},
+		{Labels: map[string]string{"a=b": "c"}},
+		{Labels: map[string]string{"a b": "c"}},
+		{Labels: map[string]string{"a": "x\ny"}},
+		{Memory: "lots"},
+		{Memory: "0"},
+		{Memory: "-1g"},
+		{CPUs: -1},
+		{LogDriver: "json file"},
+		{LogOptions: map[string]string{"max-size": "10m"}},
+		{LogDriver: "local", LogOptions: map[string]string{"max size": "10m"}},
+	} {
+		bad.Name, bad.Image = "web", "nginx"
+		if bad.Validate() == nil {
+			t.Errorf("%+v should be refused", bad)
+		}
+	}
+}
+
+func TestApplyPassesOptions(t *testing.T) {
+	f := &fakeEngine{inspect: "docker\n[]\nmissing\n", after: dockerOptions}
+	o := opts
+	o.Labels = map[string]string{"traefik.enable": "true", "a.b": "c d"}
+	f.after = strings.Replace(dockerOptions, `"maintainer"`, `"a.b":"c d","maintainer"`, 1)
+	if err := Apply(context.Background(), f, o); err != nil {
+		t.Fatal(err)
+	}
+	want := "'--user' '1000:1000' '--label' 'a.b=c d' '--label' 'traefik.enable=true' '--memory' '512m' '--cpus' '1.5' '--log-driver' 'json-file' '--log-opt' 'max-size=10m' '--' 'nginx:1.27'"
+	if !strings.Contains(f.ran[1], want) {
+		t.Errorf("run = %s\nwant %s", f.ran[1], want)
+	}
+	// Any of them changed by hand recreates the container.
+	f = &fakeEngine{inspect: strings.Replace(dockerOptions, "536870912", "268435456", 1), after: f.after}
+	if err := Apply(context.Background(), f, o); err != nil || !strings.Contains(f.ran[1], "rm -f -- 'web'") {
+		t.Fatalf("a new memory limit should recreate: %v, ran %q", err, f.ran)
+	}
+}

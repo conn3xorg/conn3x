@@ -128,3 +128,65 @@ func TestConvertContainerObjects(t *testing.T) {
 		}
 	}
 }
+
+// user, labels, memory, cpus and log options map to the step's arguments
+// under both modules' names; privileged stays for review (#1352).
+func TestConvertContainerOptions(t *testing.T) {
+	res := convertString(t, `- hosts: app
+  tasks:
+    - name: Run the app
+      community.docker.docker_container:
+        name: app
+        image: ghcr.io/example/app:1.4
+        user: "1000:1000"
+        labels: {traefik.enable: "true"}
+        memory: 512m
+        cpus: 1.5
+        log_driver: json-file
+        log_options: {max-size: 10m}
+    - containers.podman.podman_container:
+        name: worker
+        image: ghcr.io/example/worker:2.4.1
+        label: {app: worker}
+        cpus: "2"
+        memory: "0"
+        log_driver: k8s-file
+        log_opt: {max_size: 5mb, path: /var/log/worker.json}
+`)
+	hcl := string(res.HCL)
+	for _, want := range []string{`user       = "1000:1000"`, `memory     = "512m"`, "cpus       = 1.5", `log_driver = "json-file"`, `"traefik.enable" = "true"`, `max-size = "10m"`,
+		`app = "worker"`, "cpus       = 2", `log_driver = "k8s-file"`, `max-size = "5mb"`, `path     = "/var/log/worker.json"`} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %s:\n%s", want, hcl)
+		}
+	}
+	if strings.Count(hcl, "memory") != 1 || strings.Contains(hcl, "max_size") {
+		t.Errorf("memory 0 is no limit, and podman's max_size is max-size:\n%s", hcl)
+	}
+	if res.Converted != 2 || len(res.Review) != 0 {
+		t.Errorf("converted %d, review %v", res.Converted, res.Review)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.circuit.hcl"), res.HCL, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, diags := configs.NewParser(afero.NewOsFs()).LoadConfigDir(dir); diags.HasErrors() {
+		t.Errorf("the circuit doesn't load: %s\n%s", diags, hcl)
+	}
+
+	for task, want := range map[string]string{
+		"docker_container: { name: web, image: nginx, privileged: yes }":                           "privileged",
+		"docker_container: { name: web, image: nginx, memory: lots }":                              `memory "lots" must be a size`,
+		"podman_container: { name: web, image: nginx, cpus: many }":                                `sets cpus "many", which isn't a number`,
+		"docker_container: { name: web, image: nginx, user: 'root; id' }":                          "user",
+		"docker_container: { name: web, image: nginx, labels: { 'a b': c } }":                      `labels key "a b"`,
+		"docker_container: { name: web, image: nginx, labels: { a: [b] } }":                        "sets labels a to something other than one value",
+		"docker_container: { name: web, image: nginx, log_options: { max-size: 10m } }":            "log_options needs log_driver",
+		"podman_container: { name: web, image: nginx, log_driver: k8s-file, log_opt: { x: [1] } }": "sets log_opt x",
+	} {
+		res := convertString(t, "- hosts: app\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, want) {
+			t.Errorf("%s: converted %d, review %+v, want %q", task, res.Converted, res.Review, want)
+		}
+	}
+}
