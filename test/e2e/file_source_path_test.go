@@ -65,3 +65,31 @@ func TestFileSourcePath(t *testing.T) {
 		})
 	}
 }
+
+// A copy whose mode drifted, behind an earlier step that rewrites its
+// source in the same apply, copies the new source instead of failing
+// with OpenTofu's "inconsistent result" (#1376).
+func TestFileSourcePathEarlierStep(t *testing.T) {
+	h := startHost(t, "ubuntu2404")
+	w := newWorkdir(t, "file_source_path_earlier")
+	vars := fileVars{Content: `listen = 80\n`, Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts}
+	w.writeAs("main.circuit.hcl", vars)
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("plan after apply:\n%s", out)
+	}
+
+	h.exec("", "chmod", "0600", "/etc/app/app.conf")
+	vars.Content = `listen = 81\n`
+	w.writeAs("main.circuit.hcl", vars)
+	if out, code := w.conn3x("apply", "-auto-approve", "-no-color"); code != 0 {
+		t.Fatalf("apply exited %d:\n%s", code, out)
+	}
+	if got := h.exec("", "sh", "-c", "cat /etc/app/app.conf; stat -c %a /etc/app/app.conf"); got != "listen = 81\n640\n" {
+		t.Fatalf("after apply: %q", got)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("plan after the second apply:\n%s", out)
+	}
+}

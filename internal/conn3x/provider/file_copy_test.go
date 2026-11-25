@@ -125,3 +125,43 @@ func TestFileSourcePathValidate(t *testing.T) {
 		}
 	}
 }
+
+// A copy that applies only for its mode still copies the source again, so
+// its hashes plan unknown: an earlier step in the same apply may rewrite
+// the source, and a known plan would be an inconsistent result (#1376).
+func TestFileSourcePathModeDriftPlansHashesUnknown(t *testing.T) {
+	f := newFileTest(t)
+	src := filepath.Join(f.server.Dir, "motd.sample")
+	if err := os.WriteFile(src, []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := f.config(map[string]cty.Value{"source_path": cty.StringVal(src), "mode": cty.StringVal("0640")})
+	null := cty.NullVal(cfg.Type())
+	state := f.apply(null, f.plan(null, cfg).PlannedState, cfg)
+	read := f.read(state)
+	if p := f.plan(read, cfg).PlannedState; !p.RawEquals(read) {
+		t.Fatalf("an in-sync copy planned a change:\n%#v", p)
+	}
+
+	if err := os.Chmod(f.path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	read = f.read(state)
+	planned := f.plan(read, cfg).PlannedState
+	if planned.GetAttr("sha256").IsKnown() || planned.GetAttr("source_sha256").IsKnown() {
+		t.Fatalf("mode drift planned known hashes: %#v", planned)
+	}
+	// The earlier step.
+	if err := os.WriteFile(src, []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	applied := f.apply(read, planned, cfg)
+	for name, want := range planned.AsValueMap() {
+		if want.IsWhollyKnown() && !want.RawEquals(applied.GetAttr(name)) {
+			t.Errorf("%s planned %#v, applied %#v", name, want, applied.GetAttr(name))
+		}
+	}
+	if applied.GetAttr("sha256").AsString() != sum("v2\n") || applied.GetAttr("mode").AsString() != "0640" {
+		t.Fatalf("after apply: %#v", applied)
+	}
+}

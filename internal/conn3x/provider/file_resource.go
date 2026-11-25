@@ -210,7 +210,15 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 			vals["sha256"] = cty.UnknownVal(cty.String)
 		}
 	}
-	return finishFilePlan(req, resp, vals)
+	resp = finishFilePlan(req, resp, vals)
+	// A copy that applies for any reason, even only its mode, copies the
+	// source again, which an earlier step in the same apply may have
+	// changed: its hashes can't be promised.
+	if !vals["source_path"].IsNull() && known(vals["sha256"]) && !resp.PlannedState.RawEquals(req.PriorState) {
+		vals["sha256"], vals["source_sha256"] = cty.UnknownVal(cty.String), cty.UnknownVal(cty.String)
+		resp.PlannedState = cty.ObjectVal(vals)
+	}
+	return resp
 }
 
 // planCopy plans sha256 and source_sha256 for a copy of src. The last
