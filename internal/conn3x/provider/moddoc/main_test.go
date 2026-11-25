@@ -101,9 +101,10 @@ func TestMarksBothSidesOfAPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	for page, names := range map[string][]string{
-		"file":      {"content", "content_wo", "source_path"},
-		"firewalld": {"port", "service"},
-		"wait_for":  {"path", "port", "url"},
+		"file":         {"content", "content_wo", "source_path"},
+		"windows_file": {"content", "content_wo", "source_path"},
+		"firewalld":    {"port", "service"},
+		"wait_for":     {"path", "port", "url"},
 	} {
 		got, err := os.ReadFile(filepath.Join(dir, page+".md"))
 		if err != nil {

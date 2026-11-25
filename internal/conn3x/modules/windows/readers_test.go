@@ -647,6 +647,11 @@ func TestFileWritesSend(t *testing.T) {
 	if err := ApplyFile(ctx, f, `C:\x`, []byte("hi"), SecretEntries, nil); err != nil || args(f, 1)["content"] != "aGk=" || args(f, 1)["exact"] != true {
 		t.Errorf("file: %v, sent %v", err, args(f, 1))
 	}
+	// A copy sends the source's path and no content.
+	c := &fake{answers: []map[string]any{ok(nil)}}
+	if err := ApplyFileCopy(ctx, c, `C:\x`, `C:\s.sample`, nil); err != nil || args(c, 0)["source"] != `C:\s.sample` || args(c, 0)["content"] != "" || args(c, 0)["exact"] != false {
+		t.Errorf("copy: %v, sent %v", err, args(c, 0))
+	}
 	// Inheritance left as it is sends none.
 	if err := ApplyACL(ctx, f, ACL{Path: `C:\x`}, false); err != nil {
 		t.Fatal(err)

@@ -114,7 +114,6 @@ func TestWindowsLeftForAPerson(t *testing.T) {
 		"removes a path":                `win_file: {path: 'C:\x', state: absent}`,
 		"only checks or touches":        `win_file: {path: 'C:\x', state: touch}`,
 		"into a folder":                 `win_copy: {src: a, dest: 'C:\dir\'}`,
-		"remote_src":                    `win_copy: {src: 'C:\a', dest: 'C:\b', remote_src: true}`,
 		"force: no":                     `win_copy: {dest: 'C:\b', content: x, force: no}`,
 		"Jinja template":                `win_template: {src: a.j2, dest: 'C:\b'}`,
 		"the right":                     `win_acl: {path: 'C:\x', user: u, rights: 'Synchronize', type: allow}`,
@@ -424,6 +423,44 @@ func TestWinUpdates(t *testing.T) {
 		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
 		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
 			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}
+
+// win_copy with remote_src copies a file already on the host, which is a
+// windows_file step's source_path; a folder and a relative src stay for
+// review (#1377).
+func TestConvertWinCopyRemoteSrc(t *testing.T) {
+	for _, c := range []struct {
+		task, review string
+		want         []string
+	}{
+		{task: `win_copy: {src: 'C:\app\app.conf.sample', dest: 'C:\app\app.conf', remote_src: true}`,
+			want: []string{"windows_file {", `path        = "C:\\app\\app.conf"`, `source_path = "C:\\app\\app.conf.sample"`}},
+		{task: `win_copy: {src: 'C:/opt/a.ini', dest: 'C:\a.ini', remote_src: yes, backup: yes}`, want: []string{`source_path = "C:/opt/a.ini"`}},
+		{task: `win_copy: {content: x, dest: 'C:\a.ini', remote_src: false}`, want: []string{`content = "x"`}},
+		{task: `win_copy: {src: 'C:\opt\conf\', dest: 'C:\conf', remote_src: true}`, review: "copies a folder already on the host"},
+		{task: `win_copy: {src: 'C:/opt/conf/', dest: 'C:\conf', remote_src: true}`, review: "copies a folder already on the host"},
+		{task: `win_copy: {src: a.ini, dest: 'C:\a.ini', remote_src: true}`, review: "isn't a full path on a local drive"},
+		{task: `win_copy: {src: '\\srv\share\a.ini', dest: 'C:\a.ini', remote_src: true}`, review: "isn't a full path on a local drive"},
+		{task: `win_copy: {src: 'C:\a.ini', dest: 'C:\b.ini', remote_src: true, force: no}`, review: "sets force: no"},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+c.task+"\n")
+		hcl := string(res.HCL)
+		if c.review != "" {
+			if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, c.review) {
+				t.Errorf("%s: converted %d, review %+v, want review %q", c.task, res.Converted, res.Review, c.review)
+			}
+			continue
+		}
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v:\n%s", c.task, res.Converted, res.Review, hcl)
+			continue
+		}
+		for _, w := range c.want {
+			if !strings.Contains(hcl, w) {
+				t.Errorf("%s: missing %q in:\n%s", c.task, w, hcl)
+			}
 		}
 	}
 }

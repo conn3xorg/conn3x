@@ -92,15 +92,20 @@ func winFileSchema() providers.Schema {
 			"id":       {Type: cty.String, Computed: true},
 			"revision": revisionAttr(),
 			"path":     {Type: cty.String, Required: true, Description: "Full path on a local drive, such as C:\\app\\config.json. Its folder must already exist."},
-			"content":  {Type: cty.String, Optional: true, Description: "Exact content, up to 2 MiB. Set this or content_wo."},
+			"content":  {Type: cty.String, Optional: true, Description: "Exact content, up to 2 MiB. Set this or content_wo, or source_path."},
 			"content_wo": {
 				Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
-				Description: "Exact content, kept out of state: state records only content_hmac. Use it for secrets. Unless acl is set, only SYSTEM and Administrators can read the file.",
+				Description: "Exact content, kept out of state: state records only content_hmac. Use it for secrets. Unless acl is set, only SYSTEM and Administrators can read the file. Set this or content, or source_path.",
 			},
-			"content_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 over the path and the SHA-256 of content_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null when content is used."},
-			"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the file, hex encoded. Null with content_wo, and sensitive when content is."},
-			"on_remove":    {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
-			"in_sync":      {Type: cty.Bool, Computed: true, Description: "Whether the file's rules matched at the last refresh."},
+			"source_path": {
+				Type: cty.String, Optional: true,
+				Description: "Full path of a file on the same host to copy to path, such as a sample config an installer leaves. Set this or content, or content_wo. Every plan hashes both files on the host, and neither file's content goes into the plan or state.",
+			},
+			"source_sha256": {Type: cty.String, Computed: true, Description: "With source_path, SHA-256 of the source file when it was last read, hex encoded. Null when it was missing, or without source_path."},
+			"content_hmac":  {Type: cty.String, Computed: true, Description: "HMAC-SHA256 over the path and the SHA-256 of content_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null when content is used."},
+			"sha256":        {Type: cty.String, Computed: true, Description: "SHA-256 of the file, hex encoded. Null with content_wo, and sensitive when content is."},
+			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
+			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether the file's rules matched at the last refresh."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{
 			"ssh": connectionBlock(),
@@ -117,9 +122,20 @@ func validateWinFile(cfg cty.Value) tfdiags.Diagnostics {
 	diags = diags.Append(validateOnRemove(cfg))
 	diags = diags.Append(validateWinPathAttr(cfg))
 	diags = diags.Append(validateWinEntries(cfg, "acl"))
-	content, wo := cfg.GetAttr("content"), cfg.GetAttr("content_wo")
-	if content.IsNull() == wo.IsNull() {
-		diags = diags.Append(attrError("content", "set exactly one of content and content_wo"))
+	content, wo, src := cfg.GetAttr("content"), cfg.GetAttr("content_wo"), cfg.GetAttr("source_path")
+	set := 0
+	for _, v := range []cty.Value{content, wo, src} {
+		if !v.IsNull() {
+			set++
+		}
+	}
+	if set != 1 {
+		diags = diags.Append(attrError("content", "set exactly one of content, content_wo and source_path"))
+	}
+	if known(src) {
+		if _, err := windows.CleanLocalPath("source_path", src.AsString()); err != nil {
+			diags = diags.Append(attrError("source_path", err.Error()))
+		}
 	}
 	if known(content) && len(content.AsString()) > windows.MaxContent {
 		diags = diags.Append(attrError("content", "content is larger than 2 MiB"))
@@ -148,7 +164,11 @@ func planWinFile(req providers.PlanResourceChangeRequest) providers.PlanResource
 		vals["on_remove"] = cty.StringVal(defaultOnRemove)
 	}
 	stale := req.PriorState.IsNull()
-	if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
+	vals["source_sha256"] = cty.NullVal(cty.String)
+	if src := vals["source_path"]; !src.IsNull() {
+		vals["content_hmac"] = cty.NullVal(cty.String)
+		vals["sha256"], vals["source_sha256"] = planCopy(req.PriorState, src)
+	} else if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
 		vals["content"], vals["content_wo"], vals["sha256"] = cty.NullVal(cty.String), cty.NullVal(cty.String), cty.NullVal(cty.String)
 		vals["content_hmac"] = cty.UnknownVal(cty.String)
 		key, err := writeKey(req.PriorState)
@@ -177,7 +197,15 @@ func planWinFile(req providers.PlanResourceChangeRequest) providers.PlanResource
 	if stale {
 		vals["in_sync"] = cty.UnknownVal(cty.Bool)
 	}
-	return finishFilePlan(req, resp, vals)
+	resp = finishFilePlan(req, resp, vals)
+	// A copy that applies for any reason, even only its rules, copies the
+	// source again, which an earlier step in the same apply may have
+	// changed: its hashes can't be promised.
+	if !vals["source_path"].IsNull() && known(vals["sha256"]) && !resp.PlannedState.RawEquals(req.PriorState) {
+		vals["sha256"], vals["source_sha256"] = cty.UnknownVal(cty.String), cty.UnknownVal(cty.String)
+		resp.PlannedState = cty.ObjectVal(vals)
+	}
+	return resp
 }
 
 func readWinFile(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -218,7 +246,48 @@ func readWinFile(ctx context.Context, req providers.ReadResourceRequest) provide
 		}
 	}
 	resp.NewState = winFileState(req.PriorState, s.SHA256, key, inSync)
+	if src := req.PriorState.GetAttr("source_path"); !src.IsNull() {
+		sum, err := winSourceSum(ctx, h, src.AsString())
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(err)
+			return resp
+		}
+		resp.NewState = withSourceSum(resp.NewState, sum)
+	}
 	return resp
+}
+
+// winSourceSum hashes a copy's source on the host: "" when it's missing.
+// A folder or a link, there or on the way, is an error, as it is at path.
+func winSourceSum(ctx context.Context, h *hostConn, src string) (string, error) {
+	src, err := windows.CleanLocalPath("source_path", src)
+	if err != nil {
+		return "", err
+	}
+	s, err := windows.ReadPath(ctx, h.raw(), src, nil, true)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("reading source_path %s: %w", src, err)
+	case s.LinkOnWay != "":
+		return "", fmt.Errorf("source_path %s has a link or junction on the way, at %s, which Conn3x won't follow. Use the real path", src, s.LinkOnWay)
+	case s.Kind == "missing":
+		return "", nil
+	case s.Kind == "link":
+		return "", fmt.Errorf("source_path %s is a link or junction, which Conn3x won't follow. Use the real path", src)
+	case s.Kind != "file":
+		return "", fmt.Errorf("source_path %s is a folder, not a file", src)
+	}
+	return s.SHA256, nil
+}
+
+// withSourceSum records a copy's source hash, null when it was missing.
+func withSourceSum(state cty.Value, sum string) cty.Value {
+	vals := state.AsValueMap()
+	vals["source_sha256"] = cty.NullVal(cty.String)
+	if sum != "" {
+		vals["source_sha256"] = cty.StringVal(sum)
+	}
+	return cty.ObjectVal(vals)
 }
 
 // winFileEntries is the file's list of rules, or the default for a secret.
@@ -274,10 +343,14 @@ func applyWinFile(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	if err != nil {
 		return fail(err)
 	}
-	content, wo := "", req.Config.GetAttr("content_wo")
+	content, wo, src := "", req.Config.GetAttr("content_wo"), stringOr(planned.GetAttr("source_path"), "")
 	var key []byte
 	var secrets []string
-	if wo.IsNull() {
+	if src != "" {
+		if src, err = windows.CleanLocalPath("source_path", src); err != nil {
+			return fail(err)
+		}
+	} else if wo.IsNull() {
 		content = planned.GetAttr("content").AsString()
 	} else {
 		content = wo.AsString()
@@ -293,6 +366,14 @@ func applyWinFile(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	}
 	entries := winFileEntries(planned, !wo.IsNull())
 	want := digest(content)
+	if src != "" {
+		if want, err = winSourceSum(ctx, h, src); err != nil {
+			return fail(err)
+		}
+		if want == "" {
+			return fail(fmt.Errorf("source_path %s doesn't exist on the host; a step that creates it has to come first", src))
+		}
+	}
 	before, err := windows.ReadPath(ctx, h.raw(), path, windows.Principals(entries, ""), true)
 	if err != nil {
 		return fail(errors.New(windows.Scrub(err.Error(), secrets)))
@@ -303,7 +384,11 @@ func applyWinFile(ctx context.Context, req providers.ApplyResourceChangeRequest)
 			return fail(err)
 		}
 	}
-	if !done {
+	if !done && src != "" {
+		if err := windows.ApplyFileCopy(ctx, h.raw(), path, src, entries); err != nil {
+			return fail(fmt.Errorf("copying %s to %s: %w", src, path, err))
+		}
+	} else if !done {
 		if err := windows.ApplyFile(ctx, h.raw(), path, []byte(content), entries, secrets); err != nil {
 			return fail(fmt.Errorf("writing %s: %w", path, err))
 		}
@@ -316,10 +401,20 @@ func applyWinFile(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	if err != nil {
 		return fail(err)
 	}
+	if src != "" {
+		// The source is hashed again: an earlier step in this apply, or
+		// anything else, may have changed it since.
+		if want, err = winSourceSum(ctx, h, src); err != nil {
+			return fail(fmt.Errorf("reading back %s: %w", path, err))
+		}
+	}
 	if after.Kind != "file" || after.SHA256 != want || !inSync {
 		return fail(fmt.Errorf("%s does not match what was written; something else changed it", path))
 	}
 	resp.NewState = winFileState(planned, after.SHA256, key, true)
+	if src != "" {
+		resp.NewState = withSourceSum(resp.NewState, want)
+	}
 	return resp
 }
 

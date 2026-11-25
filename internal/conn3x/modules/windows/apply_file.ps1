@@ -4,6 +4,22 @@ param($A)
 #include safepath
 $path = $A.path
 Assert-FullName $path
+$src = $null
+if ($A.source) {
+  # A copy's source, checked before anything is made or written. It's held
+  # from its folder, as the target is, so no link is followed and nobody can
+  # write to it while it's copied.
+  Assert-FullName $A.source
+  $gone = "source_path $($A.source) doesn't exist on the host; a step that creates it has to come first"
+  if (-not (Test-Path -LiteralPath $A.source)) { throw $gone }
+  Lock-Folders ([IO.Path]::GetDirectoryName($A.source))
+  # FILE_GENERIC_READ, shared for reading only.
+  $src = Open-In ([IO.Path]::GetFileName($A.source)) 0x120089 1
+  if (-not $src) { throw $gone }
+  $si = Get-Info $src
+  Assert-NotLink $A.source $si
+  if ($si.Attributes -band 0x10) { throw "source_path $($A.source) is a folder, not a file" }
+}
 $dir = [IO.Path]::GetDirectoryName($path)
 Lock-Folders $dir -Strict:([bool]$A.exact)
 $old = $null
@@ -57,8 +73,13 @@ $th = [Conn3xFs]::OpenIn($script:folder, '.conn3x-' + [guid]::NewGuid().ToString
 $stream = New-Object IO.FileStream($th, [IO.FileAccess]::ReadWrite)
 try {
   try {
-    $bytes = [Convert]::FromBase64String($A.content)
-    $stream.Write($bytes, 0, $bytes.Length)
+    if ($src) {
+      $from = New-Object IO.FileStream($src, [IO.FileAccess]::Read)
+      try { $from.CopyTo($stream) } finally { $from.Dispose() }
+    } else {
+      $bytes = [Convert]::FromBase64String($A.content)
+      $stream.Write($bytes, 0, $bytes.Length)
+    }
     $stream.Flush($true)
     if ($keep) {
       # Let the system apply the inheriting rules, so it marks the DACL

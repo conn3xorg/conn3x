@@ -227,7 +227,9 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 // earlier step in the same apply may change src.
 func planCopy(prior, src cty.Value) (cty.Value, cty.Value) {
 	unknown := cty.UnknownVal(cty.String)
-	if prior.IsNull() || isAbsent(prior) || !src.IsKnown() || !prior.GetAttr("source_path").RawEquals(src) {
+	// An absent prior has no source_path, so the RawEquals catches it, and
+	// windows_file, which shares this, has no state attribute to ask.
+	if prior.IsNull() || !src.IsKnown() || !prior.GetAttr("source_path").RawEquals(src) {
 		return unknown, unknown
 	}
 	was, from := prior.GetAttr("sha256"), prior.GetAttr("source_sha256")

@@ -315,6 +315,17 @@ func ApplyFile(ctx context.Context, r ps.Runner, path string, content []byte, en
 	return nil
 }
 
+// ApplyFileCopy is ApplyFile with the content of source, a file on the same
+// host, so the content never leaves it. The source is opened from its folder
+// as the target is, never through a link, and a missing one stops the write
+// before anything is made.
+func ApplyFileCopy(ctx context.Context, r ps.Runner, path, source string, entries []Entry) error {
+	_, err := ps.Apply(ctx, r, script("apply_file.ps1"), map[string]any{
+		"path": path, "source": source, "content": "", "exact": len(entries) > 0, "entries": wireEntries(entries, false),
+	}, fileApplyTimeout)
+	return err
+}
+
 // ApplyFileRemove deletes a file, or a link in its place, not what it points to.
 func ApplyFileRemove(ctx context.Context, r ps.Runner, path string) error {
 	_, err := ps.Apply(ctx, r, script("apply_file_remove.ps1"), map[string]any{"path": path}, fileApplyTimeout)

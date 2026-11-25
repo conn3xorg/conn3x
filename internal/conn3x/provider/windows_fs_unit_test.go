@@ -389,3 +389,139 @@ func winStrings(v any) []string {
 	}
 	return out
 }
+
+// A windows_file with source_path copies a file already on the host, plans
+// clean once the copy matches, and plans a copy when either file changes,
+// with neither file's content in the plan or state (#1377).
+func TestWinFileSourcePath(t *testing.T) {
+	h := newWinFakeHost(t)
+	const typ, dest, src = "conn3x_windows_file", `C:\app\app.conf`, `C:\app\app.conf.sample`
+	disks := map[string]*winDisk{dest: {}, src: {}}
+	disks[dest].set("missing", "")
+	disks[src].set("missing", "")
+	h.onFunc("read_path.ps1", func(args map[string]any) (any, string) { return disks[args["path"].(string)].read(args) })
+	h.onFunc("apply_file.ps1", func(args map[string]any) (any, string) {
+		s := disks[args["source"].(string)]
+		if s.path["kind"] != "file" {
+			return nil, "source_path " + src + " doesn't exist on the host; a step that creates it has to come first"
+		}
+		disks[dest].set("file", s.path["sha256"].(string))
+		return nil, ""
+	})
+	cfg := h.step(typ, map[string]cty.Value{"path": cty.StringVal(dest), "source_path": cty.StringVal("C:/app/app.conf.sample")})
+	null := cty.NullVal(cfg.Type())
+
+	// Missing at plan is "will copy": an earlier step may make it. At apply
+	// it fails, naming it, before anything is written.
+	planned := h.plan(typ, null, cfg).PlannedState
+	if planned.GetAttr("sha256").IsKnown() || planned.GetAttr("source_sha256").IsKnown() || !planned.GetAttr("content").IsNull() {
+		t.Fatalf("plan before the source exists: %#v", planned)
+	}
+	r := resourceTypes[typ].apply(ctx, providers.ApplyResourceChangeRequest{TypeName: typ, PriorState: null, PlannedState: planned, Config: cfg})
+	if err := r.Diagnostics.Err(); err == nil || !strings.Contains(err.Error(), "source_path "+src+" doesn't exist on the host") {
+		t.Fatalf("apply with the source missing: %v", err)
+	}
+	if n := len(h.sent("apply_file.ps1")); n != 0 {
+		t.Fatalf("a missing source still wrote %d times", n)
+	}
+
+	disks[src].set("file", strings.ToUpper(digest("v1")))
+	state := h.create(typ, cfg)
+	if got := h.sent("apply_file.ps1"); len(got) != 1 || got[0]["source"] != src || got[0]["content"] != "" {
+		t.Fatalf("apply sent %v", got)
+	}
+	if !state.GetAttr("content").IsNull() || !state.GetAttr("content_hmac").IsNull() || state.GetAttr("sha256").AsString() != digest("v1") || state.GetAttr("source_sha256").AsString() != digest("v1") {
+		t.Fatalf("state after apply: %#v", state)
+	}
+	read := h.read(typ, state).NewState
+	if p := h.plan(typ, read, cfg).PlannedState; !p.RawEquals(read) {
+		t.Fatalf("second plan isn't clean:\n%#v\nwant\n%#v", p, read)
+	}
+
+	// A hand edit of the copy, then a change to the source, each plan a copy.
+	disks[dest].edit("sha256", digest("edited"))
+	if p := h.plan(typ, h.read(typ, state).NewState, cfg).PlannedState; p.GetAttr("sha256").IsKnown() {
+		t.Fatalf("a hand edit planned no change: %#v", p)
+	}
+	disks[dest].edit("sha256", digest("v1"))
+	disks[src].edit("sha256", digest("v2"))
+	read = h.read(typ, state).NewState
+	if read.GetAttr("source_sha256").AsString() != digest("v2") {
+		t.Fatalf("source_sha256 after a source change: %#v", read)
+	}
+	planned = h.plan(typ, read, cfg).PlannedState
+	if planned.GetAttr("sha256").IsKnown() {
+		t.Fatalf("a source change planned no change: %#v", planned)
+	}
+	state = resourceTypes[typ].apply(ctx, providers.ApplyResourceChangeRequest{TypeName: typ, PriorState: read, PlannedState: planned, Config: cfg}).NewState
+	if state.GetAttr("sha256").AsString() != digest("v2") {
+		t.Fatalf("after copying the new source: %#v", state)
+	}
+
+	// A source that's gone reads as null and plans a copy.
+	disks[src].set("missing", "")
+	read = h.read(typ, state).NewState
+	if !read.GetAttr("source_sha256").IsNull() {
+		t.Fatalf("source_sha256 with the source gone: %#v", read)
+	}
+	if p := h.plan(typ, read, cfg).PlannedState; p.GetAttr("sha256").IsKnown() {
+		t.Fatalf("a missing source planned no change: %#v", p)
+	}
+
+	// A folder or a link as the source is an error, never followed.
+	for kind, want := range map[string]string{"directory": "is a folder, not a file", "link": "is a link or junction"} {
+		disks[src].set(kind, "")
+		if r := h.read(typ, state); !r.Diagnostics.HasErrors() || !strings.Contains(r.Diagnostics.Err().Error(), want) {
+			t.Errorf("a %s source: %v", kind, r.Diagnostics.Err())
+		}
+	}
+	disks[src].set("missing", "")
+	disks[src].edit("link_on_way", `C:\app`)
+	if r := h.read(typ, state); !r.Diagnostics.HasErrors() || !strings.Contains(r.Diagnostics.Err().Error(), "link or junction on the way") {
+		t.Errorf("a link on the way to the source: %v", r.Diagnostics.Err())
+	}
+}
+
+// A copy that applies only for its rules still copies the source again, so
+// its hashes plan unknown: an earlier step in the same apply may rewrite the
+// source, and a known plan would be an inconsistent result (#1376).
+func TestWinFileSourcePathRulesDriftPlansHashesUnknown(t *testing.T) {
+	h := newWinFakeHost(t)
+	const typ, dest, src = "conn3x_windows_file", `C:\app\app.conf`, `C:\app\app.conf.sample`
+	disks := map[string]*winDisk{dest: {}, src: {}}
+	disks[dest].set("missing", "")
+	disks[src].set("file", digest("v1"))
+	h.onFunc("read_path.ps1", func(args map[string]any) (any, string) { return disks[args["path"].(string)].read(args) })
+	h.onFunc("apply_file.ps1", func(map[string]any) (any, string) {
+		disks[dest].set("file", disks[src].path["sha256"].(string))
+		return nil, ""
+	})
+	cfg := h.step(typ, map[string]cty.Value{"path": cty.StringVal(dest), "source_path": cty.StringVal(src)})
+	state := h.create(typ, cfg)
+	read := h.read(typ, state).NewState
+	if p := h.plan(typ, read, cfg).PlannedState; !p.RawEquals(read) {
+		t.Fatalf("an in-sync copy planned a change:\n%#v", p)
+	}
+
+	vals := read.AsValueMap()
+	vals["in_sync"] = cty.False
+	read = cty.ObjectVal(vals)
+	planned := h.plan(typ, read, cfg).PlannedState
+	if planned.GetAttr("sha256").IsKnown() || planned.GetAttr("source_sha256").IsKnown() {
+		t.Fatalf("rules drift planned known hashes: %#v", planned)
+	}
+	// The earlier step.
+	disks[src].set("file", digest("v2"))
+	r := resourceTypes[typ].apply(ctx, providers.ApplyResourceChangeRequest{TypeName: typ, PriorState: read, PlannedState: planned, Config: cfg})
+	if r.Diagnostics.HasErrors() {
+		t.Fatal(r.Diagnostics.Err())
+	}
+	for name, want := range planned.AsValueMap() {
+		if want.IsWhollyKnown() && !want.RawEquals(r.NewState.GetAttr(name)) {
+			t.Errorf("%s planned %#v, applied %#v", name, want, r.NewState.GetAttr(name))
+		}
+	}
+	if r.NewState.GetAttr("sha256").AsString() != digest("v2") || r.NewState.GetAttr("source_sha256").AsString() != digest("v2") {
+		t.Fatalf("after apply: %#v", r.NewState)
+	}
+}

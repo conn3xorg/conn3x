@@ -114,3 +114,28 @@ func TestWinACLValidate(t *testing.T) {
 		t.Error("accepted an unknown right")
 	}
 }
+
+func TestWinFileSourcePathValidate(t *testing.T) {
+	r := resourceTypes["conn3x_windows_file"]
+	for name, tc := range map[string]struct {
+		attrs map[string]cty.Value
+		want  string
+	}{
+		"with content":    {map[string]cty.Value{"content": cty.StringVal("x"), "source_path": cty.StringVal(`C:\a`)}, "set exactly one of content, content_wo and source_path"},
+		"with content_wo": {map[string]cty.Value{"content_wo": cty.StringVal("x"), "source_path": cty.StringVal(`C:\a`)}, "set exactly one of content, content_wo and source_path"},
+		"none":            {map[string]cty.Value{}, "set exactly one of content, content_wo and source_path"},
+		"relative":        {map[string]cty.Value{"source_path": cty.StringVal(`app\a`)}, "source_path"},
+		"share":           {map[string]cty.Value{"source_path": cty.StringVal(`\\srv\share\a`)}, "source_path"},
+		"traversal":       {map[string]cty.Value{"source_path": cty.StringVal(`C:\a\..\b`)}, "source_path"},
+	} {
+		tc.attrs["path"] = cty.StringVal(`C:\app\x`)
+		if d := r.validate(objFor(r.schema(), tc.attrs)); !d.HasErrors() || !strings.Contains(d.Err().Error(), tc.want) {
+			t.Errorf("%s: got %v, want an error containing %q", name, d.Err(), tc.want)
+		}
+	}
+	for _, src := range []cty.Value{cty.StringVal(`C:\app\x.sample`), cty.StringVal("C:/app/x.sample"), cty.UnknownVal(cty.String)} {
+		if d := r.validate(objFor(r.schema(), map[string]cty.Value{"path": cty.StringVal(`C:\app\x`), "source_path": src})); d.HasErrors() {
+			t.Errorf("%#v refused: %v", src, d.Err())
+		}
+	}
+}

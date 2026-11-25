@@ -115,13 +115,23 @@ func winCopyModule(in *input) ([]step, string) {
 	if strings.HasSuffix(dest, `\`) || strings.HasSuffix(dest, "/") {
 		return nil, "copies into a folder; windows_file needs the file's own path"
 	}
-	if in.has("remote_src") && in.bool("remote_src", false) {
-		return nil, "copies a file already on the host (remote_src), which the converter can't translate yet"
-	}
 	attrs := []attr{s("path", dest)}
+	remote := in.bool("remote_src", false)
 	switch {
 	case in.has("content"):
 		attrs = append(attrs, s("content", in.str("content")))
+	case in.has("src") && remote:
+		// remote_src copies a file already on the host: source_path.
+		src := in.str("src")
+		switch {
+		case strings.HasSuffix(src, `\`) || strings.HasSuffix(src, "/"):
+			return nil, "copies a folder already on the host (remote_src), recursively; windows_file copies one file, so list the files as steps of their own"
+		case strings.Contains(src, "\x00"):
+			return nil, "builds src from a loop variable; write the path out in a windows_file step's source_path"
+		case !winAbsolute.MatchString(strings.ReplaceAll(src, "/", `\`)):
+			return nil, "has a src with remote_src that isn't a full path on a local drive, such as C:\\app\\app.conf.sample"
+		}
+		attrs = append(attrs, s("source_path", src))
 	case in.has("src"):
 		if p := in.local("files", in.str("src")); p != "" {
 			attrs = append(attrs, attr{key: "content", raw: "file(" + moduleFile(p) + ")"})
