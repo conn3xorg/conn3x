@@ -134,12 +134,11 @@ done`
 
 // ReadDownload returns the SHA-256 of the file at dest, or "" if it is missing.
 func ReadDownload(ctx context.Context, r modules.Runner, dest string) (string, error) {
-	res, err := r.Run(ctx, modules.Guard(modules.Settled+fmt.Sprintf("if route_settled %[1]s && [ -f %[1]s ]; then sha256sum -- %[1]s; fi", ssh.Quote(dest)), modules.Follow(dest)), nil)
+	res, err := r.Run(ctx, modules.Guard(modules.Settled+modules.Sum256+fmt.Sprintf("if route_settled %[1]s && [ -f %[1]s ]; then sum256 %[1]s; fi", ssh.Quote(dest)), modules.Follow(dest)), nil)
 	if err := check(res, err); err != nil {
 		return "", err
 	}
-	sum, _, _ := strings.Cut(string(res.Stdout), " ")
-	return strings.TrimSpace(sum), nil
+	return strings.TrimSpace(string(res.Stdout)), nil
 }
 
 // ApplyDownload fetches into a temporary file beside dest and moves it into
@@ -167,7 +166,7 @@ func ApplyDownload(ctx context.Context, r modules.Runner, d Download) error {
 		get = fmt.Sprintf(fetchWithHeaders, netrc)
 		needsCurl = "headers"
 	}
-	script := fmt.Sprintf(`set -e
+	script := modules.Sum256 + fmt.Sprintf(`set -e
 p=%[1]s
 url=%[2]s
 want=%[3]s
@@ -180,7 +179,7 @@ elif command -v wget >/dev/null 2>&1; then
   noconfig=; if wget --no-config --version >/dev/null 2>&1; then noconfig=--no-config; fi
   wget $noconfig -q -O "$tmp" -- "$url"
 else echo "neither curl nor wget is installed; add a package step for one first" >&2; exit 1; fi
-got=$(sha256sum -- "$tmp" | cut -d' ' -f1)
+got=$(sum256 "$tmp")
 if [ "$got" != "$want" ]; then echo "checksum mismatch for $url: got $got, want $want" >&2; exit 1; fi
 chmod %[4]s "$tmp"
 %[5]s`+file.SyncFile+`

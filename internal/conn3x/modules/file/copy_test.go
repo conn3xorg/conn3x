@@ -101,3 +101,19 @@ func TestCopySourceQuoting(t *testing.T) {
 		t.Fatal("the source path ran as shell")
 	}
 }
+
+// A path and a source_path with a backslash in them read as their bare
+// hashes, which sha256sum given the name would print with a "\" (#1385).
+func TestCopySourceBackslash(t *testing.T) {
+	dir := t.TempDir()
+	src, dest := filepath.Join(dir, `src\ a`), filepath.Join(dir, `dest\ a`)
+	if err := os.WriteFile(src, []byte("b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(ctx, localRunner{}, Desired{Path: dest, Source: src, Mode: "0644"}); err != nil {
+		t.Fatal(err)
+	}
+	if a, srcSum, err := ReadCopy(ctx, localRunner{}, dest, src); err != nil || srcSum != hash("b\n") || a.SHA256 != srcSum {
+		t.Fatalf("%+v %q %v", a, srcSum, err)
+	}
+}

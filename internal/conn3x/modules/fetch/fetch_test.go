@@ -361,3 +361,14 @@ func TestDownloadHeaderValidation(t *testing.T) {
 		}
 	}
 }
+
+// A dest with a backslash in its name reads as its bare hash (#1385).
+func TestReadDownloadBackslash(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), `a\ b`)
+	if err := os.WriteFile(dest, []byte("test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadDownload(context.Background(), moduletest.Local{}, dest); err != nil || got != sum {
+		t.Fatalf("%q %v", got, err)
+	}
+}

@@ -74,12 +74,11 @@ func (s Script) Validate() error {
 // already there, root's and 0700, and checks what arrived.
 func (s Script) ensure(ctx context.Context, r modules.Runner) error {
 	p := ssh.Quote(s.path())
-	cmd := fmt.Sprintf(`sum() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1; }
-p=%[1]s; if [ -f "$p" ] && [ "$(sum "$p")" = %[2]s ]; then exit 0; fi
+	cmd := fmt.Sprintf(modules.Sum256+`p=%[1]s; if [ -f "$p" ] && [ "$(sum256 "$p")" = %[2]s ]; then exit 0; fi
 install -d -m 0700 %[3]s || exit 1
 t=$(mktemp %[3]s/.new.XXXXXX) || exit 1
 trap 'rm -f "$t"' EXIT
-cat > "$t" && chmod 0700 "$t" && [ "$(sum "$t")" = %[2]s ] && mv -f "$t" "$p" || { echo "the program didn't arrive whole" >&2; exit 1; }
+cat > "$t" && chmod 0700 "$t" && [ "$(sum256 "$t")" = %[2]s ] && mv -f "$t" "$p" || { echo "the program didn't arrive whole" >&2; exit 1; }
 trap - EXIT`,
 		p, ssh.Quote(s.Sum()), ssh.Quote(Dir))
 	res, err := r.Run(ctx, cmd, s.Program)

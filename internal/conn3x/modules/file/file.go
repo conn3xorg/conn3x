@@ -213,13 +213,12 @@ func notRegularError(p string) error {
 // it's copied from: "" when src is missing. Neither file's content leaves
 // the host. Something other than a regular file at src is an error.
 func ReadCopy(ctx context.Context, r modules.Runner, p, src string) (Actual, string, error) {
-	script := modules.Settled + fmt.Sprintf(`p=%s
+	script := modules.Settled + modules.Sum256 + fmt.Sprintf(`p=%s
 s=%s
-sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum -- "$1"; else shasum -a 256 -- "$1"; fi | cut -d' ' -f1; }
 if route_settled "$s" && [ -e "$s" ]; then
   [ -f "$s" ] || exit %d
   [ -r "$s" ] || { id -un; exit %d; }
-  sum "$s"
+  sum256 "$s"
 else echo missing; fi
 route_settled "$p" || { echo missing; exit 0; }
 [ -e "$p" ] || [ -L "$p" ] || { echo missing; exit 0; }
@@ -227,7 +226,7 @@ route_settled "$p" || { echo missing; exit 0; }
 [ -r "$p" ] || { id -un; exit %d; }
 echo present
 stat -c '%%a %%U %%G' -- "$p" 2>/dev/null || stat -f '%%Lp %%Su %%Sg' "$p"
-sum "$p"`, ssh.Quote(p), ssh.Quote(src), sourceNotRegular, sourceUnreadable, notRegular, unreadable)
+sum256 "$p"`, ssh.Quote(p), ssh.Quote(src), sourceNotRegular, sourceUnreadable, notRegular, unreadable)
 	res, err := run(ctx, r, modules.Guard(script, modules.Follow(p), modules.Follow(src)), nil)
 	if err != nil {
 		who := strings.TrimSpace(string(res.Stdout))

@@ -93,3 +93,29 @@ func TestFileSourcePathEarlierStep(t *testing.T) {
 		t.Fatalf("plan after the second apply:\n%s", out)
 	}
 }
+
+// A path and a source_path with a backslash and a space in them copy,
+// plan clean and show a hand edit, though sha256sum given such a name
+// prints its hash with a "\" in front (#1385).
+func TestFileSourcePathBackslash(t *testing.T) {
+	for _, image := range []string{"ubuntu2404", "rocky10"} {
+		t.Run(image, func(t *testing.T) {
+			h := startHost(t, image)
+			h.exec("", "sh", "-c", `mkdir -p /usr/share/doc/app && printf 'listen = 80\n' > '/usr/share/doc/app/a\b c.sample'`)
+			w := newWorkdir(t, "file_source_path_backslash")
+			w.writeAs("main.circuit.hcl", fetchVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts})
+			w.mustConn3x("init", "-no-color")
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+			if got := h.exec("", "cat", `/etc/app/a\b c.conf`); got != "listen = 80\n" {
+				t.Fatalf("after apply: %q", got)
+			}
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+				t.Fatalf("plan after apply:\n%s", out)
+			}
+			h.exec("", "sh", "-c", `echo 'listen = 8080' > '/etc/app/a\b c.conf'`)
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, `app_conf["box"] will be updated`) || !strings.Contains(out, "1 to change") {
+				t.Fatalf("plan after a hand edit:\n%s", out)
+			}
+		})
+	}
+}

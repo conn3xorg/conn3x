@@ -13,6 +13,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/opentofu/opentofu/internal/conn3x/modules"
 	"github.com/opentofu/opentofu/internal/conn3x/transport"
 	"github.com/opentofu/opentofu/internal/conn3x/transport/ssh"
 )
@@ -57,8 +58,7 @@ func hostScript(format string, a ...any) string {
 const helpers = `umask 077
 me=$(id -u) mygid=$(id -g) pergroup=
 [ "$(id -gn)" = "$(id -un)" ] && pergroup=1
-sum256() { { sha256sum "$1" || shasum -a 256 "$1"; } 2>/dev/null | cut -d' ' -f1; }
-guarded() { ls -ldn -- "$1" 2>/dev/null | { read -r m n u g r || exit 1; case $u in 0|"$me") ;; *) exit 1 ;; esac
+` + modules.Sum256 + `guarded() { ls -ldn -- "$1" 2>/dev/null | { read -r m n u g r || exit 1; case $u in 0|"$me") ;; *) exit 1 ;; esac
   case $m in ?????????[tT]*) ;; ????????w*) exit 1 ;; ?????w*) [ "$me" != 0 ] && [ -n "$pergroup" ] && [ "$g" = "$mygid" ] ;; esac; }; }
 usable() { [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ] && case $(ls -ld "$1") in drwx------*) true ;; *) false ;; esac || return 1
   _p=$(cd -P -- "$1" && pwd -P) || return 1
@@ -130,7 +130,7 @@ const startScript = "um=$(umask)\n" + helpers + `d=%s name=%s want=%s
 here=$(pwd)
 cd -P -- "$d" || exit 126
 usable . || { echo "$d is not a private directory" >&2; exit 126; }
-[ "$(sum256 "./$name")" = "$want" ] || { echo "$d/$name has changed" >&2; exit 126; }
+[ "$(sum256 "./$name" 2>/dev/null)" = "$want" ] || { echo "$d/$name has changed" >&2; exit 126; }
 p=$(pwd -P)
 cd -- "$here" || exit 126
 umask "$um"
