@@ -351,9 +351,10 @@ func (u UFWRule) restore(rules [2]string) (string, error) {
 	// ufw numbers rules, not tuple lines: an application-profile rule is one
 	// tuple per protocol ("allow Multi" with 80,443/tcp|8080/udp is two), so
 	// consecutive tuples of one profile rule count once. A profile tuple has
-	// the direction in field 12 (fields 10 and 11 are the profile names); a
+	// the direction in field 12 (fields 10 and 11 are the profile names): in,
+	// in_eth0 with an interface, or in_eth0!out_eth1 for a routed rule. A
 	// plain rule's is field 10, with an optional comment= after it.
-	const ufwRuleNumber = `function key(l, f, m) { m = split(l, f, " "); return (m >= 12 && f[12] ~ /^(in|out|fwd)$/) ? f[4] " " f[7] " " f[9] " " f[10] " " f[11] " " f[12] " " f[13] : "" } function num(l, k) { k = key(l); if (k == "" || k != pk) r++; pk = k; return r } `
+	const ufwRuleNumber = `function key(l, f, m) { m = split(l, f, " "); return (m >= 12 && f[12] ~ /^(in|out|fwd)([_!]|$)/) ? f[4] " " f[7] " " f[9] " " f[10] " " f[11] " " f[12] " " f[13] : "" } function num(l, k) { k = key(l); if (k == "" || k != pk) r++; pk = k; return r } `
 	// Old tuples go in a[], with their rule numbers in rn[]. The first
 	// current tuple that differs is where the deleted rule sat, and its rule
 	// number is the place to insert it. A current file that only grew prints

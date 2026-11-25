@@ -34,6 +34,11 @@ func TestUFWRestorePosition(t *testing.T) {
 		// tuples per family, as ufw 0.36.2 writes it.
 		multi4 = "### tuple ### allow tcp 80,443 0.0.0.0/0 any 0.0.0.0/0 Multi - in\n### tuple ### allow udp 8080 0.0.0.0/0 any 0.0.0.0/0 Multi - in\n"
 		multi6 = "### tuple ### allow tcp 80,443 ::/0 any ::/0 Multi - in\n### tuple ### allow udp 8080 ::/0 any ::/0 Multi - in\n"
+		// The same profile on an interface, and routed: ufw 0.36.2's
+		// "allow in on eth0 to any app Multi" and "route allow in on eth0
+		// out on eth1 to any app Multi". Each is one rule.
+		multiIf4    = "### tuple ### allow tcp 80,443 0.0.0.0/0 any 0.0.0.0/0 Multi - in_eth0\n### tuple ### allow udp 8080 0.0.0.0/0 any 0.0.0.0/0 Multi - in_eth0\n"
+		multiRoute4 = "### tuple ### route:allow tcp 80,443 0.0.0.0/0 any 0.0.0.0/0 Multi - in_eth0!out_eth1\n### tuple ### route:allow udp 8080 0.0.0.0/0 any 0.0.0.0/0 Multi - in_eth0!out_eth1\n"
 		// Two plain rules with the same comment are still two rules.
 		noted4 = "### tuple ### allow tcp 80 0.0.0.0/0 any 0.0.0.0/0 in comment=776562\n### tuple ### allow tcp 443 0.0.0.0/0 any 0.0.0.0/0 in comment=776562\n"
 	)
@@ -85,6 +90,11 @@ func TestUFWRestorePosition(t *testing.T) {
 			multi4 + allow4 + deny4, multi6 + allow6 + deny6,
 			multi4 + deny4, multi6 + deny6,
 			"insert 2 allow from 0.0.0.0/0 to any port 22 proto tcp\ninsert 5 allow from ::/0 to any port 22 proto tcp\n"},
+		// Foothills' case on #1403: ufw numbers these 1 to 4, so the allow is 2.
+		{"between interface and routed profile rules", ssh22,
+			multiIf4 + allow4 + multiRoute4 + deny4, "",
+			multiIf4 + multiRoute4 + deny4, "",
+			"insert 2 allow from 0.0.0.0/0 to any port 22 proto tcp\n"},
 		{"below two commented rules", ssh22, noted4 + allow4 + deny4, "", noted4 + deny4, "",
 			"insert 3 allow from 0.0.0.0/0 to any port 22 proto tcp\n"},
 		{"never deleted", ssh22, allow4 + deny4, allow6 + deny6, allow4 + deny4, allow6 + deny6, ""},
