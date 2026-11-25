@@ -841,15 +841,26 @@ func copyModule(in *input) ([]step, string) {
 	switch {
 	case in.has("content"):
 		attrs = append(attrs, s("content", in.str("content")))
+	case in.has("src") && in.bool("remote_src", false):
+		// remote_src copies a file already on the host: source_path.
+		src := in.str("src")
+		switch {
+		case strings.HasSuffix(src, "/") || in.has("directory_mode"):
+			return nil, "copies a directory already on the host (remote_src), recursively; a file step copies one file, so list the files as steps of their own"
+		case in.str("mode") == "preserve":
+			return nil, "sets mode: preserve, which keeps the source file's mode; a file step sets one mode, so write it out in octal"
+		case strings.Contains(src, "\x00"):
+			return nil, "builds src from a loop variable; write the path out in a file step's source_path"
+		case !strings.HasPrefix(src, "/"):
+			return nil, "has a relative src with remote_src, so where it reads from depends on the remote user's home"
+		}
+		attrs = append(attrs, s("source_path", src))
 	case in.has("src"):
 		if p := in.local("files", in.str("src")); p != "" {
 			attrs = append(attrs, attr{key: "content", raw: "file(" + moduleFile(p) + ")"})
 			if in.role != nil {
 				in.copy(p)
 			}
-		}
-		if in.has("remote_src") && in.bool("remote_src", false) {
-			return nil, "copies a file already on the host (remote_src), which the converter can't translate yet"
 		}
 	default:
 		return nil, "has neither content nor src"

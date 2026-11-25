@@ -73,7 +73,7 @@ func (f *fileTest) plan(prior, config cty.Value) providers.PlanResourceChangeRes
 	proposed := config
 	if !prior.IsNull() && !config.IsNull() {
 		vals := config.AsValueMap()
-		for _, name := range []string{"id", "revision", "sha256", "content_hmac", "mode", "on_remove", "in_sync"} {
+		for _, name := range []string{"id", "revision", "sha256", "source_sha256", "content_hmac", "mode", "on_remove", "in_sync"} {
 			if vals[name].IsNull() {
 				vals[name] = prior.GetAttr(name)
 			}

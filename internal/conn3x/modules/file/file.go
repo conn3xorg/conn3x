@@ -21,9 +21,12 @@ import (
 type Desired struct {
 	Path    string
 	Content string
-	Mode    string // octal, like "0644"
-	Owner   string
-	Group   string
+	// Source, when set, is a file on the same host whose content is
+	// copied to Path instead of Content.
+	Source string
+	Mode   string // octal, like "0644"
+	Owner  string
+	Group  string
 	// ValidateCommand, when set, checks the new content before it replaces
 	// the file. %s stands for the temporary file's path.
 	ValidateCommand string
@@ -49,6 +52,9 @@ type Actual struct {
 	Mode    string // four-digit octal
 	Owner   string
 	Group   string
+	// SHA256 is the content's hash, hex encoded, set by ReadCopy, which
+	// leaves Content empty.
+	SHA256 string
 }
 
 var modePattern = regexp.MustCompile(`^[0-7]{4}$`)
@@ -57,6 +63,9 @@ var modePattern = regexp.MustCompile(`^[0-7]{4}$`)
 func (d Desired) Validate() error {
 	if d.Path == "" || !path.IsAbs(d.Path) {
 		return fmt.Errorf("path %q must be absolute", d.Path)
+	}
+	if d.Source != "" && !path.IsAbs(d.Source) {
+		return fmt.Errorf("source_path %q must be absolute", d.Source)
 	}
 	if !modePattern.MatchString(d.Mode) {
 		return fmt.Errorf("mode %q must be four octal digits, like \"0644\"", d.Mode)
@@ -100,6 +109,13 @@ const unreadable = 4
 // validateFailed is the exit code for a validate command that rejected the
 // new content.
 const validateFailed = 5
+
+// sourceNotRegular and sourceUnreadable are notRegular and unreadable for
+// a copy's source.
+const (
+	sourceNotRegular = 6
+	sourceUnreadable = 7
+)
 
 // Read reports the file's current state. A missing file is not an error.
 // A runner that is a modules.FileReader answers natively when it can.
@@ -192,10 +208,69 @@ func notRegularError(p string) error {
 	return fmt.Errorf("%s exists but is not a regular file", p)
 }
 
-// NeedsChange reports whether Apply would change anything.
+// ReadCopy reports the file at p as Read does, but with its SHA-256 in
+// place of its content, and the SHA-256 of src, the file on the same host
+// it's copied from: "" when src is missing. Neither file's content leaves
+// the host. Something other than a regular file at src is an error.
+func ReadCopy(ctx context.Context, r modules.Runner, p, src string) (Actual, string, error) {
+	script := modules.Settled + fmt.Sprintf(`p=%s
+s=%s
+sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum -- "$1"; else shasum -a 256 -- "$1"; fi | cut -d' ' -f1; }
+if route_settled "$s" && [ -e "$s" ]; then
+  [ -f "$s" ] || exit %d
+  [ -r "$s" ] || { id -un; exit %d; }
+  sum "$s"
+else echo missing; fi
+route_settled "$p" || { echo missing; exit 0; }
+[ -e "$p" ] || [ -L "$p" ] || { echo missing; exit 0; }
+[ -f "$p" ] || exit %d
+[ -r "$p" ] || { id -un; exit %d; }
+echo present
+stat -c '%%a %%U %%G' -- "$p" 2>/dev/null || stat -f '%%Lp %%Su %%Sg' "$p"
+sum "$p"`, ssh.Quote(p), ssh.Quote(src), sourceNotRegular, sourceUnreadable, notRegular, unreadable)
+	res, err := run(ctx, r, modules.Guard(script, modules.Follow(p), modules.Follow(src)), nil)
+	if err != nil {
+		who := strings.TrimSpace(string(res.Stdout))
+		switch res.ExitCode {
+		case sourceNotRegular:
+			return Actual{}, "", fmt.Errorf("source_path %s exists but is not a regular file", src)
+		case sourceUnreadable:
+			return Actual{}, "", fmt.Errorf("source_path %s can't be read by %s", src, who)
+		case notRegular:
+			return Actual{}, "", notRegularError(p)
+		case unreadable:
+			return Actual{}, "", fmt.Errorf("%s exists but can't be read by %s", p, who)
+		}
+		return Actual{}, "", err
+	}
+	lines := strings.Split(strings.TrimRight(string(res.Stdout), "\n"), "\n")
+	srcSum := ""
+	if len(lines) > 0 && lines[0] != "missing" {
+		if !sha256Hex.MatchString(lines[0]) {
+			return Actual{}, "", fmt.Errorf("hashing %s: unexpected output %q", src, lines[0])
+		}
+		srcSum = lines[0]
+	}
+	if len(lines) < 2 || lines[1] == "missing" {
+		return Actual{}, srcSum, nil
+	}
+	if len(lines) != 4 || !sha256Hex.MatchString(lines[3]) {
+		return Actual{}, "", fmt.Errorf("reading %s: unexpected output %q", p, res.Stdout)
+	}
+	meta := strings.Fields(lines[2])
+	if len(meta) != 3 {
+		return Actual{}, "", fmt.Errorf("reading %s: unexpected stat output %q", p, lines[2])
+	}
+	return Actual{Exists: true, Mode: NormalizeMode(meta[0]), Owner: meta[1], Group: meta[2], SHA256: lines[3]}, srcSum, nil
+}
+
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// NeedsChange reports whether Apply would change anything. With a Source,
+// the content isn't compared: the caller compares the hashes.
 func NeedsChange(d Desired, a Actual) bool {
 	return !a.Exists ||
-		a.Content != d.Content ||
+		(d.Source == "" && a.Content != d.Content) ||
 		NormalizeMode(d.Mode) != a.Mode ||
 		(d.Owner != "" && d.Owner != a.Owner) ||
 		(d.Group != "" && d.Group != a.Group)
@@ -221,20 +296,29 @@ func ApplyBackup(ctx context.Context, r modules.Runner, d Desired, via ...module
 	if err := d.Validate(); err != nil {
 		return "", err
 	}
+	fill := `cat > "$tmp"`
+	if d.Source != "" {
+		fill = `cat -- "$s" > "$tmp"`
+	}
 	script := fmt.Sprintf(`set -e
 p=%s
-mkdir -p -- "$(dirname -- "$p")"
+%smkdir -p -- "$(dirname -- "$p")"
 tmp=$(mktemp "$(dirname -- "$p")/.conn3x.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
-cat > "$tmp"
+%s
 chmod %s "$tmp"
 %s%s%s`+SyncFile+`
 `+Replace+`
 trap - EXIT
 `+SyncDir+`
 if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null || true; fi`,
-		ssh.Quote(d.Path), NormalizeMode(d.Mode), Ownership(d.Owner, d.Group), validateScript(d.ValidateCommand), backupScript(d.Backup, d.BackupKeep))
-	res, err := run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group, Path: d.Path}, append(via, modules.Parent(d.Path))...), []byte(d.Content))
+		ssh.Quote(d.Path), sourceCheck(d.Source), fill, NormalizeMode(d.Mode), Ownership(d.Owner, d.Group), validateScript(d.ValidateCommand), backupScript(d.Backup, d.BackupKeep))
+	routes := append(via, modules.Parent(d.Path))
+	stdin := []byte(d.Content)
+	if d.Source != "" {
+		routes, stdin = append(routes, modules.Follow(d.Source)), nil
+	}
+	res, err := run(ctx, r, modules.GuardWrite(script, modules.Write{Owner: d.Owner, Group: d.Group, Path: d.Path}, routes...), stdin)
 	if err != nil && res.ExitCode == validateFailed {
 		return "", &ValidateError{Output: strings.TrimSpace(string(res.Stderr))}
 	}
@@ -248,6 +332,19 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -- "$p" 2>/dev/null ||
 		}
 	}
 	return backup, nil
+}
+
+// sourceCheck sets "$s" to a copy's source and stops, naming it, before
+// anything is written when it's missing or isn't a regular file, such as a
+// FIFO that would hang the copy.
+func sourceCheck(src string) string {
+	if src == "" {
+		return ""
+	}
+	return modules.Settled + fmt.Sprintf(`s=%s
+if ! route_settled "$s" || [ ! -e "$s" ]; then echo "source_path $s doesn't exist on the host; a step that creates it has to come first" >&2; exit 1; fi
+[ -f "$s" ] || { echo "source_path $s is not a regular file" >&2; exit 1; }
+`, ssh.Quote(src))
 }
 
 // backupScript copies "$p", when it's there, to its backup name once the

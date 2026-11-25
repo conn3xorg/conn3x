@@ -101,7 +101,7 @@ func TestMarksBothSidesOfAPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	for page, names := range map[string][]string{
-		"file":      {"content", "content_wo"},
+		"file":      {"content", "content_wo", "source_path"},
 		"firewalld": {"port", "service"},
 		"wait_for":  {"path", "port", "url"},
 	} {

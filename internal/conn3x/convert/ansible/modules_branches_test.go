@@ -131,9 +131,47 @@ func TestConvertGitSubmodules(t *testing.T) {
 	}
 }
 
+// copy with remote_src copies a file already on the host, which is a file
+// step's source_path; a directory, mode: preserve and a relative src stay
+// for review (#1349).
+func TestConvertCopyRemoteSrc(t *testing.T) {
+	for _, c := range []struct {
+		task, review string
+		want         []string
+	}{
+		{task: "copy: { src: /opt/app/share/app.conf.sample, dest: /etc/app.conf, remote_src: true, mode: '0644' }",
+			want: []string{"file {", `path        = "/etc/app.conf"`, `source_path = "/opt/app/share/app.conf.sample"`, `mode        = "0644"`}},
+		{task: "copy: { src: /opt/a.conf, dest: /etc/a.conf, remote_src: yes, owner: app, group: app, mode: '0640', backup: yes }",
+			want: []string{`source_path = "/opt/a.conf"`, `owner       = "app"`, `group       = "app"`, "backup      = true"}},
+		{task: "copy: { src: /opt/a.conf, dest: /etc/a.conf, remote_src: true }", want: []string{`source_path = "/opt/a.conf"`, "Set mode if this file isn't meant to be 0644"}},
+		{task: "copy: { src: /opt/a.d/, dest: /etc/a.d, remote_src: true }", review: "copies a directory already on the host"},
+		{task: "copy: { src: /opt/a.d, dest: /etc/a.d, remote_src: true, directory_mode: '0755' }", review: "copies a directory already on the host"},
+		{task: "copy: { src: /opt/a.conf, dest: /etc/a.conf, remote_src: true, mode: preserve }", review: "sets mode: preserve"},
+		{task: "copy: { src: a.conf, dest: /etc/a.conf, remote_src: true }", review: "has a relative src with remote_src"},
+		{task: "copy: { src: /opt/a.conf, dest: /etc/a.conf, remote_src: true, local_follow: false }", review: "sets local_follow"},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+c.task+"\n")
+		hcl := string(res.HCL)
+		if c.review != "" {
+			if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, c.review) {
+				t.Errorf("%s: converted %d, review %+v, want review %q", c.task, res.Converted, res.Review, c.review)
+			}
+			continue
+		}
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v:\n%s", c.task, res.Converted, res.Review, hcl)
+			continue
+		}
+		for _, w := range c.want {
+			if !strings.Contains(hcl, w) {
+				t.Errorf("%s: missing %q in:\n%s", c.task, w, hcl)
+			}
+		}
+	}
+}
+
 func TestConvertModuleOptionRefusals(t *testing.T) {
 	for task, reason := range map[string]string{
-		"copy: { src: /etc/hosts, dest: /tmp/h, remote_src: yes }":                        "copies a file already on the host",
 		"copy: { dest: /tmp/h }":                                                          "has neither content nor src",
 		"copy: { dest: /tmp/h, content: x, force: no }":                                   "sets force: no",
 		"copy: { dest: /tmp/h, content: x, validate: 'check' }":                           "validate has no %s",

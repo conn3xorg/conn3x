@@ -37,19 +37,24 @@ func fileSchema() providers.Schema {
 				"id":       {Type: cty.String, Computed: true},
 				"revision": revisionAttr(),
 				"path":     {Type: cty.String, Required: true, Description: "Absolute path of the file on the host."},
-				"content":  {Type: cty.String, Optional: true, Description: "Exact content of the file. Set this or content_wo, unless state is \"absent\"."},
+				"content":  {Type: cty.String, Optional: true, Description: "Exact content of the file. Set this or content_wo, or source_path, unless state is \"absent\"."},
 				"content_wo": {
 					Type: cty.String, Optional: true, WriteOnly: true, Sensitive: true,
-					Description: "Exact content of the file, kept out of state: state records only content_hmac. Use it for secrets. Set this or content, unless state is \"absent\".",
+					Description: "Exact content of the file, kept out of state: state records only content_hmac. Use it for secrets. Set this or content, or source_path, unless state is \"absent\".",
 				},
-				"content_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of content_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null when content is used."},
-				"mode":         {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0644\", or \"0600\" with content_wo."},
-				"owner":        {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
-				"group":        {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
-				"on_remove":    {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
-				"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded. Sensitive when content is."},
-				"state":        {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which removes the file and keeps it gone."},
-				"in_sync":      {Type: cty.Bool, Computed: true, Description: "With state \"absent\", whether the file is already gone. Null otherwise."},
+				"source_path": {
+					Type: cty.String, Optional: true,
+					Description: "Absolute path of a file on the same host to copy to path, such as a sample config a package ships. Set this or content, or content_wo, unless state is \"absent\". Every plan hashes both files on the host, and neither file's content goes into the plan or state.",
+				},
+				"source_sha256": {Type: cty.String, Computed: true, Description: "With source_path, SHA-256 of the source file when it was last read, hex encoded. Null when it was missing, or without source_path."},
+				"content_hmac":  {Type: cty.String, Computed: true, Description: "HMAC-SHA256 of content_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null when content is used."},
+				"mode":          {Type: cty.String, Optional: true, Computed: true, Description: "Octal permissions. Defaults to \"0644\", or \"0600\" with content_wo."},
+				"owner":         {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
+				"group":         {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
+				"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
+				"sha256":        {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded. Sensitive when content is."},
+				"state":         {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which removes the file and keeps it gone."},
+				"in_sync":       {Type: cty.Bool, Computed: true, Description: "With state \"absent\", whether the file is already gone. Null otherwise."},
 				"confirm_after": {
 					Type: cty.String, Optional: true,
 					Description: "For a change that could lock Conn3x out, such as sshd_config: before writing, the host keeps a copy and schedules its own revert after this long, such as \"60s\"; after writing and running reload, Conn3x logs in again over a new connection and cancels it. If that login doesn't come, the host puts the old file back by itself, even if Conn3x has gone away. Needs systemd.",
@@ -85,7 +90,7 @@ func validateFile(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	diags = diags.Append(validateState(cfg, "content", "content_wo", "mode", "owner", "group", "validate", "confirm_after", "reload"))
+	diags = diags.Append(validateState(cfg, "content", "content_wo", "source_path", "mode", "owner", "group", "validate", "confirm_after", "reload"))
 	if ca := cfg.GetAttr("confirm_after"); ca.IsKnown() {
 		if _, err := parseConfirmAfter(ca); err != nil {
 			diags = diags.Append(attrError("confirm_after", err.Error()))
@@ -108,9 +113,22 @@ func validateFile(cfg cty.Value) tfdiags.Diagnostics {
 			diags = diags.Append(attrError("validate", err.Error()))
 		}
 	}
-	if state := cfg.GetAttr("state"); state.IsKnown() && (state.IsNull() || state.AsString() == statePresent) &&
-		cfg.GetAttr("content").IsNull() == cfg.GetAttr("content_wo").IsNull() {
-		diags = diags.Append(attrError("content", "set exactly one of content and content_wo"))
+	if state := cfg.GetAttr("state"); state.IsKnown() && (state.IsNull() || state.AsString() == statePresent) {
+		set := 0
+		for _, attr := range []string{"content", "content_wo", "source_path"} {
+			if !cfg.GetAttr(attr).IsNull() {
+				set++
+			}
+		}
+		if set != 1 {
+			diags = diags.Append(attrError("content", "set exactly one of content, content_wo and source_path"))
+		}
+	}
+	if src := cfg.GetAttr("source_path"); src.IsKnown() && !src.IsNull() {
+		d := file.Desired{Path: "/", Source: src.AsString(), Mode: defaultMode}
+		if err := d.Validate(); err != nil {
+			diags = diags.Append(attrError("source_path", err.Error()))
+		}
 	}
 	path, mode := cfg.GetAttr("path"), cfg.GetAttr("mode")
 	if path.IsKnown() && !path.IsNull() {
@@ -147,6 +165,7 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 		}
 		vals["content_wo"] = cty.NullVal(cty.String)
 		vals["sha256"], vals["content_hmac"], vals["in_sync"] = cty.UnknownVal(cty.String), cty.UnknownVal(cty.String), cty.UnknownVal(cty.Bool)
+		vals["source_sha256"] = cty.UnknownVal(cty.String)
 		return finishFilePlan(req, resp, vals)
 	}
 	if isAbsent(req.ProposedNewState) {
@@ -164,7 +183,11 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 	if mode := vals["mode"]; mode.IsKnown() {
 		vals["mode"] = cty.StringVal(file.NormalizeMode(mode.AsString()))
 	}
-	if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
+	vals["source_sha256"] = cty.NullVal(cty.String)
+	if src := vals["source_path"]; !src.IsNull() {
+		vals["content_hmac"] = cty.NullVal(cty.String)
+		vals["sha256"], vals["source_sha256"] = planCopy(req.PriorState, src)
+	} else if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
 		// Write-only: the content stays out of the plan and state.
 		vals["content"], vals["content_wo"], vals["sha256"] = cty.NullVal(cty.String), cty.NullVal(cty.String), cty.NullVal(cty.String)
 		vals["content_hmac"] = cty.UnknownVal(cty.String)
@@ -190,10 +213,26 @@ func planFile(req providers.PlanResourceChangeRequest) providers.PlanResourceCha
 	return finishFilePlan(req, resp, vals)
 }
 
+// planCopy plans sha256 and source_sha256 for a copy of src. The last
+// read found it in sync when path held what src did: both stay. Anything
+// else, src missing included, is unknown until apply copies it, since an
+// earlier step in the same apply may change src.
+func planCopy(prior, src cty.Value) (cty.Value, cty.Value) {
+	unknown := cty.UnknownVal(cty.String)
+	if prior.IsNull() || isAbsent(prior) || !src.IsKnown() || !prior.GetAttr("source_path").RawEquals(src) {
+		return unknown, unknown
+	}
+	was, from := prior.GetAttr("sha256"), prior.GetAttr("source_sha256")
+	if !known(was) || !known(from) || !was.RawEquals(from) {
+		return unknown, unknown
+	}
+	return was, from
+}
+
 // planAbsentFile plans a file that must not exist. Nothing about its
 // content is tracked; in_sync says whether it is already gone.
 func planAbsentFile(req providers.PlanResourceChangeRequest, resp providers.PlanResourceChangeResponse, vals map[string]cty.Value) providers.PlanResourceChangeResponse {
-	for _, attr := range []string{"content", "content_wo", "content_hmac", "sha256", "mode"} {
+	for _, attr := range []string{"content", "content_wo", "content_hmac", "sha256", "source_sha256", "mode"} {
 		vals[attr] = cty.NullVal(cty.String)
 	}
 	vals["in_sync"] = absentInSync(req)
@@ -289,6 +328,18 @@ func readFile(ctx context.Context, req providers.ReadResourceRequest) providers.
 		resp.NewState = cty.ObjectVal(vals)
 		return resp
 	}
+	if src := req.PriorState.GetAttr("source_path"); !src.IsNull() {
+		actual, srcSum, err := file.ReadCopy(ctx, client, path, src.AsString())
+		switch {
+		case err != nil:
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading %s: %w", path, err))
+		case !actual.Exists:
+			resp.NewState = cty.NullVal(req.PriorState.Type())
+		default:
+			resp.NewState = copyState(req.PriorState, actual, srcSum)
+		}
+		return resp
+	}
 	actual, err := file.Read(ctx, client, path)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading %s: %w", path, err))
@@ -351,7 +402,9 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 
 	content := planned.GetAttr("content")
 	var key []byte
-	if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
+	if !planned.GetAttr("source_path").IsNull() {
+		content = cty.StringVal("")
+	} else if wo := req.Config.GetAttr("content_wo"); !wo.IsNull() {
 		content = wo
 		if key, err = writeKey(req.PriorState); err == nil {
 			// A saved plan applied elsewhere must use the key it was made with.
@@ -364,12 +417,13 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 	}
 	desired := file.Desired{
 		Path:       planned.GetAttr("path").AsString(),
-		Content:    content.AsString(),
+		Source:     stringOr(planned.GetAttr("source_path"), ""),
 		Mode:       planned.GetAttr("mode").AsString(),
 		Owner:      stringOr(planned.GetAttr("owner"), ""),
 		Group:      stringOr(planned.GetAttr("group"), ""),
 		Backup:     known(planned.GetAttr("backup")) && planned.GetAttr("backup").True(),
 		BackupKeep: backupKeep(planned),
+		Content:    content.AsString(),
 	}
 	if contentChanging(req.PriorState, planned) {
 		desired.ValidateCommand = stringOr(req.Config.GetAttr("validate"), "")
@@ -394,6 +448,18 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("writing %s: %w", desired.Path, err))
 		return resp
 	}
+	if desired.Source != "" {
+		actual, srcSum, err := file.ReadCopy(ctx, client, desired.Path, desired.Source)
+		if err == nil && (file.NeedsChange(desired, actual) || actual.SHA256 != srcSum) {
+			err = errors.New("it does not match " + desired.Source + "; something else changed one of them")
+		}
+		if err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading back %s: %w", desired.Path, err))
+			return resp
+		}
+		resp.NewState = withBackup(copyState(planned, actual, srcSum), backup)
+		return resp
+	}
 	actual, err := file.Read(ctx, client, desired.Path)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading back %s: %w", desired.Path, err))
@@ -403,13 +469,30 @@ func applyFile(ctx context.Context, req providers.ApplyResourceChangeRequest) pr
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("%s does not match what was written; something else changed it", desired.Path))
 		return resp
 	}
-	resp.NewState = stateFrom(planned, actual, key)
-	if backup != "" {
-		vals := resp.NewState.AsValueMap()
-		vals["backup_file"] = cty.StringVal(backup)
-		resp.NewState = cty.ObjectVal(vals)
-	}
+	resp.NewState = withBackup(stateFrom(planned, actual, key), backup)
 	return resp
+}
+
+// withBackup records the copy a backup made, if it made one.
+func withBackup(state cty.Value, backup string) cty.Value {
+	if backup == "" {
+		return state
+	}
+	vals := state.AsValueMap()
+	vals["backup_file"] = cty.StringVal(backup)
+	return cty.ObjectVal(vals)
+}
+
+// copyState is stateFrom for a copy of source_path: the hashes of both
+// files, and no content.
+func copyState(base cty.Value, actual file.Actual, srcSum string) cty.Value {
+	vals := stateFrom(base, actual, nil).AsValueMap()
+	vals["content"], vals["sha256"] = cty.NullVal(cty.String), cty.StringVal(actual.SHA256)
+	vals["source_sha256"] = cty.NullVal(cty.String)
+	if srcSum != "" {
+		vals["source_sha256"] = cty.StringVal(srcSum)
+	}
+	return cty.ObjectVal(vals)
 }
 
 // fileChanging reports whether apply changes the file at all: its content,
