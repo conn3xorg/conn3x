@@ -254,16 +254,45 @@ func (r IPTablesRule) change(present bool) string {
 }
 
 // Undo is what takes back ApplyIPTables(rule, present) on a host that had
-// the rule (had) or not: nothing when the apply changes nothing.
-func (r IPTablesRule) Undo(present, had bool) []string {
+// the rule (had) or not: nothing when the apply changes nothing. chain is
+// the rule's chain as ListIPTablesChain read it just before a delete, so
+// the undo puts the rule back where it was.
+func (r IPTablesRule) Undo(present, had bool, chain string) []string {
 	if had == present {
 		return nil
 	}
-	cmds := []string{r.change(!present)}
+	cmds := []string{r.change(false)}
+	if !present {
+		cmds[0] = r.restore(chain)
+	}
 	if r.Persist {
 		cmds = append(cmds, r.SaveCommand())
 	}
 	return cmds
+}
+
+// restore inserts the deleted rule at the first line where the chain as
+// listed before the delete and as listed now differ. Line 1 is the chain's
+// -P or -N line, so line n is rule n-1, and a rule that was last is one
+// past the rules left. -C skips it when the delete never happened, so a
+// failed delete isn't undone into a second copy.
+func (r IPTablesRule) restore(chain string) string {
+	at := quoteAll([]string{r.binary(), "-w", "-t", r.table(), "-I", r.Chain}) + ` "$n" ` + quoteAll(r.Spec())
+	return fmt.Sprintf(`%s 2>/dev/null || { n=$(%s | o=%s awk 'BEGIN { split(ENVIRON["o"], a, "\n") } NR > 1 && $0 != a[NR] { print NR - 1; f = 1; exit } END { if (!f) print NR }') && %s; }`,
+		r.command("-C"), r.listCommand(), ssh.Quote(chain), at)
+}
+
+func (r IPTablesRule) listCommand() string {
+	return quoteAll([]string{r.binary(), "-w", "-t", r.table(), "-S", r.Chain})
+}
+
+// ListIPTablesChain is the rule's chain as iptables -S prints it, for Undo.
+func ListIPTablesChain(ctx context.Context, r modules.Runner, rule IPTablesRule) (string, error) {
+	res, err := r.Run(ctx, rule.listCommand(), nil)
+	if err := check(res, err); err != nil {
+		return "", fmt.Errorf("%s -S %s: %w", rule.binary(), rule.Chain, err)
+	}
+	return string(res.Stdout), nil
 }
 
 // SaveCommand writes iptables-save, or ip6tables-save, to the file the

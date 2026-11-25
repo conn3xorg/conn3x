@@ -387,7 +387,11 @@ func applyIPTablesRule(ctx context.Context, req providers.ApplyResourceChangeReq
 			r := iptablesRuleFrom(v)
 			undo := func() ([]string, error) {
 				had, err := firewall.ReadIPTables(ctx, h, r)
-				return r.Undo(present, had), err
+				if err != nil || !had || present {
+					return r.Undo(present, had, ""), err
+				}
+				chain, err := firewall.ListIPTablesChain(ctx, h, r)
+				return r.Undo(present, had, chain), err
 			}
 			if err := guardRule(ctx, h, v, undo, func() error { return firewall.ApplyIPTables(ctx, h, r, present) }); err != nil {
 				return fmt.Errorf("iptables_rule %s %s: %w", r.Chain, strings.Join(r.Spec(), " "), err)

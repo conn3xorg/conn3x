@@ -81,3 +81,48 @@ func TestIPTablesRule(t *testing.T) {
 		})
 	}
 }
+
+// confirm_after on removing an appended iptables rule: the SSH ACCEPT sits
+// above a catch-all DROP, removing it locks Conn3x out, and the host's undo
+// puts it back above the DROP, so the host answers again, and saves the
+// table in that order.
+func TestIPTablesConfirmAfterUndoesARemoval(t *testing.T) {
+	for _, c := range []struct{ image, packages, saved string }{
+		{"rocky10", `"iptables-nft", "iptables-services"`, "/etc/sysconfig/iptables"},
+		{"ubuntu2404", `"iptables", "iptables-persistent"`, "/etc/iptables/rules.v4"},
+	} {
+		t.Run(c.image, func(t *testing.T) {
+			h := startHostWith(t, c.image, "--privileged")
+			const (
+				replies = "-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n"
+				ssh     = "-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT\n"
+				drop    = "-A INPUT -j DROP\n"
+			)
+			w := newWorkdir(t, "iptables_confirm")
+			vars := iptablesVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Packages: c.packages, Rules: true}
+			w.writeAs("main.circuit.hcl", vars)
+			w.mustConn3x("init", "-no-color")
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+			if got := h.exec("", "iptables", "-w", "-S", "INPUT"); !strings.Contains(got, replies+ssh+drop) {
+				t.Fatalf("after apply, want replies, SSH, then DROP:\n%s", got)
+			}
+
+			vars.Rules = false
+			w.writeAs("main.circuit.hcl", vars)
+			out, code := w.conn3x("apply", "-auto-approve", "-no-color")
+			t.Logf("apply of the lockout:\n%s", out)
+			if code == 0 || !strings.Contains(out, "the host put the old state back by itself; it answers again now") {
+				t.Fatalf("removing the SSH rule should fail and be undone by the host (exit %d):\n%s", code, out)
+			}
+			if got := h.exec("", "iptables", "-w", "-S", "INPUT"); !strings.Contains(got, replies+ssh+drop) {
+				t.Errorf("the SSH rule didn't go back above the DROP:\n%s", got)
+			}
+			if got := h.exec("", "cat", c.saved); !strings.Contains(got, replies+ssh+drop) {
+				t.Errorf("%s isn't in the old order:\n%s", c.saved, got)
+			}
+			if got := strings.TrimSpace(h.exec("", "sh", "-c", "systemctl list-timers --all --no-legend 'conn3x-revert-*' | wc -l; ls -A /var/lib/conn3x/revert | wc -l")); got != "0\n0" {
+				t.Errorf("after the undo, timers and copies = %q", got)
+			}
+		})
+	}
+}

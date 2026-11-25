@@ -5,6 +5,8 @@ package firewall
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -151,18 +153,69 @@ func TestApplyIPTables(t *testing.T) {
 
 func TestIPTablesUndo(t *testing.T) {
 	r := IPTablesRule{Chain: "INPUT", Protocol: "tcp", DestinationPort: "22", Jump: "ACCEPT"}
-	if got := r.Undo(true, false); !reflect.DeepEqual(got, []string{r.command("-D")}) {
+	if got := r.Undo(true, false, ""); !reflect.DeepEqual(got, []string{r.command("-D")}) {
 		t.Errorf("undo of an add: %q", got)
 	}
-	if got := r.Undo(false, true); !reflect.DeepEqual(got, []string{r.command("-A")}) {
+	if got := r.Undo(false, true, "-P INPUT ACCEPT\n"); !reflect.DeepEqual(got, []string{r.restore("-P INPUT ACCEPT\n")}) {
 		t.Errorf("undo of a delete: %q", got)
 	}
-	if got := r.Undo(true, true); got != nil {
+	if got := r.Undo(true, true, ""); got != nil {
 		t.Errorf("undo of nothing: %q", got)
 	}
 	r.Persist = true
-	if got := r.Undo(true, false); len(got) != 2 || got[1] != r.SaveCommand() {
-		t.Errorf("undo with persist: %q", got)
+	for _, present := range []bool{true, false} {
+		if got := r.Undo(present, !present, ""); len(got) != 2 || got[1] != r.SaveCommand() {
+			t.Errorf("undo with persist, present %v: %q", present, got)
+		}
+	}
+}
+
+// The undo of a delete runs against a stand-in iptables that lists the
+// chain as it is after the delete, and reports where it would insert.
+func TestIPTablesRestorePosition(t *testing.T) {
+	if _, err := exec.LookPath("awk"); err != nil {
+		t.Skip("no awk")
+	}
+	const (
+		replies = "-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n"
+		sshRule = `-A INPUT -p tcp -m tcp --dport 22 -m comment --comment "it\'s \"ssh\" $HOME" -j ACCEPT` + "\n"
+		drop    = "-A INPUT -j DROP\n"
+	)
+	for _, c := range []struct {
+		name          string
+		rule          IPTablesRule
+		before, after string
+		has           bool
+		want          string
+	}{
+		{"appended above a drop", IPTablesRule{Chain: "INPUT", Jump: "ACCEPT"}, "-P INPUT ACCEPT\n" + replies + sshRule + drop, "-P INPUT ACCEPT\n" + replies + drop, false, "-I INPUT 2"},
+		{"inserted at the top", IPTablesRule{Chain: "INPUT", Jump: "ACCEPT", Insert: true, RuleNum: 3}, "-P INPUT DROP\n" + replies + sshRule, "-P INPUT DROP\n" + sshRule, false, "-I INPUT 1"},
+		{"last", IPTablesRule{Chain: "INPUT", Jump: "DROP"}, "-P INPUT ACCEPT\n" + replies + drop, "-P INPUT ACCEPT\n" + replies, false, "-I INPUT 2"},
+		{"user chain, ip6tables", IPTablesRule{Chain: "web", Table: "mangle", Jump: "ACCEPT", IPv6: true}, "-N web\n" + sshRule, "-N web\n", false, "-I web 1"},
+		{"never deleted", IPTablesRule{Chain: "INPUT", Jump: "ACCEPT"}, "-P INPUT ACCEPT\n" + sshRule, "-P INPUT ACCEPT\n" + sshRule, true, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bin := c.rule.binary()
+			has := "1"
+			if c.has {
+				has = "0"
+			}
+			// $1 -w, $2 -t, $3 table, $4 op, $5 chain, $6 position.
+			stub := bin + `() { case "$4" in -C) return ` + has + `;; -S) printf %s "$AFTER";; -I) echo "$3 $4 $5 $6";; esac; }` + "\n"
+			cmd := exec.Command("sh", "-c", stub+c.rule.restore(c.before))
+			cmd.Env = append(os.Environ(), "AFTER="+c.after)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			want := ""
+			if c.want != "" {
+				want = c.rule.table() + " " + c.want + "\n"
+			}
+			if string(out) != want {
+				t.Errorf("got %q, want %q", out, want)
+			}
+		})
 	}
 }
 
