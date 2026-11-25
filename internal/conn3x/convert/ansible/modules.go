@@ -108,6 +108,8 @@ type input struct {
 	keyFrom string
 	// capTasks is how many capabilities tasks in the play set this path.
 	capTasks int
+	// cronTasks is how many cron tasks in the play write this cron_file.
+	cronTasks int
 	// env is a command or shell task's environment mapping, if it has one.
 	env *yaml.Node
 	// itemVar names the role default a loop runs over, whose items the
@@ -1665,8 +1667,17 @@ var cronName = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
 func cronModule(in *input) ([]step, string) {
 	in.state("present", "present")
-	if in.has("cron_file") {
-		return nil, "writes to a named cron_file, which the converter can't translate yet"
+	// A relative cron_file is a file in /etc/cron.d, where a cron step keeps
+	// its job; the step owns the whole file, so the file can't be shared.
+	cronFile := in.str("cron_file")
+	switch {
+	case !in.has("cron_file"):
+	case cronFile == "" || cronName.MatchString(cronFile):
+		return nil, "writes to cron_file " + strconv.Quote(cronFile) + "; a cron step's name, its file in /etc/cron.d, takes only letters, digits, - and _"
+	case in.cronTasks > 1 || in.loop:
+		return nil, "writes to cron_file " + strconv.Quote(cronFile) + " more than once in the play; a cron step owns its whole file, so give each job a file of its own"
+	case !in.has("user"):
+		return nil, "sets cron_file without user, which Ansible requires"
 	}
 	schedule := ""
 	if in.has("special_time") {
@@ -1683,8 +1694,14 @@ func cronModule(in *input) ([]step, string) {
 		schedule = strings.Join(fields, " ")
 	}
 	name := strings.Trim(cronName.ReplaceAllString(in.str("name"), "-"), "-")
+	if cronFile != "" {
+		name = cronFile
+	}
 	attrs := []attr{s("name", name), s("schedule", schedule), s("command", in.str("job"))}
 	attrs = in.optional(attrs, "user", "user")
+	if cronFile != "" {
+		return one("cron", attrs)
+	}
 	return one("cron", attrs, "Conn3x keeps the job in /etc/cron.d rather than the user's crontab.",
 		fmt.Sprintf("TODO(convert): Delete the \"#Ansible: %s\" job Ansible left in the user's crontab, or it runs twice.", in.str("name")))
 }

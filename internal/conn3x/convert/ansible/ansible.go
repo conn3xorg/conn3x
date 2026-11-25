@@ -99,8 +99,10 @@ type converter struct {
 	keyFolded, keyFrom map[*yaml.Node]string
 	// capPaths counts the play's capabilities tasks by the path each sets.
 	capPaths map[string]int
-	inv      *Inventory
-	role     *role // set while converting a role
+	// cronFiles counts the play's cron tasks by the cron_file each writes.
+	cronFiles map[string]int
+	inv       *Inventory
+	role      *role // set while converting a role
 	// roleCalls is Options.Roles. roles are those converted so far, by
 	// their path, roleDirs and modules the names used, and callWhy why a
 	// role call couldn't convert, for flatten to leave it for review.
@@ -456,7 +458,7 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 	used := map[string]int{}
 	c.jsonPairs(tasks)
 	c.keyPairs(tasks)
-	c.csrs, c.capPaths = map[string]map[string]*yaml.Node{}, map[string]int{}
+	c.csrs, c.capPaths, c.cronFiles = map[string]map[string]*yaml.Node{}, map[string]int{}, map[string]int{}
 	for _, t := range tasks {
 		mod, args := moduleOf(mapping(t.node))
 		if mod == "openssl_csr" && scalar(args["path"]) != "" {
@@ -464,6 +466,9 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 		}
 		if mod == "capabilities" {
 			c.capPaths[scalar(args["path"])]++
+		}
+		if mod == "cron" {
+			c.cronFiles[scalar(args["cron_file"])]++
 		}
 	}
 	c.findProbes(tasks, vars)
@@ -1213,6 +1218,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		in.csrs = c.csrs
 		in.keyFrom = c.keyFrom[node]
 		in.capTasks = c.capPaths[scalar(args["path"])]
+		in.cronTasks = c.cronFiles[scalar(args["cron_file"])]
 		in.env = t["environment"]
 		steps, reason := m(in)
 		if reason == "" && items != nil {

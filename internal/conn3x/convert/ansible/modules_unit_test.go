@@ -97,7 +97,7 @@ func TestConvertModuleArguments(t *testing.T) {
 		"unarchive: { src: a.tgz, dest: /opt }":                                                          "from the controller",
 		"unarchive: { src: /tmp/a.tgz, dest: /opt, remote_src: yes }":                                    "no creates guard",
 		"kernel_blacklist: { blacklist_file: /etc/modprobe.d/x.conf }":                                   "has no name",
-		"cron: { name: x, job: /bin/true, cron_file: x }":                                                "named cron_file",
+		"cron: { name: x, job: /bin/true, cron_file: x }":                                                "sets cron_file without user",
 		"parted: { device: /dev/sdb, number: 1, state: present }":                                        "sets no part_start",
 		"parted: { device: /dev/sdb, number: 1, state: present, part_start: '0%' }":                      "must be a size in MiB, GiB or TiB",
 		"parted: { device: /dev/sdb, number: 1 }":                                                        "has state info",

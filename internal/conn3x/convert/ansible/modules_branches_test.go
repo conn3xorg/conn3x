@@ -131,6 +131,50 @@ func TestConvertGitSubmodules(t *testing.T) {
 	}
 }
 
+// cron with a cron_file writes a file in /etc/cron.d, which is a cron step
+// named after the file; a path, a name the step can't take and a file two
+// tasks share stay for review (#1347).
+func TestConvertCronFile(t *testing.T) {
+	certbot := "cron: { name: certbot renew, cron_file: certbot, user: root, minute: '17', hour: '3', job: certbot renew --quiet }"
+	for _, c := range []struct {
+		tasks, review string
+		want          []string
+	}{
+		{tasks: certbot, want: []string{"cron {", `name     = "certbot"`, `schedule = "17 3 * * *"`, `user     = "root"`, `command  = "certbot renew --quiet"`}},
+		{tasks: "cron: { name: x, cron_file: /etc/crontab, user: root, job: /bin/true }", review: `writes to cron_file "/etc/crontab"; a cron step's name`},
+		{tasks: "cron: { name: x, cron_file: app.daily, user: root, job: /bin/true }", review: `writes to cron_file "app.daily"; a cron step's name`},
+		{tasks: "cron: { name: x, cron_file: x, job: /bin/true }", review: "sets cron_file without user"},
+		{tasks: certbot + "\n    - cron: { name: other, cron_file: certbot, user: root, job: /bin/true }", review: `writes to cron_file "certbot" more than once in the play`},
+		{tasks: "cron: { name: '{{ item }}', cron_file: jobs, user: root, job: /bin/true }\n      loop: [a, b]", review: `writes to cron_file "jobs" more than once in the play`},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+c.tasks+"\n")
+		hcl := string(res.HCL)
+		if c.review != "" {
+			if res.Converted != 0 || len(res.Review) == 0 {
+				t.Errorf("%s: converted %d, review %+v, want review %q", c.tasks, res.Converted, res.Review, c.review)
+			}
+			for _, r := range res.Review {
+				if !strings.Contains(r.Reason, c.review) {
+					t.Errorf("%s: review %q, want %q", c.tasks, r.Reason, c.review)
+				}
+			}
+			continue
+		}
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v:\n%s", c.tasks, res.Converted, res.Review, hcl)
+			continue
+		}
+		for _, w := range c.want {
+			if !strings.Contains(hcl, w) {
+				t.Errorf("%s: missing %q in:\n%s", c.tasks, w, hcl)
+			}
+		}
+		if strings.Contains(hcl, "crontab") {
+			t.Errorf("%s: a cron_file job never was in the user's crontab:\n%s", c.tasks, hcl)
+		}
+	}
+}
+
 // copy with remote_src copies a file already on the host, which is a file
 // step's source_path; a directory, mode: preserve and a relative src stay
 // for review (#1349).
