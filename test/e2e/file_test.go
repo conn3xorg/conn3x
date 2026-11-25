@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -214,5 +215,37 @@ func TestFileValidate(t *testing.T) {
 	}
 	if got := h.exec("", "sh", "-c", "visudo -c >/dev/null && echo ok"); got != "ok\n" {
 		t.Fatalf("sudoers no longer parses: %s", got)
+	}
+}
+
+// A sensitive content's sha256 is a plain hash of the secret, so it's
+// hidden wherever content is, and a hand edit still shows as a change.
+func TestFileSensitiveContentHidesSha256(t *testing.T) {
+	h := startHost(t, "rocky10")
+	w := newWorkdir(t, "file_sensitive")
+	w.write(fileVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts})
+	w.mustConn3x("init", "-no-color")
+	hash := "f52fbd32b2b3b86ff88ef6c490628285f482af15ddcb29541f94bcf526a3f6c7" // sha256("hunter2")
+
+	out := w.mustConn3x("plan", "-no-color")
+	if strings.Contains(out, hash) || !regexp.MustCompile(`\+ sha256 += \(sensitive value\)`).MatchString(out) {
+		t.Fatalf("plan shows the hash of the sensitive content:\n%s", out)
+	}
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if out := w.mustConn3x("show", "-no-color"); strings.Contains(out, hash) {
+		t.Fatalf("show prints the hash of the sensitive content:\n%s", out)
+	}
+	state, err := os.ReadFile(filepath.Join(w.dir, "terraform.tfstate"))
+	if err != nil || !strings.Contains(string(state), `"value": "sha256"`) {
+		t.Fatalf("state doesn't mark sha256 sensitive (%v):\n%s", err, state)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("second plan is not empty:\n%s", out)
+	}
+
+	h.exec("", "sh", "-c", "echo hacked > /etc/app-secret")
+	out = w.mustConn3x("plan", "-no-color")
+	if !strings.Contains(out, "1 to change") || strings.Contains(out, "hacked") {
+		t.Fatalf("hand edit plan should show a hidden change:\n%s", out)
 	}
 }

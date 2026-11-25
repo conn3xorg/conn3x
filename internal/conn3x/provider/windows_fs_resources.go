@@ -98,7 +98,7 @@ func winFileSchema() providers.Schema {
 				Description: "Exact content, kept out of state: state records only content_hmac. Use it for secrets. Unless acl is set, only SYSTEM and Administrators can read the file.",
 			},
 			"content_hmac": {Type: cty.String, Computed: true, Description: "HMAC-SHA256 over the path and the SHA-256 of content_wo, keyed by CONN3X_HMAC_KEY or ~/.config/conn3x/hmac.key. Null when content is used."},
-			"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the file, hex encoded. Null with content_wo."},
+			"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the file, hex encoded. Null with content_wo, and sensitive when content is."},
 			"on_remove":    {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
 			"in_sync":      {Type: cty.Bool, Computed: true, Description: "Whether the file's rules matched at the last refresh."},
 		},

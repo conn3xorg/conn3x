@@ -1380,6 +1380,7 @@ func (n *NodeAbstractResourceInstance) plan(
 	// have been processed
 	// Deprecated marks are not added here (..., nil, false)
 	marks := combinePathValueMarks(unmarkedPaths, schema.Block.ValueMarks(plannedNewVal, nil, nil))
+	marks = conn3xDerivedMarks(n.Addr.Resource.Resource.Type, marks) // CONN3X
 	if len(marks) > 0 {
 		plannedNewVal = plannedNewVal.MarkWithPaths(marks)
 	}
@@ -1570,7 +1571,7 @@ func (n *NodeAbstractResourceInstance) plan(
 		plannedIdentity = resp.PlannedIdentity
 
 		if len(unmarkedPaths) > 0 {
-			plannedNewVal = plannedNewVal.MarkWithPaths(unmarkedPaths)
+			plannedNewVal = plannedNewVal.MarkWithPaths(conn3xDerivedMarks(n.Addr.Resource.Resource.Type, unmarkedPaths)) // CONN3X
 		}
 
 		for _, err := range plannedNewVal.Type().TestConformance(schema.Block.ImpliedType()) {

@@ -79,7 +79,7 @@ step "old_config" {
 <!-- reference -->
 ## How it works
 
-**Reading.** Every plan reads the file on the host: whether it exists, its mode, its owner and group, and its content. The plan shows a line-by-line diff of the content, so you review the exact change before it's made. With `content_wo`, state and the plan hold only `content_hmac`, and the diff shows that changing instead.
+**Reading.** Every plan reads the file on the host: whether it exists, its mode, its owner and group, and its content. The plan shows a line-by-line diff of the content, so you review the exact change before it's made. With `content_wo`, state and the plan hold only `content_hmac`, and the diff shows that changing instead. When `content` comes from a `sensitive = true` variable, the plan hides `sha256` along with it, since a plain hash of a short secret can be reversed with a dictionary. State still holds `content` itself, so keep secrets in `content_wo`.
 
 The login user has to be able to read the file. If it can't, the plan stops with an error that names the user, such as `/etc/app.conf exists but can't be read by deploy`. Set `become = true` in the circuit's [`ssh` block](/reference/circuits/ssh#become) so Conn3x reads it through `sudo`, or give the file a mode the login user can read.
 

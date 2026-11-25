@@ -47,7 +47,7 @@ func fileSchema() providers.Schema {
 				"owner":        {Type: cty.String, Optional: true, Description: "Owning user. Left as is when unset."},
 				"group":        {Type: cty.String, Optional: true, Description: "Owning group. Left as is when unset."},
 				"on_remove":    {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the file, \"delete\" removes it."},
-				"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded."},
+				"sha256":       {Type: cty.String, Computed: true, Description: "SHA-256 of the content, hex encoded. Sensitive when content is."},
 				"state":        {Type: cty.String, Optional: true, Description: "\"present\" (default) or \"absent\", which removes the file and keeps it gone."},
 				"in_sync":      {Type: cty.Bool, Computed: true, Description: "With state \"absent\", whether the file is already gone. Null otherwise."},
 				"confirm_after": {
