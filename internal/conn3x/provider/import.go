@@ -125,7 +125,7 @@ var importable = map[string]struct {
 
 	// A rule's id is all its fields, as planRule writes it.
 	"conn3x_firewalld":        {keysID("firewalld", "zone", "service", "port"), notNull, "", hasFirewalld},
-	"conn3x_ufw_rule":         {keysID("ufw", "action", "port", "from"), notNull, "", hasUFWRule},
+	"conn3x_ufw_rule":         {func(v cty.Value) []string { return keysID("ufw", ufwKeys(v)...)(v) }, notNull, "", hasUFWRule},
 	"conn3x_selinux_boolean":  {keysID("selinux_boolean", "name"), notNull, "SELinux boolean %s", hasSELinuxBoolean},
 	"conn3x_selinux_fcontext": {keysID("selinux_fcontext", "target"), notNull, "a local SELinux file context for %s", hasFcontext},
 }
@@ -150,7 +150,7 @@ var ruleWhat = map[string]func(cty.Value) string{
 		return fmt.Sprintf("MySQL account '%s'@'%s'", u.Name, u.Host)
 	},
 	"conn3x_ufw_rule": func(v cty.Value) string {
-		what := "the ufw rule " + v.GetAttr("action").AsString() + " " + v.GetAttr("port").AsString()
+		what := "the ufw rule " + v.GetAttr("action").AsString() + " " + stringOr(v.GetAttr("port"), "") + stringOr(v.GetAttr("app"), "")
 		if from := stringOr(v.GetAttr("from"), ""); from != "" {
 			what += " from " + from
 		}

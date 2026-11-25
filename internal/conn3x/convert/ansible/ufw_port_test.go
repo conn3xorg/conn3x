@@ -58,3 +58,39 @@ func TestConvertFirewallPorts(t *testing.T) {
 		t.Errorf("loop: converted %d, review %+v:\n%s", res.Converted, res.Review, res.HCL)
 	}
 }
+
+// name, or its alias app, names a ufw application profile, which a ufw
+// step takes as app (#1342). Set with port or proto, it stays for review.
+func TestConvertUFWApp(t *testing.T) {
+	for task, want := range map[string][]string{
+		"community.general.ufw: {rule: allow, name: OpenSSH}":    {`action = "allow"`, `app = "OpenSSH"`},
+		"ufw: {rule: limit, app: Nginx Full}":                    {`action = "limit"`, `app = "Nginx Full"`},
+		"ufw: {rule: allow, name: OpenSSH, from_ip: 10.0.0.0/8}": {`app = "OpenSSH"`, `from = "10.0.0.0/8"`},
+		"ufw: {rule: allow, name: OpenSSH, from_ip: any}":        {`app = "OpenSSH"`},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		hcl := strings.Join(strings.Fields(string(res.HCL)), " ")
+		if res.Converted != 1 || len(res.Review) != 0 {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+			continue
+		}
+		for _, w := range want {
+			if !strings.Contains(hcl, w) {
+				t.Errorf("%s: missing %q:\n%s", task, w, res.HCL)
+			}
+		}
+		if strings.Contains(hcl, "port =") || strings.Contains(task, "any") && strings.Contains(hcl, "from =") {
+			t.Errorf("%s: wrote port, or from any:\n%s", task, res.HCL)
+		}
+	}
+	for task, reason := range map[string]string{
+		"ufw: {rule: allow, name: OpenSSH, port: '22'}": "together with port or proto",
+		"ufw: {rule: allow, name: OpenSSH, proto: tcp}": "together with port or proto",
+		"ufw: {rule: allow, app: 'Open SSH; reboot'}":   "must be a ufw profile name",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%s: converted %d, review %+v, want %q", task, res.Converted, res.Review, reason)
+		}
+	}
+}

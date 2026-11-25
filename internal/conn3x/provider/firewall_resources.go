@@ -145,12 +145,13 @@ func applyFirewalld(ctx context.Context, req providers.ApplyResourceChangeReques
 
 func ufwRuleSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
-		Description: "A ufw rule for a port. Rules take effect once ufw is enabled; allow SSH before enabling it.",
+		Description: "A ufw rule for a port or an application profile. Rules take effect once ufw is enabled; allow SSH before enabling it.",
 		Attributes: map[string]*configschema.Attribute{
 			"id":            {Type: cty.String, Computed: true},
 			"revision":      revisionAttr(),
 			"action":        {Type: cty.String, Required: true, Description: "allow, deny, reject or limit."},
-			"port":          {Type: cty.String, Required: true, Description: "Port, optionally with a protocol: 22, 22/tcp or 6000:6007/tcp."},
+			"port":          {Type: cty.String, Optional: true, Description: "Port, optionally with a protocol: 22, 22/tcp or 6000:6007/tcp. Set this or app."},
+			"app":           {Type: cty.String, Optional: true, Description: "Application profile in /etc/ufw/applications.d, such as OpenSSH or Nginx Full, for the ports it lists. Set it instead of port."},
 			"from":          {Type: cty.String, Optional: true, Description: "Address or CIDR the rule applies to. Defaults to anywhere."},
 			"on_remove":     {Type: cty.String, Optional: true, Computed: true, Description: ruleOnRemove},
 			"in_sync":       {Type: cty.Bool, Computed: true, Description: "Whether ufw has the rule."},
@@ -161,7 +162,24 @@ func ufwRuleSchema() providers.Schema {
 }
 
 func ufwRuleFrom(v cty.Value) firewall.UFWRule {
-	return firewall.UFWRule{Action: v.GetAttr("action").AsString(), Port: v.GetAttr("port").AsString(), From: stringOr(v.GetAttr("from"), "")}
+	return firewall.UFWRule{Action: v.GetAttr("action").AsString(), Port: stringOr(v.GetAttr("port"), ""), App: stringOr(v.GetAttr("app"), ""), From: stringOr(v.GetAttr("from"), "")}
+}
+
+// ufwKeys identify a rule. app joins them only when it's set, so a port
+// rule keeps the id it had before app existed.
+func ufwKeys(v cty.Value) []string {
+	if v.GetAttr("app").IsNull() {
+		return []string{"action", "port", "from"}
+	}
+	return []string{"action", "port", "from", "app"}
+}
+
+func planUFWRule(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	var keys []string
+	if !req.ProposedNewState.IsNull() {
+		keys = ufwKeys(req.ProposedNewState)
+	}
+	return planRule("ufw", keys)(req)
 }
 
 func validateUFWRule(cfg cty.Value) tfdiags.Diagnostics {
@@ -172,7 +190,11 @@ func validateUFWRule(cfg cty.Value) tfdiags.Diagnostics {
 	diags = diags.Append(validateOnRemove(cfg))
 	diags = diags.Append(validateRuleConfirmAfter(cfg))
 	if err := ufwRuleFrom(cfg).Validate(); err != nil {
-		diags = diags.Append(attrError("port", err.Error()))
+		attr := "port"
+		if !cfg.GetAttr("app").IsNull() {
+			attr = "app"
+		}
+		diags = diags.Append(attrError(attr, err.Error()))
 	}
 	return diags
 }

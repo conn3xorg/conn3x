@@ -73,6 +73,13 @@ func TestUFWRule(t *testing.T) {
 		{Action: "limit", Port: "22"}:                               "limit 22",
 		{Action: "deny", Port: "6000:6007/tcp", From: "10.0.0.0/8"}: "deny from 10.0.0.0/8 to any port 6000:6007 proto tcp",
 		{Action: "allow", Port: "53", From: "192.0.2.1"}:            "allow from 192.0.2.1 to any port 53",
+		// As ufw 0.36.2 prints them in "ufw show added": a profile name is
+		// quoted only when it has a space.
+		{Action: "allow", App: "OpenSSH"}:                       "allow OpenSSH",
+		{Action: "limit", App: "Nginx Full"}:                    "limit 'Nginx Full'",
+		{Action: "allow", App: "OpenSSH", From: "10.0.0.0/8"}:   "allow from 10.0.0.0/8 to any app OpenSSH",
+		{Action: "allow", App: "Nginx Full", From: "192.0.2.1"}: "allow from 192.0.2.1 to any app 'Nginx Full'",
+		{Action: "allow", App: "9p-fs_v2.0+x"}:                  "allow 9p-fs_v2.0+x",
 	} {
 		if err := rule.Validate(); err != nil {
 			t.Errorf("rejected %+v: %v", rule, err)
@@ -89,6 +96,14 @@ func TestUFWRule(t *testing.T) {
 		{Action: "allow", Port: "22/tcp; reboot"},
 		{Action: "allow", Port: "22", From: "not-an-ip"},
 		{Action: "allow", Port: "99999"},
+		{Action: "allow", Port: "22/tcp", App: "OpenSSH"},
+		{Action: "allow", App: "Nginx'Full"},
+		{Action: "allow", App: "OpenSSH; reboot"},
+		{Action: "allow", App: "$(reboot)"},
+		{Action: "allow", App: " OpenSSH"},
+		{Action: "allow", App: "all"},
+		{Action: "allow", App: "22"},
+		{Action: "allow", App: "OpenSSH", From: "not-an-ip"},
 	} {
 		if bad.Validate() == nil {
 			t.Errorf("accepted %+v", bad)
@@ -109,13 +124,17 @@ func TestUFWAdded(t *testing.T) {
 // ufwHost keeps rules the way ufw show added prints them. With lose set,
 // it drops writes, as ufw does when two run at once.
 type ufwHost struct {
-	rules []string
-	lose  bool
-	ran   []string
+	rules  []string
+	lose   bool
+	noApps bool
+	ran    []string
 }
 
 func (h *ufwHost) Run(_ context.Context, cmd string, _ []byte) (ssh.Result, error) {
 	h.ran = append(h.ran, cmd)
+	if strings.HasPrefix(cmd, "ufw app info ") && h.noApps {
+		return ssh.Result{ExitCode: 1, Stdout: []byte("ERROR: Could not find profile 'Nginx Full'\n")}, nil
+	}
 	if cmd == "ufw show added" {
 		return ssh.Result{Stdout: []byte("Added user rules (see 'ufw status' for running firewall):\n" + strings.Join(h.rules, "\n") + "\n")}, nil
 	}
@@ -138,6 +157,23 @@ func TestApplyUFWTakesTurnsAndChecksTheRuleLanded(t *testing.T) {
 	h = &ufwHost{lose: true}
 	if err := ApplyUFW(context.Background(), h, u, true); err == nil || !strings.Contains(err.Error(), "doesn't agree") {
 		t.Errorf("apply = %v, want it to fail when the rule didn't land", err)
+	}
+}
+
+// An app rule checks the profile is there, by its name as written, before
+// ufw sees the rule.
+func TestApplyUFWAppChecksTheProfile(t *testing.T) {
+	u := UFWRule{Action: "allow", App: "Nginx Full"}
+	h := &ufwHost{}
+	if err := ApplyUFW(context.Background(), h, u, true); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"ufw app info 'Nginx Full'", "flock /run/conn3x-ufw.lock ufw allow 'Nginx Full'"}; len(h.ran) < 2 || h.ran[0] != want[0] || h.ran[1] != want[1] {
+		t.Errorf("ran %q, want %q first", h.ran, want)
+	}
+	h = &ufwHost{noApps: true}
+	if err := ApplyUFW(context.Background(), h, u, true); err == nil || !strings.Contains(err.Error(), `no ufw application profile "Nginx Full"`) || len(h.ran) != 1 {
+		t.Errorf("apply = %v after %q, want it to stop at app info", err, h.ran)
 	}
 }
 

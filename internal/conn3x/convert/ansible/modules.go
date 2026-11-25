@@ -2183,19 +2183,26 @@ func ufwModule(in *input) ([]step, string) {
 	if !in.has("rule") {
 		return ufwSettingsModule(in)
 	}
+	app := in.has("name") || in.has("app")
+	if app && (in.has("port") || in.has("to_port") || in.has("proto")) {
+		return nil, "names an application profile together with port or proto; a ufw step allows either a profile's own ports or one port, so drop one"
+	}
 	port := in.str("port", "to_port")
 	if in.has("proto") {
 		if p := in.str("proto"); p != "any" {
 			port += "/" + p
 		}
 	}
-	r := firewall.UFWRule{Action: in.str("rule"), Port: port, From: in.str("from_ip", "from", "src")}
+	r := firewall.UFWRule{Action: in.str("rule"), Port: port, App: in.str("name", "app"), From: in.str("from_ip", "from", "src")}
 	if r.From == "any" {
 		r.From = "" // Ansible's default for from_ip; the step leaves from out for anywhere
 	}
 	// A mark is a loop item or a variable; each written item is checked on its own.
-	if !strings.Contains(r.Action+r.Port+r.From, "\x00") {
+	if !strings.Contains(r.Action+r.Port+r.App+r.From, "\x00") {
 		if err := r.Validate(); err != nil {
+			if app {
+				return nil, "can't be a ufw step: " + err.Error()
+			}
 			p, _, _ := strings.Cut(port, "/")
 			switch {
 			case p == "":
@@ -2207,6 +2214,9 @@ func ufwModule(in *input) ([]step, string) {
 		}
 	}
 	attrs := []attr{s("action", r.Action), s("port", r.Port)}
+	if app {
+		attrs = []attr{s("action", r.Action), s("app", r.App)}
+	}
 	if r.From != "" {
 		attrs = append(attrs, s("from", r.From))
 	}

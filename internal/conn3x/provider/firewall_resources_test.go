@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
@@ -75,5 +76,53 @@ func TestFirewallConfirmAfter(t *testing.T) {
 		if diags := r.validate(objFor(r.schema(), cfg)); !diags.HasErrors() {
 			t.Errorf("%s accepted confirm_after 1s", rt)
 		}
+	}
+}
+
+// A ufw rule names a port or an application profile. app is in the id
+// only when set, so a port rule's id is what it was before app existed,
+// and changing the profile replaces the rule.
+func TestUFWAppRule(t *testing.T) {
+	r := resourceTypes["conn3x_ufw_rule"]
+	plan := func(prior cty.Value, attrs map[string]cty.Value) providers.PlanResourceChangeResponse {
+		cfg := objFor(r.schema(), attrs)
+		if prior == cty.NilVal {
+			prior = cty.NullVal(cfg.Type())
+		}
+		return r.plan(providers.PlanResourceChangeRequest{PriorState: prior, ProposedNewState: cfg, Config: cfg})
+	}
+	allow := cty.StringVal("allow")
+	for want, attrs := range map[string]map[string]cty.Value{
+		":ufw:allow:22/tcp:":                {"action": allow, "port": cty.StringVal("22/tcp")},
+		":ufw:allow:::OpenSSH":              {"action": allow, "app": cty.StringVal("OpenSSH")},
+		":ufw:allow::10.0.0.0/8:Nginx Full": {"action": allow, "app": cty.StringVal("Nginx Full"), "from": cty.StringVal("10.0.0.0/8")},
+	} {
+		if id := plan(cty.NilVal, attrs).PlannedState.GetAttr("id"); !id.IsKnown() || !strings.HasSuffix(id.AsString(), want) {
+			t.Errorf("%v: id %#v, want it to end %q", attrs, id, want)
+		}
+	}
+	prior := withSync(plan(cty.NilVal, map[string]cty.Value{"action": allow, "app": cty.StringVal("OpenSSH")}).PlannedState, true)
+	resp := plan(prior, map[string]cty.Value{"action": allow, "app": cty.StringVal("Nginx Full")})
+	if len(resp.RequiresReplace) != 1 || !resp.RequiresReplace[0].Equals(cty.GetAttrPath("app")) {
+		t.Errorf("app change: RequiresReplace = %v", resp.RequiresReplace)
+	}
+	if resp := plan(prior, map[string]cty.Value{"action": allow, "app": cty.StringVal("OpenSSH")}); len(resp.RequiresReplace) != 0 || !resp.PlannedState.GetAttr("in_sync").RawEquals(cty.True) {
+		t.Errorf("same app: RequiresReplace = %v, in_sync %#v", resp.RequiresReplace, resp.PlannedState.GetAttr("in_sync"))
+	}
+	if resp := plan(prior, map[string]cty.Value{"action": allow, "port": cty.StringVal("22/tcp")}); len(resp.RequiresReplace) == 0 {
+		t.Error("app to port planned no replacement")
+	}
+
+	for _, bad := range []map[string]cty.Value{
+		{"action": allow, "app": cty.StringVal("OpenSSH"), "port": cty.StringVal("22/tcp")},
+		{"action": allow, "app": cty.StringVal("OpenSSH'; reboot; '")},
+		{"action": allow},
+	} {
+		if diags := r.validate(objFor(r.schema(), bad)); !diags.HasErrors() {
+			t.Errorf("accepted %v", bad)
+		}
+	}
+	if diags := r.validate(objFor(r.schema(), map[string]cty.Value{"action": allow, "app": cty.StringVal("Nginx Full")})); diags.HasErrors() {
+		t.Errorf("refused app Nginx Full: %v", diags.Err())
 	}
 }

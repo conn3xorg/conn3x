@@ -13,7 +13,7 @@ import (
 type confirmFirewallVars struct {
 	Port, KeyFile, KnownHosts string
 	Tool                      string
-	Rule, Deny                bool
+	Rule, Deny, App           bool
 }
 
 // confirm_after on a ufw rule: removing the rule that lets SSH in locks
@@ -56,11 +56,27 @@ func TestConfirmAfterUndoesAUFWLockout(t *testing.T) {
 
 // confirm_after on removing a ufw allow that sits above a deny for the
 // same port: the host's undo puts the allow back above the deny, in both
-// address families, so the host answers again.
+// address families, so the host answers again. The allow is a port, or
+// the OpenSSH application profile, which goes back the same way.
 func TestConfirmAfterPutsAUFWRuleBackInPlace(t *testing.T) {
+	for _, c := range []struct {
+		name, allow4, allow6 string
+		app                  bool
+	}{
+		{"port", "allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in", "allow tcp 22 ::/0 any ::/0 in", false},
+		{"app", "allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 OpenSSH - in", "allow tcp 22 ::/0 any ::/0 OpenSSH - in", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			order := c.allow4 + "\ndeny any 22 0.0.0.0/0 any 0.0.0.0/0 in\n" + c.allow6 + "\ndeny any 22 ::/0 any ::/0 in\n"
+			confirmUFWRuleBackInPlace(t, c.app, order)
+		})
+	}
+}
+
+func confirmUFWRuleBackInPlace(t *testing.T, app bool, order string) {
 	h := startHostWith(t, "ubuntu2404", "--privileged")
 	w := newWorkdir(t, "confirm_firewall")
-	vars := confirmFirewallVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Tool: "ufw", Rule: true, Deny: true}
+	vars := confirmFirewallVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Tool: "ufw", Rule: true, Deny: true, App: app}
 	w.writeAs("main.circuit.hcl", vars)
 	w.mustConn3x("init", "-no-color")
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
@@ -71,7 +87,6 @@ func TestConfirmAfterPutsAUFWRuleBackInPlace(t *testing.T) {
 	tuples := func() string {
 		return h.exec("", "sh", "-c", "grep -h '^### tuple' /etc/ufw/user.rules /etc/ufw/user6.rules | sed 's/^### tuple ### //'")
 	}
-	const order = "allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in\ndeny any 22 0.0.0.0/0 any 0.0.0.0/0 in\nallow tcp 22 ::/0 any ::/0 in\ndeny any 22 ::/0 any ::/0 in\n"
 	if got := tuples(); got != order {
 		t.Fatalf("after apply, want the allow above the deny in each family:\n%s", got)
 	}

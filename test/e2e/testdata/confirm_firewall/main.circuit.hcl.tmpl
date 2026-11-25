@@ -18,7 +18,11 @@ circuit "box" {
 {{- if eq .Tool "ufw"}}
     ufw {
       action        = "allow"
+{{- if .App}}
+      app           = "OpenSSH"
+{{- else}}
       port          = "22/tcp"
+{{- end}}
       confirm_after = "20s"
     }
 {{- else}}

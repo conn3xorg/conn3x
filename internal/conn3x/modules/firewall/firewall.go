@@ -192,14 +192,21 @@ func (f Firewalld) Undo(present, hadRuntime, hadPermanent bool) []string {
 	return cmds
 }
 
-// UFWRule is one ufw rule for a port, optionally from one address or network.
+// UFWRule is one ufw rule for a port or an application profile, optionally
+// from one address or network.
 type UFWRule struct {
 	Action string // allow, deny, reject or limit
 	Port   string // such as 22, 22/tcp or 6000:6007/tcp
+	App    string // a profile in /etc/ufw/applications.d, such as OpenSSH; set instead of Port
 	From   string // an address or CIDR; empty means anywhere
 }
 
 var ufwPort = regexp.MustCompile(`^(\d+)(?::(\d+))?(?:/(tcp|udp))?$`)
+
+// ufwApp is what ufw 0.36.2 accepts as a profile name (valid_profile_name
+// in its applications.py). It has no quote, so ssh.Quote of it is ufw's own
+// quoting, and the name is safe in a root shell.
+var ufwApp = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _.+-]*$`)
 
 // Validate checks a rule before anything reaches the host.
 func (u UFWRule) Validate() error {
@@ -207,6 +214,18 @@ func (u UFWRule) Validate() error {
 	case "allow", "deny", "reject", "limit":
 	default:
 		return fmt.Errorf("action must be allow, deny, reject or limit, not %q", u.Action)
+	}
+	if u.App != "" {
+		if u.Port != "" {
+			return errors.New("set port or app, not both")
+		}
+		if !ufwApp.MatchString(u.App) || u.App == "all" || strings.Trim(u.App, "0123456789") == "" {
+			return fmt.Errorf("app %q must be a ufw profile name, such as OpenSSH or Nginx Full: letters, digits, spaces and _ . + -, starting with a letter or digit, and not all digits or \"all\"", u.App)
+		}
+		return u.validFrom()
+	}
+	if u.Port == "" {
+		return errors.New("set port or app")
 	}
 	m := ufwPort.FindStringSubmatch(u.Port)
 	if m == nil {
@@ -218,6 +237,10 @@ func (u UFWRule) Validate() error {
 	if err := portRange(u.Port, m[1], m[2]); err != nil {
 		return err
 	}
+	return u.validFrom()
+}
+
+func (u UFWRule) validFrom() error {
 	if u.From != "" && net.ParseIP(u.From) == nil {
 		if _, _, err := net.ParseCIDR(u.From); err != nil {
 			return fmt.Errorf("from %q is not an address or CIDR", u.From)
@@ -228,6 +251,16 @@ func (u UFWRule) Validate() error {
 
 // Spec renders the rule the way ufw itself prints it in "ufw show added".
 func (u UFWRule) Spec() string {
+	if u.App != "" {
+		app := u.App
+		if strings.Contains(app, " ") {
+			app = ssh.Quote(app) // ufw quotes a name only when it has a space
+		}
+		if u.From == "" {
+			return u.Action + " " + app
+		}
+		return fmt.Sprintf("%s from %s to any app %s", u.Action, u.From, app)
+	}
 	if u.From == "" {
 		return u.Action + " " + u.Port
 	}
@@ -257,8 +290,8 @@ func ReadUFW(ctx context.Context, r modules.Runner, u UFWRule) (bool, error) {
 	return ufwAdded(string(res.Stdout), u), nil
 }
 
-// ApplyUFW adds or deletes the rule. Spec contains only validated words, so
-// it is safe to pass unquoted. ufw rewrites its rule files without a lock
+// ApplyUFW adds or deletes the rule. Spec contains only validated words,
+// with a profile name that has a space quoted, so it is safe in the shell. ufw rewrites its rule files without a lock
 // of its own, so two rules applied at once on one host can lose one, as a
 // step with for_each does. flock makes them take turns, and the rule is
 // read back so a lost write fails the step.
@@ -266,6 +299,15 @@ func ApplyUFW(ctx context.Context, r modules.Runner, u UFWRule, present bool) er
 	cmd, err := u.command(present)
 	if err != nil {
 		return err
+	}
+	if present && u.App != "" {
+		// "ufw allow" finds a profile whatever its case and stores ufw's own
+		// spelling, which "ufw show added" then never matches; app info
+		// takes the name only as written.
+		res, err := r.Run(ctx, "ufw app info "+ssh.Quote(u.App), nil)
+		if err := check(res, err); err != nil {
+			return fmt.Errorf("no ufw application profile %q on the host (names are case-sensitive; ufw app list shows them): %w", u.App, err)
+		}
 	}
 	res, err := r.Run(ctx, cmd, nil)
 	if err := check(res, err); err != nil {
@@ -281,7 +323,7 @@ func ApplyUFW(ctx context.Context, r modules.Runner, u UFWRule, present bool) er
 	return nil
 }
 
-// command is the ufw command line. Spec goes into it unquoted, so the rule
+// command is the ufw command line. Spec goes into it as it is, so the rule
 // is validated here, whoever the caller is.
 func (u UFWRule) command(present bool) (string, error) {
 	if err := u.Validate(); err != nil {

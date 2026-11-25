@@ -39,6 +39,13 @@ func TestUFWRestorePosition(t *testing.T) {
 		// out on eth1 to any app Multi". Each is one rule.
 		multiIf4    = "### tuple ### allow tcp 80,443 0.0.0.0/0 any 0.0.0.0/0 Multi - in_eth0\n### tuple ### allow udp 8080 0.0.0.0/0 any 0.0.0.0/0 Multi - in_eth0\n"
 		multiRoute4 = "### tuple ### route:allow tcp 80,443 0.0.0.0/0 any 0.0.0.0/0 Multi - in_eth0!out_eth1\n### tuple ### route:allow udp 8080 0.0.0.0/0 any 0.0.0.0/0 Multi - in_eth0!out_eth1\n"
+		// "ufw allow OpenSSH", and "ufw allow 'Nginx Full'" with
+		// ports=80,443/tcp|8080/udp, as ufw 0.36.2 writes them.
+		app4   = "### tuple ### allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 OpenSSH - in\n"
+		app6   = "### tuple ### allow tcp 22 ::/0 any ::/0 OpenSSH - in\n"
+		appFr4 = "### tuple ### allow tcp 22 0.0.0.0/0 any 192.0.2.1 OpenSSH - in\n"
+		nginx4 = "### tuple ### allow tcp 80,443 0.0.0.0/0 any 0.0.0.0/0 Nginx%20Full - in\n### tuple ### allow udp 8080 0.0.0.0/0 any 0.0.0.0/0 Nginx%20Full - in\n"
+		nginx6 = "### tuple ### allow tcp 80,443 ::/0 any ::/0 Nginx%20Full - in\n### tuple ### allow udp 8080 ::/0 any ::/0 Nginx%20Full - in\n"
 		// Two plain rules with the same comment are still two rules.
 		noted4 = "### tuple ### allow tcp 80 0.0.0.0/0 any 0.0.0.0/0 in comment=776562\n### tuple ### allow tcp 443 0.0.0.0/0 any 0.0.0.0/0 in comment=776562\n"
 	)
@@ -97,6 +104,21 @@ func TestUFWRestorePosition(t *testing.T) {
 			"insert 2 allow from 0.0.0.0/0 to any port 22 proto tcp\n"},
 		{"below two commented rules", ssh22, noted4 + allow4 + deny4, "", noted4 + deny4, "",
 			"insert 3 allow from 0.0.0.0/0 to any port 22 proto tcp\n"},
+		// An app rule goes back in halves as a port rule does: ufw stores
+		// "insert N allow from 0.0.0.0/0 to any app OpenSSH" as the IPv4
+		// half of "allow OpenSSH", and prints the pair as before.
+		{"an app rule above a deny", UFWRule{Action: "allow", App: "OpenSSH"},
+			app4 + deny4, app6 + deny6,
+			deny4, deny6,
+			"insert 1 allow from 0.0.0.0/0 to any app OpenSSH\ninsert 3 allow from ::/0 to any app OpenSSH\n"},
+		{"an app rule of two tuples", UFWRule{Action: "allow", App: "Nginx Full"},
+			web4 + nginx4 + deny4, web6 + nginx6 + deny6,
+			web4 + deny4, web6 + deny6,
+			"insert 2 allow from 0.0.0.0/0 to any app Nginx Full\ninsert 5 allow from ::/0 to any app Nginx Full\n"},
+		{"an app rule from one address", UFWRule{Action: "allow", App: "OpenSSH", From: "192.0.2.1"},
+			appFr4 + deny4, deny6,
+			deny4, deny6,
+			"insert 1 allow from 192.0.2.1 to any app OpenSSH\n"},
 		{"never deleted", ssh22, allow4 + deny4, allow6 + deny6, allow4 + deny4, allow6 + deny6, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
