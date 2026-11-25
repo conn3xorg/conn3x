@@ -196,16 +196,16 @@ func runEachPlan(o eachOptions, root string, run eachRunner, stdout, stderr io.W
 		sem := make(chan struct{}, o.parallelism)
 		var wg sync.WaitGroup
 		for _, dir := range level {
-			if result[dir] != "" {
-				continue
-			}
+			// result is read under mu: plans from this level write to it.
 			mu.Lock()
-			why := blocked(dir)
-			if why != "" {
-				result[dir] = why
+			skip := result[dir] != ""
+			if !skip {
+				if why := blocked(dir); why != "" {
+					result[dir], skip = why, true
+				}
 			}
 			mu.Unlock()
-			if why != "" {
+			if skip {
 				continue
 			}
 			wg.Add(1)
