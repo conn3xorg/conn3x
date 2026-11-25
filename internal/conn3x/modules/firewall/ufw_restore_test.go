@@ -4,9 +4,11 @@
 package firewall
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +32,12 @@ func TestUFWRestorePosition(t *testing.T) {
 		tail   = "\n### END RULES ###\nCOMMIT\n"
 	)
 	ssh22 := UFWRule{Action: "allow", Port: "22/tcp"}
+	// A blocklist big enough that its listing passes the 128 KiB a single
+	// argument or environment string may hold on Linux.
+	var block strings.Builder
+	for i := 0; i < 3000; i++ {
+		fmt.Fprintf(&block, "### tuple ### deny any any 0.0.0.0/0 any 198.%d.%d.0/24 in\n", i/250, i%250)
+	}
 	for _, c := range []struct {
 		name             string
 		rule             UFWRule
@@ -63,6 +71,10 @@ func TestUFWRestorePosition(t *testing.T) {
 			allow4 + deny4, allow6 + deny6,
 			allow4 + deny4, deny6,
 			"insert 3 allow from ::/0 to any port 22 proto tcp\n"},
+		{"above a blocklist past the argument limit", ssh22,
+			allow4 + block.String(), "",
+			block.String(), "",
+			"insert 1 allow from 0.0.0.0/0 to any port 22 proto tcp\n"},
 		{"never deleted", ssh22, allow4 + deny4, allow6 + deny6, allow4 + deny4, allow6 + deny6, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -82,7 +94,10 @@ func TestUFWRestorePosition(t *testing.T) {
 			stub := `flock() { shift; "$@"; }
 ufw() { echo "$*"; case "$*" in *:*) ;; *) echo '### tuple ### restored' >> "$V4" ;; esac; }
 `
-			sh := exec.Command("sh", "-c", stub+cmd)
+			// On stdin, as revert.sh is run from a file: an argument is
+			// capped at 128 KiB on Linux.
+			sh := exec.Command("sh")
+			sh.Stdin = strings.NewReader(stub + cmd + "\n")
 			sh.Env = append(os.Environ(), "V4="+ufwFiles[0])
 			out, err := sh.CombinedOutput()
 			if err != nil {

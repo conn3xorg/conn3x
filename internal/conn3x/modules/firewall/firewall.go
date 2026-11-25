@@ -347,7 +347,10 @@ func (u UFWRule) restore(rules [2]string) (string, error) {
 		return "", err
 	}
 	const lock = "flock /run/conn3x-ufw.lock ufw "
-	const place = `awk 'BEGIN { n = split(ENVIRON["o"], a, "\n") } /^### tuple/ { c++; if ($0 != a[c]) { print c; f = 1; exit } } END { if (!f && c < n) print "end" }' `
+	// The old listing reaches awk on stdin, from a heredoc in revert.sh, and
+	// ends at a marker line: an environment string or argument is capped at
+	// 128 KiB, which a blocklist of a few thousand rules passes.
+	const place = `awk 's == 0 { if ($0 == "### conn3x end") s = 1; else if ($0 != "") a[++n] = $0; next } /^### tuple/ { c++; if ($0 != a[c]) { print c; f = 1; exit } } END { if (!f && c < n) print "end" }' - `
 	cmds := make([]string, 2)
 	for i, anywhere := range []string{"0.0.0.0/0", "::/0"} {
 		half := u
@@ -358,8 +361,8 @@ func (u UFWRule) restore(rules [2]string) (string, error) {
 		if i == 1 {
 			base = `$(awk '/^### tuple/ { c++ } END { print c + 0 }' ` + ssh.Quote(ufwFiles[0]) + ")"
 		}
-		cmds[i] = fmt.Sprintf(`p=$(o=%s %s%s) && case $p in '') ;; end) %s%s ;; *) %sinsert $((%s + p)) %s ;; esac`,
-			ssh.Quote(rules[i]), place, ssh.Quote(ufwFiles[i]), lock, half.Spec(), lock, base, half.Spec())
+		cmds[i] = fmt.Sprintf("p=$(%s%s <<'CONN3X_UFW_RULES'\n%s\n### conn3x end\nCONN3X_UFW_RULES\n) && case $p in '') ;; end) %s%s ;; *) %sinsert $((%s + p)) %s ;; esac",
+			place, ssh.Quote(ufwFiles[i]), rules[i], lock, half.Spec(), lock, base, half.Spec())
 	}
 	return strings.Join(cmds, " && "), nil
 }
