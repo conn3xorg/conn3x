@@ -16,7 +16,7 @@ import (
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
-var ufwSettingsAttrs = []string{"enabled", "default_incoming", "default_outgoing", "default_routed"}
+var ufwSettingsAttrs = []string{"enabled", "default_incoming", "default_outgoing", "default_routed", "logging"}
 
 func ufwSettingsSchema() providers.Schema {
 	policy := func(dir string) *configschema.Attribute {
@@ -31,6 +31,7 @@ func ufwSettingsSchema() providers.Schema {
 			"default_incoming": policy("incoming"),
 			"default_outgoing": policy("outgoing"),
 			"default_routed":   policy("routed (forwarded)"),
+			"logging":          {Type: cty.String, Optional: true, Description: "ufw's logging level, set with ufw logging: off, low, medium, high or full, or on for any level but off (low when it was off). Unset leaves it as it is."},
 			"confirm_after":    ruleConfirmAfter(),
 			"in_sync":          {Type: cty.Bool, Computed: true, Description: "Whether ufw had every setting the step sets at the last refresh."},
 		},
@@ -39,7 +40,7 @@ func ufwSettingsSchema() providers.Schema {
 }
 
 func ufwSettingsFrom(v cty.Value) firewall.UFWSettings {
-	s := firewall.UFWSettings{Incoming: stringOr(v.GetAttr("default_incoming"), ""), Outgoing: stringOr(v.GetAttr("default_outgoing"), ""), Routed: stringOr(v.GetAttr("default_routed"), "")}
+	s := firewall.UFWSettings{Incoming: stringOr(v.GetAttr("default_incoming"), ""), Outgoing: stringOr(v.GetAttr("default_outgoing"), ""), Routed: stringOr(v.GetAttr("default_routed"), ""), Logging: stringOr(v.GetAttr("logging"), "")}
 	if e := v.GetAttr("enabled"); known(e) {
 		on := e.True()
 		s.Enabled = &on

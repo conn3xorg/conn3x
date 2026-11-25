@@ -46,10 +46,47 @@ func TestUFWSettingsCommands(t *testing.T) {
 	if !(UFWSettings{Outgoing: "allow"}).Matches(off) || (UFWSettings{Enabled: on(true)}).Matches(off) {
 		t.Error("Matches")
 	}
-	for _, bad := range []UFWSettings{{}, {Incoming: "drop"}, {Routed: "DENY"}} {
+	for _, bad := range []UFWSettings{{}, {Incoming: "drop"}, {Routed: "DENY"}, {Logging: "ON"}, {Logging: "verbose"}} {
 		if bad.Validate() == nil {
 			t.Errorf("%+v passed", bad)
 		}
+	}
+}
+
+// ufw logging on keeps a level it has and sets low only from off, so on
+// matches any level but off. A missing LOGLEVEL matches nothing, and has
+// no level to put back.
+func TestUFWSettingsLogging(t *testing.T) {
+	st, err := parseUFWState("incoming=DROP\noutgoing=ACCEPT\nrouted=DROP\nlogging=medium\nboot=yes\nstatus=Status: active\n")
+	if err != nil || st.Logging != "medium" {
+		t.Fatalf("parse: %+v, %v", st, err)
+	}
+	for _, c := range []struct {
+		want, have string
+		match      bool
+	}{
+		{"on", "medium", true}, {"on", "low", true}, {"on", "off", false}, {"on", "", false},
+		{"medium", "medium", true}, {"high", "medium", false}, {"off", "off", true}, {"off", "low", false},
+		{"", "full", true},
+	} {
+		if got := (UFWSettings{Logging: c.want}).Matches(UFWState{Logging: c.have}); got != c.match {
+			t.Errorf("%q against %q: %t", c.want, c.have, got)
+		}
+	}
+	for _, v := range []string{"off", "on", "low", "medium", "high", "full"} {
+		if err := (UFWSettings{Logging: v}).Validate(); err != nil {
+			t.Errorf("%s: %v", v, err)
+		}
+	}
+	do, undo := UFWSettings{Logging: "high"}.Commands(st)
+	if !slices.Equal(do, []string{"flock /run/conn3x-ufw.lock ufw logging high"}) || !slices.Equal(undo, []string{"flock /run/conn3x-ufw.lock ufw logging medium"}) {
+		t.Errorf("medium to high:\n%q\n%q", do, undo)
+	}
+	if do, undo := (UFWSettings{Logging: "on"}).Commands(st); len(do) != 0 || len(undo) != 0 {
+		t.Errorf("on while medium: %q %q", do, undo)
+	}
+	if do, undo := (UFWSettings{Logging: "on"}).Commands(UFWState{}); len(do) != 1 || len(undo) != 0 {
+		t.Errorf("on without LOGLEVEL: %q %q", do, undo)
 	}
 }
 

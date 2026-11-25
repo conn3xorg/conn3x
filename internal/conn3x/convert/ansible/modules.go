@@ -2148,8 +2148,8 @@ func firewalldModule(in *input) ([]step, string) {
 }
 
 // ufwSettingsModule converts a ufw task that changes ufw itself: state
-// enabled or disabled, and default (or policy) with direction, which
-// Ansible takes as incoming when it's left out.
+// enabled or disabled, default (or policy) with direction, which Ansible
+// takes as incoming when it's left out, and logging.
 func ufwSettingsModule(in *input) ([]step, string) {
 	var attrs []attr
 	switch st := in.str("state"); st {
@@ -2171,7 +2171,28 @@ func ufwSettingsModule(in *input) ([]step, string) {
 		attrs = append(attrs, s("default_"+dir, p))
 	}
 	if in.has("logging") {
-		return nil, "sets logging, which ufw_settings doesn't offer yet"
+		lv := in.str("logging")
+		if in.args["logging"].Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) == 0 {
+			// YAML reads a bare on, yes or true as a boolean, and Ansible
+			// turns that back into the one choice it can be: on, or off.
+			switch lv {
+			case "on", "On", "ON", "yes", "Yes", "YES", "true", "True", "TRUE":
+				lv = "on"
+			case "off", "Off", "OFF", "no", "No", "NO", "false", "False", "FALSE":
+				lv = "off"
+			}
+		}
+		// Ansible maps the text True and False the same way, quoted or not.
+		switch lv {
+		case "True":
+			lv = "on"
+		case "False":
+			lv = "off"
+		}
+		if !slices.Contains([]string{"off", "on", "low", "medium", "high", "full"}, lv) {
+			return nil, fmt.Sprintf("sets logging %q; ufw_settings takes off, on, low, medium, high or full, as Ansible does", lv)
+		}
+		attrs = append(attrs, s("logging", lv))
 	}
 	if len(attrs) == 0 {
 		return nil, "changes ufw itself in a way ufw_settings doesn't cover"

@@ -15,23 +15,30 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules"
 )
 
-// UFWSettings is ufw itself: whether it's on, and its default policy for
-// each direction. Anything unset is left as it is.
+// UFWSettings is ufw itself: whether it's on, its default policy for
+// each direction, and its logging level. Anything unset is left as it is.
 type UFWSettings struct {
 	Enabled                    *bool
 	Incoming, Outgoing, Routed string // allow, deny or reject; "" leaves it
+	Logging                    string // off, on, low, medium, high or full; "" leaves it
 }
 
 // UFWState is ufw as the host has it.
 type UFWState struct {
 	Active                     bool // running, and enabled at boot
 	Incoming, Outgoing, Routed string
+	Logging                    string // LOGLEVEL in /etc/ufw/ufw.conf; "" when it's missing
 }
 
 // Validate checks the settings before anything reaches the host.
 func (s UFWSettings) Validate() error {
-	if s.Enabled == nil && s.Incoming == "" && s.Outgoing == "" && s.Routed == "" {
-		return errors.New("set enabled or a default policy: a ufw_settings step with nothing set does nothing")
+	if s.Enabled == nil && s.Incoming == "" && s.Outgoing == "" && s.Routed == "" && s.Logging == "" {
+		return errors.New("set enabled, a default policy or logging: a ufw_settings step with nothing set does nothing")
+	}
+	switch s.Logging {
+	case "", "off", "on", "low", "medium", "high", "full":
+	default:
+		return fmt.Errorf("logging must be off, on, low, medium, high or full, not %q", s.Logging)
 	}
 	for dir, p := range map[string]string{"default_incoming": s.Incoming, "default_outgoing": s.Outgoing, "default_routed": s.Routed} {
 		switch p {
@@ -48,7 +55,17 @@ func (s UFWSettings) Matches(st UFWState) bool {
 	return (s.Enabled == nil || *s.Enabled == st.Active) &&
 		(s.Incoming == "" || s.Incoming == st.Incoming) &&
 		(s.Outgoing == "" || s.Outgoing == st.Outgoing) &&
-		(s.Routed == "" || s.Routed == st.Routed)
+		(s.Routed == "" || s.Routed == st.Routed) &&
+		s.loggingMatches(st.Logging)
+}
+
+// loggingMatches reports whether ufw logs as s asks. on is any level but
+// off, as ufw logging on keeps the level it has and sets low only from off.
+func (s UFWSettings) loggingMatches(have string) bool {
+	if s.Logging == "on" {
+		return have != "" && have != "off"
+	}
+	return s.Logging == "" || s.Logging == have
 }
 
 // The policies come from /etc/default/ufw, not ufw status, which shows
@@ -58,6 +75,7 @@ const ufwStateScript = `policy() { sed -n "s/^$1=[\"']*\([A-Z]*\)[\"']*$/\1/p" /
 echo "incoming=$(policy DEFAULT_INPUT_POLICY)"
 echo "outgoing=$(policy DEFAULT_OUTPUT_POLICY)"
 echo "routed=$(policy DEFAULT_FORWARD_POLICY)"
+echo "logging=$(sed -n "s/^LOGLEVEL=[\"']*\([a-z]*\)[\"']*$/\1/p" /etc/ufw/ufw.conf | tail -n 1)"
 echo "boot=$(sed -n "s/^ENABLED=[\"']*\([a-z]*\)[\"']*$/\1/p" /etc/ufw/ufw.conf | tail -n 1)"
 echo "status=$(ufw status | head -n 1)"`
 
@@ -91,6 +109,8 @@ func parseUFWState(out string) (UFWState, error) {
 			default:
 				st.Routed = p
 			}
+		case "logging":
+			st.Logging = v
 		case "boot":
 			boot = v
 		case "status":
@@ -111,6 +131,13 @@ func (s UFWSettings) Commands(st UFWState) (do, undo []string) {
 		if d.want != "" && d.want != d.have {
 			do = append(do, "flock /run/conn3x-ufw.lock ufw default "+d.want+" "+d.dir)
 			undo = append(undo, "flock /run/conn3x-ufw.lock ufw default "+d.have+" "+d.dir)
+		}
+	}
+	if !s.loggingMatches(st.Logging) {
+		do = append(do, "flock /run/conn3x-ufw.lock ufw logging "+s.Logging)
+		// With no LOGLEVEL in ufw.conf there's no level to put back.
+		if st.Logging != "" {
+			undo = append(undo, "flock /run/conn3x-ufw.lock ufw logging "+st.Logging)
 		}
 	}
 	if s.Enabled != nil && *s.Enabled != st.Active {
@@ -273,7 +300,7 @@ func ApplyUFWSettings(ctx context.Context, r modules.Runner, s UFWSettings, do [
 		return err
 	}
 	if !s.Matches(st) {
-		return fmt.Errorf("ufw doesn't match after applying: active %t, default %s (incoming), %s (outgoing), %s (routed)", st.Active, st.Incoming, st.Outgoing, st.Routed)
+		return fmt.Errorf("ufw doesn't match after applying: active %t, default %s (incoming), %s (outgoing), %s (routed), logging %q", st.Active, st.Incoming, st.Outgoing, st.Routed, st.Logging)
 	}
 	return nil
 }

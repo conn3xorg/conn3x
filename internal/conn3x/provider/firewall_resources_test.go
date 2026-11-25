@@ -126,3 +126,31 @@ func TestUFWAppRule(t *testing.T) {
 		t.Errorf("refused app Nginx Full: %v", diags.Err())
 	}
 }
+
+// logging is a setting on ufw_settings: alone it's enough for a step,
+// a value ufw doesn't take is refused, and changing it plans an update.
+func TestUFWSettingsLogging(t *testing.T) {
+	r := resourceTypes["conn3x_ufw_settings"]
+	plan := func(prior cty.Value, logging string) providers.PlanResourceChangeResponse {
+		cfg := objFor(r.schema(), map[string]cty.Value{"logging": cty.StringVal(logging)})
+		if prior == cty.NilVal {
+			prior = cty.NullVal(cfg.Type())
+		}
+		return r.plan(providers.PlanResourceChangeRequest{PriorState: prior, ProposedNewState: cfg, Config: cfg})
+	}
+	for _, v := range []string{"off", "on", "low", "medium", "high", "full"} {
+		if diags := r.validate(objFor(r.schema(), map[string]cty.Value{"logging": cty.StringVal(v)})); diags.HasErrors() {
+			t.Errorf("refused logging %s: %v", v, diags.Err())
+		}
+	}
+	if diags := r.validate(objFor(r.schema(), map[string]cty.Value{"logging": cty.StringVal("ON")})); !diags.HasErrors() {
+		t.Error("accepted logging ON")
+	}
+	prior := withSync(plan(cty.NilVal, "medium").PlannedState, true)
+	if got := plan(prior, "medium").PlannedState.GetAttr("in_sync"); !got.RawEquals(cty.True) {
+		t.Errorf("same level: in_sync %#v", got)
+	}
+	if got := plan(prior, "high").PlannedState.GetAttr("in_sync"); got.IsKnown() {
+		t.Errorf("medium to high: in_sync %#v", got)
+	}
+}
