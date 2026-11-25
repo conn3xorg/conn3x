@@ -293,9 +293,75 @@ func (u UFWRule) command(present bool) (string, error) {
 	return "flock /run/conn3x-ufw.lock ufw delete " + u.Spec(), nil
 }
 
-// Undo is what takes back ApplyUFW(u, present).
-func (u UFWRule) Undo(present bool) (string, error) {
-	return u.command(!present)
+// Undo is what takes back ApplyUFW(u, present). rules is ufw's rules as
+// ListUFW read them just before a delete, so the undo puts the rule back
+// where it was.
+func (u UFWRule) Undo(present bool, rules [2]string) (string, error) {
+	if present {
+		return u.command(false)
+	}
+	return u.restore(rules)
+}
+
+// ufwFiles are where ufw keeps its rules, IPv4 then IPv6, one "### tuple"
+// line per rule, in the order the firewall checks them.
+var ufwFiles = [2]string{"/etc/ufw/user.rules", "/etc/ufw/user6.rules"}
+
+// ListUFW is ufw's rules as the tuple lines of its two rules files, IPv4
+// then IPv6, for Undo.
+func ListUFW(ctx context.Context, r modules.Runner) ([2]string, error) {
+	var rules [2]string
+	for i, f := range ufwFiles {
+		res, err := r.Run(ctx, "cat "+f, nil)
+		if err := check(res, err); err != nil {
+			return rules, fmt.Errorf("ufw: %s: %w", f, err)
+		}
+		rules[i] = ufwTuples(string(res.Stdout))
+	}
+	return rules, nil
+}
+
+func ufwTuples(file string) string {
+	var lines []string
+	for _, line := range strings.Split(file, "\n") {
+		if strings.HasPrefix(line, "### tuple") {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// restore puts a deleted rule back at its old place in each address
+// family. A rule with no from is two ufw rules, one per family, and
+// "ufw insert" of the pair can't place both, so each half goes back on its
+// own, as from 0.0.0.0/0 or from ::/0, which ufw stores exactly as the
+// halves of the pair. The place is the first tuple line where the file as
+// listed before the delete and as it is now differ, or the end; a family
+// whose file didn't change is left alone, so a delete that never happened
+// isn't undone into a second copy. ufw numbers the IPv4 rules first, so an
+// IPv6 rule's number is its place plus the IPv4 count.
+// shortcut: counts tuple lines, which is off when an application profile
+// spans several tuples; count ufw's own numbering if profiles are managed.
+func (u UFWRule) restore(rules [2]string) (string, error) {
+	if err := u.Validate(); err != nil {
+		return "", err
+	}
+	const lock = "flock /run/conn3x-ufw.lock ufw "
+	const place = `awk 'BEGIN { n = split(ENVIRON["o"], a, "\n") } /^### tuple/ { c++; if ($0 != a[c]) { print c; f = 1; exit } } END { if (!f && c < n) print "end" }' `
+	cmds := make([]string, 2)
+	for i, anywhere := range []string{"0.0.0.0/0", "::/0"} {
+		half := u
+		if half.From == "" {
+			half.From = anywhere
+		}
+		base := "0"
+		if i == 1 {
+			base = `$(awk '/^### tuple/ { c++ } END { print c + 0 }' ` + ssh.Quote(ufwFiles[0]) + ")"
+		}
+		cmds[i] = fmt.Sprintf(`p=$(o=%s %s%s) && case $p in '') ;; end) %s%s ;; *) %sinsert $((%s + p)) %s ;; esac`,
+			ssh.Quote(rules[i]), place, ssh.Quote(ufwFiles[i]), lock, half.Spec(), lock, base, half.Spec())
+	}
+	return strings.Join(cmds, " && "), nil
 }
 
 func check(res ssh.Result, err error) error {

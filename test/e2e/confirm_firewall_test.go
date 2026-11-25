@@ -13,7 +13,7 @@ import (
 type confirmFirewallVars struct {
 	Port, KeyFile, KnownHosts string
 	Tool                      string
-	Rule                      bool
+	Rule, Deny                bool
 }
 
 // confirm_after on a ufw rule: removing the rule that lets SSH in locks
@@ -51,6 +51,46 @@ func TestConfirmAfterUndoesAUFWLockout(t *testing.T) {
 	}
 	if out, code := w.conn3x("plan", "-no-color"); code != 0 {
 		t.Fatalf("can't plan after the undo (exit %d):\n%s", code, out)
+	}
+}
+
+// confirm_after on removing a ufw allow that sits above a deny for the
+// same port: the host's undo puts the allow back above the deny, in both
+// address families, so the host answers again.
+func TestConfirmAfterPutsAUFWRuleBackInPlace(t *testing.T) {
+	h := startHostWith(t, "ubuntu2404", "--privileged")
+	w := newWorkdir(t, "confirm_firewall")
+	vars := confirmFirewallVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Tool: "ufw", Rule: true, Deny: true}
+	w.writeAs("main.circuit.hcl", vars)
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+
+	h.exec("", "sed", "-i", "/-A ufw-before-input -i lo -j ACCEPT/d", "/etc/ufw/before.rules")
+	h.exec("", "ufw", "--force", "enable")
+	// ufw's rules files, IPv4 then IPv6, in the order each family checks them.
+	tuples := func() string {
+		return h.exec("", "sh", "-c", "grep -h '^### tuple' /etc/ufw/user.rules /etc/ufw/user6.rules | sed 's/^### tuple ### //'")
+	}
+	const order = "allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in\ndeny any 22 0.0.0.0/0 any 0.0.0.0/0 in\nallow tcp 22 ::/0 any ::/0 in\ndeny any 22 ::/0 any ::/0 in\n"
+	if got := tuples(); got != order {
+		t.Fatalf("after apply, want the allow above the deny in each family:\n%s", got)
+	}
+	if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+		t.Fatalf("plan with ufw up:\n%s", out)
+	}
+
+	vars.Rule = false
+	w.writeAs("main.circuit.hcl", vars)
+	out, code := w.conn3x("apply", "-auto-approve", "-no-color")
+	t.Logf("apply of the lockout:\n%s", out)
+	if code == 0 || !strings.Contains(out, "the host put the old state back by itself; it answers again now") {
+		t.Fatalf("removing the SSH rule should fail and be undone by the host (exit %d):\n%s", code, out)
+	}
+	if got := tuples(); got != order {
+		t.Errorf("the allow didn't go back above the deny:\n%s", got)
+	}
+	if got := strings.TrimSpace(h.exec("", "sh", "-c", "systemctl list-timers --all --no-legend 'conn3x-revert-*' | wc -l; ls -A /var/lib/conn3x/revert | wc -l")); got != "0\n0" {
+		t.Errorf("after the undo, timers and copies = %q", got)
 	}
 }
 

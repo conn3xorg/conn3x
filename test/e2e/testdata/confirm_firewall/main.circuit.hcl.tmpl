@@ -29,4 +29,14 @@ circuit "box" {
 {{- end}}
   }
 {{end}}
+{{- if .Deny}}
+  step "deny" {
+    depends_on = [{{if .Rule}}conn3x_ufw_rule.box__ssh{{else}}conn3x_package.box__tool{{end}}]
+
+    ufw {
+      action = "deny"
+      port   = "22"
+    }
+  }
+{{end}}
 }
