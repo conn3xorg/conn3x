@@ -12,6 +12,12 @@ workflows make sure that someone hears about it.
   - the `osv` packages, such as Go modules;
   - the `github` projects' own security advisories.
 
+  For `nodejs`, it also reads the Node.js security working group's
+  [core vulnerability data](https://github.com/nodejs/security-wg/tree/main/vuln/core),
+  since Node.js advisories reach neither OSV nor GitHub's. It has no dates,
+  so a CVE is reported when its vulnerable range takes in a full version a
+  circuit pins, such as `26.13.0`, and no earlier issue named it.
+
   It also reads the vendor RSS feeds in `feeds`, such as Oracle's security
   alerts. A vendor's advisory names its CVEs days before distros ship a fix
   and OSV lists them, so each new item opens an issue of its own, naming the
@@ -25,6 +31,17 @@ workflows make sure that someone hears about it.
   failed daily run opens an issue too.
 
 ## Keeping the watchlist current
+
+Each `pinned` default is generated: `scripts/gen_watchlist.py` reads it from
+the circuit's latest tag, and the advisory watch runs it before every run.
+Run it after a circuit release and commit the result, so the file in the
+repository says the same:
+
+```sh
+python3 scripts/gen_watchlist.py
+```
+
+Everything else is kept by hand.
 
 When a circuit starts installing something new, add it to `watchlist.json`
 in the same change: its package names, binary and source both (OSV's
@@ -56,3 +73,6 @@ To try a change without opening issues:
 ```sh
 python3 scripts/advisory_watch.py --days 7 --dry-run
 ```
+
+`--backfill` looks back 30 days instead of 7, for advisories published
+before an entry was watched.

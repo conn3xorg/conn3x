@@ -1,5 +1,5 @@
 {
-  "generated": "2026-11-20T17:36:13Z",
+  "generated": "2026-11-25T15:29:58Z",
   "ecosystems": [
     "Debian:13",
     "Ubuntu:24.04:LTS",
@@ -16,6 +16,13 @@
         "oracle-database-free",
         "kestra",
         "opensearch"
+      ]
+    },
+    {
+      "name": "Node.js",
+      "url": "https://nodejs.org/en/feed/vulnerability.xml",
+      "entries": [
+        "nodejs"
       ]
     }
   ],
@@ -161,7 +168,7 @@
         {
           "circuit": "circuit-bun",
           "variable": "bun_version",
-          "default": "1.4.4"
+          "default": "1.4.5"
         }
       ]
     },
@@ -521,7 +528,7 @@
         {
           "circuit": "circuit-php",
           "variable": "composer_version",
-          "default": "2.11.0"
+          "default": "2.11.3"
         }
       ]
     },
@@ -1314,7 +1321,7 @@
         {
           "circuit": "circuit-monitoring",
           "variable": "grafana_version",
-          "default": "13.2.4"
+          "default": "13.2.6"
         }
       ]
     },
@@ -1746,7 +1753,7 @@
         {
           "circuit": "circuit-kestra",
           "variable": "kestra_version",
-          "default": "v2.0.9-slim"
+          "default": "v2.0.13-slim"
         }
       ]
     },
@@ -1935,7 +1942,7 @@
         {
           "circuit": "circuit-litellm",
           "variable": "litellm_version",
-          "default": "v1.106.6"
+          "default": "v1.110.2"
         }
       ]
     },
@@ -2315,7 +2322,7 @@
         {
           "circuit": "circuit-nodejs",
           "variable": "node_version",
-          "default": "26.13.0"
+          "default": "26.13.1"
         }
       ]
     },
@@ -2430,7 +2437,7 @@
         {
           "circuit": "circuit-openbao",
           "variable": "openbao_version",
-          "default": "2.7.2"
+          "default": "2.7.3"
         }
       ]
     },
@@ -2531,7 +2538,7 @@
         {
           "circuit": "circuit-opensearch",
           "variable": "opensearch_version",
-          "default": "3.9.0"
+          "default": "3.10.1"
         }
       ]
     },
@@ -2669,7 +2676,7 @@
         {
           "circuit": "circuit-oracle-free",
           "variable": "oracle_free_version",
-          "default": "23.26.3-1"
+          "default": "23.26.4-1"
         }
       ]
     },
@@ -2865,7 +2872,7 @@
         {
           "circuit": "circuit-portainer",
           "variable": "portainer_version",
-          "default": "2.45.3"
+          "default": "2.45.4"
         }
       ]
     },
@@ -3187,7 +3194,7 @@
         {
           "circuit": "circuit-containerd",
           "variable": "runc_version",
-          "default": "1.5.2"
+          "default": "1.5.3"
         }
       ]
     },
@@ -3508,7 +3515,7 @@
         {
           "circuit": "circuit-traefik",
           "variable": "traefik_version",
-          "default": "3.7.16"
+          "default": "3.7.20"
         }
       ]
     },
@@ -3908,12 +3915,12 @@
     {
       "circuit": "circuit-lempa-homelab",
       "what": "composed circuits",
-      "why": "Composes 23 other circuits at older module tags (e.g. circuit-homepage?ref=v0.1.0, circuit-wazuh?ref=v0.2.0). Its circuits are listed under each main piece of software, but pinned defaults reflect origin/main of the source circuits, not those tags."
+      "why": "Composes 23 other circuits at older module tags (e.g. circuit-homepage?ref=v0.1.0, circuit-wazuh?ref=v0.2.0). Its circuits are listed under each main piece of software, but pinned defaults are each source circuit's latest tag, not those tags."
     },
     {
       "circuit": "circuit-mini-homelab",
       "what": "composed circuits",
-      "why": "Composes circuit-uptimekuma and circuit-homepage at ref v0.1.0; pinned defaults reflect origin/main, not those tags."
+      "why": "Composes circuit-uptimekuma and circuit-homepage at ref v0.1.0; pinned defaults are each circuit's latest tag, not those refs."
     },
     {
       "circuit": "circuit-flux, circuit-istio, circuit-rancher, circuit-kubeadm",

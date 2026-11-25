@@ -14,7 +14,14 @@ Its feeds are vendors' own RSS feeds, such as Oracle's security alerts, which
 publish days before OSV has the CVEs. Each new item opens an issue naming the
 entries it may cover.
 
-Usage: python3 scripts/advisory_watch.py [--days 7] [--dry-run]
+Node.js core advisories reach neither OSV nor GitHub's, so the nodejs entry
+also reads the Node.js security working group's vulnerability data, and
+reports each CVE whose vulnerable range takes in a circuit's pinned default.
+
+--backfill looks back 30 days instead, for advisories from before the watch
+first ran. Try it with --dry-run first.
+
+Usage: python3 scripts/advisory_watch.py [--days 7 | --backfill] [--dry-run]
 """
 
 import argparse
@@ -30,6 +37,9 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 OSV = "https://api.osv.dev/v1"
+NODE_CORE = "https://raw.githubusercontent.com/nodejs/security-wg/main/vuln/core/index.json"
+NODE_ENTRY = "nodejs"
+BACKFILL_DAYS = 30
 LABEL = "upstream-advisory"
 ASSIGNEE = "jamesconwaydev"
 # Every advisory ID an issue covers, so a later run doesn't open it again.
@@ -259,6 +269,100 @@ def from_github(adv):
     }
 
 
+def github_recent(advs, cutoff):
+    """Records for the advisories published since cutoff."""
+    return [from_github(a) for a in advs if (p := parse_time(a.get("published_at"))) and p >= cutoff]
+
+
+def semver(s):
+    """'26.13.1' or a partial such as '26' or '9.7.x' as a tuple of the parts given."""
+    parts = [] if s in ("*", "x") else s.split(".")
+    while parts and parts[-1] in ("x", "*"):
+        parts.pop()
+    if len(parts) > 3 or not all(p.isdigit() for p in parts):
+        raise ValueError(f"not a version: {s}")
+    return tuple(map(int, parts))
+
+
+def pad(v):
+    return v + (0,) * (3 - len(v))
+
+
+def bump(v):
+    """The first version past a partial one: 26 gives 27.0.0, 9.7 gives 9.8.0."""
+    return pad(v[:-1] + (v[-1] + 1,)) if v else (10**9, 0, 0)
+
+
+def satisfies(version, spec):
+    """Whether version, such as (26, 13, 0), is in an npm-style range of the
+    kinds the Node.js security WG writes: '22.x || ^24.22.1', '>= 10.9.0',
+    '>=6.0.0 <6.2.0', '<= 10', '8.5.0'. Raises ValueError for anything else."""
+    for alt in spec.split("||"):
+        comps = re.sub(r"(>=|<=|>|<|=|\^|~)\s+", r"\1", alt).split()
+        if comps and all(_compare(version, c) for c in comps):
+            return True
+    return False
+
+
+def _compare(v, comp):
+    m = re.fullmatch(r"(>=|<=|>|<|=|\^|~)?v?([\dx*.]+)", comp)
+    if not m:
+        raise ValueError(f"not a range: {comp}")
+    op, ver = m.group(1) or "", semver(m.group(2))
+    lo, full = pad(ver), len(ver) == 3
+    if op in ("", "="):
+        return v == lo if full else lo <= v < bump(ver)
+    if op == "^":
+        hi = bump(ver[:1]) if ver[:1] != (0,) or len(ver) < 2 else bump(ver[:2])
+        return lo <= v < hi
+    if op == "~":
+        return lo <= v < bump(ver[:2] if len(ver) > 1 else ver)
+    if op == ">=":
+        return v >= lo
+    if op == ">":
+        return v > lo if full else v >= bump(ver)
+    if op == "<":
+        return v < lo
+    return v <= lo if full else v < bump(ver)  # <=
+
+
+def node_affected(vuln, version):
+    """Whether the version is in the advisory's vulnerable range and not its patched one."""
+    return satisfies(version, vuln.get("vulnerable") or "") and not satisfies(version, vuln.get("patched") or "")
+
+
+def from_node(key, vuln):
+    ids = cves(vuln.get("cve") or [])
+    patched = [p.strip().lstrip("^") for p in (vuln.get("patched") or "").split("||") if p.strip()]
+    return {
+        "id": ids[0] if ids else f"nodejs-security-wg:{key}",
+        "cves": ids,
+        "aliases": set(ids),
+        "published": vuln.get("publish_date") or "",
+        "summary": (vuln.get("description") or vuln.get("overview") or "").strip().split("\n")[0][:160],
+        "severity": (vuln.get("severity") or "").lower(),
+        "fixed": [f"Node.js {p}" for p in patched],
+        "url": vuln.get("ref") or f"https://github.com/nodejs/security-wg/blob/main/vuln/core/{key}.json",
+    }
+
+
+def node_records(index, entry):
+    """Records for the advisories in the Node.js security WG's core index
+    that affect one of the entry's full pinned versions, whenever they were
+    published: the feed gives no dates, and the issues' markers keep a CVE
+    from being opened twice. A default such as a bare major, which installs
+    the newest release, isn't checked."""
+    versions = [semver(p["default"]) for p in entry.get("pinned", []) if re.fullmatch(r"\d+\.\d+\.\d+", p["default"])]
+    out = []
+    for key, vuln in index.items():
+        try:
+            if any(node_affected(vuln, v) for v in versions):
+                out.append(from_node(key, vuln))
+        except ValueError as e:
+            print(f"::warning::Node.js security WG {key}: {e}")
+    return out
+
+
 def group(records):
     """Rows, one per CVE where there is one. A record naming one CVE, such as
     DEBIAN-CVE-2026-1 or GHSA-x for CVE-2026-1, joins that CVE's row; one
@@ -341,6 +445,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--watchlist", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "security", "watchlist.json"))
     ap.add_argument("--days", type=int, default=7)
+    ap.add_argument("--backfill", action="store_true", help=f"look back {BACKFILL_DAYS} days, for advisories from before the watch's first run")
     ap.add_argument("--repo", default="conn3xorg/conn3x")
     ap.add_argument("--dry-run", action="store_true", help="print the issues instead of opening them")
     ap.add_argument("--state", help="JSON file of every OSV ID seen per package, read at the start and written at the end")
@@ -348,7 +453,7 @@ def main():
 
     with open(args.watchlist) as f:
         watchlist = json.load(f)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=BACKFILL_DAYS if args.backfill else args.days)
 
     state = load_state(args.state)
 
@@ -378,10 +483,16 @@ def main():
                 # An Actions warning, shown on the run's summary page.
                 print(f"::warning::GitHub refused {repo}'s advisories; its OSV and distro sources were still read")
                 continue
-            for a in advs:
-                p = parse_time(a.get("published_at"))
-                if p and p >= cutoff:
-                    records[i].append(from_github(a))
+            records[i] += github_recent(advs, cutoff)
+        if e["name"] == NODE_ENTRY:
+            try:
+                index = json.loads(http_text(NODE_CORE) or "null")
+            except ValueError:
+                index = None
+            if isinstance(index, dict):
+                records[i] += node_records(index, e)
+            else:
+                skipped.append(NODE_CORE)
 
     # Every issue's body, paged, so no cap on how many earlier issues count.
     bodies = gh("api", "--paginate", f"repos/{args.repo}/issues?labels={LABEL}&state=all&per_page=100", "--jq", ".[].body") if not args.dry_run or os.environ.get("GH_TOKEN") else ""

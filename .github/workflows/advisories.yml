@@ -42,6 +42,10 @@ jobs:
           path: advisory-state.json
           key: advisory-state-${{ github.run_id }}
           restore-keys: advisory-state-
+      # Reads each circuit's latest tag, which are public, so the issues name
+      # today's defaults. A circuit it can't read keeps the committed value.
+      - name: Bring pinned defaults up to date
+        run: python3 scripts/gen_watchlist.py
       - name: Look for new advisories
         env:
           GH_TOKEN: ${{ github.token }}

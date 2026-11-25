@@ -62,6 +62,7 @@ jobs:
           bash scripts/stable-channel_test.sh
           python3 scripts/dashboards_test.py
           python3 scripts/advisory_watch_test.py
+          python3 scripts/gen_watchlist_test.py
       - name: No executables or oversized files added
         if: github.event_name == 'pull_request'
         env:

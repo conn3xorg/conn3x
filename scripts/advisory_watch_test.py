@@ -167,5 +167,75 @@ class Render(unittest.TestCase):
         self.assertIn("| not yet |", body)
 
 
+NODE = {
+    "201": {"cve": ["CVE-2026-106072"], "vulnerable": "22.x || 24.x || 26.x", "patched": "^22.23.4 || ^24.22.1 || ^26.12.1",
+            "ref": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+            "description": "Improper certificate validation", "overview": "A flaw.", "severity": "medium"},
+    "90": {"cve": ["CVE-2018-1"], "vulnerable": "4.x || 6.x  || 8.x || 9.x", "patched": "^4.9.0 || ^6.14.0 || ^8.11.0 || ^9.10.0", "overview": "Old.\nMore.", "severity": "high"},
+    "91": {"cve": [], "vulnerable": ">= 10.9.0", "patched": "", "overview": "No CVE, no fix."},
+}
+
+
+class Node(unittest.TestCase):
+    def test_ranges(self):
+        v = w.semver
+        self.assertTrue(w.satisfies(v("26.13.0"), "22.x || 26.x"))
+        self.assertFalse(w.satisfies(v("27.0.0"), "22.x || 26.x"))
+        self.assertTrue(w.satisfies(v("26.12.1"), "^24.22.1 || ^26.12.1"))
+        self.assertFalse(w.satisfies(v("26.12.0"), "^24.22.1 || ^26.12.1"))
+        self.assertFalse(w.satisfies(v("27.0.0"), "^26.12.1"))
+        self.assertTrue(w.satisfies(v("0.10.48"), "^0.10.48"))
+        self.assertFalse(w.satisfies(v("0.11.0"), "^0.10.48"))
+        self.assertTrue(w.satisfies(v("9.7.3"), "9.7.x || 10.x"))
+        self.assertTrue(w.satisfies(v("6.1.0"), ">=6.0.0 <6.2.0 || 5.x"))
+        self.assertFalse(w.satisfies(v("6.2.0"), ">=6.0.0 <6.2.0 || 5.x"))
+        self.assertTrue(w.satisfies(v("10.9.0"), ">= 10.9.0"))
+        self.assertTrue(w.satisfies(v("10.99.0"), "<= 10"))
+        self.assertFalse(w.satisfies(v("11.0.0"), "<= 10"))
+        self.assertTrue(w.satisfies(v("8.5.0"), "8.5.0"))
+        self.assertFalse(w.satisfies(v("8.5.1"), "8.5.0"))
+        self.assertFalse(w.satisfies(v("26.0.0"), ""))
+        with self.assertRaises(ValueError):
+            w.satisfies(v("26.0.0"), "latest")
+
+    def test_only_advisories_affecting_a_full_pinned_default(self):
+        entry = {"name": "nodejs", "pinned": [{"default": "26"}, {"default": "26.12.0"}]}
+        recs = w.node_records(NODE, entry)
+        # 91 has no patched range, so every version from 10.9.0 is affected.
+        self.assertEqual([r["id"] for r in recs], ["CVE-2026-106072", "nodejs-security-wg:91"])
+        r = recs[0]
+        self.assertEqual(r["fixed"], ["Node.js 22.23.4", "Node.js 24.22.1", "Node.js 26.12.1"])
+        self.assertEqual((r["severity"], r["summary"]), ("medium", "Improper certificate validation"))
+        self.assertTrue(r["url"].startswith("https://nodejs.org/"))
+        self.assertEqual(w.node_records(NODE, {"pinned": [{"default": "26.12.1"}]})[0]["id"], "nodejs-security-wg:91")
+        # A bare major installs the newest release, so it isn't checked.
+        self.assertEqual(w.node_records(NODE, {"pinned": [{"default": "26"}]}), [])
+
+    def test_a_range_it_cant_read_is_skipped(self):
+        bad = {"1": {"cve": ["CVE-2026-9"], "vulnerable": "next", "patched": ""}}
+        self.assertEqual(w.node_records(bad, {"pinned": [{"default": "26.0.0"}]}), [])
+
+    def test_a_cve_an_earlier_issue_listed_isnt_opened_again(self):
+        recs = w.node_records(NODE, {"pinned": [{"default": "26.12.0"}]})
+        # An OSV-sourced issue such as #1362 named the CVE by a distro's ID too.
+        seen = w.seen_ids(["<!-- advisory-ids: CVE-2026-106072 UBUNTU-CVE-2026-106072 -->"])
+        self.assertEqual([r["key"] for r in w.new_rows(recs, seen)], ["nodejs-security-wg:91"])
+        # And a Node record joins the OSV record for the same CVE in one row.
+        rows = w.group(recs[:1] + [osv("UBUNTU-CVE-2026-106072")])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["ids"], {"CVE-2026-106072", "UBUNTU-CVE-2026-106072"})
+
+
+class Backfill(unittest.TestCase):
+    def test_backfill_reaches_back_30_days(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 11, 25, tzinfo=timezone.utc)
+        advs = [{"ghsa_id": "GHSA-r", "cve_id": "CVE-2026-119101", "published_at": "2026-11-12T10:00:00Z"},
+                {"ghsa_id": "GHSA-o", "cve_id": "CVE-2026-1", "published_at": "2026-10-20T10:00:00Z"},
+                {"ghsa_id": "GHSA-u", "cve_id": None, "published_at": None}]
+        self.assertEqual(w.github_recent(advs, now - timedelta(days=7)), [])
+        self.assertEqual([r["id"] for r in w.github_recent(advs, now - timedelta(days=w.BACKFILL_DAYS))], ["GHSA-r"])
+
+
 if __name__ == "__main__":
     unittest.main()
