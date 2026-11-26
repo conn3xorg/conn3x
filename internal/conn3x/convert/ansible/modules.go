@@ -268,7 +268,7 @@ func (in *input) defaultArg(key string) (string, *roleDefault) {
 // or "" for any other state.
 func (in *input) stateDefault(allowed ...string) string {
 	name, d := in.defaultArg("state")
-	if d == nil || d.boolean || d.number || !slices.Contains(allowed, d.value) {
+	if d == nil || d.boolean || d.number || !slices.Contains(allowed, d.value) || in.role.computed[name] != "" {
 		return ""
 	}
 	in.used["state"] = true
@@ -433,6 +433,10 @@ func (in *input) render(key, s string) string {
 				in.fail(fmt.Sprintf("%s uses item from the role default %q and %s", key, in.itemVar, why))
 				return m
 			}
+			if in.role.computed[in.itemVar] != "" {
+				in.fail(fmt.Sprintf("%s uses item from the role default %q, which is built from other defaults, so a validation can't check each item goes in a path", key, in.itemVar))
+				return m
+			}
 			return itemMark
 		}
 		if name == "item" && in.loop {
@@ -458,6 +462,10 @@ func (in *input) render(key, s string) string {
 			return v
 		}
 		if d := in.role.defaultOrNil(name); d != nil && inPath && !d.boolean {
+			if in.role.computed[name] != "" {
+				in.fail(fmt.Sprintf("%s refers to the role default %q, which is built from other defaults, so a validation can't check it goes in a path", key, name))
+				return m
+			}
 			if why := in.pathRef(s, refs, ref, name, []string{d.value}); why != "" {
 				in.fail(fmt.Sprintf("%s refers to the role default %q and %s", key, name, why))
 				return m
@@ -477,7 +485,7 @@ func (in *input) render(key, s string) string {
 			if packageModules[in.mod] {
 				in.commaFree = append(in.commaFree, name)
 			}
-			return refMark("var." + name)
+			return refMark(in.role.ref(name))
 		}
 		if in.role != nil && len(in.role.varFiles[name]) > 0 {
 			files := joinAnd(in.role.varFiles[name])
@@ -1536,7 +1544,8 @@ func (in *input) repoDefault() (*attr, string) {
 	if err := (pkg.Desired{Name: "x", State: pkg.Present, EnableRepositories: ids}).Validate(); d.value != "" && err != nil {
 		return nil, fmt.Sprintf("can't be a package step: %s, from the role default %q", err, name)
 	}
-	return &attr{key: "enable_repositories", raw: fmt.Sprintf(`var.%s == "" ? null : [for id in split(",", var.%s) : trimspace(id)]`, name, name)}, ""
+	ref := in.role.ref(name)
+	return &attr{key: "enable_repositories", raw: fmt.Sprintf(`%s == "" ? null : [for id in split(",", %s) : trimspace(id)]`, ref, ref)}, ""
 }
 
 // omitDefault is the variable in {{ x | default(omit) }} or

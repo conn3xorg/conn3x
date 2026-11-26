@@ -29,3 +29,4 @@ Then run `conn3x init` and `conn3x apply`.
 | `mixed_enabled` | `true` |
 | `mixed_mode` | `"0644"` |
 | `mixed_conf_dir` | `"/etc/mixed"` |
+| `mixed_conf` | `"${var.mixed_conf_dir}/mixed.conf"` |

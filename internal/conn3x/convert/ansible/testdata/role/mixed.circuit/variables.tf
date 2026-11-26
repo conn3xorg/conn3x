@@ -43,8 +43,6 @@ variable "ssh_become" {
   description = "Run every command as root through sudo. Set this when ssh_user isn't root."
 }
 
-# Default "mixed_conf" (defaults/main.yml line 4) is a Jinja expression, which the converter can't carry over as a variable yet. Tasks that use it are marked TODO(convert).
-
 # Default "mixed_umask" (defaults/main.yml line 6) is a value YAML could read as a number or a date, which the converter can't carry over as a variable yet. Tasks that use it are marked TODO(convert).
 
 variable "mixed_enabled" {
@@ -67,6 +65,16 @@ variable "mixed_conf_dir" {
     condition     = startswith(var.mixed_conf_dir, "/")
     error_message = "mixed_conf_dir goes in a path, so it must be an absolute path, starting with /."
   }
+}
+
+variable "mixed_conf" {
+  type        = string
+  default     = null
+  description = "From the role's defaults/main.yml. Left null, it's built from mixed_conf_dir as the role builds it, in local.mixed_conf."
+}
+
+locals {
+  mixed_conf = var.mixed_conf != null ? var.mixed_conf : "${var.mixed_conf_dir}/mixed.conf"
 }
 
 # Default "mixed_ports" (defaults/main.yml line 5) is a list, which the converter carries over as a variable only for a loop over it. Tasks that use it are marked TODO(convert).
