@@ -85,6 +85,9 @@ func ConvertWith(path string, opts Options) (Result, error) {
 
 type converter struct {
 	dir, file string // file is the one being read, relative to dir
+	// retypedVars are the play's variables that Ansible's YAML 1.1 reads
+	// as other text, such as an unquoted yes, with why.
+	retypedVars map[string]string
 	// jsonRead holds slurps that only feed a json_patch chain, by task;
 	// jsonEdits and jsonWhy that chain's copy, as steps or why not.
 	jsonRead  map[*yaml.Node]string
@@ -312,9 +315,13 @@ func (c *converter) play(name, hosts string, p map[string]*yaml.Node, node *yaml
 			vars[k] = v
 		}
 	}
+	c.retypedVars = map[string]string{}
 	for k, v := range mapping(p["vars"]) {
 		if v.Kind == yaml.ScalarNode {
 			vars[k] = v.Value
+			if why := yaml11Retyped(k, v); why != "" {
+				c.retypedVars[k] = why
+			}
 		}
 	}
 	if !c.roleCalls {
@@ -812,7 +819,9 @@ func (c *converter) roleDefault(name string) *roleDefault {
 
 // input is what a module reads a task's arguments through.
 func (c *converter) input(mod string, args map[string]*yaml.Node, vars map[string]string, items []string) *input {
-	return &input{mod: mod, role: c.role, args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil, runAs: c.runAs}
+	in := &input{mod: mod, role: c.role, args: args, vars: vars, dir: c.dir, used: map[string]bool{}, loop: items != nil, runAs: c.runAs, retypedVars: c.retypedVars}
+	in.checkFreeText()
+	return in
 }
 
 // effectiveUser is who a play's tasks run as, as an expression, or empty when

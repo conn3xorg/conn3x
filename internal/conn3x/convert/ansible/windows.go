@@ -361,6 +361,9 @@ func winEnvironmentModule(in *input) ([]step, string) {
 			}
 			val := ""
 			if v.Tag != "!!null" {
+				if why := yaml11Retyped(k.Value, v); why != "" {
+					return nil, why
+				}
 				val = in.render("variables", v.Value)
 			}
 			vars = append(vars, envVar{name: in.render("variables", k.Value), value: val})

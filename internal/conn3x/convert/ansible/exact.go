@@ -19,18 +19,9 @@ import (
 	"github.com/opentofu/opentofu/internal/conn3x/modules/sshkey"
 )
 
-// YAML 1.1, which Ansible reads, turns unquoted yes into True, 1.10 into 1.1
-// and 010 into 8, and yaml.v3 hands the original text to the converter. So
-// the only unquoted values trusted to stay as written are plain words and
-// plain whole numbers.
-var (
-	yamlWord    = regexp.MustCompile(`(?i)^(|~|yes|no|on|off|true|false|null)$`)
-	yamlNumeric = regexp.MustCompile(`^[-+.0-9]`)
-	plainInt    = regexp.MustCompile(`^(0|-?[1-9][0-9]*)$`)
-)
-
 // text reads an argument that has to reach the host exactly as Ansible would
-// see it, and refuses it when it can't be sure of that.
+// see it, and refuses it when it can't be sure of that: an unquoted value,
+// or one filled in from a variable, that YAML 1.1 reads as other text.
 func (in *input) text(key string) string {
 	n, ok := in.args[key]
 	if !ok {
@@ -39,7 +30,7 @@ func (in *input) text(key string) string {
 	v := in.str(key)
 	quoted := n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0
 	templated := strings.Contains(n.Value, "{{")
-	if (!quoted || templated) && (yamlWord.MatchString(v) || (yamlNumeric.MatchString(v) && !plainInt.MatchString(v))) {
+	if kind, passed := yaml11Scalar(v); (!quoted || templated) && kind != "" && passed != v {
 		in.fail(fmt.Sprintf("has %s %q, which Ansible may read as something other than that text; quote it in the playbook and in any variable it comes from", key, v))
 	}
 	if strings.Contains(v, "{#") {

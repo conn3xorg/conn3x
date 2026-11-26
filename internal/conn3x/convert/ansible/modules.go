@@ -99,6 +99,8 @@ type input struct {
 	out map[string][]byte
 	// wait is set for a uri task that retries until a status answers.
 	wait *uriWait
+	// retypedVars are the converter's, for checkFreeText.
+	retypedVars map[string]string
 	// jsonEdits are a copy's json_patch chain on the slurp before it, or
 	// jsonWhy why that chain can't convert.
 	jsonEdits []jsonEdit
@@ -3583,6 +3585,9 @@ func commandModule(in *input) ([]step, string) {
 			k, v := in.env.Content[i].Value, in.env.Content[i+1]
 			if v.Kind != yaml.ScalarNode {
 				return nil, "sets environment " + k + " to something that isn't a string"
+			}
+			if why := yaml11Retyped("environment "+k, v); why != "" {
+				return nil, why
 			}
 			env[k] = cty.StringVal(in.render("environment", v.Value))
 		}
