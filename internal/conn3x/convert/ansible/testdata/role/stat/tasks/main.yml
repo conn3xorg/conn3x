@@ -1,0 +1,26 @@
+- name: Check for passwd
+  ansible.builtin.stat:
+    path: /etc/passwd
+  register: passwd
+- name: Check for a missing file
+  ansible.builtin.stat:
+    path: /tmp/stat-missing
+  register: missing
+- name: Mark passwd seen
+  ansible.builtin.file:
+    path: /tmp/stat-passwd-seen
+    state: directory
+  when: passwd.stat.exists
+- name: Never made
+  ansible.builtin.file:
+    path: /tmp/stat-missing-seen
+    state: directory
+  when: missing.stat.exists
+- name: Write a starter config
+  ansible.builtin.copy:
+    content: "listen = 8080\n"
+    dest: /tmp/stat-app.conf
+    mode: "0644"
+  when:
+    - passwd.stat.exists
+    - not missing.stat.exists

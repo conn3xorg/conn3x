@@ -1,0 +1,8 @@
+module "stat" {
+  source = "./circuit-stat"
+
+  hosts                = { box = "127.0.0.1" }
+  ssh_port             = {{.Port}}
+  ssh_private_key_file = "{{.Key}}"
+  ssh_known_hosts_file = "{{.KnownHosts}}"
+}

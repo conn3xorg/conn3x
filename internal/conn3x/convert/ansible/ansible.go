@@ -1177,6 +1177,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				continue
 			}
 		}
+		if k == "when" && c.role != nil {
+			if why := c.role.statWhy(t[k]); why != "" {
+				c.issue(body, name, node, why)
+				return
+			}
+		}
 		if keywords[k] && !harmless[k] {
 			c.issue(body, name, node, "uses "+k+", which the converter can't translate yet")
 			return

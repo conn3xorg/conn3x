@@ -28,11 +28,18 @@ import (
 // probe could change what it reads. So a probe converts only when every
 // task before it, in Ansible's run order, is another probe, a fact read or
 // a set_fact. Any later probe stays for review, with that reason.
+//
+// A stat probe, stat: path=X with register, converts the same way, to
+// [ -e X ] || [ -L X ]: stat doesn't follow a link by default, so a
+// dangling one still exists. Only X.stat.exists reads it; a when on any
+// other field stays, naming the field. data "conn3x_file" would read the
+// file itself into state, and fail on a directory, a big file or one the
+// login user can't read, where stat only reads metadata.
 
 // probe is a converted probe: mayFail says it set failed_when: false, so
 // Ansible never marked it failed and "is failed" was always false.
 type probe struct {
-	mayFail bool
+	mayFail, stat bool
 }
 
 // probeKeys are what a probe may set besides its command.
@@ -42,11 +49,11 @@ var probeKeys = map[string]bool{"name": true, "tags": true, "register": true, "c
 var readOnlyModules = map[string]bool{"set_fact": true, "include_vars": true, "setup": true, "gather_facts": true, "stat": true, "slurp": true, "debug": true, "assert": true, "getent": true, "find": true, "package_facts": true, "service_facts": true}
 
 // probeShaped reports whether a task is a command with register and
-// changed_when: false, whatever else it sets.
+// changed_when: false, or a stat with register, whatever else it sets.
 func probeShaped(t map[string]*yaml.Node) bool {
 	mod, _ := moduleOf(t)
 	b, ok := yamlBool(t["changed_when"])
-	return mod == "command" && t["register"] != nil && ok && !b
+	return t["register"] != nil && (mod == "stat" || mod == "command" && ok && !b)
 }
 
 // readOnly reports whether a task leaves the host as it found it, so a
@@ -116,12 +123,21 @@ func (c *converter) probe(t taskAt, m map[string]*yaml.Node, vars map[string]str
 	if c.role.probes[name] != nil {
 		return fmt.Sprintf("registers %s, which an earlier probe already registers, so the two would be one data source", name)
 	}
-	_, args := moduleOf(m)
+	mod, args := moduleOf(m)
 	if len(c.familyNames(args, vars)) > 0 {
-		return "reads a value from vars/<family>.yml in its command, which the converter can't put in a probe yet"
+		what := "command"
+		if mod == "stat" {
+			what = "path"
+		}
+		return "reads a value from vars/<family>.yml in its " + what + ", which the converter can't put in a probe yet"
 	}
-	in := c.input("command", args, vars, nil)
-	cmd, why := commandLine(in)
+	in := c.input(mod, args, vars, nil)
+	var cmd, why string
+	if mod == "stat" {
+		cmd, why = statLine(in)
+	} else {
+		cmd, why = commandLine(in)
+	}
 	if why == "" {
 		why = in.problem
 	}
@@ -133,8 +149,9 @@ func (c *converter) probe(t taskAt, m map[string]*yaml.Node, vars map[string]str
 	}
 	// Ansible stops the play on a non-zero exit unless the task says
 	// otherwise; the data source doesn't, so a postcondition does.
+	// A stat probe's test exits 1 for a missing path, which isn't a failure.
 	post := ""
-	if m["failed_when"] == nil && m["ignore_errors"] == nil {
+	if mod == "command" && m["failed_when"] == nil && m["ignore_errors"] == nil {
 		post = fmt.Sprintf(`
   lifecycle {
     postcondition {
@@ -144,7 +161,7 @@ func (c *converter) probe(t taskAt, m map[string]*yaml.Node, vars map[string]str
   }
 `, name)
 	}
-	c.role.probes[name] = &probe{mayFail: m["failed_when"] != nil}
+	c.role.probes[name] = &probe{mayFail: m["failed_when"] != nil, stat: mod == "stat"}
 	c.role.probeBlocks = append(c.role.probeBlocks, fmt.Sprintf(`
 # Task %q (%s line %d) probes each host at plan time,
 # as Ansible ran it before any task had changed the host. The steps whose
@@ -168,6 +185,23 @@ data "conn3x_command" %q {
 	return ""
 }
 
+// statLine is a stat probe's test of its path. stat with follow: true
+// would test the link's target, and a path starting with ~ Ansible expands,
+// so both stay.
+func statLine(in *input) (string, string) {
+	path := in.str("path", "dest", "name")
+	switch {
+	case path == "":
+		return "", "has no path"
+	case strings.HasPrefix(path, "~"):
+		return "", "sets a path starting with ~, which Ansible expands to a home directory and a quoted path in a shell test doesn't"
+	case in.bool("follow", false):
+		return "", "sets follow: true, which tests where a link points, and the converter only tests whether the path itself exists"
+	}
+	q := shellQuote(path)
+	return "[ -e " + q + " ] || [ -L " + q + " ]", ""
+}
+
 var (
 	probeName   = `([A-Za-z_][A-Za-z0-9_]*)`
 	probeLit    = `(?:'([^'\\]*)'|"([^"\\]*)")`
@@ -175,7 +209,20 @@ var (
 	probeStatus = regexp.MustCompile(`^` + probeName + ` is (succeeded|success|failed|failure)$`)
 	probeOut    = regexp.MustCompile(`^` + probeName + `\.stdout (==|!=) ` + probeLit + `$`)
 	probeIn     = regexp.MustCompile(`^` + probeLit + ` (in|not in) ` + probeName + `\.stdout$`)
+	probeExists = regexp.MustCompile(`^` + probeName + `\.stat\.exists$`)
+	statField   = regexp.MustCompile(`\b` + probeName + `\.stat\.([A-Za-z_]+)`)
 )
+
+// statWhy says why a when on a stat probe's result stays: it reads a field
+// other than exists, which the probe's test doesn't return. "" otherwise.
+func (r *role) statWhy(n *yaml.Node) string {
+	for _, m := range statField.FindAllStringSubmatch(nodeText(n), -1) {
+		if p := r.probes[m[1]]; p != nil && p.stat && m[2] != "exists" {
+			return fmt.Sprintf("reads %s.stat.%s, and the converted stat probe only tests whether the path exists; test %s yourself in a data \"conn3x_command\"", m[1], m[2], m[2])
+		}
+	}
+	return ""
+}
 
 // probeWhen is a when on a converted probe's result as an expression on
 // its data source for the step's host: X.rc == 0, X is failed, X.stdout ==
@@ -185,10 +232,13 @@ var (
 // marked failed, whatever its exit code.
 func (r *role) probeWhen(cond string) string {
 	ref := func(name string) string {
-		if r.probes[name] == nil {
+		if r.probes[name] == nil || r.probes[name].stat {
 			return ""
 		}
 		return fmt.Sprintf("data.conn3x_command.%s[each.key]", name)
+	}
+	if m := probeExists.FindStringSubmatch(cond); m != nil && r.probes[m[1]] != nil && r.probes[m[1]].stat {
+		return fmt.Sprintf("data.conn3x_command.%s[each.key].exit_code == 0", m[1])
 	}
 	if m := probeRC.FindStringSubmatch(cond); m != nil {
 		if d := ref(m[1]); d != "" {
