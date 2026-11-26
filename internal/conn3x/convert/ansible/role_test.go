@@ -742,6 +742,37 @@ func TestDefaultAlsoSetInVarsForOtherOS(t *testing.T) {
 	}
 }
 
+// A list default whose items use another default stays fixed, so a task
+// using it stays for review saying so, not blaming an include_vars the
+// converter follows. A file a targeted host could load still blocks.
+func TestTemplatedListDefaultAlsoSetInVarsForOtherOS(t *testing.T) {
+	const tasks = `- name: Load OS vars
+  include_vars: "{{ lookup('first_found', params) }}"
+  vars:
+    params:
+      files: ['{{ ansible_facts.distribution }}.yml', '{{ ansible_facts.os_family }}.yml', main.yml]
+      paths: [vars]
+- name: Install
+  package: {name: "{{ pkgs }}"}
+`
+	const defaults = "edition: ce\npkgs:\n  - \"docker-{{ edition }}\"\n  - containerd.io\n"
+	for _, tc := range []struct{ file, reason string }{
+		{"vars/Suse.yml", `name refers to the role default "pkgs"; it is a list whose items use Jinja, such as "docker-{{ edition }}", which the converter can't carry over as a variable yet`},
+		{"vars/CentOS.yml", `refers to "pkgs", which vars/Debian.yml doesn't set`},
+		{"vars/OracleLinux.yml", `name refers to "pkgs", which is set in vars/OracleLinux.yml, a vars file a host Conn3x configures could load`},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			res, err := ConvertRole(writeRole(t, map[string]string{"defaults/main.yml": defaults, "tasks/main.yml": tasks, "vars/main.yml": "", "vars/Debian.yml": "x: 1\n", "vars/RedHat.yml": "x: 1\n", tc.file: "pkgs: [other]\n"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(res.Review) != 1 || res.Review[0].Task != "Install" || !strings.Contains(res.Review[0].Reason, tc.reason) || strings.Contains(res.Review[0].Reason, "include_vars") {
+				t.Errorf("review %+v, want Install: %s", res.Review, tc.reason)
+			}
+		})
+	}
+}
+
 // lookup('first_found', params) is followed only when params looks under
 // vars/ alone; another path stays for review.
 func TestLookupFirstFoundOtherPath(t *testing.T) {

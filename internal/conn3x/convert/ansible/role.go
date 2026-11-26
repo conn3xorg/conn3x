@@ -86,6 +86,8 @@ type role struct {
 	// files don't set them.
 	shadowed      map[string]bool
 	shadowDefault map[string]string
+	// defaultWhy is why classify didn't keep a default, for tasks using it.
+	defaultWhy map[string]string
 	// lists are the defaults that are lists of plain values, kept apart
 	// so only a loop over one uses them; listUsed are those a loop reads,
 	// which become variables.
@@ -145,7 +147,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, shadowDefault: map[string]string{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, shadowDefault: map[string]string{}, defaultWhy: map[string]string{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -202,6 +204,14 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			v, boolean, why = strconv.FormatBool(b), true, ""
 		}
 		plain := why == ""
+		if kv[1].Kind == yaml.SequenceNode {
+			for _, e := range kv[1].Content {
+				if _, _, w := plainValue(e); w == "a Jinja expression" {
+					why = fmt.Sprintf("a list whose items use Jinja, such as %q", e.Value)
+					break
+				}
+			}
+		}
 		switch {
 		case has(vars, k):
 			why = "is also set in " + varsFile + ", which wins in Ansible, so it stays fixed"
@@ -219,6 +229,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			why = "is " + why + ", which the converter can't carry over as a variable yet"
 		}
 		if why != "" {
+			r.defaultWhy[k] = why
 			vb.AppendNewline()
 			comment(vb, where+" "+why+". Tasks that use it are marked TODO(convert).")
 			return
