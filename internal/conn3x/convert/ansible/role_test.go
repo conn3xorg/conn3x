@@ -969,8 +969,9 @@ func TestRolePackagesWhen(t *testing.T) {
 	}
 }
 
-// A when on the distribution's name or major version reads conn3x_host,
-// taking the name from a host object's os first, as the family does.
+// A when on the distribution's name, major version or release codename
+// reads conn3x_host, taking the name from a host object's os first, as
+// the family does.
 func TestRoleDistributionWhen(t *testing.T) {
 	res, err := ConvertRole(writeRole(t, map[string]string{
 		"tasks/main.yml": `- name: Ubuntu only
@@ -984,18 +985,30 @@ func TestRoleDistributionWhen(t *testing.T) {
 - name: Unknown name
   copy: {dest: /etc/w, content: x}
   when: ansible_facts.distribution == 'Gentoo'
+- name: Trusty
+  copy: {dest: /etc/x, content: x}
+  when: ansible_facts.distribution_release == 'trusty'
+- name: Not xenial
+  copy: {dest: /etc/y, content: x}
+  when: ansible_distribution_release != "xenial"
+- name: Release in or
+  copy: {dest: /etc/z, content: x}
+  when: (ansible_facts.os_family == 'Debian' and ansible_facts['distribution_release'] == "xenial") or ansible_facts.distribution == 'Ubuntu'
 `,
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Converted != 2 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "uses when") {
+	if res.Converted != 5 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "uses when") {
 		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
 	}
 	hcl := string(res.Files["main.circuit.hcl"])
 	for _, want := range []string{
 		`when = try(var.hosts[each.key].os, data.conn3x_host.facts[each.key].os_id) == "ubuntu"`,
 		`when = try(var.hosts[each.key].os, data.conn3x_host.facts[each.key].os_id) != "amzn" && try(tonumber(split(".", data.conn3x_host.facts[each.key].os_version)[0]), 0) >= 9`,
+		`when = data.conn3x_host.facts[each.key].os_codename == "trusty"`,
+		`when = data.conn3x_host.facts[each.key].os_codename != "xenial"`,
+		`when = ((local.os_family[each.key] == "debian") && (data.conn3x_host.facts[each.key].os_codename == "xenial")) || (try(var.hosts[each.key].os, data.conn3x_host.facts[each.key].os_id) == "ubuntu")`,
 		`data "conn3x_host" "facts"`,
 	} {
 		if !strings.Contains(hcl, want) {

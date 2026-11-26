@@ -20,15 +20,23 @@ type Facts struct {
 	Family   string // "redhat" or "debian"
 	ID       string // os-release ID, such as rocky or ubuntu
 	Version  string // os-release VERSION_ID
+	Codename string // os-release VERSION_CODENAME, or UBUNTU_CODENAME, or ""
 	Arch     string // uname -m
 	CPUs     int
 	MemoryMB int
 	IPv4     string // source address of the default route, or ""
 }
 
+// codenameLine prints the release codename as Ansible's
+// get_distribution_codename reads it from os-release: VERSION_CODENAME,
+// and UBUNTU_CODENAME only when VERSION_CODENAME isn't set at all, since
+// a distribution with no codenames may set it empty.
+const codenameLine = `echo "codename=${VERSION_CODENAME-$UBUNTU_CODENAME}"`
+
 const script = `. /etc/os-release
 echo "id=$ID"
 echo "version=$VERSION_ID"
+` + codenameLine + `
 echo "like=$ID_LIKE"
 echo "arch=$(uname -m)"
 echo "cpus=$(nproc)"
@@ -49,7 +57,8 @@ func Gather(ctx context.Context, r modules.Runner) (Facts, error) {
 	return parse(string(res.Stdout))
 }
 
-// What os-release allows for ID and VERSION_ID, and what uname -m prints.
+// What os-release allows for ID, VERSION_ID and VERSION_CODENAME, and
+// what uname -m prints.
 var (
 	idWord      = regexp.MustCompile(`^[a-z0-9._-]+$`)
 	versionWord = regexp.MustCompile(`^[A-Za-z0-9._-]*$`)
@@ -65,6 +74,8 @@ func Plain(f Facts) error {
 		return fmt.Errorf("the host reported an OS id that isn't a plain word: %q", f.ID)
 	case !versionWord.MatchString(f.Version):
 		return fmt.Errorf("the host reported an OS version that isn't a plain word: %q", f.Version)
+	case !versionWord.MatchString(f.Codename):
+		return fmt.Errorf("the host reported a release codename that isn't a plain word: %q", f.Codename)
 	case !archWord.MatchString(f.Arch):
 		return fmt.Errorf("the host reported an architecture that isn't a plain word: %q", f.Arch)
 	}
@@ -83,7 +94,7 @@ func parse(out string) (Facts, error) {
 			kv[k] = strings.TrimSpace(v)
 		}
 	}
-	f := Facts{ID: kv["id"], Version: kv["version"], Arch: kv["arch"], IPv4: kv["ipv4"]}
+	f := Facts{ID: kv["id"], Version: kv["version"], Codename: kv["codename"], Arch: kv["arch"], IPv4: kv["ipv4"]}
 	if err := Plain(f); err != nil {
 		return Facts{}, err
 	}

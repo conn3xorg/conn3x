@@ -304,11 +304,13 @@ var distributionIDs = map[string]string{
 const (
 	distributionFact = `ansible_(?:facts\.distribution|facts\[["']distribution["']\]|distribution)`
 	majorFact        = `ansible_(?:facts\.distribution_major_version|facts\[["']distribution_major_version["']\]|distribution_major_version)`
+	releaseFact      = `ansible_(?:facts\.distribution_release|facts\[["']distribution_release["']\]|distribution_release)`
 )
 
 var (
 	distributionCompare = regexp.MustCompile(`^` + distributionFact + `\s*(==|!=)\s*["'](\w+)["']$`)
 	majorCompare        = regexp.MustCompile(`^` + majorFact + `\s*\|\s*int\s*(==|!=|>=|<=|>|<)\s*(\d+)$`)
+	releaseCompare      = regexp.MustCompile(`^` + releaseFact + `\s*(==|!=)\s*["']([\w.-]+)["']$`)
 )
 
 // hostID and hostMajor are a host's os-release ID, from its host object's
@@ -319,8 +321,9 @@ const (
 )
 
 // distributionWhen reads a when that compares the host's distribution to a
-// name, or its major version as a number, as a step's when over the
-// conn3x_host data source. "" for any other when, or a name it doesn't know.
+// name, its major version as a number, or its release codename to a name,
+// as a step's when over the conn3x_host data source. "" for any other
+// when, or a distribution name it doesn't know.
 func distributionWhen(n *yaml.Node) string {
 	if n == nil || n.Kind != yaml.ScalarNode {
 		return ""
@@ -335,6 +338,9 @@ func distributionWhen(n *yaml.Node) string {
 	}
 	if m := majorCompare.FindStringSubmatch(cond); m != nil {
 		return fmt.Sprintf("%s %s %s", hostMajor, m[1], m[2])
+	}
+	if m := releaseCompare.FindStringSubmatch(cond); m != nil {
+		return fmt.Sprintf(`data.conn3x_host.facts[each.key].os_codename %s "%s"`, m[1], m[2])
 	}
 	return ""
 }

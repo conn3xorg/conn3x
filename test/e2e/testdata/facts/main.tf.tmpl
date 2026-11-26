@@ -29,3 +29,7 @@ circuit "facts" {
 output "memory_mb" {
   value = data.conn3x_host.box.memory_mb
 }
+
+output "os_codename" {
+  value = data.conn3x_host.box.os_codename
+}

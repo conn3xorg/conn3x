@@ -23,14 +23,15 @@ func hostDataSchema() providers.Schema {
 	return providers.Schema{Block: &configschema.Block{
 		Description: "Facts about a host, read over SSH at plan time.",
 		Attributes: map[string]*configschema.Attribute{
-			"id":         {Type: cty.String, Computed: true},
-			"os_family":  {Type: cty.String, Computed: true, Description: "\"redhat\" or \"debian\", or \"windows\" with allow_windows."},
-			"os_id":      {Type: cty.String, Computed: true, Description: "os-release ID, such as rocky or ubuntu, or \"windows\"."},
-			"os_version": {Type: cty.String, Computed: true, Description: "os-release VERSION_ID, such as 10.0 or 24.04. On Windows, the version such as 10.0.26100."},
-			"arch":       {Type: cty.String, Computed: true, Description: "Machine architecture, such as x86_64 or aarch64."},
-			"cpus":       {Type: cty.Number, Computed: true, Description: "Number of CPUs."},
-			"memory_mb":  {Type: cty.Number, Computed: true, Description: "Total memory in MiB."},
-			"ipv4":       {Type: cty.String, Computed: true, Description: "Source address of the default IPv4 route, or empty."},
+			"id":          {Type: cty.String, Computed: true},
+			"os_family":   {Type: cty.String, Computed: true, Description: "\"redhat\" or \"debian\", or \"windows\" with allow_windows."},
+			"os_id":       {Type: cty.String, Computed: true, Description: "os-release ID, such as rocky or ubuntu, or \"windows\"."},
+			"os_version":  {Type: cty.String, Computed: true, Description: "os-release VERSION_ID, such as 10.0 or 24.04. On Windows, the version such as 10.0.26100."},
+			"os_codename": {Type: cty.String, Computed: true, Description: "Release codename, such as trixie or noble: os-release VERSION_CODENAME, or UBUNTU_CODENAME when that isn't set, as Ansible's distribution_release reads it. Empty when os-release has neither, as on Rocky Linux and Fedora, and on Windows."},
+			"arch":        {Type: cty.String, Computed: true, Description: "Machine architecture, such as x86_64 or aarch64."},
+			"cpus":        {Type: cty.Number, Computed: true, Description: "Number of CPUs."},
+			"memory_mb":   {Type: cty.Number, Computed: true, Description: "Total memory in MiB."},
+			"ipv4":        {Type: cty.String, Computed: true, Description: "Source address of the default IPv4 route, or empty."},
 			"allow_windows": {
 				Type: cty.Bool, Optional: true,
 				Description: "Experimental. Let this read succeed on Windows Server. Without it a Windows host is an error at plan, because a circuit written for Linux would otherwise take it for something it isn't.",
@@ -70,7 +71,7 @@ func readHostData(ctx context.Context, req providers.ReadDataSourceRequest) prov
 	vals["id"] = cty.StringVal(hostPort(conn))
 	vals["windows"] = win
 	vals["os_family"], vals["os_id"], vals["os_version"] = cty.StringVal(f.Family), cty.StringVal(f.ID), cty.StringVal(f.Version)
-	vals["arch"], vals["ipv4"] = cty.StringVal(f.Arch), cty.StringVal(f.IPv4)
+	vals["os_codename"], vals["arch"], vals["ipv4"] = cty.StringVal(f.Codename), cty.StringVal(f.Arch), cty.StringVal(f.IPv4)
 	vals["cpus"], vals["memory_mb"] = cty.NumberIntVal(int64(f.CPUs)), cty.NumberIntVal(int64(f.MemoryMB))
 	vals["local_facts"] = cty.NullVal(cty.DynamicPseudoType)
 	if rl := req.Config.GetAttr("read_local_facts"); known(rl) && rl.True() && f.Family != "windows" {

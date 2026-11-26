@@ -13,6 +13,7 @@ import (
 
 func TestHostFacts(t *testing.T) {
 	families := map[string]string{"rocky10": "redhat rocky", "fedora45": "redhat fedora", "ubuntu2404": "debian ubuntu", "debian13": "debian debian"}
+	codenames := map[string]string{"rocky10": "", "fedora45": "", "ubuntu2404": "noble", "debian13": "trixie"}
 	for _, image := range linuxImages {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)
@@ -27,6 +28,9 @@ func TestHostFacts(t *testing.T) {
 			}
 			if mb, err := strconv.Atoi(strings.TrimSpace(w.mustConn3x("output", "-raw", "memory_mb"))); err != nil || mb < 256 {
 				t.Fatalf("memory_mb = %d, %v", mb, err)
+			}
+			if got := w.mustConn3x("output", "-raw", "os_codename"); got != codenames[image] {
+				t.Fatalf("os_codename = %q, want %q", got, codenames[image])
 			}
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 				t.Fatalf("plan after apply:\n%s", out)
