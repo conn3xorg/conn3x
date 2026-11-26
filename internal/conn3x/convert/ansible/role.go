@@ -55,6 +55,8 @@ type role struct {
 	versioned    bool
 	varsIncludes []varsInclude
 	familyUsed   bool
+	// readsVersion is set once a task's when tests ansible_version.
+	readsVersion bool
 	// packagesUsed is set once a step's when tests an installed package.
 	packagesUsed bool
 	// defaultTasks are the set_fact tasks that default a variable to a
@@ -468,6 +470,9 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			b.WriteString("\n")
 		}
 		files["README.md"] = append(files["README.md"], b.String()...)
+	}
+	if r.readsVersion {
+		files["README.md"] = append(files["README.md"], "\nSome of the role's tasks test `ansible_version`, the version of Ansible running the play. A circuit has no Ansible, so each test is read as it comes out on every ansible-core from "+ansibleCoreFloor+" on; a test that comes out differently across those stays for review.\n"...)
 	}
 	c.res.Files = files
 	c.res.Variables = slices.Concat(order, used, looped)
@@ -1069,6 +1074,11 @@ func (r *role) boolWhen(n *yaml.Node) string {
 		}
 		return fmt.Sprintf("var.%s %s \"%s\"", m[1], m[2], quoted(m[3]+m[4]))
 	}
+	// x | bool == true is x | bool, as the filter binds before ==.
+	eq := boolEqRe.FindStringSubmatch(cond)
+	if eq != nil {
+		cond = eq[1]
+	}
 	m := boolWhenRe.FindStringSubmatch(cond)
 	if m == nil {
 		return ""
@@ -1077,13 +1087,15 @@ func (r *role) boolWhen(n *yaml.Node) string {
 	if d, ok := r.defaults[name]; !ok || !d.boolean {
 		return ""
 	}
-	if m[1] != "" {
+	if (m[1] != "") != (eq != nil && strings.EqualFold(eq[2], "false")) {
 		return "!var." + name
 	}
 	return "var." + name
 }
 
 var textWhenRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*) ?(==|!=) ?(?:'([^'\\]*)'|"([^"\\]*)")$`)
+
+var boolEqRe = regexp.MustCompile(`^((?:not )?[A-Za-z_][A-Za-z0-9_]* ?\| ?bool) ?== ?(true|True|false|False)$`)
 
 var boolWhenRe = regexp.MustCompile(`^(not )?(?:\(([A-Za-z_][A-Za-z0-9_]*) ?\| ?bool\)|([A-Za-z_][A-Za-z0-9_]*)(?: ?\| ?bool)?)$`)
 

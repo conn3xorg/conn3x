@@ -684,7 +684,7 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 		c.issue(cb, hname, h, neverReason)
 		return nil, "", ""
 	}
-	if why := dropCheckMode(t); why != "" {
+	if why := c.dropRunConstants(t); why != "" {
 		c.issue(cb, hname, h, why)
 		return nil, "", ""
 	}
@@ -1027,7 +1027,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		c.issue(body, name, node, neverReason)
 		return
 	}
-	if why := dropCheckMode(t); why != "" {
+	if why := c.dropRunConstants(t); why != "" {
 		c.issue(body, name, node, why)
 		return
 	}
