@@ -75,11 +75,11 @@ func installPostgreSQL(t *testing.T, h *host, image string) func(db, sql string)
 	}
 	// Red Hat's pg_hba.conf checks 127.0.0.1 with ident, so the role's
 	// password login gets a line of its own above the others.
-	h.exec("", "sh", "-c", install+` &&
+	h.exec("", "sh", "-c", tryInstall+`try_install "$1" &&
 		for i in $(seq 60); do runuser -u postgres -- psql -Xqc 'select 1' >/dev/null 2>&1 && break; sleep 1; done &&
 		hba=$(runuser -u postgres -- psql -XtAc 'show hba_file') &&
 		sed -i '1i host all app 127.0.0.1/32 scram-sha-256' "$hba" &&
-		runuser -u postgres -- psql -Xqc 'select pg_reload_conf()' >/dev/null`)
+		runuser -u postgres -- psql -Xqc 'select pg_reload_conf()' >/dev/null`, "sh", install)
 	return func(db, sql string) string {
 		t.Helper()
 		return strings.TrimSpace(h.exec("", "runuser", "-u", "postgres", "--", "psql", "-XtA", "-d", db, "-c", sql))

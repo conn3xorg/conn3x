@@ -33,6 +33,22 @@ var linuxImages = []string{"rocky10", "fedora45", "ubuntu2404", "debian13"}
 // rpmImage reports whether an image uses dnf rather than apt.
 func rpmImage(image string) bool { return image == "rocky10" || image == "fedora45" }
 
+// tryInstall defines try_install, a shell function that runs the install
+// script in $1 for up to 150 s and, when that fails or hangs, once more,
+// so one bad download costs a test about 5 minutes at most. On ubuntu2404,
+// apt-get has kept running for minutes after its http method died, and a
+// mirror has answered mid-sync, where a second try gets through (#1427).
+// SIGKILL goes to timeout's whole process group, apt-get included, which
+// had outlived a SIGTERM; dpkg then finishes whatever the kill cut short.
+const tryInstall = `try_install() {
+	timeout -s KILL 150 sh -c "$1" && return
+	echo "install failed or hung ($?), trying once more"
+	sleep 10
+	! command -v dpkg >/dev/null || dpkg --configure -a
+	timeout -s KILL 150 sh -c "$1"
+}
+`
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "conn3x-e2e-bin")
 	if err != nil {

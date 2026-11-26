@@ -32,8 +32,8 @@ func TestImportPostgreSQL(t *testing.T) {
 			if rpmImage(image) {
 				install = "dnf install -y -q postgresql-server >/dev/null && postgresql-setup --initdb >/dev/null && systemctl enable --now postgresql"
 			}
-			h.exec("", "sh", "-c", install+` &&
-				for i in $(seq 60); do runuser -u postgres -- psql -Xqc 'select 1' >/dev/null 2>&1 && break; sleep 1; done`)
+			h.exec("", "sh", "-c", tryInstall+`try_install "$1" &&
+				for i in $(seq 60); do runuser -u postgres -- psql -Xqc 'select 1' >/dev/null 2>&1 && break; sleep 1; done`, "sh", install)
 			psql := func(sql string) string {
 				return strings.TrimSpace(h.exec("", "runuser", "-u", "postgres", "--", "psql", "-XtAc", sql))
 			}

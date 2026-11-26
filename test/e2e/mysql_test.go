@@ -42,7 +42,7 @@ func TestMySQL(t *testing.T) {
 			}
 			// A server that hangs at install fails this test, not the suite,
 			// and says where it was.
-			h.exec("", "sh", "-c", `timeout 300 sh -c "$1" || { echo "install failed or hung: $?"; ps -eo pid,etime,stat,args; tail -n 40 /var/log/mysql/error.log; tail -n 30 /var/log/apt/term.log; exit 1; }`, "sh",
+			h.exec("", "sh", "-c", tryInstall+`try_install "$1" || { echo "install failed or hung: $?"; ps -eo pid,etime,stat,args; tail -n 40 /var/log/mysql/error.log; tail -n 30 /var/log/apt/term.log; exit 1; }`, "sh",
 				install+` && for i in $(seq 60); do mysql -u root -e 'select 1' >/dev/null 2>&1 && break; sleep 1; done`)
 			// MariaDB's own name for the client, where it has one, skips a warning.
 			const cli = `"$(command -v mariadb || command -v mysql)"`
