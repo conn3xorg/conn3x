@@ -480,7 +480,17 @@ func (in *input) render(key, s string) string {
 			return refMark("var." + name)
 		}
 		if in.role != nil && len(in.role.varFiles[name]) > 0 {
-			in.fail(fmt.Sprintf("%s refers to %q, which is set in %s, loaded by an include_vars the converter can't translate yet; it's usually set per OS", key, name, joinAnd(in.role.varFiles[name])))
+			files := joinAnd(in.role.varFiles[name])
+			switch loadable, _, _ := in.role.loadableVarFiles(name); {
+			case len(loadable) == 0 && in.role.defaultWhy[name] != "":
+				// No file a targeted host loads sets it, so the default
+				// itself is what blocks.
+				in.fail(fmt.Sprintf("%s refers to the role default %q; it %s", key, name, in.role.defaultWhy[name]))
+			case in.role.varsIncludes != nil && in.role.varsComplete:
+				in.fail(fmt.Sprintf("%s refers to %q, which is set in %s, a vars file a host Conn3x configures could load, so its value depends on the host and the converter can't fill it in", key, name, files))
+			default:
+				in.fail(fmt.Sprintf("%s refers to %q, which is set in %s, loaded by an include_vars the converter can't translate yet; it's usually set per OS", key, name, files))
+			}
 			return m
 		}
 		what := "a play variable"
