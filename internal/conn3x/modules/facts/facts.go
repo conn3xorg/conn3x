@@ -21,10 +21,13 @@ type Facts struct {
 	ID       string // os-release ID, such as rocky or ubuntu
 	Version  string // os-release VERSION_ID
 	Codename string // os-release VERSION_CODENAME, or UBUNTU_CODENAME, or ""
-	Arch     string // uname -m
-	CPUs     int
-	MemoryMB int
-	IPv4     string // source address of the default route, or ""
+	// ServiceManager is what Ansible's service_mgr reads on Linux, such as
+	// systemd, or "" when it can't tell.
+	ServiceManager string
+	Arch           string // uname -m
+	CPUs           int
+	MemoryMB       int
+	IPv4           string // source address of the default route, or ""
 }
 
 // codenameLine prints the release codename as Ansible's
@@ -33,10 +36,37 @@ type Facts struct {
 // a distribution with no codenames may set it empty.
 const codenameLine = `echo "codename=${VERSION_CODENAME-$UBUNTU_CODENAME}"`
 
+// serviceManager prints the service manager under the root in $1 in the
+// order Ansible's service_mgr.py checks for it on Linux: PID 1's name,
+// unless that's init or a shell, renamed as Ansible renames it; then
+// systemd when systemctl is installed and one of sd_booted's directories
+// exists, or /sbin/init links to systemd. Ansible's upstart, openrc,
+// sysvinit and dinit checks, and its fallback "service", are left out:
+// nothing prints instead.
+const serviceManager = `service_manager() {
+	p=$(cat "$1/proc/1/comm" 2>/dev/null)
+	case $p in
+	'' | init | *sh) ;;
+	procd) echo openwrt_init; return ;;
+	runit-init) echo runit; return ;;
+	svscan) echo svc; return ;;
+	openrc-init) echo openrc; return ;;
+	*) echo "$p"; return ;;
+	esac
+	command -v systemctl >/dev/null 2>&1 || return 0
+	for d in /run/systemd/system /dev/.run/systemd /dev/.systemd; do
+		[ -e "$1$d" ] && { echo systemd; return; }
+	done
+	l=$(readlink "$1/sbin/init" 2>/dev/null)
+	[ "${l##*/}" != systemd ] || echo systemd
+}
+`
+
 const script = `. /etc/os-release
 echo "id=$ID"
 echo "version=$VERSION_ID"
 ` + codenameLine + `
+` + serviceManager + `echo "service_manager=$(service_manager)"
 echo "like=$ID_LIKE"
 echo "arch=$(uname -m)"
 echo "cpus=$(nproc)"
@@ -97,6 +127,10 @@ func parse(out string) (Facts, error) {
 	f := Facts{ID: kv["id"], Version: kv["version"], Codename: kv["codename"], Arch: kv["arch"], IPv4: kv["ipv4"]}
 	if err := Plain(f); err != nil {
 		return Facts{}, err
+	}
+	// PID 1 can be any program, and an odd name shouldn't fail the read.
+	if sm := kv["service_manager"]; versionWord.MatchString(sm) {
+		f.ServiceManager = sm
 	}
 	for _, id := range append([]string{f.ID}, strings.Fields(kv["like"])...) {
 		switch id {

@@ -305,12 +305,14 @@ const (
 	distributionFact = `ansible_(?:facts\.distribution|facts\[["']distribution["']\]|distribution)`
 	majorFact        = `ansible_(?:facts\.distribution_major_version|facts\[["']distribution_major_version["']\]|distribution_major_version)`
 	releaseFact      = `ansible_(?:facts\.distribution_release|facts\[["']distribution_release["']\]|distribution_release)`
+	serviceMgrFact   = `ansible_(?:facts\.service_mgr|facts\[["']service_mgr["']\]|service_mgr)`
 )
 
 var (
 	distributionCompare = regexp.MustCompile(`^` + distributionFact + `\s*(==|!=)\s*["'](\w+)["']$`)
 	majorCompare        = regexp.MustCompile(`^` + majorFact + `\s*\|\s*int\s*(==|!=|>=|<=|>|<)\s*(\d+)$`)
 	releaseCompare      = regexp.MustCompile(`^` + releaseFact + `\s*(==|!=)\s*["']([\w.-]+)["']$`)
+	serviceMgrCompare   = regexp.MustCompile(`^` + serviceMgrFact + `\s*(==|!=)\s*["']([\w.-]+)["']$`)
 )
 
 // hostID and hostMajor are a host's os-release ID, from its host object's
@@ -321,8 +323,8 @@ const (
 )
 
 // distributionWhen reads a when that compares the host's distribution to a
-// name, its major version as a number, or its release codename to a name,
-// as a step's when over the conn3x_host data source. "" for any other
+// name, its major version as a number, or its release codename or service
+// manager to a name, as a step's when over the conn3x_host data source. "" for any other
 // when, or a distribution name it doesn't know.
 func distributionWhen(n *yaml.Node) string {
 	if n == nil || n.Kind != yaml.ScalarNode {
@@ -341,6 +343,9 @@ func distributionWhen(n *yaml.Node) string {
 	}
 	if m := releaseCompare.FindStringSubmatch(cond); m != nil {
 		return fmt.Sprintf(`data.conn3x_host.facts[each.key].os_codename %s "%s"`, m[1], m[2])
+	}
+	if m := serviceMgrCompare.FindStringSubmatch(cond); m != nil {
+		return fmt.Sprintf(`data.conn3x_host.facts[each.key].service_manager %s "%s"`, m[1], m[2])
 	}
 	return ""
 }

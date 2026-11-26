@@ -1017,6 +1017,47 @@ func TestRoleDistributionWhen(t *testing.T) {
 	}
 }
 
+// A when on the service manager reads conn3x_host, so a role's unit file
+// and init script steps each keep their own when, alone or in a list.
+func TestRoleServiceManagerWhen(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "app_enabled: true\n",
+		"tasks/main.yml": `- name: Init script
+  copy: {dest: /etc/init.d/app, content: x}
+  when: "ansible_facts.service_mgr != 'systemd'"
+- name: Unit file
+  copy: {dest: /etc/systemd/system/app.service, content: x}
+  when: ansible_service_mgr == "systemd"
+- name: With a default
+  copy: {dest: /etc/app, content: x}
+  when:
+    - app_enabled
+    - ansible_facts['service_mgr'] == 'systemd'
+- name: Not systemd or disabled
+  copy: {dest: /etc/app2, content: x}
+  when: not app_enabled or ansible_facts.service_mgr != 'systemd'
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Converted != 4 || len(res.Review) != 0 {
+		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{
+		`when = data.conn3x_host.facts[each.key].service_manager != "systemd"`,
+		`when = data.conn3x_host.facts[each.key].service_manager == "systemd"`,
+		`when = var.app_enabled && data.conn3x_host.facts[each.key].service_manager == "systemd"`,
+		`when = (!(var.app_enabled)) || (data.conn3x_host.facts[each.key].service_manager != "systemd")`,
+		`data "conn3x_host" "facts"`,
+	} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("missing %s in\n%s", want, hcl)
+		}
+	}
+}
+
 // A when built with and, or, not and parentheses from conditions the
 // converter reads converts too, and so does a list or text default's
 // length. A family test inside one reads local.os_family.

@@ -31,9 +31,13 @@ ipv4=203.0.113.10
 		t.Fatalf("got %+v\nwant %+v", got, want)
 	}
 
-	deb, err := parse("id=ubuntu\nversion=24.04\ncodename=noble\nlike=debian\narch=aarch64\ncpus=4\nmemory_kb=4096000\nipv4=\n")
-	if err != nil || deb.Family != "debian" || deb.Codename != "noble" || deb.IPv4 != "" {
+	deb, err := parse("id=ubuntu\nversion=24.04\ncodename=noble\nservice_manager=systemd\nlike=debian\narch=aarch64\ncpus=4\nmemory_kb=4096000\nipv4=\n")
+	if err != nil || deb.Family != "debian" || deb.Codename != "noble" || deb.ServiceManager != "systemd" || deb.IPv4 != "" {
 		t.Fatalf("got %+v, %v", deb, err)
+	}
+	// PID 1 can be called anything; a name that isn't a plain word is "".
+	if odd, err := parse("id=debian\nservice_manager=my init;id\narch=x86_64\ncpus=1\nmemory_kb=1024\n"); err != nil || odd.ServiceManager != "" {
+		t.Fatalf("got %+v, %v", odd, err)
 	}
 	if _, err := parse("id=alpine\nversion=3.20\narch=x86_64\ncpus=1\nmemory_kb=1\n"); err == nil {
 		t.Fatal("accepted an unsupported family")
@@ -98,5 +102,77 @@ func TestCodenameLine(t *testing.T) {
 		if got := string(out); err != nil || got != "codename="+c.want+"\n" {
 			t.Errorf("%s: %q, %v", name, got, err)
 		}
+	}
+}
+
+// The service manager follows Ansible's service_mgr.py on Linux, against a
+// fake root and a PATH with or without systemctl.
+func TestServiceManager(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	for name, c := range map[string]struct {
+		comm      string // "" for no /proc/1/comm
+		systemctl bool
+		dir, init string // a directory to make, and where /sbin/init links
+		want      string
+	}{
+		"systemd as pid 1":          {comm: "systemd", want: "systemd"},
+		"init, booted with systemd": {comm: "init", systemctl: true, dir: "/run/systemd/system", want: "systemd"},
+		"init, no systemd":          {comm: "init", systemctl: true, want: ""},
+		"booted, no systemctl":      {comm: "init", dir: "/run/systemd/system", want: ""},
+		"bash in a container":       {comm: "bash", want: ""},
+		"bash, init is systemd":     {comm: "bash", systemctl: true, init: "/lib/systemd/systemd", want: "systemd"},
+		"runit renamed":             {comm: "runit-init", want: "runit"},
+		"another init":              {comm: "tini", want: "tini"},
+		"no proc":                   {systemctl: true, dir: "/run/systemd/system", want: "systemd"},
+	} {
+		root, bin := t.TempDir(), t.TempDir()
+		for _, tool := range []string{"cat", "readlink"} {
+			p, err := exec.LookPath(tool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(p, filepath.Join(bin, tool)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if c.systemctl {
+			if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if c.comm != "" {
+			mustWrite(t, filepath.Join(root, "proc/1/comm"), c.comm+"\n")
+		}
+		if c.dir != "" {
+			if err := os.MkdirAll(filepath.Join(root, c.dir), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if c.init != "" {
+			if err := os.MkdirAll(filepath.Join(root, "sbin"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(c.init, filepath.Join(root, "sbin/init")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command("/bin/sh", "-c", serviceManager+`echo "service_manager=$(service_manager "$1")"`, "sh", root)
+		cmd.Env = []string{"PATH=" + bin}
+		out, err := cmd.Output()
+		if got := string(out); err != nil || got != "service_manager="+c.want+"\n" {
+			t.Errorf("%s: %q, %v", name, got, err)
+		}
+	}
+}
+
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

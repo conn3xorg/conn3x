@@ -12,8 +12,8 @@ import (
 )
 
 // whenAtom is a role task's one-condition when as a step's when: a
-// default, a probe, an installed package, the distribution or a list's
-// length. "" for any other.
+// default, a probe, an installed package, the distribution, the service
+// manager or a list's length. "" for any other.
 func (r *role) whenAtom(cond string) string {
 	n := &yaml.Node{Kind: yaml.ScalarNode, Value: cond}
 	for _, f := range []func(*yaml.Node) string{r.boolWhen, packagesWhen, distributionWhen, r.lengthWhen} {

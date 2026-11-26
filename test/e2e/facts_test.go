@@ -32,6 +32,9 @@ func TestHostFacts(t *testing.T) {
 			if got := w.mustConn3x("output", "-raw", "os_codename"); got != codenames[image] {
 				t.Fatalf("os_codename = %q, want %q", got, codenames[image])
 			}
+			if got := w.mustConn3x("output", "-raw", "service_manager"); got != "systemd" {
+				t.Fatalf("service_manager = %q, want systemd", got)
+			}
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 				t.Fatalf("plan after apply:\n%s", out)
 			}

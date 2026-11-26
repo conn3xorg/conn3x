@@ -23,7 +23,7 @@ func TestHostDataSourceIsServed(t *testing.T) {
 	if !ok {
 		t.Fatal("conn3x_host is not in the schema")
 	}
-	for _, attr := range []string{"os_family", "os_id", "os_version", "os_codename", "arch", "cpus", "memory_mb", "ipv4"} {
+	for _, attr := range []string{"os_family", "os_id", "os_version", "os_codename", "service_manager", "arch", "cpus", "memory_mb", "ipv4"} {
 		if a := schema.Block.Attributes[attr]; a == nil || !a.Computed {
 			t.Errorf("%s is missing or not computed", attr)
 		}
