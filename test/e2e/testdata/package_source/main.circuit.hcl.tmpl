@@ -23,6 +23,9 @@ circuit "agent" {
       name      = "conn3x-demo"
       source    = "/opt/downloads/conn3x-demo.{{.Ext}}"
       on_remove = "{{.OnRemove}}"
+{{- if .SourceSHA256}}
+      source_sha256 = "{{.SourceSHA256}}"
+{{- end}}
     }
   }
 {{end}}}

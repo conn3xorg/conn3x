@@ -90,3 +90,55 @@ func TestPackageSourceValidate(t *testing.T) {
 		}
 	}
 }
+
+// A new source_sha256, such as from a download that fetches another file
+// in the same apply, plans the install in this plan, not the next (#1416).
+func TestPackageSourceSHA256Plan(t *testing.T) {
+	a, b := cty.StringVal(strings.Repeat("a", 64)), cty.StringVal(strings.Repeat("b", 64))
+	v14 := cty.StringVal("1.4.0-1")
+	prior := sourcePrior(t, v14, v14).AsValueMap()
+	prior["source_sha256"] = a
+	inSync := cty.ObjectVal(prior)
+	cfg := func(sum cty.Value) cty.Value {
+		return packageObj(t, map[string]cty.Value{"name": cty.StringVal("agent"), "source": cty.StringVal("/opt/dl/agent.deb"), "source_sha256": sum})
+	}
+	if p := planPkg(t, inSync, cfg(a)); !p.RawEquals(inSync) {
+		t.Fatalf("same hash planned a change: %#v", p)
+	}
+	for name, sum := range map[string]cty.Value{"new hash": b, "unknown hash": cty.UnknownVal(cty.String)} {
+		p := planPkg(t, inSync, cfg(sum))
+		if p.RawEquals(inSync) || p.GetAttr("installed_version").IsKnown() || p.GetAttr("source_version").IsKnown() {
+			t.Errorf("%s: %#v", name, p)
+		}
+	}
+	// A file swapped on the host, which the refresh hashed.
+	prior["source_sha256"] = b
+	if p := planPkg(t, cty.ObjectVal(prior), cfg(a)); p.GetAttr("installed_version").IsKnown() || !p.GetAttr("source_sha256").RawEquals(a) {
+		t.Fatalf("swapped file: %#v", p)
+	}
+}
+
+func TestPackageSourceSHA256Validate(t *testing.T) {
+	sum := strings.Repeat("0a", 32)
+	for _, tc := range []struct {
+		attrs map[string]cty.Value
+		want  string
+	}{
+		{map[string]cty.Value{"source_sha256": cty.StringVal(sum)}, "only applies with source"},
+		{map[string]cty.Value{"source_sha256": cty.UnknownVal(cty.String)}, "only applies with source"},
+		{map[string]cty.Value{"source": cty.StringVal("/tmp/agent.deb"), "source_sha256": cty.StringVal(strings.ToUpper(sum))}, "64 lowercase hex characters"},
+		{map[string]cty.Value{"source": cty.StringVal("/tmp/agent.deb"), "source_sha256": cty.StringVal(sum[1:])}, "64 lowercase hex characters"},
+		{map[string]cty.Value{"source": cty.UnknownVal(cty.String), "source_sha256": cty.StringVal("sha256:" + sum)}, "64 lowercase hex characters"},
+	} {
+		tc.attrs["name"] = cty.StringVal("agent")
+		diags := validatePackage(packageObj(t, tc.attrs))
+		if !diags.HasErrors() || !strings.Contains(diags.Err().Error(), tc.want) {
+			t.Errorf("%v: %v, want %q", tc.attrs, diags.Err(), tc.want)
+		}
+	}
+	for _, s := range []cty.Value{cty.StringVal(sum), cty.UnknownVal(cty.String)} {
+		if diags := validatePackage(packageObj(t, map[string]cty.Value{"name": cty.StringVal("agent"), "source": cty.StringVal("/tmp/agent.deb"), "source_sha256": s})); diags.HasErrors() {
+			t.Errorf("%#v refused: %v", s, diags.Err())
+		}
+	}
+}

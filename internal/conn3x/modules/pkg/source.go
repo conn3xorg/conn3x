@@ -19,7 +19,17 @@ import (
 // would read in it, quoted or not.
 var sourcePattern = regexp.MustCompile(`^/[A-Za-z0-9._+~@%=,:/-]*\.(deb|rpm)$`)
 
+var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 func (d Desired) validateSource() error {
+	if d.SourceSHA256 != "" {
+		if d.Source == "" {
+			return errors.New("source_sha256 only applies with source")
+		}
+		if !sha256Pattern.MatchString(d.SourceSHA256) {
+			return fmt.Errorf("source_sha256 %q must be 64 lowercase hex characters", d.SourceSHA256)
+		}
+	}
 	if d.Source == "" {
 		return nil
 	}
@@ -99,6 +109,27 @@ else echo missing; fi`, ssh.Quote(src), query)
 	return name, version, nil
 }
 
+// SourceSum reads the SHA-256 of the file at src, or "" when it's missing.
+func SourceSum(ctx context.Context, r modules.Runner, src string) (string, error) {
+	if err := (Desired{Name: "x", State: Present, Source: src}).validateSource(); err != nil {
+		return "", err
+	}
+	script := modules.Settled + modules.Sum256 + fmt.Sprintf(`f=%s
+if route_settled "$f" && [ -f "$f" ]; then sum256 "$f"; fi`, ssh.Quote(src))
+	res, err := r.Run(ctx, modules.Guard(script, modules.Follow(src)), nil)
+	if err != nil {
+		return "", err
+	}
+	if res.ExitCode != 0 {
+		return "", fmt.Errorf("hashing %s: %s (exit status %d)", src, strings.TrimSpace(string(res.Stderr)), res.ExitCode)
+	}
+	sum := strings.TrimSpace(string(res.Stdout))
+	if sum != "" && !sha256Pattern.MatchString(sum) {
+		return "", fmt.Errorf("hashing %s: unexpected output %q", src, sum)
+	}
+	return sum, nil
+}
+
 // applySource installs the package from the file at d.Source, after
 // checking that the file is that package. apt-get and dnf resolve its
 // dependencies from the repositories, d's included, which dpkg -i and
@@ -127,7 +158,16 @@ func applySource(ctx context.Context, r modules.Runner, family Family, d Desired
 		}
 		cmd = "dnf -y" + d.recommends(family) + d.repoOptions(family) + " " + verb + " " + q
 	case SUSE:
-		cmd = zypperCommand("install --oldpackage" + d.recommends(family) + " " + q)
+		// zypper -n refuses an unsigned file, which dnf and apt install
+		// from a path. --no-gpg-checks would skip the repositories' too.
+		cmd = zypperCommand("install --oldpackage --allow-unsigned-rpm" + d.recommends(family) + " " + q)
+	}
+	if d.SourceSHA256 != "" {
+		// Checked in the same guarded script as the install, where only
+		// root can change the file, so the install gets the file checked.
+		cmd = modules.Sum256 + fmt.Sprintf(`got=$([ -f %[1]s ] && sum256 %[1]s)
+[ "$got" = %[2]s ] || { echo "source %[3]s has SHA-256 ${got:-unreadable}, not source_sha256 %[2]s; refusing to install it" >&2; exit 1; }
+`, q, d.SourceSHA256, d.Source) + cmd
 	}
 	// What the file holds runs as root, so Whole refuses a file, or a
 	// directory on the way, that anyone but root could change.

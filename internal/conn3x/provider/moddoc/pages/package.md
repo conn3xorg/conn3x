@@ -48,7 +48,7 @@ step "gone" {
 }
 ```
 
-Install a vendor's `.deb` from a file on the host, downloaded and checked by the step before it:
+Install a vendor's `.deb` from a file on the host, downloaded and checked by the step before it. With the download's `sha256` as `source_sha256`, a new `url` and `sha256` upgrade the package in the same apply:
 
 ```hcl
 step "agent_deb" {
@@ -61,8 +61,9 @@ step "agent_deb" {
 
 step "agent" {
   package {
-    name   = "agent"
-    source = "/opt/downloads/agent_1.4.0-1_amd64.deb"
+    name          = "agent"
+    source        = conn3x_download.docs__agent_deb[each.key].dest
+    source_sha256 = conn3x_download.docs__agent_deb[each.key].sha256
   }
 }
 ```
@@ -91,7 +92,7 @@ step "tmux" {
 
 **Versions.** `version` matches the start of the installed version, so `"1.26.3"` matches `1:1.26.3-2.el10`. Give the epoch or the release as well when you need an exact match.
 
-**From a file.** `source` installs the package from a `.deb` or `.rpm` already on the host, usually one a [`download`](/modules/download) step fetched and checked just before. `name` is still required: at plan the file may not be there yet, and Conn3x needs to know which package to look for. When the file is there, every plan reads its name and version with `dpkg-deb -f` or `rpm -qp`, and the step is in sync when the installed version is the file's, epoch and release included. A new file with another version, older or newer, plans a change once it's on the host. A file that has gone, such as one in `/tmp` after a reboot, leaves the installed package as it is. At apply, Conn3x checks the file is the package `name` says and fails if it isn't, then runs `apt-get install`, `dnf install`, or `dnf downgrade` for an older file, or `zypper install --oldpackage`, which fetch the package's dependencies from the repositories. The file's scripts run as root, so Conn3x refuses a file, or a directory on the way to it, that a user other than root could change; keep downloads in a directory of root's, such as `/opt/downloads`. `source` can't be set with `version` or `state = "latest"`, and `state = "absent"` removes the package by name, file or not. Alpine isn't supported.
+**From a file.** `source` installs the package from a `.deb` or `.rpm` already on the host, usually one a [`download`](/modules/download) step fetched and checked just before. `name` is still required: at plan the file may not be there yet, and Conn3x needs to know which package to look for. When the file is there, every plan reads its name and version with `dpkg-deb -f` or `rpm -qp`, and the step is in sync when the installed version is the file's, epoch and release included. A new file with another version, older or newer, plans a change once it's on the host. When a `download` step in the same configuration fetches that file, that's one plan too late: the plan that changes the download can't read a file that isn't there yet. Set `source_sha256` to the download's `sha256` and a new hash plans the install in the same plan, with the versions known after apply. At apply, Conn3x hashes the file and installs it only if it has that SHA-256, checked in the same root-only script as the install, so nothing can swap the file in between. Every plan hashes the file too, so a file swapped on the host by hand shows as a change. A file that has gone, such as one in `/tmp` after a reboot, leaves the installed package as it is. At apply, Conn3x checks the file is the package `name` says and fails if it isn't, then runs `apt-get install`, `dnf install`, or `dnf downgrade` for an older file, or `zypper install --oldpackage --allow-unsigned-rpm`, which fetch the package's dependencies from the repositories. Like dnf and apt, zypper then installs an unsigned file, since the download's checksum is what vouches for it. The file's scripts run as root, so Conn3x refuses a file, or a directory on the way to it, that a user other than root could change; keep downloads in a directory of root's, such as `/opt/downloads`. `source` can't be set with `version` or `state = "latest"`, and `state = "absent"` removes the package by name, file or not. Alpine isn't supported.
 
 **Other repositories and releases.** On the Red Hat family, `enable_repositories` turns on dnf repositories that are off by default, such as `crb` or `highavailability`, for this package only: Conn3x adds `--enablerepo=ID` to the install and, with `state = "latest"`, to the `dnf repoquery` that finds the newest version. The repositories stay off afterwards, so `dnf repolist --disabled` still lists them. On Debian and Ubuntu, `target_release` installs from a release such as `trixie-backports`, with `apt-get install -t`, and `state = "latest"` reads the newest version with `apt-cache -t` too, so a backports package doesn't plan a downgrade to the main archive's. The release must be in the host's sources, which a [`repository`](/modules/repository) step can add; if its package lists haven't been fetched yet, Conn3x runs `apt-get update` once and tries again. A repository ID is letters, digits and `- _ . :`, and a release letters, digits and `. + ~ _ -`, so globs such as `epel*` are refused. `enable_repositories` on a Debian or Ubuntu host, or `target_release` on any other, fails before anything runs, naming the host: at plan for a step that's already applied, at apply for a new one, since Conn3x doesn't connect to a host until then. Both work with `source`, for the file's dependencies. A step sets one or the other, not both.
 

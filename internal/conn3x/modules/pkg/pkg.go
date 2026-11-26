@@ -47,6 +47,9 @@ type Desired struct {
 	// Source, when set, is a .deb or .rpm file on the host to install
 	// the package from. Name stays the package's name.
 	Source string
+	// SourceSHA256, when set, is the SHA-256 the file at Source must
+	// have, in lowercase hex: Apply refuses to install any other file.
+	SourceSHA256 string
 	// InstallRecommends, when set, says whether an install also brings in
 	// what the package recommends: apt's recommended packages, dnf's weak
 	// dependencies. Nil keeps the host's own setting.
@@ -115,6 +118,9 @@ type Actual struct {
 	// SourceVersion is the version of the file at Desired.Source, as
 	// ReadSource read it, or "" when it was missing or not read.
 	SourceVersion string
+	// SourceSHA256 is the SHA-256 of the file at Desired.Source, read only
+	// when Desired.SourceSHA256 is set and the file is there, or "".
+	SourceSHA256 string
 }
 
 var (
@@ -380,6 +386,13 @@ func Settled(ctx context.Context, r modules.Runner, family Family, d Desired) bo
 		// package, Apply says the file is missing.
 		if _, a.SourceVersion, err = ReadSource(ctx, r, family, d.Source); err == nil && a.SourceVersion == "" {
 			return a.Installed
+		}
+		// Another file than the one wanted goes to Apply, which refuses it.
+		if err == nil && d.SourceSHA256 != "" {
+			var sum string
+			if sum, err = SourceSum(ctx, r, d.Source); err == nil && sum != d.SourceSHA256 {
+				return false
+			}
 		}
 	}
 	return err == nil && !NeedsChange(d, a)

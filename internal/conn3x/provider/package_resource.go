@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
@@ -29,6 +30,10 @@ func packageSchema() providers.Schema {
 				"source": {
 					Type: cty.String, Optional: true,
 					Description: "Absolute path of a .deb or .rpm file on the host to install the package from, such as one a download step wrote. name is still the package's name, and apply checks the file is that package. The step is in sync when the installed version is the file's. Can't be set with version or state \"latest\".",
+				},
+				"source_sha256": {
+					Type: cty.String, Optional: true,
+					Description: "With source, the SHA-256 the file must have, in lowercase hex, such as a download step's sha256. A new value plans the install in the same plan as the download that brings the file, apply refuses a file with another hash, and a file swapped on the host shows as a change.",
 				},
 				"source_version": {Type: cty.String, Computed: true, Description: "With source, the version of the file at source when it was last read. Null when it was missing, or without source."},
 				"install_recommends": {
@@ -60,6 +65,7 @@ func desiredPackage(v cty.Value) pkg.Desired {
 		State:              pkg.State(stringOr(v.GetAttr("state"), string(pkg.Present))),
 		Version:            stringOr(v.GetAttr("version"), ""),
 		Source:             stringOr(v.GetAttr("source"), ""),
+		SourceSHA256:       stringOr(v.GetAttr("source_sha256"), ""),
 		InstallRecommends:  optBool(v.GetAttr("install_recommends")),
 		EnableRepositories: stringList(v.GetAttr("enable_repositories")),
 		TargetRelease:      stringOr(v.GetAttr("target_release"), ""),
@@ -92,15 +98,23 @@ func validatePackage(cfg cty.Value) tfdiags.Diagnostics {
 		// A path from another step's output: check what can be checked.
 		d.Source = "/unknown.deb"
 	}
+	if sum := cfg.GetAttr("source_sha256"); !sum.IsKnown() {
+		// Another step's sha256, known at apply.
+		d.SourceSHA256 = strings.Repeat("0", 64)
+	}
 	if err := d.Validate(); err != nil {
 		attr := "name"
 		plain := pkg.Desired{Name: d.Name, State: d.State, Version: d.Version}
 		withSource := plain
 		withSource.Source = d.Source
+		withSum := withSource
+		withSum.SourceSHA256 = d.SourceSHA256
 		switch {
 		case plain.Validate() != nil:
 		case withSource.Validate() != nil:
 			attr = "source"
+		case withSum.Validate() != nil:
+			attr = "source_sha256"
 		case d.TargetRelease != "":
 			attr = "target_release"
 		case len(d.EnableRepositories) > 0:
@@ -154,10 +168,12 @@ func planPackage(req providers.PlanResourceChangeRequest) providers.PlanResource
 		// A new state also counts: the refresh read latest_version only for
 		// the old one, so going to "latest" learns it at apply.
 		// A new source also counts: the refresh read the old one's version.
+		// So does a new source_sha256, such as a download's that fetches
+		// another file this apply, or the hash of a file swapped on the host.
 		// So do new repositories or a new release, which offer another.
 		changed := func(attr string) bool { return !req.PriorState.GetAttr(attr).RawEquals(vals[attr]) }
 		if pkg.NeedsChange(desiredPackage(planned), actualPackage(req.PriorState)) ||
-			changed("state") || changed("source") || changed("enable_repositories") || changed("target_release") {
+			changed("state") || changed("source") || changed("source_sha256") || changed("enable_repositories") || changed("target_release") {
 			unknownInstall()
 		} else {
 			vals["installed_version"] = req.PriorState.GetAttr("installed_version")
@@ -216,6 +232,9 @@ func readPackageOnHost(ctx context.Context, host *hostConn, d pkg.Desired) (pkg.
 	actual, err := pkg.ReadFor(ctx, host, family, d)
 	if err == nil && d.Source != "" && d.State != pkg.Absent {
 		_, actual.SourceVersion, err = pkg.ReadSource(ctx, host, family, d.Source)
+		if err == nil && d.SourceSHA256 != "" && actual.SourceVersion != "" {
+			actual.SourceSHA256, err = pkg.SourceSum(ctx, host, d.Source)
+		}
 	}
 	if err != nil {
 		return actual, fmt.Errorf("reading package %s: %w", d.Name, err)
@@ -291,6 +310,11 @@ func packageState(base cty.Value, actual pkg.Actual) cty.Value {
 	vals["source_version"] = cty.NullVal(cty.String)
 	if actual.SourceVersion != "" {
 		vals["source_version"] = cty.StringVal(actual.SourceVersion)
+	}
+	// The hash of the file on the host, so a swapped one plans a change. A
+	// file that's gone keeps the hash it had, and the step stays in sync.
+	if actual.SourceSHA256 != "" {
+		vals["source_sha256"] = cty.StringVal(actual.SourceSHA256)
 	}
 	return cty.ObjectVal(vals)
 }

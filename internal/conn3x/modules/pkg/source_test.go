@@ -24,6 +24,10 @@ func TestValidateSource(t *testing.T) {
 		{Name: "agent", State: Present, Source: "/tmp/agent\n.deb"},
 		{Name: "agent", State: Present, Source: "/tmp/agent.deb", Version: "1.4.0"},
 		{Name: "agent", State: Latest, Source: "/tmp/agent.rpm"},
+		{Name: "agent", State: Present, SourceSHA256: strings.Repeat("a", 64)},
+		{Name: "agent", State: Present, Source: "/tmp/agent.deb", SourceSHA256: strings.Repeat("A", 64)},
+		{Name: "agent", State: Present, Source: "/tmp/agent.deb", SourceSHA256: strings.Repeat("a", 63)},
+		{Name: "agent", State: Present, Source: "/tmp/agent.deb", SourceSHA256: strings.Repeat("a", 63) + "'"},
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("Validate(%+v) accepted", bad)
@@ -33,6 +37,7 @@ func TestValidateSource(t *testing.T) {
 		{Name: "agent", State: Present, Source: "/tmp/agent_1.4.0-1_amd64.deb"},
 		{Name: "agent", State: Present, Source: "/opt/dl/agent-1:1.4.0-1.el9.x86_64.rpm"},
 		{Name: "agent", State: Absent, Source: "/tmp/agent.deb"},
+		{Name: "agent", State: Present, Source: "/tmp/agent.deb", SourceSHA256: strings.Repeat("0a", 32)},
 	} {
 		if err := good.Validate(); err != nil {
 			t.Errorf("Validate(%+v): %v", good, err)
@@ -82,7 +87,7 @@ func TestApplySource(t *testing.T) {
 		{RPM, "/tmp/agent.rpm", "", "dnf -y install '/tmp/agent.rpm'"},
 		{RPM, "/tmp/agent.rpm", "0:1.3.0-1.el9", "dnf -y install '/tmp/agent.rpm'"},
 		{RPM, "/tmp/agent.rpm", "0:1.5.0-1.el9", "dnf -y downgrade '/tmp/agent.rpm'"},
-		{SUSE, "/tmp/agent.rpm", "", "zypper -n -q install --oldpackage '/tmp/agent.rpm'"},
+		{SUSE, "/tmp/agent.rpm", "", "zypper -n -q install --oldpackage --allow-unsigned-rpm '/tmp/agent.rpm'"},
 	} {
 		installed := ssh.Result{ExitCode: 1}
 		if tc.installed != "" {
@@ -163,5 +168,45 @@ func TestSettledSource(t *testing.T) {
 		if got := Settled(ctx, h, Deb, d); got != tc.want {
 			t.Errorf("installed %q, file %q: Settled = %v", tc.installed, tc.file, got)
 		}
+	}
+}
+
+// With source_sha256, the install checks the file's hash first, in the
+// same guarded script, so it installs only the file that was checked. A
+// file with another hash isn't settled, so Apply gets to refuse it.
+func TestSourceSHA256(t *testing.T) {
+	want, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	d := Desired{Name: "agent", State: Present, Source: "/tmp/agent.deb", SourceSHA256: want}
+	h := &scriptedHost{answers: []answer{
+		{"dpkg-deb", ok("Package: agent\nVersion: 1.4.0-1\n")},
+		{"install", ok("")},
+	}}
+	if err := Apply(ctx, h, Deb, d); err != nil {
+		t.Fatal(err)
+	}
+	last := h.ran[len(h.ran)-1]
+	check := strings.Index(last, inner(`[ "$got" = `+want+` ] || {`))
+	install := strings.Index(last, inner("--allow-downgrades install '/tmp/agent.deb'"))
+	if check < 0 || install < check || !strings.Contains(last, "route_walk whole '/tmp/agent.deb'") || !strings.Contains(last, "refusing to install it") {
+		t.Errorf("install doesn't check the hash first under the guard: %q", last)
+	}
+
+	for sum, settled := range map[string]bool{want: true, other: false, "": false} {
+		h := &scriptedHost{answers: []answer{
+			{"dpkg-query", ok("ii 1.4.0-1\n")},
+			{"dpkg-deb", ok("Package: agent\nVersion: 1.4.0-1\n")},
+			{"sum256", ok(sum + "\n")},
+		}}
+		if got := Settled(ctx, h, Deb, d); got != settled {
+			t.Errorf("file hashing to %q: Settled = %v", sum, got)
+		}
+	}
+	h = &scriptedHost{answers: []answer{{"sum256", ok(other + "\n")}}}
+	if got, err := SourceSum(ctx, h, "/tmp/agent.deb"); err != nil || got != other {
+		t.Errorf("SourceSum = %q, %v", got, err)
+	}
+	h = &scriptedHost{answers: []answer{{"sum256", ok("nope\n")}}}
+	if _, err := SourceSum(ctx, h, "/tmp/agent.deb"); err == nil {
+		t.Error("SourceSum took garbage")
 	}
 }
