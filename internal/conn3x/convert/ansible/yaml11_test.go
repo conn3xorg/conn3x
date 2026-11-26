@@ -34,7 +34,7 @@ func TestYAML11Scalar(t *testing.T) {
 // read their own way.
 func TestYAML11FreeText(t *testing.T) {
 	const play = "- hosts: all\n  vars: {flag: yes, ver: '1.10'}\n  tasks:\n    - "
-	for _, v := range []string{"yes", "on", "true", "1.10", "1.5e+3", "0755", "0x1F", "1_000", "1:20", "null"} {
+	for _, v := range []string{"yes", "on", "true", "1.10", "1.5e+3", "0755", "0x1F", "1_000", "1:20"} {
 		for task, key := range map[string]string{
 			"copy: {dest: /a, content: " + v + "}":                              "content",
 			"lineinfile: {path: /a, line: " + v + "}":                           "line",
@@ -52,6 +52,17 @@ func TestYAML11FreeText(t *testing.T) {
 			if res := convertString(t, play+quoted+"\n"); res.Converted != 1 {
 				t.Errorf("%s: converted %d, review %+v", quoted, res.Converted, res.Review)
 			}
+		}
+	}
+	// A null module argument is None, not set, and the module reads it its
+	// own way; in environment, Ansible writes the text None.
+	if res := convertString(t, play+"win_environment: {name: OLD_VAR, value: , level: machine}\n"); res.Converted != 1 || !strings.Contains(string(res.HCL), `state = "absent"`) {
+		t.Errorf("null value: converted %d, review %+v:\n%s", res.Converted, res.Review, res.HCL)
+	}
+	for _, v := range []string{"", "~", "null"} {
+		task := "command: {cmd: x, creates: /x}\n      environment: {A: " + v + "}"
+		if res := convertString(t, play+task+"\n"); res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, `environment A is the unquoted YAML 1.1 null`) {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
 		}
 	}
 	if res := convertString(t, play+"copy: {dest: /a, content: \"{{ flag }}\"}\n"); res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "content reads {{ flag }}") {

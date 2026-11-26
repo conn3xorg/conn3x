@@ -167,6 +167,11 @@ func (in *input) checkFreeText() {
 		if n == nil {
 			continue
 		}
+		// A null argument reaches the module as None, which means not set,
+		// and each module reads that its own way; only text is checked here.
+		if kind, _ := yaml11Scalar(n.Value); kind == "null" {
+			continue
+		}
 		if why := yaml11Retyped(k, n); why != "" {
 			in.fail(why)
 			return
