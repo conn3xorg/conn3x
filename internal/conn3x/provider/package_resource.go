@@ -35,6 +35,14 @@ func packageSchema() providers.Schema {
 					Type: cty.Bool, Optional: true,
 					Description: "Whether an install also brings in what the package recommends: apt's recommended packages, or dnf's weak dependencies. false keeps a server lean. Unset keeps the host's own setting. It only changes how the package is installed, never what's already there.",
 				},
+				"enable_repositories": {
+					Type: cty.List(cty.String), Optional: true,
+					Description: "Red Hat family only. IDs of dnf repositories that are off by default, such as crb, to turn on for this package's install and for finding its newest version, as dnf --enablerepo does. They stay off afterwards.",
+				},
+				"target_release": {
+					Type: cty.String, Optional: true,
+					Description: "Debian and Ubuntu only. The apt release to install from and read the newest version from, such as trixie-backports, as apt-get -t does.",
+				},
 				"on_remove":         {Type: cty.String, Optional: true, Computed: true, Description: "What happens on the host when this resource is removed: \"forget\" (default) leaves the package, \"delete\" uninstalls it."},
 				"installed_version": {Type: cty.String, Computed: true, Description: "Version installed on the host, or null when it isn't installed."},
 				"latest_version":    {Type: cty.String, Computed: true, Description: "Newest available version, read when state is \"latest\"."},
@@ -48,11 +56,13 @@ func packageSchema() providers.Schema {
 
 func desiredPackage(v cty.Value) pkg.Desired {
 	return pkg.Desired{
-		Name:              v.GetAttr("name").AsString(),
-		State:             pkg.State(stringOr(v.GetAttr("state"), string(pkg.Present))),
-		Version:           stringOr(v.GetAttr("version"), ""),
-		Source:            stringOr(v.GetAttr("source"), ""),
-		InstallRecommends: optBool(v.GetAttr("install_recommends")),
+		Name:               v.GetAttr("name").AsString(),
+		State:              pkg.State(stringOr(v.GetAttr("state"), string(pkg.Present))),
+		Version:            stringOr(v.GetAttr("version"), ""),
+		Source:             stringOr(v.GetAttr("source"), ""),
+		InstallRecommends:  optBool(v.GetAttr("install_recommends")),
+		EnableRepositories: stringList(v.GetAttr("enable_repositories")),
+		TargetRelease:      stringOr(v.GetAttr("target_release"), ""),
 	}
 }
 
@@ -72,8 +82,8 @@ func validatePackage(cfg cty.Value) tfdiags.Diagnostics {
 		return diags
 	}
 	diags = diags.Append(validateOnRemove(cfg))
-	for _, attr := range []string{"state", "version"} {
-		if !cfg.GetAttr(attr).IsKnown() {
+	for _, attr := range []string{"state", "version", "enable_repositories", "target_release"} {
+		if !cfg.GetAttr(attr).IsWhollyKnown() {
 			return diags
 		}
 	}
@@ -84,8 +94,17 @@ func validatePackage(cfg cty.Value) tfdiags.Diagnostics {
 	}
 	if err := d.Validate(); err != nil {
 		attr := "name"
-		if d.Source != "" && (pkg.Desired{Name: d.Name, State: d.State, Version: d.Version}).Validate() == nil {
+		plain := pkg.Desired{Name: d.Name, State: d.State, Version: d.Version}
+		withSource := plain
+		withSource.Source = d.Source
+		switch {
+		case plain.Validate() != nil:
+		case withSource.Validate() != nil:
 			attr = "source"
+		case d.TargetRelease != "":
+			attr = "target_release"
+		case len(d.EnableRepositories) > 0:
+			attr = "enable_repositories"
 		}
 		diags = diags.Append(attrError(attr, err.Error()))
 	}
@@ -135,8 +154,10 @@ func planPackage(req providers.PlanResourceChangeRequest) providers.PlanResource
 		// A new state also counts: the refresh read latest_version only for
 		// the old one, so going to "latest" learns it at apply.
 		// A new source also counts: the refresh read the old one's version.
-		if pkg.NeedsChange(desiredPackage(planned), actualPackage(req.PriorState)) || !req.PriorState.GetAttr("state").RawEquals(vals["state"]) ||
-			!req.PriorState.GetAttr("source").RawEquals(vals["source"]) {
+		// So do new repositories or a new release, which offer another.
+		changed := func(attr string) bool { return !req.PriorState.GetAttr(attr).RawEquals(vals[attr]) }
+		if pkg.NeedsChange(desiredPackage(planned), actualPackage(req.PriorState)) ||
+			changed("state") || changed("source") || changed("enable_repositories") || changed("target_release") {
 			unknownInstall()
 		} else {
 			vals["installed_version"] = req.PriorState.GetAttr("installed_version")
@@ -189,7 +210,10 @@ func readPackageOnHost(ctx context.Context, host *hostConn, d pkg.Desired) (pkg.
 	if err != nil {
 		return pkg.Actual{}, err
 	}
-	actual, err := pkg.Read(ctx, host, family, d.Name, d.State == pkg.Latest)
+	if err := d.Fits(family); err != nil {
+		return pkg.Actual{}, fmt.Errorf("package %s on %s: %w", d.Name, host.host, err)
+	}
+	actual, err := pkg.ReadFor(ctx, host, family, d)
 	if err == nil && d.Source != "" && d.State != pkg.Absent {
 		_, actual.SourceVersion, err = pkg.ReadSource(ctx, host, family, d.Source)
 	}
@@ -222,6 +246,10 @@ func applyPackage(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	family, err := host.packageFamily(ctx)
 	if err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(err)
+		return resp
+	}
+	if err := d.Fits(family); err != nil {
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("package %s on %s: %w", d.Name, host.host, err))
 		return resp
 	}
 	if !pkg.Settled(ctx, host, family, d) {

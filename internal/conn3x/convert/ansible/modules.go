@@ -1473,6 +1473,25 @@ func packageModule(in *input) ([]step, string) {
 		}
 		names = slices.Insert(names, i, name)
 	}
+	// enablerepo and default_release are for this install only, as the
+	// step's are. disablerepo stays for review: dropping it could install
+	// from a repository the play kept out.
+	var from []attr
+	if in.mod == "dnf" || in.mod == "dnf5" || in.mod == "yum" {
+		if ids := in.list("enablerepo"); len(ids) > 0 {
+			from = append(from, attr{key: "enable_repositories", val: strList(ids)})
+			if err := (pkg.Desired{Name: "x", State: pkg.Present, EnableRepositories: ids}).Validate(); err != nil && !strings.Contains(strings.Join(ids, ""), "\x00") {
+				return nil, "can't be a package step: " + err.Error()
+			}
+		}
+	}
+	if in.mod == "apt" && in.has("default_release") {
+		r := in.str("default_release")
+		from = append(from, s("target_release", r))
+		if err := (pkg.Desired{Name: "x", State: pkg.Present, TargetRelease: r}).Validate(); err != nil && !strings.Contains(r, "\x00") {
+			return nil, "can't be a package step: " + err.Error()
+		}
+	}
 	var steps []step
 	for i, n := range names {
 		// A glob or '*' names no single package and cannot validate as a
@@ -1504,6 +1523,9 @@ func packageModule(in *input) ([]step, string) {
 		}
 		if recommends != nil && st != "absent" {
 			attrs = append(attrs, *recommends)
+		}
+		if st != "absent" {
+			attrs = append(attrs, from...)
 		}
 		steps = append(steps, step{module: "package", attrs: attrs, notes: notes, suffix: n})
 		notes = nil

@@ -51,7 +51,46 @@ type Desired struct {
 	// what the package recommends: apt's recommended packages, dnf's weak
 	// dependencies. Nil keeps the host's own setting.
 	InstallRecommends *bool
+	// EnableRepositories are dnf repository IDs, such as crb, to turn on
+	// for the install and the newest-version query only, as dnf's
+	// --enablerepo does. Red Hat family only.
+	EnableRepositories []string
+	// TargetRelease is an apt release, such as trixie-backports, to
+	// install from and read the candidate from, as apt's -t does. Debian
+	// family only.
+	TargetRelease string
 }
+
+// repoOptions is the option that sets EnableRepositories or TargetRelease
+// for a family's install or query, or "". Validate has checked each value.
+func (d Desired) repoOptions(family Family) string {
+	var b strings.Builder
+	switch family {
+	case RPM:
+		for _, id := range d.EnableRepositories {
+			b.WriteString(" --enablerepo=" + ssh.Quote(id))
+		}
+	case Deb:
+		if d.TargetRelease != "" {
+			b.WriteString(" -t " + ssh.Quote(d.TargetRelease))
+		}
+	}
+	return b.String()
+}
+
+// Fits says why family can't take what d sets, if it can't. dnf has
+// --enablerepo and apt has -t; zypper and apk have neither as such.
+func (d Desired) Fits(family Family) error {
+	if len(d.EnableRepositories) > 0 && family != RPM {
+		return fmt.Errorf("enable_repositories only applies on the Red Hat family, with dnf, and this host uses %s", familyTool[family])
+	}
+	if d.TargetRelease != "" && family != Deb {
+		return fmt.Errorf("target_release only applies on Debian and Ubuntu, with apt, and this host uses %s", familyTool[family])
+	}
+	return nil
+}
+
+var familyTool = map[Family]string{RPM: "dnf", Deb: "apt", SUSE: "zypper", APK: "apk"}
 
 // recommends is the option that sets InstallRecommends for a family, or ""
 // to keep the host's setting.
@@ -83,6 +122,12 @@ var (
 	// as "remove x". It may end in "+", as g++ does; see exactDeb.
 	namePattern    = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.+_:@-]*[A-Za-z0-9+])?$`)
 	versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+~:_-]*$`)
+	// dnf allows letters, digits and - _ . : in a repository ID. Globs,
+	// which --enablerepo also takes, aren't allowed here.
+	repoIDPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.:-]*$`)
+	// An apt release is a suite, codename or version, such as
+	// trixie-backports, stable or 13.
+	releasePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+~_-]*$`)
 )
 
 // ValidName reports whether name passes the check Validate applies. A
@@ -105,6 +150,17 @@ func (d Desired) Validate() error {
 	}
 	if err := d.validateSource(); err != nil {
 		return err
+	}
+	for _, id := range d.EnableRepositories {
+		if !repoIDPattern.MatchString(id) {
+			return fmt.Errorf("repository ID %q is not valid: use letters, digits and - _ . : only", id)
+		}
+	}
+	if d.TargetRelease != "" && !releasePattern.MatchString(d.TargetRelease) {
+		return fmt.Errorf("target_release %q is not valid: use a suite or codename such as trixie-backports, of letters, digits and . + ~ _ - only", d.TargetRelease)
+	}
+	if len(d.EnableRepositories) > 0 && d.TargetRelease != "" {
+		return errors.New("enable_repositories is for dnf and target_release for apt, so a step sets one or the other")
 	}
 	if d.Version != "" {
 		if d.State == Latest {
@@ -151,6 +207,19 @@ func DetectFamily(ctx context.Context, r modules.Runner) (Family, error) {
 // Read reports whether the package is installed. With candidate set it also
 // asks the package manager for the newest available version.
 func Read(ctx context.Context, r modules.Runner, family Family, name string, candidate bool) (Actual, error) {
+	return read(ctx, r, family, name, candidate, "")
+}
+
+// ReadFor is Read for d: the newest version, read for Latest, is the one
+// d's repositories or release offer.
+func ReadFor(ctx context.Context, r modules.Runner, family Family, d Desired) (Actual, error) {
+	if err := d.Fits(family); err != nil {
+		return Actual{}, err
+	}
+	return read(ctx, r, family, d.Name, d.State == Latest, d.repoOptions(family))
+}
+
+func read(ctx context.Context, r modules.Runner, family Family, name string, candidate bool, opts string) (Actual, error) {
 	if !namePattern.MatchString(name) {
 		return Actual{}, fmt.Errorf("package name %q is not valid", name)
 	}
@@ -185,7 +254,7 @@ func Read(ctx context.Context, r modules.Runner, family Family, name string, can
 			}
 			a.Candidate = zypperNewest(string(res.Stdout), name)
 		} else if candidate {
-			res, err := r.Run(ctx, "dnf -q repoquery --latest-limit 1 --qf '%{epoch}:%{version}-%{release}' -- "+q, nil)
+			res, err := r.Run(ctx, "dnf -q"+opts+" repoquery --latest-limit 1 --qf '%{epoch}:%{version}-%{release}' -- "+q, nil)
 			if err != nil {
 				return a, err
 			}
@@ -208,7 +277,7 @@ func Read(ctx context.Context, r modules.Runner, family Family, name string, can
 			}
 		}
 		if candidate {
-			res, err := r.Run(ctx, "apt-cache policy -- "+q, nil)
+			res, err := r.Run(ctx, "apt-cache"+opts+" policy -- "+q, nil)
 			if err != nil {
 				return a, err
 			}
@@ -301,7 +370,7 @@ func NeedsChange(d Desired, a Actual) bool {
 // every other package step and behind apt's lock, which a host that just
 // booted holds for minutes while unattended-upgrades runs.
 func Settled(ctx context.Context, r modules.Runner, family Family, d Desired) bool {
-	a, err := Read(ctx, r, family, d.Name, d.State == Latest)
+	a, err := ReadFor(ctx, r, family, d)
 	if err == nil && d.Source != "" && d.State != Absent {
 		// A file that's gone, as from /tmp after a reboot, leaves an
 		// installed package as it is, as the plan does. Without the
@@ -331,6 +400,9 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 	if err := d.Validate(); err != nil {
 		return err
 	}
+	if err := d.Fits(family); err != nil {
+		return err
+	}
 	if d.Source != "" && d.State != Absent {
 		return applySource(ctx, r, family, d)
 	}
@@ -344,12 +416,12 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		case Absent:
 			return Run(ctx, r, "dnf -y remove "+ssh.Quote(d.Name))
 		case Latest:
-			if err := Run(ctx, r, "dnf -y"+d.recommends(family)+" install "+ssh.Quote(d.Name)); err != nil {
+			if err := Run(ctx, r, "dnf -y"+d.recommends(family)+d.repoOptions(family)+" install "+ssh.Quote(d.Name)); err != nil {
 				return err
 			}
-			return Run(ctx, r, "dnf -y"+d.recommends(family)+" upgrade "+ssh.Quote(d.Name))
+			return Run(ctx, r, "dnf -y"+d.recommends(family)+d.repoOptions(family)+" upgrade "+ssh.Quote(d.Name))
 		default:
-			return Run(ctx, r, "dnf -y"+d.recommends(family)+" install "+ssh.Quote(spec))
+			return Run(ctx, r, "dnf -y"+d.recommends(family)+d.repoOptions(family)+" install "+ssh.Quote(spec))
 		}
 	case Deb:
 		spec := d.Name
@@ -359,7 +431,7 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 		if d.State == Absent {
 			return Run(ctx, r, exactDeb(d.Name, `dpkg-query -W -f '${Package}\n' --`)+aptGet+" remove "+ssh.Quote(d.Name))
 		}
-		install := exactDeb(d.Name, "apt-cache pkgnames --") + aptGet + d.recommends(family) + " install " + ssh.Quote(spec)
+		install := exactDeb(d.Name, "apt-cache pkgnames --") + aptGet + d.recommends(family) + d.repoOptions(family) + " install " + ssh.Quote(spec)
 		err := Run(ctx, r, install)
 		if err != nil && staleLists(err) {
 			// Fresh hosts often have no package lists yet, and an image a few
@@ -468,7 +540,9 @@ func staleLists(err error) bool {
 	return strings.Contains(msg, "Unable to locate package") ||
 		strings.Contains(msg, "has no installation candidate") ||
 		strings.Contains(msg, "Unable to fetch some archives") ||
-		strings.Contains(msg, "Can't find a source to download version")
+		strings.Contains(msg, "Can't find a source to download version") ||
+		// -t names a release whose lists haven't been fetched yet.
+		strings.Contains(msg, "such a release is not available in the sources")
 }
 
 // Another apt or dnf can hold the package manager's lock, such as a step

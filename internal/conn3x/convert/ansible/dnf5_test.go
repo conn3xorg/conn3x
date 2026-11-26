@@ -16,8 +16,8 @@ func TestConvertsDnf5LikeDnf(t *testing.T) {
 			t.Errorf("%q: converted %d, review %+v, want %q in:\n%s", task, res.Converted, res.Review, want, res.HCL)
 		}
 	}
-	res := convertWithKey(t, "    - dnf5: {name: nginx, enablerepo: epel}\n")
-	if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "enablerepo") {
-		t.Errorf("enablerepo: converted %d, review %+v", res.Converted, res.Review)
+	res := convertWithKey(t, "    - dnf5: {name: nginx, disablerepo: epel}\n")
+	if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, "disablerepo") {
+		t.Errorf("disablerepo: converted %d, review %+v", res.Converted, res.Review)
 	}
 }

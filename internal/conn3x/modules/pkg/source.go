@@ -101,7 +101,8 @@ else echo missing; fi`, ssh.Quote(src), query)
 
 // applySource installs the package from the file at d.Source, after
 // checking that the file is that package. apt-get and dnf resolve its
-// dependencies from the repositories, which dpkg -i and rpm -U don't.
+// dependencies from the repositories, d's included, which dpkg -i and
+// rpm -U don't.
 func applySource(ctx context.Context, r modules.Runner, family Family, d Desired) error {
 	name, version, err := ReadSource(ctx, r, family, d.Source)
 	if err != nil {
@@ -117,14 +118,14 @@ func applySource(ctx context.Context, r modules.Runner, family Family, d Desired
 	var cmd string
 	switch family {
 	case Deb:
-		cmd = aptGet + d.recommends(family) + " --allow-downgrades install " + q
+		cmd = aptGet + d.recommends(family) + d.repoOptions(family) + " --allow-downgrades install " + q
 	case RPM:
 		// dnf install refuses a version older than the one installed.
 		verb := "install"
 		if a, err := Read(ctx, r, family, d.Name, false); err == nil && a.Installed && rpmCompare(version, a.Version) < 0 {
 			verb = "downgrade"
 		}
-		cmd = "dnf -y" + d.recommends(family) + " " + verb + " " + q
+		cmd = "dnf -y" + d.recommends(family) + d.repoOptions(family) + " " + verb + " " + q
 	case SUSE:
 		cmd = zypperCommand("install --oldpackage" + d.recommends(family) + " " + q)
 	}
