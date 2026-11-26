@@ -1,6 +1,11 @@
 # Debian 13 with systemd and sshd, used as a managed host in end-to-end tests.
 FROM docker.io/library/debian:trixie
 
+# As in ubuntu2404: a fetch that stalls fails after 20s, not apt's default
+# 30s, and is tried again, rather than holding apt and the test that
+# called it (#1427).
+RUN printf 'Acquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Retries "3";\n' > /etc/apt/apt.conf.d/80conn3x-e2e-timeouts
+
 # The base image lags the archive. An upgrade during an apply that brings a
 # new libc6, as installing postgresql-18 from pgdg does through locales,
 # runs its postinst's systemctl daemon-reexec and cuts off any systemctl

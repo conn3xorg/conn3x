@@ -34,7 +34,7 @@ func TestImportMySQL(t *testing.T) {
 			case rpmImage(image):
 				install = "dnf install -y -q mariadb-server && systemctl enable --now mariadb"
 			}
-			h.exec("", "sh", "-c", `timeout 300 sh -c "$1" >/tmp/install.log 2>&1 || { echo "install failed or hung: $?"; tail -n 20 /tmp/install.log; ps -eo pid,etime,stat,args; tail -n 30 /var/log/mysql/error.log /var/log/mariadb/mariadb.log /var/log/apt/term.log /var/log/dnf.log 2>/dev/null; exit 1; }`, "sh",
+			h.exec("", "sh", "-c", tryInstall+`try_install "$1" >/tmp/install.log 2>&1 || { echo "install failed or hung: $?"; tail -n 20 /tmp/install.log; ps -eo pid,etime,stat,args; tail -n 30 /var/log/mysql/error.log /var/log/mariadb/mariadb.log /var/log/apt/term.log /var/log/dnf.log 2>/dev/null; exit 1; }`, "sh",
 				install+` && for i in $(seq 60); do mysql -u root -e 'select 1' >/dev/null 2>&1 && break; sleep 1; done`)
 			const cli = `"$(command -v mariadb || command -v mysql)"`
 			sql := func(q string) string {
