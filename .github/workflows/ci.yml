@@ -276,9 +276,10 @@ jobs:
           fi
           mkdir -p ~/.cache/conn3x-plugins
           export TF_PLUGIN_CACHE_DIR=~/.cache/conn3x-plugins
-          # The tests run one at a time, 20 to 26 minutes in all, and twice
-          # that when package mirrors are slow. So each job takes every third
-          # test by name.
+          # The tests run one at a time, and with 210 of them a third each
+          # came to about 34 minutes, more when package mirrors are slow, near
+          # go test's 45-minute timeout. So each job takes every fourth test
+          # by name.
           tests=$(sed -nE 's/^func (Test[A-Za-z0-9_]+)\(t \*testing\.T\).*/\1/p' test/e2e/*_test.go | sort | awk -v i=${{ matrix.shard }} '(NR - 1) % 4 == i' | paste -sd '|' -)
           echo "shard ${{ matrix.shard }}: ${tests//|/ }"
           go test -tags e2e -count=1 -timeout 45m -v -run "^(${tests})\$" ./test/e2e/...
