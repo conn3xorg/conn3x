@@ -21,7 +21,23 @@ git config gpg.x509.program gitsign
 git config user.name "Conn3x release"
 git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 git tag -s -m "$tag" "$tag" "$commit"
-gitsign verify-tag \
-  --certificate-identity-regexp "$identity" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  "$tag"
+# Rekor's search index can lag the write by a minute or more, and verify
+# looks the entry up there, so a signature made a second ago may not be
+# found yet ("could not find matching tlog entry"). Retry for about two
+# minutes; any other failure, or the same one after that, still stops
+# the release before the tag is pushed.
+for try in 1 2 3 4 5 6 7 8; do
+  if out=$(gitsign verify-tag \
+    --certificate-identity-regexp "$identity" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    "$tag" 2>&1); then
+    printf '%s\n' "$out"
+    exit 0
+  fi
+  printf '%s\n' "$out" >&2
+  case $out in
+    *"could not find matching tlog entry"*) [ "$try" -lt 8 ] && sleep 15 ;;
+    *) exit 1 ;;
+  esac
+done
+exit 1
