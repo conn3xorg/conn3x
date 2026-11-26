@@ -303,9 +303,11 @@ func NeedsChange(d Desired, a Actual) bool {
 func Settled(ctx context.Context, r modules.Runner, family Family, d Desired) bool {
 	a, err := Read(ctx, r, family, d.Name, d.State == Latest)
 	if err == nil && d.Source != "" && d.State != Absent {
-		// A missing file isn't settled: Apply says it's missing.
-		if _, a.SourceVersion, err = ReadSource(ctx, r, family, d.Source); a.SourceVersion == "" {
-			return false
+		// A file that's gone, as from /tmp after a reboot, leaves an
+		// installed package as it is, as the plan does. Without the
+		// package, Apply says the file is missing.
+		if _, a.SourceVersion, err = ReadSource(ctx, r, family, d.Source); err == nil && a.SourceVersion == "" {
+			return a.Installed
 		}
 	}
 	return err == nil && !NeedsChange(d, a)

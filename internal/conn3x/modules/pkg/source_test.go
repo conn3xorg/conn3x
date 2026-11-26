@@ -145,18 +145,23 @@ func TestNeedsChangeSource(t *testing.T) {
 	}
 }
 
-// Settled reads the file too: a newer file isn't settled, nor a missing
-// one, which Apply then names.
+// Settled reads the file too: a newer file isn't settled. A missing one
+// is, with the package installed, as the plan has it; without the
+// package it isn't, and Apply names the file.
 func TestSettledSource(t *testing.T) {
 	d := Desired{Name: "agent", State: Present, Source: "/tmp/agent.deb"}
-	for file, want := range map[string]bool{
-		"Package: agent\nVersion: 1.4.0-1\n": true,
-		"Package: agent\nVersion: 1.5.0-1\n": false,
-		"missing\n":                          false,
+	for _, tc := range []struct {
+		installed, file string
+		want            bool
+	}{
+		{"ii 1.4.0-1\n", "Package: agent\nVersion: 1.4.0-1\n", true},
+		{"ii 1.4.0-1\n", "Package: agent\nVersion: 1.5.0-1\n", false},
+		{"ii 1.4.0-1\n", "missing\n", true},
+		{"", "missing\n", false},
 	} {
-		h := &scriptedHost{answers: []answer{{"dpkg-query", ok("ii 1.4.0-1\n")}, {"dpkg-deb", ok(file)}}}
-		if got := Settled(ctx, h, Deb, d); got != want {
-			t.Errorf("%q: Settled = %v", file, got)
+		h := &scriptedHost{answers: []answer{{"dpkg-query", ok(tc.installed)}, {"dpkg-deb", ok(tc.file)}}}
+		if got := Settled(ctx, h, Deb, d); got != tc.want {
+			t.Errorf("installed %q, file %q: Settled = %v", tc.installed, tc.file, got)
 		}
 	}
 }

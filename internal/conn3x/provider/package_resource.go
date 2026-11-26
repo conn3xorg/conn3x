@@ -241,7 +241,8 @@ func applyPackage(ctx context.Context, req providers.ApplyResourceChangeRequest)
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading back: %w", err))
 		return resp
 	}
-	if pkg.NeedsChange(d, actual) || (d.Source != "" && d.State != pkg.Absent && actual.SourceVersion == "") {
+	// With source, a file that's gone leaves the installed package as it is.
+	if pkg.NeedsChange(d, actual) {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("package %s is not %s after applying; the package manager reported success but the host disagrees", d.Name, d.State))
 		return resp
 	}

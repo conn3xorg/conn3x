@@ -14,7 +14,7 @@ import (
 type packageSourceVars struct {
 	Port, KeyFile, KnownHosts string
 	Ext, Version, OnRemove    string
-	WithPackage               bool
+	WithFile, WithPackage     bool
 }
 
 // buildDeb and buildRPM make conn3x-demo 1.0 and 2.0 in /opt/builds, each
@@ -61,7 +61,7 @@ func TestPackageSource(t *testing.T) {
 	for _, image := range []string{"ubuntu2404", "rocky10"} {
 		t.Run(image, func(t *testing.T) {
 			h := startHost(t, image)
-			vars := packageSourceVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Ext: "deb", Version: "1.0", OnRemove: "forget", WithPackage: true}
+			vars := packageSourceVars{Port: h.port, KeyFile: h.keyFile, KnownHosts: h.knownHosts, Ext: "deb", Version: "1.0", OnRemove: "forget", WithFile: true, WithPackage: true}
 			build := buildDeb
 			if rpmImage(image) {
 				vars.Ext, build = "rpm", buildRPM
@@ -118,6 +118,30 @@ func TestPackageSource(t *testing.T) {
 			}
 			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
 				t.Fatalf("plan after the downgrade:\n%s", out)
+			}
+
+			// A file that's gone, as from /tmp after a reboot, leaves the
+			// package as it is: an apply planned for on_remove succeeds,
+			// both ways, and the package stays.
+			vars.WithFile = false
+			w.writeAs("main.circuit.hcl", vars)
+			w.mustConn3x("apply", "-auto-approve", "-no-color")
+			h.exec("", "rm", "/opt/downloads/conn3x-demo."+vars.Ext)
+			if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+				t.Fatalf("plan with the file gone:\n%s", out)
+			}
+			for _, onRemove := range []string{"forget", "delete"} {
+				vars.OnRemove = onRemove
+				w.writeAs("main.circuit.hcl", vars)
+				if out, code := w.conn3x("apply", "-auto-approve", "-no-color"); code != 0 {
+					t.Fatalf("apply for on_remove = %q with the file gone exited %d:\n%s", onRemove, code, out)
+				}
+				if got := installed(); got != "1.0\n" {
+					t.Fatalf("after on_remove = %q with the file gone: %q", onRemove, got)
+				}
+				if out := w.mustConn3x("plan", "-no-color"); !strings.Contains(out, "No changes.") {
+					t.Fatalf("plan after on_remove = %q with the file gone:\n%s", onRemove, out)
+				}
 			}
 
 			// Removing the step removes the package by name.

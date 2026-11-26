@@ -8,6 +8,7 @@ circuit "agent" {
     known_hosts_file = "{{.KnownHosts}}"
   }
 
+{{if .WithFile}}
   # Stands in for a download step: it puts the file in place in the same
   # apply, after the plan has read the host.
   step "agent_file" {
@@ -16,7 +17,7 @@ circuit "agent" {
       source_path = "/opt/builds/conn3x-demo-{{.Version}}.{{.Ext}}"
     }
   }
-{{if .WithPackage}}
+{{end}}{{if .WithPackage}}
   step "agent" {
     package {
       name      = "conn3x-demo"
