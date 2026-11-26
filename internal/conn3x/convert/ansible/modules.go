@@ -778,6 +778,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_ping":              pingModule, // checks the same as ping, and data: crash fails the same way
 	"win_copy":              winCopyModule,
 	"win_dns_client":        winDNSClientModule,
+	"win_environment":       winEnvironmentModule,
 	"win_domain":            winDomainModule,
 	"win_domain_controller": winDCModule,
 	"win_domain_group":      winADGroupModule,

@@ -956,6 +956,8 @@ func sameForAnyUser(mod string, args map[string]*yaml.Node) bool {
 		return args["user"] != nil // otherwise it's the crontab of whoever runs it
 	case "wait_for":
 		return args["path"] == nil // a path can be out of one user's reach and not another's
+	case "win_environment":
+		return scalar(args["level"]) == "machine" // user is the HKCU of whoever runs it
 	}
 	return false
 }

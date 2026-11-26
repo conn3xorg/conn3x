@@ -328,6 +328,89 @@ func winTimezoneModule(in *input) ([]step, string) {
 	return one("windows_timezone", []attr{s("name", zone)})
 }
 
+// winUserEnvNote is on a windows_environment step with level user: the step
+// writes the login user's HKCU, and Ansible the user the task runs as.
+const winUserEnvNote = "Review: level = \"user\" sets the variable for the account the ssh block logs in as. Ansible set it for the user the task ran as, the become user under become, so check they're the same account."
+
+// winEnvironmentModule converts ansible.windows.win_environment, one step
+// for name, or one for each key of variables. Like Ansible, a variable
+// with no state and an empty value is removed.
+func winEnvironmentModule(in *input) ([]step, string) {
+	level := in.str("level")
+	switch level {
+	case "machine", "user":
+	case "process":
+		return nil, "sets level: process, which lasts only as long as the Ansible module's own process, so there's nothing for a step to keep"
+	default:
+		return nil, fmt.Sprintf("has the level %q; windows_environment takes machine or user", level)
+	}
+	type envVar struct{ name, value, state string }
+	var vars []envVar
+	if n := in.args["variables"]; n != nil {
+		in.ignore("variables")
+		if in.has("name") || in.has("value") || in.has("state") {
+			return nil, "sets variables with name, value or state, which Ansible refuses"
+		}
+		if n.Kind != yaml.MappingNode {
+			return nil, "has variables that aren't a mapping of names to values"
+		}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			if v.Kind != yaml.ScalarNode {
+				return nil, fmt.Sprintf("gives %s a value that isn't a single value", k.Value)
+			}
+			val := ""
+			if v.Tag != "!!null" {
+				val = in.render("variables", v.Value)
+			}
+			vars = append(vars, envVar{name: k.Value, value: val})
+		}
+	} else {
+		vars = []envVar{{name: in.str("name"), value: in.str("value"), state: in.str("state")}}
+	}
+	var notes []string
+	if level == "user" {
+		notes = []string{winUserEnvNote}
+	}
+	var steps []step
+	for _, v := range vars {
+		switch {
+		case v.name == "":
+			return nil, "has no name"
+		case strings.EqualFold(v.name, "Path"):
+			return nil, "sets Path whole, which windows_environment refuses; give each folder a windows_path step"
+		}
+		st := v.state
+		if st == "" {
+			st = "present"
+			if v.value == "" {
+				st = "absent"
+			}
+		}
+		attrs := []attr{s("name", v.name)}
+		switch st {
+		case "present":
+			if v.value == "" {
+				return nil, "has state present and no value, which Ansible refuses"
+			}
+			attrs = append(attrs, s("value", v.value), s("level", level))
+		case "absent":
+			attrs = append(attrs, s("level", level), s("state", "absent"))
+		default:
+			return nil, fmt.Sprintf("state %q has no Conn3x equivalent", st)
+		}
+		out := step{module: "windows_environment", attrs: attrs, notes: notes}
+		if len(vars) > 1 {
+			out.suffix = v.name
+		}
+		steps = append(steps, out)
+	}
+	if len(steps) == 0 {
+		return nil, "has an empty variables mapping"
+	}
+	return steps, ""
+}
+
 // winGetURLModule converts ansible.windows.win_get_url when the task gives
 // a SHA-256: checksum with checksum_algorithm sha256, since the algorithm
 // defaults to sha1. force is dropped: the step downloads whenever dest's

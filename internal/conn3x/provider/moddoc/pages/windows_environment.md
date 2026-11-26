@@ -39,3 +39,9 @@ step "app_logs" {
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the variable. `on_remove = "delete"` removes it.
+
+## From Ansible
+
+`conn3x convert ansible` turns `ansible.windows.win_environment` tasks into `windows_environment` steps, with `name`, `value`, `level` and `state` carried over. A task with `variables` becomes one step per variable, and an empty value removes its variable, as it does in Ansible. So does a task with no `state` and no `value`.
+
+`level: user` converts, with a review note. The step sets the variable for the account the `ssh` block logs in as, where Ansible sets it for the user the task runs as, which is the become user under `become`. With `level: user`, a play or task that sets `become_user` stays a TODO. `level: process` stays a TODO too: it lasts only as long as the Ansible module's own process, so there's nothing for a step to keep. A task that sets `Path` whole stays a TODO; give each folder a `windows_path` step instead.
