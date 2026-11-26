@@ -14,9 +14,11 @@ import (
 // an included task sets, keeps the include for review.
 func TestIncludeTasksWhen(t *testing.T) {
 	defaults := "a: true\nb: false\nlst: []\nmethod: pkg\n"
+	probe := "- command: which php\n  changed_when: false\n  failed_when: false\n  register: p\n"
+	stat := "- stat: {path: /etc/x}\n  register: out\n"
 	for name, c := range map[string]struct {
-		when, first, inner string
-		want               string // in main.circuit.hcl; "" means the include stays
+		when, before, first, inner string
+		want                       string // in main.circuit.hcl; "" means the include stays
 	}{
 		"or":            {when: "a or b", want: "when = (var.a) || (var.b)"},
 		"not":           {when: "not a", want: "when = !var.a"},
@@ -29,13 +31,17 @@ func TestIncludeTasksWhen(t *testing.T) {
 		"ANDs own when": {when: "a | bool", inner: "  when: not b\n", want: "when = !var.b && var.a"},
 		"unreadable":    {when: "a is version('1', '>')"},
 		"set_fact":      {when: "a | bool", inner: "- set_fact: {a: false}\n"},
-		"register":      {when: "out.stat.exists", first: "- stat: {path: /etc/x}\n  register: out\n"},
+		"probe":         {when: "p.rc != 0", before: probe, want: "when = data.conn3x_command.p[each.key].exit_code != 0"},
+		"probe late":    {when: "p.rc != 0", before: "- package: {name: curl}\n" + probe},
+		// A probe the include reads, registered again inside it.
+		"register":     {when: "out.stat.exists", before: stat, first: stat},
+		"no probe yet": {when: "out.stat.exists", first: stat},
 	} {
 		inner := c.first + "- name: Tools\n  package: {name: jq}\n" + c.inner
 		res, err := ConvertRole(writeRole(t, map[string]string{
 			"defaults/main.yml": defaults,
 			"tasks/extra.yml":   inner,
-			"tasks/main.yml":    "- include_tasks: extra.yml\n  when: " + c.when + "\n",
+			"tasks/main.yml":    c.before + "- include_tasks: extra.yml\n  when: " + c.when + "\n",
 		}))
 		if err != nil {
 			t.Fatal(err)
@@ -50,5 +56,34 @@ func TestIncludeTasksWhen(t *testing.T) {
 		if !strings.Contains(hcl, c.want) || strings.Contains(reasons(res), "include_tasks") {
 			t.Errorf("%s: no %q, review %q\n%s", name, c.want, reasons(res), hcl)
 		}
+	}
+}
+
+// The probe.go example: a read-only probe, then an include on its exit
+// code. The probe is a data source, read once at plan, so the include's
+// when reads the same on each included task as on the include.
+func TestIncludeTasksOnProbe(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"tasks/main.yml": `- name: Check if PHP is installed.
+  command: which php
+  changed_when: false
+  failed_when: false
+  register: php_installed
+- include_tasks: install-from-source.yml
+  when: php_installed.rc != 0
+`,
+		"tasks/install-from-source.yml": "- name: Build tools\n  package: {name: gcc}\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []string{`data "conn3x_command" "php_installed"`, "when = data.conn3x_command.php_installed[each.key].exit_code != 0", `name = "gcc"`} {
+		if !strings.Contains(hcl, want) {
+			t.Errorf("no %q\n%s", want, hcl)
+		}
+	}
+	if len(res.Review) != 0 {
+		t.Errorf("review %+v", res.Review)
 	}
 }
