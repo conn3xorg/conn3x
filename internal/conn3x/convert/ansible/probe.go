@@ -22,7 +22,9 @@ import (
 //	  when: php_installed.rc != 0
 //
 // The probe becomes data "conn3x_command" "php_installed", run on every
-// host at plan time, and the when an expression on it, through boolWhen.
+// host at plan time, and the when an expression on it, through boolWhen,
+// on each task the include reads. steps flattens the role again once its
+// probes are known, so the include can read the probe's name.
 // A data source reads before any step runs, where Ansible ran the probe
 // after the tasks above it; the two agree only when nothing before the
 // probe could change what it reads. So a probe converts only when every

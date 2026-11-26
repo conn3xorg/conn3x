@@ -441,9 +441,26 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 
 	// Each task flattens from its own file: a role call in an imported file
 	// splits the play, and the tasks around it still come from that file.
-	var tasks []taskAt
-	for _, t := range taskNodes {
-		tasks = append(tasks, c.flatten([]*yaml.Node{t.node}, t.file, t.stack)...)
+	imports := c.imports
+	flat := func() []taskAt {
+		c.imports = imports
+		var tasks []taskAt
+		for _, t := range taskNodes {
+			tasks = append(tasks, c.flatten([]*yaml.Node{t.node}, t.file, t.stack)...)
+		}
+		return tasks
+	}
+	tasks := flat()
+	c.findProbes(tasks, vars)
+	// An include's when can read a probe, which findProbes only finds once
+	// the tasks are flat, so flatten again with the probes known, until no
+	// probe comes or goes. A role's tasks reach steps once, so its probes
+	// are all from here.
+	for i, seen := 0, 0; c.role != nil && len(c.role.probes) != seen && i < 8; i++ {
+		seen = len(c.role.probes)
+		tasks = flat()
+		c.role.probes, c.role.probeBlocks = map[string]*probe{}, nil
+		c.findProbes(tasks, vars)
 	}
 	// Handlers run after every task, so they count as later for all of them.
 	c.factsAfter = map[*yaml.Node]bool{}
@@ -478,7 +495,6 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 			c.cronFiles[scalar(args["cron_file"])]++
 		}
 	}
-	c.findProbes(tasks, vars)
 	c.findUnreadRegisters(tasks)
 	var key taskAt // a key task waiting on the repository task after it
 	for _, t := range tasks {
