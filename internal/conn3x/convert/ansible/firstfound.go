@@ -33,7 +33,7 @@ import (
 // family and distribution names.
 var familyDistributions = map[string][]string{
 	"Debian": {"Debian", "Ubuntu"},
-	"RedHat": {"RedHat", "Rocky", "AlmaLinux", "Fedora"},
+	"RedHat": {"RedHat", "Rocky", "AlmaLinux", "Fedora", "CentOS"},
 }
 
 // osVersions are the releases of each distribution whose vars files the
@@ -48,6 +48,7 @@ var osVersions = map[string][]string{
 	"Rocky":     {"8", "9", "10"},
 	"AlmaLinux": {"8", "9", "10"},
 	"Fedora":    {"40", "41", "42", "43", "44", "45"},
+	"CentOS":    {"9", "10"}, // CentOS Stream; Ansible names it CentOS
 }
 
 var (
@@ -249,7 +250,7 @@ func (c *converter) versionBlocks(incs []varsInclude) string {
 # stop the play, fails at plan where a step looks a value up.
 locals {
   os_distribution = { for name, h in var.hosts : name => lookup({
-    debian = "Debian", ubuntu = "Ubuntu", rhel = "RedHat", rocky = "Rocky", almalinux = "AlmaLinux", fedora = "Fedora",
+    debian = "Debian", ubuntu = "Ubuntu", rhel = "RedHat", rocky = "Rocky", almalinux = "AlmaLinux", fedora = "Fedora", centos = "CentOS",
   }, try(h.os, data.conn3x_host.facts[name].os_id), "") }
   os_family_name = { for name, h in var.hosts : name => { debian = "Debian", redhat = "RedHat" }[local.os_family[name]] }
   # Ansible's distribution_version has a minor version on Debian, which

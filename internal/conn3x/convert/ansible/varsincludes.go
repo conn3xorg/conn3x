@@ -6,6 +6,7 @@ package ansible
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -142,7 +143,7 @@ func (c *converter) readInclude(n *yaml.Node) (inc varsInclude, is, ok bool) {
 		return inc, false, false
 	}
 	for k := range t {
-		if k != "name" && k != "include_vars" && k != "ansible.builtin.include_vars" && k != "with_first_found" && k != "when" {
+		if k != "name" && k != "include_vars" && k != "ansible.builtin.include_vars" && k != "with_first_found" && k != "when" && k != "vars" {
 			return inc, true, false
 		}
 	}
@@ -156,6 +157,14 @@ func (c *converter) readInclude(n *yaml.Node) (inc varsInclude, is, ok bool) {
 		return inc, true, false
 	}
 	inc.node = n
+	if v := t["vars"]; v != nil {
+		ff, found := lookupFirstFound(arg.Value, v)
+		if !found || t["with_first_found"] != nil {
+			return inc, true, false
+		}
+		inc.templates, inc.skip, ok = firstFoundEntries(ff)
+		return inc, true, ok && !inc.skip
+	}
 	if ff := t["with_first_found"]; ff != nil {
 		if m := bareRef.FindStringSubmatch(arg.Value); m == nil || m[1] != "item" {
 			return inc, true, false
@@ -169,6 +178,33 @@ func (c *converter) readInclude(n *yaml.Node) (inc varsInclude, is, ok bool) {
 	}
 	inc.templates = [][]namePart{segs}
 	return inc, true, true
+}
+
+var firstFoundLookup = regexp.MustCompile(`^\{\{\s*lookup\(\s*['"](?:ansible\.builtin\.)?first_found['"]\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\}\}$`)
+
+// lookupFirstFound reads include_vars: "{{ lookup('first_found', params) }}"
+// whose task vars set only params, to files and paths of [vars], as a
+// with_first_found list of vars/ names. In include_vars the lookup looks
+// under the role's vars/, as with_first_found does.
+func lookupFirstFound(arg string, vars *yaml.Node) (*yaml.Node, bool) {
+	m := firstFoundLookup.FindStringSubmatch(arg)
+	kv := pairs(vars)
+	if m == nil || len(kv) != 1 || kv[0][0].Value != m[1] {
+		return nil, false
+	}
+	params := mapping(kv[0][1])
+	paths := seq(params["paths"])
+	if len(params) != 2 || params["files"] == nil || len(paths) != 1 || strings.TrimSuffix(scalar(paths[0]), "/") != "vars" {
+		return nil, false
+	}
+	files := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, f := range seq(params["files"]) {
+		if f.Kind != yaml.ScalarNode {
+			return nil, false
+		}
+		files.Content = append(files.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "vars/" + f.Value})
+	}
+	return &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Value: "files"}, files}}, true
 }
 
 // familyVars finds the role's include_vars tasks among its tasks and reads
