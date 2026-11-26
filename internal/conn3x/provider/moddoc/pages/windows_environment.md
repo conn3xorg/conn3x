@@ -30,7 +30,7 @@ step "app_logs" {
 
 **Applying.** Conn3x writes the value to the registry. A variable that's already there keeps its type; a new one with `%` in it is stored to expand, and one without is plain text.
 
-**When it takes effect.** Windows hands each program its environment when the program starts. After a change, Conn3x broadcasts `WM_SETTINGCHANGE` with `Environment`, as Ansible does, so Explorer reloads it and a program you start from Explorer sees the new value without logging off. A hung window or a slow broadcast doesn't fail the step: the value is already written. New logons, and programs they start, see the change too. Programs already running, services included, keep what they had until they restart.
+**When it takes effect.** Windows hands each program its environment when the program starts. After a change, Conn3x broadcasts `WM_SETTINGCHANGE` with `Environment`, as Ansible does, for programs listening in the same session. A hung window or a slow broadcast doesn't fail the step: the value is already written. A desktop session, such as a user logged on at the console or over RDP, is a different session from the one Conn3x works in, so its Explorer keeps the old value until that user logs on again. New logons, and programs they start, see the change. Programs already running, services included, keep what they had until they restart.
 
 **Path.** `Path` is one string of folders, and setting it whole would drop whatever else is in it, so `windows_environment` refuses it. Give each folder its own [`windows_path`](/modules/windows_path) step.
 

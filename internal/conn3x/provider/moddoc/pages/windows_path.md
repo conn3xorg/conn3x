@@ -30,7 +30,7 @@ step "old_tool_gone" {
 
 **Applying.** To add the folder, Conn3x reads `Path` again and writes it back with the folder at the end. To remove it, every copy of it comes out. The other folders, their order and their `%SystemRoot%`-style names are written back exactly as they were, and `Path` keeps its type, so it still expands.
 
-**When it takes effect.** After a change, Conn3x broadcasts `WM_SETTINGCHANGE` with `Environment`, so Explorer reloads `Path` and a program you start from Explorer finds the folder without logging off. A hung window or a slow broadcast doesn't fail the step. New logons, and programs they start, see the change too. Programs already running, services included, keep the `Path` they started with until they restart.
+**When it takes effect.** After a change, Conn3x broadcasts `WM_SETTINGCHANGE` with `Environment`, as Ansible does, for programs listening in the same session. A hung window or a slow broadcast doesn't fail the step. A desktop session, such as a user logged on at the console or over RDP, is a different session from the one Conn3x works in, so its Explorer keeps the old `Path` until that user logs on again. New logons, and programs they start, see the change. Programs already running, services included, keep the `Path` they started with until they restart.
 
 **Changes.** Changing `state` updates `Path` in place. Changing `element` or `scope` replaces the step.
 

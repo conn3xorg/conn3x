@@ -26,10 +26,11 @@ try {
   }
 } finally { $key.Close() }
 if (-not $changed) { return }
-# Tell Explorer and other listening programs the environment changed, as
-# Ansible's win_environment does, so a program Explorer starts next sees it
-# without a new logon. The value is already written: a hung window, a timeout
-# or no desktop at all must not fail the step, so any failure is ignored.
+# Tell programs listening in this session the environment changed, as
+# Ansible's win_environment does. sshd's commands run in session 0, so a
+# logged-on user's Explorer, in another session, doesn't get it. The value is
+# already written: a hung window, a timeout or no desktop at all must not fail
+# the step, so any failure is ignored.
 try {
   Add-Type -TypeDefinition @'
 using System;
