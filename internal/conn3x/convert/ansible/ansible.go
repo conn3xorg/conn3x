@@ -1896,15 +1896,25 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 			if mod == "command" || mod == "shell" || mod == "script" || mod == "raw" {
 				args["_raw"] = v
 			} else {
-				for _, kv := range strings.Fields(v.Value) {
+				words, split := splitArgs(v.Value)
+				if !split {
+					// A line Ansible refuses, with a block or quote left
+					// open, or one with an escape splits at each space; a
+					// stray {{ then keeps the task for review.
+					words = strings.Fields(v.Value)
+				}
+				for _, kv := range words {
 					if key, val, ok := strings.Cut(kv, "="); ok {
+						if split {
+							val = unquoteArg(val)
+						}
 						args[key] = &yaml.Node{Kind: yaml.ScalarNode, Value: val, Line: v.Line}
 					} else {
 						args["_raw"] = v
 					}
 				}
-				// Marks the task as free-form: this split ignores quoting,
-				// so a module that needs exact text refuses it.
+				// Marks the task as free-form, so a module that needs the
+				// exact text refuses it.
 				args["_raw"] = v
 			}
 		}
