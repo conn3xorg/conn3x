@@ -1,6 +1,7 @@
 - name: Check for passwd
   ansible.builtin.stat:
     path: /etc/passwd
+    get_checksum: false
   register: passwd
 - name: Check for a missing file
   ansible.builtin.stat:
@@ -10,7 +11,7 @@
   ansible.builtin.file:
     path: /tmp/stat-passwd-seen
     state: directory
-  when: passwd.stat.exists
+  when: passwd.stat.exists | bool
 - name: Never made
   ansible.builtin.file:
     path: /tmp/stat-missing-seen

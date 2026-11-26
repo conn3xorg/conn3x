@@ -38,6 +38,40 @@ func TestConvertRoleStatProbe(t *testing.T) {
 	}
 }
 
+// The other spellings of X.stat.exists that Jinja reads the same convert
+// too, as do get_checksum, get_mime and get_attributes set to false,
+// which only skip work stat would do (#1412).
+func TestRoleStatExistsForms(t *testing.T) {
+	yes, no := "data.conn3x_command.x[each.key].exit_code == 0", "data.conn3x_command.x[each.key].exit_code != 0"
+	for when, want := range map[string]string{
+		"x.stat.exists | bool":       yes,
+		"x.stat.exists|bool":         yes,
+		"(x.stat.exists | bool)":     yes,
+		"not x.stat.exists | bool":   "!(" + yes + ")",
+		"x.stat.exists == true":      yes,
+		"x.stat.exists==True":        yes,
+		"x.stat.exists != false":     yes,
+		"x.stat.exists != False":     yes,
+		"x.stat.exists is true":      yes,
+		"x.stat.exists is not false": yes,
+		"x.stat.exists == false":     no,
+		"x.stat.exists == False":     no,
+		"x.stat.exists != true":      no,
+		"x.stat.exists!=True":        no,
+		"x.stat.exists is false":     no,
+		"x.stat.exists is not true":  no,
+	} {
+		tasks := "- stat: { path: /etc/x, get_checksum: false, get_mime: no, get_attributes: False }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: " + when + "\n"
+		res, err := ConvertRole(writeRole(t, map[string]string{"tasks/main.yml": tasks}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hcl := string(res.Files["main.circuit.hcl"]); !strings.Contains(hcl, "when = "+want+"\n") || len(res.Review) != 0 {
+			t.Errorf("%s: want when = %s, review %+v:\n%s", when, want, res.Review, hcl)
+		}
+	}
+}
+
 // What stays of a stat probe, each with a reason naming what it can't
 // carry: follow: true, any argument but path, a path the converter can't
 // fill in or Ansible would expand, a when on any field but exists, a
@@ -45,7 +79,14 @@ func TestConvertRoleStatProbe(t *testing.T) {
 func TestRoleStatProbeStays(t *testing.T) {
 	for _, c := range []struct{ tasks, want string }{
 		{"- stat: { path: /etc/x, follow: true }\n  register: x\n", "sets follow: true"},
-		{"- stat: { path: /etc/x, get_checksum: false }\n  register: x\n", "sets get_checksum, which the converter can't translate yet"},
+		{"- stat: { path: /etc/x, get_checksum: true }\n  register: x\n", "sets get_checksum to something other than false"},
+		{"- stat: { path: /etc/x, get_mime: 'false' }\n  register: x\n", "sets get_mime to something other than false"},
+		{"- stat: { path: /etc/x, get_md5: false }\n  register: x\n", "sets get_md5, which the converter can't translate yet"},
+		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.stat.exists and other_flag\n", "uses when"},
+		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.stat.exists | int\n", "uses when"},
+		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.stat.exists == 'true'\n", "uses when"},
+		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.stat.exists == TRUE\n", "uses when"},
+		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.stat.exists is True\n", "uses when"},
 		{"- stat: { path: \"{{ app_conf }}\" }\n  register: x\n", `path refers to the role default "app_conf"`},
 		{"- stat: { path: ~/.bashrc }\n  register: x\n", "sets a path starting with ~"},
 		{"- stat: { path: /etc/x }\n  register: x\n  when: app_conf == '/etc/x'\n", "has a when"},

@@ -31,7 +31,8 @@ import (
 //
 // A stat probe, stat: path=X with register, converts the same way, to
 // [ -e X ] || [ -L X ]: stat doesn't follow a link by default, so a
-// dangling one still exists. Only X.stat.exists reads it; a when on any
+// dangling one still exists. Only X.stat.exists reads it, bare, through
+// | bool, compared to true or false, or tested is true; a when on any
 // other field stays, naming the field. data "conn3x_file" would read the
 // file itself into state, and fail on a directory, a big file or one the
 // login user can't read, where stat only reads metadata.
@@ -198,6 +199,16 @@ func statLine(in *input) (string, string) {
 	case in.bool("follow", false):
 		return "", "sets follow: true, which tests where a link points, and the converter only tests whether the path itself exists"
 	}
+	// These only skip work stat would do on the file; none changes exists.
+	for _, k := range []string{"get_attributes", "get_checksum", "get_mime"} {
+		if !in.has(k) {
+			continue
+		}
+		if b, ok := yamlBool(in.args[k]); !ok || b {
+			return "", "sets " + k + " to something other than false, which the converter can't translate yet"
+		}
+		in.ignore(k)
+	}
 	q := shellQuote(path)
 	return "[ -e " + q + " ] || [ -L " + q + " ]", ""
 }
@@ -209,7 +220,8 @@ var (
 	probeStatus = regexp.MustCompile(`^` + probeName + ` is (succeeded|success|failed|failure)$`)
 	probeOut    = regexp.MustCompile(`^` + probeName + `\.stdout (==|!=) ` + probeLit + `$`)
 	probeIn     = regexp.MustCompile(`^` + probeLit + ` (in|not in) ` + probeName + `\.stdout$`)
-	probeExists = regexp.MustCompile(`^` + probeName + `\.stat\.exists$`)
+	// Jinja reads true and True alike, and | bool on a bool is the bool.
+	probeExists = regexp.MustCompile(`^` + probeName + `\.stat\.exists(?: ?\| ?bool| ?(==|!=) ?(true|True|false|False)| is (not )?(true|false))?$`)
 	statField   = regexp.MustCompile(`\b` + probeName + `\.stat\.([A-Za-z_]+)`)
 )
 
@@ -238,7 +250,15 @@ func (r *role) probeWhen(cond string) string {
 		return fmt.Sprintf("data.conn3x_command.%s[each.key]", name)
 	}
 	if m := probeExists.FindStringSubmatch(cond); m != nil && r.probes[m[1]] != nil && r.probes[m[1]].stat {
-		return fmt.Sprintf("data.conn3x_command.%s[each.key].exit_code == 0", m[1])
+		want := (m[2] == "!=") == strings.EqualFold(m[3], "false")
+		if m[5] != "" {
+			want = (m[4] == "") == (m[5] == "true")
+		}
+		op := "=="
+		if !want {
+			op = "!="
+		}
+		return fmt.Sprintf("data.conn3x_command.%s[each.key].exit_code %s 0", m[1], op)
 	}
 	if m := probeRC.FindStringSubmatch(cond); m != nil {
 		if d := ref(m[1]); d != "" {
