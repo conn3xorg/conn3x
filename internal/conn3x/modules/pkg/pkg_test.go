@@ -110,6 +110,11 @@ func TestReadLatestCandidate(t *testing.T) {
 	if err != nil || a.Candidate != "0:1.26.4-1.el10" {
 		t.Fatalf("rpm candidate: %+v, %v", a, err)
 	}
+	// dnf5 5.2.18, as on Fedora 43, fails "repoquery ... -- nginx" with
+	// Unknown argument "--".
+	if want := "dnf -q repoquery --latest-limit 1 --qf '%{epoch}:%{version}-%{release}' 'nginx'"; rpm.ran[len(rpm.ran)-1] != want {
+		t.Errorf("repoquery ran %q, want %q", rpm.ran[len(rpm.ran)-1], want)
+	}
 	deb := &scriptedHost{answers: []answer{
 		{"dpkg-query", ok("ii  1.24.0-2ubuntu7\n")},
 		{"apt-cache policy", ok("nginx:\n  Installed: 1.24.0-2ubuntu7\n  Candidate: 1.24.0-2ubuntu7.1\n  Version table:\n")},

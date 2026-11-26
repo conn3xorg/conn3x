@@ -254,7 +254,10 @@ func read(ctx context.Context, r modules.Runner, family Family, name string, can
 			}
 			a.Candidate = zypperNewest(string(res.Stdout), name)
 		} else if candidate {
-			res, err := r.Run(ctx, "dnf -q"+opts+" repoquery --latest-limit 1 --qf '%{epoch}:%{version}-%{release}' -- "+q, nil)
+			// No "--" before the name: dnf5 5.2 (Fedora 43) refuses it after
+			// repoquery, and namePattern already keeps a name from
+			// starting with "-".
+			res, err := r.Run(ctx, "dnf -q"+opts+" repoquery --latest-limit 1 --qf '%{epoch}:%{version}-%{release}' "+q, nil)
 			if err != nil {
 				return a, err
 			}
