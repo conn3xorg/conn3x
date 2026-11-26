@@ -526,7 +526,7 @@ func TestStaticIncludeTasks(t *testing.T) {
 }
 
 // An import's when goes on every task it imports, as Ansible does. An
-// include's goes on them only when it's a role's on-off switch, which no
+// include's goes on them only when the converter reads it, on what no
 // step can change between the include and its tasks.
 func TestWhenOnImportsAndIncludes(t *testing.T) {
 	dir := writeRole(t, map[string]string{
@@ -559,7 +559,8 @@ func TestWhenOnImportsAndIncludes(t *testing.T) {
 	if res.Converted != 3 || len(res.Review) != 2 {
 		t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
 	}
-	// The include's when isn't a switch, so it stays whole; the import's
+	// The include's when compares a number default to a number, which the
+	// converter can't read, so it stays whole; the import's
 	// goes on its task, which then can't convert that when.
 	if !strings.Contains(res.Review[0].Reason, "include_tasks") || res.Review[1].File != "tasks/fail2ban.yml" || !strings.Contains(res.Review[1].Reason, "uses when") {
 		t.Errorf("review %+v", res.Review)

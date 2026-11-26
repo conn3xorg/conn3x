@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -99,11 +100,14 @@ func (c *converter) flattenIn(nodes []*yaml.Node, file string, stack []string, k
 				continue
 			}
 			// An include tests its when once, where an import tests it for
-			// every task; for a role's on-off switch, which no step can
-			// change, that's the same.
+			// every task; for what no step can change, as a role default,
+			// a probe or a host fact, that's the same. A when on a variable
+			// an included task sets can change in between, so it stays.
 			if w := mapping(n)["when"]; w != nil && staticInclude(withoutWhen(n), args) && c.switchesOnly(w) {
-				out = append(out, c.inlineWhen(n, args, file, stack, kind, group, w)...)
-				continue
+				if tasks := c.inlineWhen(n, args, file, stack, kind, group, w); !setsWhenVar(tasks, w) {
+					out = append(out, tasks...)
+					continue
+				}
 			}
 			// One fixed file, with nothing that applies to the include
 			// itself, reads the same tasks as an import of it would.
@@ -157,9 +161,10 @@ func (c *converter) inlineWhen(n *yaml.Node, args map[string]*yaml.Node, file st
 	return out
 }
 
-// switchesOnly reports whether every condition in w turns on a role
-// default that's true or false, or tests the host's family: what no step
-// can change between an include and its tasks.
+// switchesOnly reports whether every condition in w is one whenExpr reads,
+// on role defaults, probes and host facts, or tests the host's family:
+// what no step can change between an include and its tasks, unless an
+// included task sets it (see setsWhenVar).
 func (c *converter) switchesOnly(w *yaml.Node) bool {
 	if c.role == nil {
 		return false
@@ -170,11 +175,46 @@ func (c *converter) switchesOnly(w *yaml.Node) bool {
 	}
 	for _, cnd := range conds {
 		// A family no host here has keeps the include whole, as one note.
-		if allowed, _, family := familyWhen(cnd); c.role.boolWhen(cnd) == "" && (!family || len(allowed) == 0) {
+		if allowed, _, family := familyWhen(cnd); c.role.whenExpr(cnd) == "" && (!family || len(allowed) == 0) {
 			return false
 		}
 	}
 	return len(conds) > 0
+}
+
+// setsWhenVar reports whether any of tasks registers or set_facts a name
+// the when w mentions, which the include read before that task ran.
+func setsWhenVar(tasks []taskAt, w *yaml.Node) bool {
+	for _, t := range tasks {
+		m := mapping(t.node)
+		names := []string{scalar(m["register"])}
+		if mod, args := moduleOf(m); mod == "set_fact" {
+			names = append(names, sortedKeys(args)...)
+		}
+		for _, name := range names {
+			if name != "" && bareMentions(w, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bareMentions reports whether any scalar in n names the variable name,
+// as a whole word, in bare Jinja as a when holds it.
+func bareMentions(n *yaml.Node, name string) bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind == yaml.ScalarNode {
+		return regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`).MatchString(n.Value)
+	}
+	for _, c := range n.Content {
+		if bareMentions(c, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // staticInclude reports whether an include_tasks names one file without
