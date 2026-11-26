@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -78,8 +79,11 @@ type role struct {
 	familyLists     map[string]map[string][]string
 	listDefaults    map[string]listDefault
 	listDefaultUsed map[string]bool
-	// shadowed are defaults a file under vars/ also sets.
-	shadowed map[string]bool
+	// shadowed are defaults a file under vars/ also sets, and
+	// shadowDefault the plain values of those, for the hosts whose vars
+	// files don't set them.
+	shadowed      map[string]bool
+	shadowDefault map[string]string
 	// lists are the defaults that are lists of plain values, kept apart
 	// so only a loop over one uses them; listUsed are those a loop reads,
 	// which become variables.
@@ -139,7 +143,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, shadowDefault: map[string]string{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -172,34 +176,41 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	defaultsNode, defaultsFile := c.main(body, "defaults")
 	var order, listOrder []string
 	listWhere := map[string]string{}
-	for _, kv := range pairs(defaultsNode) {
+	// classify keeps a default as a variable, or says why not. files are
+	// the files under vars/ that set it and a host Conn3x configures could
+	// load.
+	classify := func(kv [2]*yaml.Node, files []string) {
 		k := kv[0].Value
 		where := fmt.Sprintf("Default %q (%s line %d)", k, defaultsFile, kv[0].Line)
-		if items, ok := plainList(kv[1]); ok && !has(vars, k) && len(r.varFiles[k]) == 0 && !reserved[k] && identifier.MatchString(k) {
+		if items, ok := plainList(kv[1]); ok && !has(vars, k) && len(files) == 0 && !reserved[k] && identifier.MatchString(k) {
 			r.lists[k] = items
 			listOrder = append(listOrder, k)
 			listWhere[k] = where
-			continue
+			return
 		}
-		if items, ok := mapList(kv[1]); ok && !has(vars, k) && len(r.varFiles[k]) == 0 && !reserved[k] && identifier.MatchString(k) {
+		if items, ok := mapList(kv[1]); ok && !has(vars, k) && len(files) == 0 && !reserved[k] && identifier.MatchString(k) {
 			r.maps[k] = items
 			listOrder = append(listOrder, k)
 			listWhere[k] = where
-			continue
+			return
 		}
 		v, number, why := plainValue(kv[1])
 		boolean := false
 		if b, ok := yamlBool(kv[1]); ok {
 			v, boolean, why = strconv.FormatBool(b), true, ""
 		}
+		plain := why == ""
 		switch {
 		case has(vars, k):
 			why = "is also set in " + varsFile + ", which wins in Ansible, so it stays fixed"
-		case len(r.varFiles[k]) > 0:
-			// Role vars beat defaults, so once an include_vars loads one of
+		case len(files) > 0:
+			// include_vars beats role defaults, so once one loads one of
 			// these, the default no longer counts.
-			why = "is also set in " + joinAnd(r.varFiles[k]) + ", which wins in Ansible once an include_vars loads it, so tasks use the value from there"
+			why = "is also set in " + joinAnd(files) + ", which wins in Ansible once an include_vars loads it, so tasks use the value from there"
 			r.shadowed[k] = true
+			if plain {
+				r.shadowDefault[k] = v
+			}
 		case reserved[k] || !identifier.MatchString(k):
 			why = "has a name the circuit can't use for a variable"
 		case why != "":
@@ -208,10 +219,20 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		if why != "" {
 			vb.AppendNewline()
 			comment(vb, where+" "+why+". Tasks that use it are marked TODO(convert).")
-			continue
+			return
 		}
 		r.defaults[k] = &roleDefault{value: v, number: number, boolean: boolean}
 		order = append(order, k)
+	}
+	// A default a file under vars/ also sets waits until the files each
+	// host loads are known.
+	var later [][2]*yaml.Node
+	for _, kv := range pairs(defaultsNode) {
+		if len(r.varFiles[kv[0].Value]) > 0 && !has(vars, kv[0].Value) && kv[0].Value != loopVar {
+			later = append(later, kv)
+			continue
+		}
+		classify(kv, r.varFiles[kv[0].Value])
 	}
 	// The loop's item beats the role's vars/ and defaults, as a task's
 	// vars do in Ansible.
@@ -258,6 +279,17 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	for _, t := range flat {
 		if _, is, ok := c.readInclude(t.node); is && !ok {
 			r.varsComplete = false
+		}
+	}
+	for _, kv := range later {
+		k := kv[0].Value
+		files, ignored := r.loadableVarFiles(k)
+		classify(kv, files)
+		_, list := r.lists[k]
+		_, isMap := r.maps[k]
+		if len(ignored) > 0 && (r.defaults[k] != nil || list || isMap) {
+			vb.AppendNewline()
+			comment(vb, fmt.Sprintf("Default %q (%s line %d) is also set in %s, which no Debian or Red Hat family release Conn3x configures loads, so the circuit keeps the default. Check it if you run the role on other hosts too.", k, defaultsFile, kv[0].Line, joinAnd(ignored)))
 		}
 	}
 	r.defaultTasks, r.defaultOf, r.defaultMissing = c.familyDefaults(flat, vars)
@@ -486,6 +518,30 @@ func templateMatches(segs []namePart, file string) bool {
 	b.WriteString("$")
 	re, err := regexp.Compile(b.String())
 	return err == nil && re.MatchString(strings.TrimPrefix(file, "vars/"))
+}
+
+// loadableVarFiles splits the files under vars/ that set name into those a
+// Debian or Red Hat family host could load and those none could, such as
+// vars/Suse.yml. When the converter doesn't follow every include_vars, any
+// file could load, so all are in the first.
+func (r *role) loadableVarFiles(name string) (loadable, ignored []string) {
+	if r.varsIncludes == nil || !r.varsComplete {
+		return r.varFiles[name], nil
+	}
+	loads := map[string]bool{}
+	for _, a := range r.axis {
+		for _, f := range a.files {
+			loads[path.Clean(f)] = true
+		}
+	}
+	for _, f := range r.varFiles[name] {
+		if loads[path.Clean(f)] {
+			loadable = append(loadable, f)
+		} else {
+			ignored = append(ignored, f)
+		}
+	}
+	return loadable, ignored
 }
 
 // otherVarFiles reads the top-level names set in vars/*.yml besides main,

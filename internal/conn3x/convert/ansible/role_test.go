@@ -5,6 +5,7 @@ package ansible
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -626,7 +627,8 @@ func TestDefaultShadowedByFamilyVars(t *testing.T) {
 		t.Fatal(err)
 	}
 	main, vars := string(res.Files["main.circuit.hcl"]), string(res.Files["variables.tf"])
-	if strings.Contains(main, "var.pkg") || strings.Contains(main, "var.flag") || !strings.Contains(main, `"deb-pkg"`) || !strings.Contains(main, `"rh-pkg"`) {
+	if strings.Contains(main, "var.pkg") || strings.Contains(main, "var.flag") || !strings.Contains(main, `"deb-pkg"`) || !strings.Contains(main, `"rh-pkg"`) ||
+		!strings.Contains(main, `{ debian = "deb-only", redhat = "fallback" }[local.os_family[each.key]]`) {
 		t.Errorf("main.circuit.hcl:\n%s", main)
 	}
 	if strings.Contains(vars, `variable "pkg"`) || !strings.Contains(vars, `Default "pkg" (defaults/main.yml line 1) is also set in vars/Debian.yml and vars/RedHat.yml`) {
@@ -636,8 +638,108 @@ func TestDefaultShadowedByFamilyVars(t *testing.T) {
 	for _, r := range res.Review {
 		got = append(got, r.Task+": "+r.Reason)
 	}
-	if len(got) != 2 || !strings.Contains(got[0], "Flagged") || !strings.Contains(got[1], "RedHat hosts get the role default") {
+	if len(got) != 1 || !strings.Contains(got[0], "Flagged") {
 		t.Errorf("review:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+// A vars file only hosts Conn3x doesn't configure load, such as Suse.yml,
+// leaves the default standing; one a Debian or Red Hat host loads beats it
+// on those hosts only, and the rest keep the default.
+func TestDefaultAlsoSetInVarsForOtherOS(t *testing.T) {
+	const tasks = `- name: Load OS vars
+  include_vars: "{{ lookup('first_found', params) }}"
+  vars:
+    params:
+      files: ['{{ ansible_facts.distribution }}.yml', '{{ ansible_facts.os_family }}.yml', main.yml]
+      paths: [vars]
+- name: Install
+  package: {name: "{{ pkg }}"}
+- name: Tools
+  package: {name: "{{ item }}"}
+  loop: "{{ tools }}"
+- name: Repo
+  package: {name: repo}
+  when: add_repo | bool
+`
+	const defaults = "pkg: generic\ntools: [jq, curl]\nadd_repo: true\n"
+	other := "pkg: suse-pkg\ntools: [zypper-tool]\nadd_repo: false\n"
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		main  []string // in main.circuit.hcl
+		vars  []string // in variables.tf
+		not   []string // in neither
+	}{{
+		name:  "other OS only",
+		files: map[string]string{"vars/Suse.yml": other, "vars/Archlinux.yml": other, "vars/Debian.yml": "x: 1\n", "vars/RedHat.yml": "x: 1\n"},
+		main:  []string{`name = var.pkg`, `for_each = var.tools`, `when = var.add_repo`},
+		vars: []string{`variable "pkg"`, `variable "tools"`, `variable "add_repo"`,
+			`Default "pkg" (defaults/main.yml line 1) is also set in vars/Archlinux.yml and vars/Suse.yml, which no Debian or Red Hat family release Conn3x configures loads`},
+	}, {
+		name:  "targeted family",
+		files: map[string]string{"vars/Debian.yml": "pkg: deb-pkg\n", "vars/RedHat.yml": "x: 1\n"},
+		main:  []string{`{ debian = "deb-pkg", redhat = "generic" }[local.os_family[each.key]]`},
+		vars:  []string{`Default "pkg" (defaults/main.yml line 1) is also set in vars/Debian.yml, which wins in Ansible once an include_vars loads it`},
+		not:   []string{`variable "pkg"`, `which no Debian or Red Hat family release Conn3x configures loads`},
+	}, {
+		name:  "both",
+		files: map[string]string{"vars/Debian.yml": "pkg: deb-pkg\n", "vars/RedHat.yml": "x: 1\n", "vars/Suse.yml": other},
+		main:  []string{`{ debian = "deb-pkg", redhat = "generic" }[local.os_family[each.key]]`, `for_each = var.tools`, `when = var.add_repo`},
+		vars: []string{`Default "pkg" (defaults/main.yml line 1) is also set in vars/Debian.yml, which wins`,
+			`Default "tools" (defaults/main.yml line 2) is also set in vars/Suse.yml, which no Debian or Red Hat family release Conn3x configures loads`},
+		not: []string{`variable "pkg"`},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"defaults/main.yml": defaults, "tasks/main.yml": tasks, "vars/main.yml": ""}
+			maps.Copy(files, tc.files)
+			res, err := ConvertRole(writeRole(t, files))
+			if err != nil {
+				t.Fatal(err)
+			}
+			main := strings.Join(strings.Fields(string(res.Files["main.circuit.hcl"])), " ")
+			vars := strings.Join(strings.Fields(string(res.Files["variables.tf"])), " ")
+			for _, w := range tc.main {
+				if !strings.Contains(main, w) {
+					t.Errorf("no %s in main.circuit.hcl:\n%s", w, main)
+				}
+			}
+			for _, w := range tc.vars {
+				if !strings.Contains(vars, w) {
+					t.Errorf("no %s in variables.tf:\n%s", w, vars)
+				}
+			}
+			for _, w := range tc.not {
+				if strings.Contains(main, w) || strings.Contains(vars, w) {
+					t.Errorf("%s in output:\n%s\n%s", w, main, vars)
+				}
+			}
+			if len(res.Review) != 0 {
+				t.Errorf("review %+v", res.Review)
+			}
+		})
+	}
+}
+
+// lookup('first_found', params) is followed only when params looks under
+// vars/ alone; another path stays for review.
+func TestLookupFirstFoundOtherPath(t *testing.T) {
+	dir := writeRole(t, map[string]string{
+		"vars/Debian.yml": "x: 1\n", "vars/RedHat.yml": "x: 2\n",
+		"tasks/main.yml": `- name: Load OS vars
+  include_vars: "{{ lookup('first_found', params) }}"
+  vars:
+    params:
+      files: ['{{ ansible_facts.os_family }}.yml']
+      paths: [other]
+`,
+	})
+	res, err := ConvertRole(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Review) != 1 || res.Review[0].Task != "Load OS vars" {
+		t.Errorf("review %+v", res.Review)
 	}
 }
 

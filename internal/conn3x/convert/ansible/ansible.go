@@ -1363,6 +1363,11 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 					src = y
 				}
 				v, ok := c.role.familyVars[f.id()][src]
+				if dv, isDefault := c.role.shadowDefault[n]; !ok && isDefault && c.role.gapTrusted(n) {
+					// No file these hosts load sets it, so the role
+					// default stands.
+					v, ok = dv, true
+				}
 				if !ok && c.role.defaultMissing[n][f.id()] {
 					gapNames = appendNew(gapNames, n)
 					continue entries
