@@ -4,6 +4,7 @@
 package ansible
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"io/fs"
@@ -719,6 +720,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"docker_compose_v2":       composeModule,
 	"command":                 commandModule,
 	"shell":                   commandModule,
+	"script":                  scriptModule,
 	"reboot":                  rebootModule,
 	"wait_for":                waitForModule,
 	"uri":                     uriModule,
@@ -3454,6 +3456,101 @@ func commandModule(in *input) ([]step, string) {
 		}
 	}
 	return one("command", attrs)
+}
+
+// scriptModule converts ansible.builtin.script: a command step that gets
+// the script on stdin, saves it, runs it with the interpreter Ansible's
+// would run under, and deletes it. Saving first matters: with sh -s, a
+// command in the script that reads stdin would swallow the rest of it.
+func scriptModule(in *input) ([]step, string) {
+	line := in.str("cmd")
+	if n, ok := in.args["_raw"]; ok {
+		for _, f := range strings.Fields(n.Value) {
+			if k, _, ok := strings.Cut(f, "="); ok && (inlineArgs[k] || k == "decrypt") {
+				return nil, "sets " + k + " inside the script line; move it under args so the converter can read it"
+			}
+		}
+		line = in.render("cmd", n.Value)
+	}
+	src, args, _ := strings.Cut(strings.TrimSpace(line), " ")
+	switch {
+	case src == "":
+		return nil, "names no script"
+	case strings.ContainsAny(src, "\x00'\"\\"):
+		return nil, "builds the script's path from a variable or quotes it; write the path out"
+	}
+	p := in.local("files", src)
+	if p == "" {
+		return nil, in.problem
+	}
+	b, err := os.ReadFile(filepath.Join(in.dir, p))
+	if err != nil {
+		return nil, fmt.Sprintf("can't read %s: %s", p, err)
+	}
+	if bytes.HasPrefix(b, []byte("$ANSIBLE_VAULT")) {
+		return nil, "runs a script encrypted with Ansible Vault, which the converter can't read"
+	}
+	run, why := scriptInterpreter(in.str("executable"), string(b))
+	if why != "" {
+		return nil, why
+	}
+	if in.role != nil {
+		in.copy(p)
+	}
+	cmd := run + ` "$conn3x_script"`
+	if args = strings.TrimSpace(args); args != "" {
+		cmd += " " + args
+	}
+	if in.has("chdir") {
+		cmd = "cd " + shellQuote(in.str("chdir")) + " && " + cmd
+	}
+	attrs := []attr{s("command", `conn3x_script=$(mktemp) && cat >"$conn3x_script" && `+cmd+` </dev/null; rc=$?; rm -f "$conn3x_script"; exit $rc`)}
+	for _, k := range []string{"creates", "removes"} {
+		if strings.ContainsAny(in.str(k), "*?[") {
+			return nil, k + " is a glob pattern; Conn3x tests the path as written"
+		}
+		attrs = in.optional(attrs, k, k)
+	}
+	if !in.has("creates") && !in.has("removes") {
+		return nil, "runs on every play; give it a creates, removes or unless guard, or triggers, so Conn3x knows when it's done"
+	}
+	attrs = append(attrs, attr{key: "stdin_wo", raw: "file(" + moduleFile(p) + ")"})
+	return one("command", attrs, "Conn3x sends the script on stdin and keeps only its HMAC in state. A changed script plans this step again, but creates and removes still hold it off, as in Ansible.")
+}
+
+// scriptShells are the interpreters a script step runs a script under:
+// a host has them, where it may not have Python or PowerShell.
+var scriptShells = map[string]bool{"sh": true, "bash": true}
+
+// scriptInterpreter is the command that runs a script the way Ansible's
+// script module does: with executable if set, otherwise as the kernel would
+// from its #! line.
+func scriptInterpreter(exe, text string) (string, string) {
+	if exe != "" {
+		if strings.ContainsAny(exe, " \t\x00") || !scriptShells[path.Base(exe)] {
+			return "", "runs the script with executable " + exe + "; a converted script runs only under sh or bash, which every host has"
+		}
+		return shellQuote(exe), ""
+	}
+	first, _, _ := strings.Cut(text, "\n")
+	if !strings.HasPrefix(first, "#!") {
+		return "", "runs a script with no #! line, so which interpreter runs it depends on the shell Ansible starts it from; set executable"
+	}
+	// The kernel splits a #! line into the interpreter and at most one
+	// argument.
+	interp, arg, _ := strings.Cut(strings.TrimSpace(first[2:]), " ")
+	arg = strings.TrimSpace(arg)
+	shell := path.Base(interp)
+	if shell == "env" {
+		shell = arg // env and one more word would be env -S
+	}
+	if !strings.HasPrefix(interp, "/") || !scriptShells[shell] || strings.ContainsAny(arg, "\x00\r") {
+		return "", "runs a script with " + strconv.Quote(first) + "; a converted script runs only under sh or bash, which every host has"
+	}
+	if arg == "" {
+		return shellQuote(interp), ""
+	}
+	return shellQuote(interp) + " " + shellQuote(arg), ""
 }
 
 func rebootModule(in *input) ([]step, string) {

@@ -1,0 +1,4 @@
+- name: Run the installer
+  ansible.builtin.script: setup.sh --prefix /opt/app
+  args:
+    creates: /opt/app/bin/app

@@ -1858,7 +1858,7 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 		case yaml.MappingNode:
 			args = mapping(v)
 		case yaml.ScalarNode:
-			if mod == "command" || mod == "shell" {
+			if mod == "command" || mod == "shell" || mod == "script" {
 				args["_raw"] = v
 			} else {
 				for _, kv := range strings.Fields(v.Value) {
