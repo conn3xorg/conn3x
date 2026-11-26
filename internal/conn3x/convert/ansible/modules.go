@@ -94,6 +94,9 @@ type input struct {
 	// path, "noslash" when it ends a copy or template's dest, where Ansible
 	// reads a trailing / as a directory to write into.
 	pathRules map[string][]string
+	// stateRules are role defaults a step's state follows, by the values
+	// a validation keeps them to; see stateDefault.
+	stateRules map[string][]string
 	// out holds files a role's task adds to the circuit, kept only if the
 	// task converts.
 	out map[string][]byte
@@ -207,6 +210,40 @@ func pathOK(v string, rules []string) bool {
 var packageModules = map[string]bool{"package": true, "dnf": true, "dnf5": true, "yum": true, "apt": true, "apk": true, "zypper": true}
 
 func (in *input) has(key string) bool { _, ok := in.args[key]; return ok }
+
+// defaultArg is the role default argument key is the whole of, as in
+// state: "{{ x }}", and its name; nil when it's anything else, or a name
+// the task's vars set.
+func (in *input) defaultArg(key string) (string, *roleDefault) {
+	n := in.args[key]
+	if in.role == nil || n == nil || n.Kind != yaml.ScalarNode {
+		return "", nil
+	}
+	m := jinja.FindStringSubmatch(n.Value)
+	if m == nil || m[0] != strings.TrimSpace(n.Value) {
+		return "", nil
+	}
+	if _, ok := in.vars[m[1]]; ok {
+		return "", nil
+	}
+	return m[1], in.role.defaults[m[1]]
+}
+
+// stateDefault is the variable for a state from a role default whose own
+// value is one of allowed, which a validation then keeps the caller's to,
+// or "" for any other state.
+func (in *input) stateDefault(allowed ...string) string {
+	name, d := in.defaultArg("state")
+	if d == nil || d.boolean || d.number || !slices.Contains(allowed, d.value) {
+		return ""
+	}
+	in.used["state"] = true
+	if in.stateRules == nil {
+		in.stateRules = map[string][]string{}
+	}
+	in.stateRules[name] = allowed
+	return name
+}
 
 // str returns an argument, with simple {{ var }} references to play vars
 // filled in. Anything else in braces is a problem for a person.
@@ -1424,7 +1461,14 @@ func packageModule(in *input) ([]step, string) {
 	if len(names) == 0 {
 		names = in.list("pkg")
 	}
-	st := in.state("present", "present", "installed", "latest", "absent", "removed")
+	// A state from a role default maps its aliases as a literal one does.
+	var stVar *attr
+	st := "present"
+	if v := in.stateDefault("present", "installed", "latest", "absent", "removed"); v != "" {
+		stVar = &attr{key: "state", raw: fmt.Sprintf(`lookup({ installed = "present", removed = "absent" }, var.%s, var.%s)`, v, v)}
+	} else {
+		st = in.state("present", "present", "installed", "latest", "absent", "removed")
+	}
 	if alias, ok := map[string]string{"installed": "present", "removed": "absent"}[st]; ok {
 		st = alias
 	}
@@ -1469,6 +1513,9 @@ func packageModule(in *input) ([]step, string) {
 	for i, f := range files {
 		if in.problem != "" {
 			return nil, in.problem
+		}
+		if stVar != nil {
+			return nil, "takes its state from a role default with a package file; a package step installs a file with state \"present\" and removes a package by name"
 		}
 		name, why := packageFile(f, st)
 		if why != "" {
@@ -1515,7 +1562,10 @@ func packageModule(in *input) ([]step, string) {
 			attrs = append(attrs, s("source", f))
 			notes = append(notes, "TODO(convert): Check the package name: the converter read "+n+" from the file name "+path.Base(f)+", and apply fails if the file is another package.")
 		}
-		if st != "present" {
+		switch {
+		case stVar != nil:
+			attrs = append(attrs, *stVar)
+		case st != "present":
 			attrs = append(attrs, s("state", st))
 		}
 		// apt's install_recommends and dnf's install_weak_deps are one setting.
@@ -1588,11 +1638,17 @@ func packageFileName(base string) string {
 
 func serviceModule(in *input) ([]step, string) {
 	attrs := []attr{s("name", in.str("name"))}
-	if in.has("state") {
+	if v := in.stateDefault("started", "stopped"); v != "" {
+		attrs = append(attrs, attr{key: "state", raw: "var." + v})
+	} else if in.has("state") {
 		st := in.state("", "started", "stopped")
 		attrs = append(attrs, s("state", st))
 	}
-	if in.has("enabled") {
+	if v, d := in.defaultArg("enabled"); d != nil && d.boolean {
+		// The variable is a bool already, as the step's enabled is.
+		in.used["enabled"] = true
+		attrs = append(attrs, attr{key: "enabled", raw: "var." + v})
+	} else if in.has("enabled") {
 		attrs = append(attrs, attr{key: "enabled", val: cty.BoolVal(in.bool("enabled", false))})
 	}
 	if in.has("masked") {

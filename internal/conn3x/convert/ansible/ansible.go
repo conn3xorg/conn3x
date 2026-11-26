@@ -1470,6 +1470,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		for n, rules := range in.pathRules {
 			c.role.pathRules[n] = append(c.role.pathRules[n], rules...)
 		}
+		for n, allowed := range in.stateRules {
+			c.role.stateRules[n] = allowed
+		}
 		for p, b := range in.out {
 			c.role.files[p] = b
 		}

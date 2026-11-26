@@ -33,6 +33,9 @@ type role struct {
 	// handlerState are defaults a handler's state follows, which must stay
 	// restarted or reloaded.
 	handlerState map[string]bool
+	// stateRules are defaults a step's state follows, by the values they
+	// must stay; see input.stateRules.
+	stateRules map[string][]string
 	// varFiles are the files under vars/ other than main that set each
 	// variable, such as vars/Debian.yml: what an include_vars loads.
 	varFiles map[string][]string
@@ -136,7 +139,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, handlerState: map[string]bool{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -302,6 +305,15 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			v := b.Body().AppendNewBlock("validation", nil).Body()
 			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`contains(["restarted", "reloaded"], var.%s)`, k)))
 			v.SetAttributeValue("error_message", cty.StringVal(k+" is a handler's state, so it must be restarted or reloaded, the two a Conn3x handler does."))
+		}
+		if allowed := r.stateRules[k]; allowed != nil {
+			v := b.Body().AppendNewBlock("validation", nil).Body()
+			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`contains(["%s"], var.%s)`, strings.Join(allowed, `", "`), k)))
+			msg := k + " is a package step's state, so it must be present, installed, latest, absent or removed."
+			if slices.Contains(allowed, "started") {
+				msg = k + " is a service step's state, so it must be started or stopped; restarted and reloaded are handler actions in Conn3x."
+			}
+			v.SetAttributeValue("error_message", cty.StringVal(msg))
 		}
 		pathValidations(b.Body(), k, "", r.pathRules[k], false)
 		vb.AppendNewline()
