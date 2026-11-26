@@ -3,7 +3,10 @@
 
 package windows
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPathEntry(t *testing.T) {
 	const path = `%SystemRoot%\system32;%SystemRoot%;C:\Tools\;C:\Program Files\Git\cmd`
@@ -54,5 +57,28 @@ func TestEnvVar(t *testing.T) {
 		if bad.Validate() == nil {
 			t.Errorf("accepted %+v", bad)
 		}
+	}
+}
+
+// A change, and only a change, is broadcast as WM_SETTINGCHANGE "Environment",
+// with SMTO_ABORTIFHUNG and a 5 s timeout, and a failed broadcast is ignored.
+// windows_path writes through the same script, so it broadcasts too.
+func TestApplyEnvBroadcastsAChange(t *testing.T) {
+	body := script("apply_env.ps1").Body
+	noop := strings.Index(body, "if (-not $changed) { return }")
+	send := strings.Index(body, `SendMessageTimeoutW(new IntPtr(0xFFFF), 0x001A, UIntPtr.Zero, "Environment", 0x0002, 5000`)
+	if noop < 0 || send < 0 || send < noop {
+		t.Fatalf("the broadcast must come after the no-op return: return at %d, send at %d", noop, send)
+	}
+	if !strings.Contains(body[send:], "} catch {") {
+		t.Error("a failed broadcast must not fail the step")
+	}
+	for _, set := range []string{"$key.DeleteValue($A.name, $false); $changed = $true", "$key.SetValue($A.name, [string]$A.value, $kind); $changed = $true"} {
+		if !strings.Contains(body, set) {
+			t.Errorf("a write doesn't mark the change: %s", set)
+		}
+	}
+	if strings.Count(body, "$changed = $true") != 2 {
+		t.Error("only a delete or a write is a change")
 	}
 }

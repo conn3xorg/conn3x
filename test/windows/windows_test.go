@@ -1527,6 +1527,19 @@ func TestEnvironmentAndPath(t *testing.T) {
 		if a, _ := windows.ReadEnv(ctx, c, name, user); a.Value != "plain" || a.Kind != "ExpandString" {
 			t.Errorf("user=%v: a new value changed the kind: %+v", user, a)
 		}
+		// The same value again writes nothing, so it skips the broadcast.
+		if err := windows.ApplyEnv(ctx, c, e); err != nil {
+			t.Fatal(err)
+		}
+		// reg.exe reads the type straight from the registry, not through .NET.
+		hive := `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment`
+		if user {
+			hive = `HKCU\Environment`
+		}
+		q := run(t, c, `param($A) reg.exe query $A.key /v $A.name`, map[string]any{"key": hive, "name": name})
+		if !strings.Contains(q.Text, "REG_EXPAND_SZ") {
+			t.Errorf("user=%v: reg query: %s", user, q.Text)
+		}
 		e.Absent = true
 		if err := windows.ApplyEnv(ctx, c, e); err != nil {
 			t.Fatal(err)
