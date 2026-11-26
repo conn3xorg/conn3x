@@ -58,6 +58,10 @@ func TestModuleOfFreeForm(t *testing.T) {
 		`name="a b" state=present`:   {"name": "a b", "state": "present"},
 		"name='{{ x }}'":             {"name": "{{ x }}"},
 		`name="" state=absent`:       {"name": "", "state": "absent"},
+		// Ansible strips whitespace from each key and value, so the spaces
+		// inside {# #} go, and the value is unquoted after.
+		"x  {#src=  #}":               {"{#src": "#}"},
+		"name={{ a }}  state=started": {"name": "{{ a }}", "state": "started"},
 		// Unbalanced, it splits at each space, and the stray {{ keeps the
 		// task for review.
 		"name={{ x": {"name": "{{"},

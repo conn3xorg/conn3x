@@ -1927,7 +1927,7 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 				for _, kv := range words {
 					if key, val, ok := strings.Cut(kv, "="); ok {
 						if split {
-							val = unquoteArg(val)
+							key, val = strings.TrimSpace(key), unquoteArg(strings.TrimSpace(val))
 						}
 						args[key] = &yaml.Node{Kind: yaml.ScalarNode, Value: val, Line: v.Line}
 					} else {
