@@ -723,6 +723,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"command":                 commandModule,
 	"shell":                   commandModule,
 	"script":                  scriptModule,
+	"raw":                     rawModule,
 	"reboot":                  rebootModule,
 	"wait_for":                waitForModule,
 	"uri":                     uriModule,
@@ -3589,6 +3590,56 @@ func scriptInterpreter(exe, text string) (string, string) {
 		return shellQuote(interp), ""
 	}
 	return shellQuote(interp) + " " + shellQuote(arg), ""
+}
+
+// rawModule drops the raw task a playbook opens with to install Python for
+// Ansible's modules, which Conn3x doesn't run. Any other raw task stays.
+func rawModule(in *input) ([]step, string) {
+	in.ignore("executable")
+	if n, ok := in.args["_raw"]; ok && len(in.args) == 1 && pythonBootstrap(n.Value) {
+		return []step{{notes: []string{
+			"dropped: this installs Python for Ansible's modules; Conn3x doesn't run Python on the host.",
+			"TODO(convert): if a later step runs python, add a package step for python3.",
+		}}}, ""
+	}
+	return nil, "runs a command with raw, which has no creates or removes; write it as a command step with a guard"
+}
+
+var (
+	pythonCheck   = regexp.MustCompile(`^(?:test -[efx] /(?:usr/)?(?:local/)?bin/python[0-9.]*|command -v python[0-9.]*|which python[0-9.]*)$`)
+	pythonUpdate  = regexp.MustCompile(`^(?:apt-get|apt|apk)(?: -[-a-z]+)* update(?: -[-a-z]+)*$`)
+	pythonInstall = regexp.MustCompile(`^(?:(?:apt-get|apt|dnf|yum|zypper) (?:-[-a-z]+ )*install|zypper (?:-[-a-z]+ )*in|apk (?:-[-a-z]+ )*add)((?: -[-a-z]+| python[-a-z0-9.]*)+)$`)
+)
+
+// pythonBootstrap reports whether a raw command only installs Python:
+// an install whose every package starts with python, through apt, apt-get,
+// dnf, yum, apk or zypper, optionally after the package lists' update and
+// behind a test for Python joined with ||. Anything else in it, such as a
+// ; or a second command, and it isn't.
+func pythonBootstrap(cmd string) bool {
+	cmd = strings.Join(strings.Fields(cmd), " ")
+	if strings.ContainsAny(cmd, ";$`<>'\"\\*?{}") {
+		return false
+	}
+	check, install, found := strings.Cut(cmd, " || ")
+	if !found {
+		install = cmd
+	} else if !pythonCheck.MatchString(check) {
+		return false
+	}
+	if strings.HasPrefix(install, "(") && strings.HasSuffix(install, ")") {
+		install = strings.TrimSpace(install[1 : len(install)-1])
+	}
+	if update, rest, ok := strings.Cut(install, " && "); ok {
+		if !pythonUpdate.MatchString(update) {
+			return false
+		}
+		install = rest
+	}
+	// The pattern has no room for |, & or parentheses, so a second command
+	// fails it.
+	m := pythonInstall.FindStringSubmatch(install)
+	return m != nil && strings.Contains(m[1], " python")
 }
 
 func rebootModule(in *input) ([]step, string) {

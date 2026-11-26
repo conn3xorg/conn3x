@@ -1471,6 +1471,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if s.module == "" {
 			body.AppendNewline()
 			comment(body, fmt.Sprintf("Task %q (%s line %d): %s", firstNonEmpty(name, mod), c.file, node.Line, s.notes[0]))
+			for _, note := range s.notes[1:] {
+				comment(body, note)
+				if r, ok := strings.CutPrefix(note, "TODO(convert): "); ok {
+					c.res.Notes = append(c.res.Notes, Issue{Task: firstNonEmpty(name, mod), File: c.file, Line: node.Line, Reason: r})
+				}
+			}
 			continue
 		}
 		stepName := base
@@ -1864,7 +1870,7 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 		case yaml.MappingNode:
 			args = mapping(v)
 		case yaml.ScalarNode:
-			if mod == "command" || mod == "shell" || mod == "script" {
+			if mod == "command" || mod == "shell" || mod == "script" || mod == "raw" {
 				args["_raw"] = v
 			} else {
 				for _, kv := range strings.Fields(v.Value) {
