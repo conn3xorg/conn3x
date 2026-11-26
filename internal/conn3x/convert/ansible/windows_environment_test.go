@@ -69,13 +69,30 @@ func TestConvertWinEnvironment(t *testing.T) {
 			want:  []string{`value = "C:\\app\\bin"`},
 		},
 		{
+			name: "templated key stays",
+			task: "win_environment: {level: machine, variables: {'{{ other_name }}': x}}",
+			want: []string{"builds a variable's name from a template"},
+		},
+		{
+			name:  "templated key from a play var",
+			task:  "win_environment: {level: machine, variables: {'{{ env_name }}': x, B: y}}",
+			steps: 2,
+			want:  []string{`name  = "APP_ENV"`},
+			not:   []string{"{{"},
+		},
+		{
+			name: "templated name stays",
+			task: "win_environment: {name: '{{ other_name }}', value: x, level: machine}",
+			want: []string{"builds a variable's name from a template"},
+		},
+		{
 			name: "Path",
 			task: "win_environment: {name: Path, value: 'C:\\x', level: machine}",
 			want: []string{"windows_path"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res := convertString(t, "- hosts: all\n  vars:\n    app_dir: 'C:\\app'\n  tasks:\n    - name: env\n      "+tc.task+"\n")
+			res := convertString(t, "- hosts: all\n  vars:\n    app_dir: 'C:\\app'\n    env_name: APP_ENV\n  tasks:\n    - name: env\n      "+tc.task+"\n")
 			got := string(res.HCL)
 			if tc.steps == 0 {
 				if res.Converted != 0 || len(res.Review) != 1 {

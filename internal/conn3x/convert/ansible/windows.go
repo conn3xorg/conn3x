@@ -363,7 +363,7 @@ func winEnvironmentModule(in *input) ([]step, string) {
 			if v.Tag != "!!null" {
 				val = in.render("variables", v.Value)
 			}
-			vars = append(vars, envVar{name: k.Value, value: val})
+			vars = append(vars, envVar{name: in.render("variables", k.Value), value: val})
 		}
 	} else {
 		vars = []envVar{{name: in.str("name"), value: in.str("value"), state: in.str("state")}}
@@ -377,6 +377,8 @@ func winEnvironmentModule(in *input) ([]step, string) {
 		switch {
 		case v.name == "":
 			return nil, "has no name"
+		case strings.Contains(v.name, "{{") || strings.Contains(v.name, "\x00"):
+			return nil, "builds a variable's name from a template, which the converter can't fill in; write the name out"
 		case strings.EqualFold(v.name, "Path"):
 			return nil, "sets Path whole, which windows_environment refuses; give each folder a windows_path step"
 		}
