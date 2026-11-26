@@ -44,6 +44,9 @@ type Desired struct {
 	Name    string
 	State   State
 	Version string // optional, with Present
+	// Source, when set, is a .deb or .rpm file on the host to install
+	// the package from. Name stays the package's name.
+	Source string
 	// InstallRecommends, when set, says whether an install also brings in
 	// what the package recommends: apt's recommended packages, dnf's weak
 	// dependencies. Nil keeps the host's own setting.
@@ -70,6 +73,9 @@ type Actual struct {
 	Installed bool
 	Version   string // as the package manager reports it
 	Candidate string // newest available, only read for Latest
+	// SourceVersion is the version of the file at Desired.Source, as
+	// ReadSource read it, or "" when it was missing or not read.
+	SourceVersion string
 }
 
 var (
@@ -96,6 +102,9 @@ func (d Desired) Validate() error {
 		}
 	default:
 		return fmt.Errorf("state must be %q, %q or %q, not %q", Present, Absent, Latest, d.State)
+	}
+	if err := d.validateSource(); err != nil {
+		return err
 	}
 	if d.Version != "" {
 		if d.State == Latest {
@@ -281,7 +290,8 @@ func NeedsChange(d Desired, a Actual) bool {
 	case Latest:
 		return !a.Installed || (a.Candidate != "" && a.Candidate != a.Version)
 	default:
-		return !a.Installed || (d.Version != "" && !versionMatches(a.Version, d.Version))
+		return !a.Installed || (d.Version != "" && !versionMatches(a.Version, d.Version)) ||
+			(d.Source != "" && a.SourceVersion != "" && a.SourceVersion != a.Version)
 	}
 }
 
@@ -292,6 +302,12 @@ func NeedsChange(d Desired, a Actual) bool {
 // booted holds for minutes while unattended-upgrades runs.
 func Settled(ctx context.Context, r modules.Runner, family Family, d Desired) bool {
 	a, err := Read(ctx, r, family, d.Name, d.State == Latest)
+	if err == nil && d.Source != "" && d.State != Absent {
+		// A missing file isn't settled: Apply says it's missing.
+		if _, a.SourceVersion, err = ReadSource(ctx, r, family, d.Source); a.SourceVersion == "" {
+			return false
+		}
+	}
 	return err == nil && !NeedsChange(d, a)
 }
 
@@ -312,6 +328,9 @@ const aptGet = "DEBIAN_FRONTEND=noninteractive apt-get -y -q -o DPkg::Lock::Time
 func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) error {
 	if err := d.Validate(); err != nil {
 		return err
+	}
+	if d.Source != "" && d.State != Absent {
+		return applySource(ctx, r, family, d)
 	}
 	switch family {
 	case RPM:
@@ -476,8 +495,12 @@ func Run(ctx context.Context, r modules.Runner, cmd string) error {
 // zypper runs zypper with args. Exit 102 is success that wants a reboot,
 // and 103 is zypper having updated itself, so it runs again once.
 func zypper(ctx context.Context, r modules.Runner, args string) error {
+	return Run(ctx, r, zypperCommand(args))
+}
+
+func zypperCommand(args string) string {
 	c := "zypper -n -q " + args
-	return Run(ctx, r, c+"; rc=$?; if [ $rc = 103 ]; then "+c+"; rc=$?; fi; [ $rc = 102 ] && rc=0; exit $rc")
+	return c + "; rc=$?; if [ $rc = 103 ]; then " + c + "; rc=$?; fi; [ $rc = 102 ] && rc=0; exit $rc"
 }
 
 func lockHeld(err error) bool {

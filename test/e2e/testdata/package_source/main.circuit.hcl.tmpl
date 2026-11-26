@@ -1,0 +1,27 @@
+circuit "agent" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # Stands in for a download step: it puts the file in place in the same
+  # apply, after the plan has read the host.
+  step "agent_file" {
+    file {
+      path        = "/opt/downloads/conn3x-demo.{{.Ext}}"
+      source_path = "/opt/builds/conn3x-demo-{{.Version}}.{{.Ext}}"
+    }
+  }
+{{if .WithPackage}}
+  step "agent" {
+    package {
+      name      = "conn3x-demo"
+      source    = "/opt/downloads/conn3x-demo.{{.Ext}}"
+      on_remove = "{{.OnRemove}}"
+    }
+  }
+{{end}}}

@@ -1449,8 +1449,32 @@ func packageModule(in *input) ([]step, string) {
 		in.ignore("update_cache", "cache_valid_time")
 		notes = append(notes, "update_cache dropped: Conn3x refreshes the package lists when a package isn't found.")
 	}
+	// A package file: apt's deb, or an .rpm path or URL in place of a name.
+	var files []string
+	if in.mod == "apt" && in.has("deb") {
+		files = append(files, in.str("deb"))
+	}
+	if in.mod != "apt" && in.mod != "apk" {
+		names = slices.DeleteFunc(names, func(n string) bool {
+			file := strings.HasSuffix(n, ".rpm") && (strings.HasPrefix(n, "/") || strings.Contains(n, "://"))
+			if file {
+				files = append(files, n)
+			}
+			return file
+		})
+	}
+	for i, f := range files {
+		if in.problem != "" {
+			return nil, in.problem
+		}
+		name, why := packageFile(f, st)
+		if why != "" {
+			return nil, why
+		}
+		names = slices.Insert(names, i, name)
+	}
 	var steps []step
-	for _, n := range names {
+	for i, n := range names {
 		// A glob or '*' names no single package and cannot validate as a
 		// package step. Leave the whole task for review, not a partial list.
 		// Names holding \x00 are marks for variables and loop items, filled in
@@ -1463,6 +1487,12 @@ func packageModule(in *input) ([]step, string) {
 			return nil, "package name " + strconv.Quote(n) + " cannot be a package step"
 		}
 		attrs := []attr{s("name", n)}
+		// The files went in at the front of names.
+		if i < len(files) {
+			f := files[i]
+			attrs = append(attrs, s("source", f))
+			notes = append(notes, "TODO(convert): Check the package name: the converter read "+n+" from the file name "+path.Base(f)+", and apply fails if the file is another package.")
+		}
 		if st != "present" {
 			attrs = append(attrs, s("state", st))
 		}
@@ -1486,6 +1516,49 @@ func packageModule(in *input) ([]step, string) {
 		return nil, "names no package"
 	}
 	return steps, ""
+}
+
+// packageFile is the package name for a step that installs the .deb or
+// .rpm at f, read from its file name, or why the task stays for review.
+func packageFile(f, st string) (string, string) {
+	switch {
+	case strings.Contains(f, "://"):
+		return "", "installs " + f + " from a URL; Conn3x installs only what it can verify, so download it with a download step and its sha256, then install it from that path with a package step's source"
+	case strings.Contains(f, "\x00"):
+		return "", "builds the package file's path from a variable; write the path out in a package step's source"
+	case st != "present":
+		return "", "sets state " + st + " with a package file; a package step installs a file with state \"present\" and removes a package by name"
+	}
+	name := packageFileName(path.Base(f))
+	if name == "" {
+		return "", "installs " + f + ", whose file name isn't NAME_VERSION_ARCH.deb or NAME-VERSION-RELEASE.ARCH.rpm, so the converter can't tell the package's name; write a package step with name and source"
+	}
+	if err := (pkg.Desired{Name: name, State: pkg.Present, Source: f}).Validate(); err != nil {
+		return "", "can't be a package step: " + err.Error()
+	}
+	return name, ""
+}
+
+// packageFileName is the package name in a file name that follows the
+// usual pattern, NAME_VERSION_ARCH.deb or NAME-VERSION-RELEASE.ARCH.rpm,
+// or "".
+func packageFileName(base string) string {
+	if b, ok := strings.CutSuffix(base, ".deb"); ok {
+		if f := strings.Split(b, "_"); len(f) == 3 && f[0] != "" && f[1] != "" && f[2] != "" {
+			return f[0]
+		}
+		return ""
+	}
+	b, ok := strings.CutSuffix(base, ".rpm")
+	i := strings.LastIndex(b, ".")
+	if !ok || i < 0 {
+		return ""
+	}
+	nvr := strings.Split(b[:i], "-")
+	if len(nvr) < 3 || slices.Contains(nvr, "") {
+		return ""
+	}
+	return strings.Join(nvr[:len(nvr)-2], "-")
 }
 
 func serviceModule(in *input) ([]step, string) {

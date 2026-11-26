@@ -26,6 +26,11 @@ func packageSchema() providers.Schema {
 				"name":     {Type: cty.String, Required: true, Description: "Package name."},
 				"state":    {Type: cty.String, Optional: true, Computed: true, Description: "\"present\" (default), \"latest\" or \"absent\"."},
 				"version":  {Type: cty.String, Optional: true, Description: "Version to install, with state \"present\"."},
+				"source": {
+					Type: cty.String, Optional: true,
+					Description: "Absolute path of a .deb or .rpm file on the host to install the package from, such as one a download step wrote. name is still the package's name, and apply checks the file is that package. The step is in sync when the installed version is the file's. Can't be set with version or state \"latest\".",
+				},
+				"source_version": {Type: cty.String, Computed: true, Description: "With source, the version of the file at source when it was last read. Null when it was missing, or without source."},
 				"install_recommends": {
 					Type: cty.Bool, Optional: true,
 					Description: "Whether an install also brings in what the package recommends: apt's recommended packages, or dnf's weak dependencies. false keeps a server lean. Unset keeps the host's own setting. It only changes how the package is installed, never what's already there.",
@@ -46,6 +51,7 @@ func desiredPackage(v cty.Value) pkg.Desired {
 		Name:              v.GetAttr("name").AsString(),
 		State:             pkg.State(stringOr(v.GetAttr("state"), string(pkg.Present))),
 		Version:           stringOr(v.GetAttr("version"), ""),
+		Source:            stringOr(v.GetAttr("source"), ""),
 		InstallRecommends: optBool(v.GetAttr("install_recommends")),
 	}
 }
@@ -53,9 +59,10 @@ func desiredPackage(v cty.Value) pkg.Desired {
 func actualPackage(v cty.Value) pkg.Actual {
 	installed := v.GetAttr("installed_version")
 	return pkg.Actual{
-		Installed: !installed.IsNull() && installed.IsKnown(),
-		Version:   stringOr(installed, ""),
-		Candidate: stringOr(v.GetAttr("latest_version"), ""),
+		Installed:     !installed.IsNull() && installed.IsKnown(),
+		Version:       stringOr(installed, ""),
+		Candidate:     stringOr(v.GetAttr("latest_version"), ""),
+		SourceVersion: stringOr(v.GetAttr("source_version"), ""),
 	}
 }
 
@@ -71,8 +78,16 @@ func validatePackage(cfg cty.Value) tfdiags.Diagnostics {
 		}
 	}
 	d := desiredPackage(cfg)
+	if src := cfg.GetAttr("source"); !src.IsKnown() {
+		// A path from another step's output: check what can be checked.
+		d.Source = "/unknown.deb"
+	}
 	if err := d.Validate(); err != nil {
-		diags = diags.Append(attrError("name", err.Error()))
+		attr := "name"
+		if d.Source != "" && (pkg.Desired{Name: d.Name, State: d.State, Version: d.Version}).Validate() == nil {
+			attr = "source"
+		}
+		diags = diags.Append(attrError(attr, err.Error()))
 	}
 	return diags
 }
@@ -101,6 +116,7 @@ func planPackage(req providers.PlanResourceChangeRequest) providers.PlanResource
 	unknownInstall := func() {
 		vals["installed_version"] = cty.UnknownVal(cty.String)
 		vals["latest_version"] = cty.UnknownVal(cty.String)
+		vals["source_version"] = cty.UnknownVal(cty.String)
 	}
 	switch {
 	case !planned.IsWhollyKnown():
@@ -109,6 +125,7 @@ func planPackage(req providers.PlanResourceChangeRequest) providers.PlanResource
 		if desiredPackage(planned).State == pkg.Absent {
 			vals["installed_version"] = cty.NullVal(cty.String)
 			vals["latest_version"] = cty.NullVal(cty.String)
+			vals["source_version"] = cty.NullVal(cty.String)
 		} else {
 			unknownInstall()
 		}
@@ -117,12 +134,23 @@ func planPackage(req providers.PlanResourceChangeRequest) providers.PlanResource
 		// when it differs from what is wanted.
 		// A new state also counts: the refresh read latest_version only for
 		// the old one, so going to "latest" learns it at apply.
-		if pkg.NeedsChange(desiredPackage(planned), actualPackage(req.PriorState)) || !req.PriorState.GetAttr("state").RawEquals(vals["state"]) {
+		// A new source also counts: the refresh read the old one's version.
+		if pkg.NeedsChange(desiredPackage(planned), actualPackage(req.PriorState)) || !req.PriorState.GetAttr("state").RawEquals(vals["state"]) ||
+			!req.PriorState.GetAttr("source").RawEquals(vals["source"]) {
 			unknownInstall()
 		} else {
 			vals["installed_version"] = req.PriorState.GetAttr("installed_version")
 			vals["latest_version"] = req.PriorState.GetAttr("latest_version")
+			vals["source_version"] = req.PriorState.GetAttr("source_version")
 		}
+	}
+	if src := vals["source"]; src.IsNull() || (vals["state"].IsKnown() && vals["state"].AsString() == string(pkg.Absent)) {
+		vals["source_version"] = cty.NullVal(cty.String)
+	} else if !req.PriorState.IsNull() && !cty.ObjectVal(vals).RawEquals(req.PriorState) {
+		// An apply for any reason reads the file again, which an earlier
+		// step in the same apply may have replaced, and installs it: what
+		// it finds can't be promised.
+		unknownInstall()
 	}
 	resp.PlannedState = cty.ObjectVal(vals)
 
@@ -162,6 +190,9 @@ func readPackageOnHost(ctx context.Context, host *hostConn, d pkg.Desired) (pkg.
 		return pkg.Actual{}, err
 	}
 	actual, err := pkg.Read(ctx, host, family, d.Name, d.State == pkg.Latest)
+	if err == nil && d.Source != "" && d.State != pkg.Absent {
+		_, actual.SourceVersion, err = pkg.ReadSource(ctx, host, family, d.Source)
+	}
 	if err != nil {
 		return actual, fmt.Errorf("reading package %s: %w", d.Name, err)
 	}
@@ -205,12 +236,12 @@ func applyPackage(ctx context.Context, req providers.ApplyResourceChangeRequest)
 	if req.PlannedState.IsNull() {
 		return resp
 	}
-	actual, err := pkg.Read(ctx, host, family, d.Name, d.State == pkg.Latest)
+	actual, err := readPackageOnHost(ctx, host, d)
 	if err != nil {
-		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading back package %s: %w", d.Name, err))
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("reading back: %w", err))
 		return resp
 	}
-	if pkg.NeedsChange(d, actual) {
+	if pkg.NeedsChange(d, actual) || (d.Source != "" && d.State != pkg.Absent && actual.SourceVersion == "") {
 		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("package %s is not %s after applying; the package manager reported success but the host disagrees", d.Name, d.State))
 		return resp
 	}
@@ -227,6 +258,10 @@ func packageState(base cty.Value, actual pkg.Actual) cty.Value {
 	vals["latest_version"] = cty.NullVal(cty.String)
 	if actual.Candidate != "" {
 		vals["latest_version"] = cty.StringVal(actual.Candidate)
+	}
+	vals["source_version"] = cty.NullVal(cty.String)
+	if actual.SourceVersion != "" {
+		vals["source_version"] = cty.StringVal(actual.SourceVersion)
 	}
 	return cty.ObjectVal(vals)
 }

@@ -38,7 +38,7 @@ func planPkg(t *testing.T, prior, config cty.Value) cty.Value {
 	proposed := config
 	if !prior.IsNull() {
 		vals := config.AsValueMap()
-		for _, n := range []string{"id", "state", "on_remove", "installed_version", "latest_version"} {
+		for _, n := range []string{"id", "state", "on_remove", "installed_version", "latest_version", "source_version"} {
 			if vals[n].IsNull() {
 				vals[n] = prior.GetAttr(n)
 			}
