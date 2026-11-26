@@ -10,10 +10,12 @@ import (
 )
 
 // osRelease answers the facts script as a host with this os-release would.
+// Ubuntu has a codename; Rocky doesn't.
 func osRelease(id, version, like string) func(string, []byte) (string, int) {
+	codename := map[string]string{"ubuntu": "noble"}[id]
 	return func(cmd string, _ []byte) (string, int) {
 		if strings.Contains(cmd, "/etc/os-release") {
-			return "id=" + id + "\nversion=" + version + "\nlike=" + like + "\narch=x86_64\ncpus=2\nmemory_kb=4046848\nipv4=10.0.0.5\n", 0
+			return "id=" + id + "\nversion=" + version + "\ncodename=" + codename + "\nservice_manager=systemd\nlike=" + like + "\narch=x86_64\ncpus=2\nmemory_kb=4046848\nipv4=10.0.0.5\n", 0
 		}
 		return "", 0
 	}
@@ -23,14 +25,14 @@ func TestRunFacts(t *testing.T) {
 	inv := brInventory(t, osRelease("rocky", "10.0", "rhel centos fedora"), osRelease("ubuntu", "24.04", "debian"))
 
 	code, out, errOut := brRun(runOptions{inventory: inv, module: "facts", forks: 2})
-	want := "web1 | os_family=redhat os_id=rocky os_version=10.0 arch=x86_64 cpus=2 memory_mb=3952 ipv4=10.0.0.5\n" +
-		"web2 | os_family=debian os_id=ubuntu os_version=24.04 arch=x86_64 cpus=2 memory_mb=3952 ipv4=10.0.0.5\n"
+	want := "web1 | os_family=redhat os_id=rocky os_version=10.0 os_codename=\"\" service_manager=systemd arch=x86_64 cpus=2 memory_mb=3952 ipv4=10.0.0.5\n" +
+		"web2 | os_family=debian os_id=ubuntu os_version=24.04 os_codename=noble service_manager=systemd arch=x86_64 cpus=2 memory_mb=3952 ipv4=10.0.0.5\n"
 	if code != 0 || out != want {
 		t.Fatalf("exit %d:\n%s\nwant:\n%s\nstderr: %s", code, out, want, errOut)
 	}
 
 	code, out, _ = brRun(runOptions{inventory: inv, module: "facts", args: "filter=os_*,arch", pattern: "web2"})
-	if want := "web2 | os_family=debian os_id=ubuntu os_version=24.04 arch=x86_64\n"; code != 0 || out != want {
+	if want := "web2 | os_family=debian os_id=ubuntu os_version=24.04 os_codename=noble arch=x86_64\n"; code != 0 || out != want {
 		t.Errorf("filtered: exit %d, %q", code, out)
 	}
 

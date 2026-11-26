@@ -19,7 +19,7 @@ const factsModule = "facts"
 
 // factNames are the facts -m facts prints, in this order. A Windows host
 // adds its windows object's, as windows_<name>.
-var factNames = []string{"os_family", "os_id", "os_version", "arch", "cpus", "memory_mb", "ipv4"}
+var factNames = []string{"os_family", "os_id", "os_version", "os_codename", "service_manager", "arch", "cpus", "memory_mb", "ipv4"}
 
 type fact struct {
 	name string
