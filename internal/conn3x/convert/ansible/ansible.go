@@ -1229,6 +1229,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	run := func(vars map[string]string) (*input, []step, string) {
 		in := c.input(mod, args, vars, items)
 		in.itemVar, in.itemMaps = listVar, itemMaps
+		if len(fams) == 1 {
+			in.family = fams[0].ansible
+		}
 		in.factsLater = c.factsAfter[node]
 		in.wait = wait
 		in.jsonEdits, in.jsonWhy = c.jsonEdits[node], c.jsonWhy[node]

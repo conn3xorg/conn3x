@@ -84,6 +84,7 @@ type input struct {
 	loop     bool   // the task loops, so {{ item }} means the current item
 	runAs    string // an expression for the user Ansible runs a task as; empty when the play leaves it open
 	itemUsed bool
+	family   string // the one OS family the task runs on, as Ansible names it, such as RedHat; "" for more
 	// factsLater is set when a later task or handler in the play reads facts.
 	factsLater bool
 	// commaFree lists role defaults used as package names: Ansible splits a
@@ -1456,6 +1457,65 @@ func patchModule(in *input) ([]step, string) {
 	return one("patch", attrs, notes...)
 }
 
+// repoDefault reads an enablerepo that is a role default x, as
+// {{ x }}, {{ x | default(omit) }} or {{ x | default(omit, true) }}: a role
+// default is always defined, and Ansible's dnf and yum read "" as no
+// repositories, so all three are x split at commas, or none when it's "".
+// It's nil, "" for any other enablerepo.
+func (in *input) repoDefault() (*attr, string) {
+	name, d := in.defaultArg("enablerepo")
+	if n, ok := omitDefault(scalar(in.args["enablerepo"])); ok {
+		if _, set := in.vars[n]; !set {
+			name, d = n, in.role.defaultOrNil(n)
+		}
+	}
+	if d == nil {
+		return nil, ""
+	}
+	in.used["enablerepo"] = true
+	if d.boolean || d.number {
+		// default(omit, true) would omit false and 0, and pass anything else
+		// as a repository ID.
+		return nil, fmt.Sprintf("enablerepo refers to the role default %q, which is a number or true or false, not repository IDs", name)
+	}
+	var ids []string
+	for _, id := range strings.Split(d.value, ",") {
+		ids = append(ids, strings.TrimSpace(id))
+	}
+	if err := (pkg.Desired{Name: "x", State: pkg.Present, EnableRepositories: ids}).Validate(); d.value != "" && err != nil {
+		return nil, fmt.Sprintf("can't be a package step: %s, from the role default %q", err, name)
+	}
+	return &attr{key: "enable_repositories", raw: fmt.Sprintf(`var.%s == "" ? null : [for id in split(",", var.%s) : trimspace(id)]`, name, name)}, ""
+}
+
+// omitDefault is the variable in {{ x | default(omit) }} or
+// {{ x | default(omit, true) }}, and whether s is one of them.
+func omitDefault(s string) (string, bool) {
+	inner, open := strings.CutPrefix(strings.TrimSpace(s), "{{")
+	inner, closed := strings.CutSuffix(inner, "}}")
+	if !open || !closed {
+		return "", false
+	}
+	parts := splitTop(inner, "|")
+	if len(parts) != 2 {
+		return "", false
+	}
+	name := strings.TrimSpace(parts[0])
+	call, isDefault := strings.CutPrefix(strings.TrimSpace(parts[1]), "default")
+	args, wrapped := unwrap(strings.TrimSpace(call))
+	if !identifier.MatchString(name) || !isDefault || !wrapped {
+		return "", false
+	}
+	a := splitTop(args, ",")
+	for i := range a {
+		a[i] = strings.TrimSpace(a[i])
+	}
+	if a[0] != "omit" || len(a) > 2 || (len(a) == 2 && !slices.Contains([]string{"true", "True", "false", "False"}, a[1])) {
+		return "", false
+	}
+	return name, true
+}
+
 func packageModule(in *input) ([]step, string) {
 	names := in.list("name")
 	if len(names) == 0 {
@@ -1526,11 +1586,21 @@ func packageModule(in *input) ([]step, string) {
 	// enablerepo and default_release are for this install only, as the
 	// step's are. disablerepo stays for review: dropping it could install
 	// from a repository the play kept out.
+	// package hands enablerepo to the host's own module, which on Debian
+	// and Ubuntu is apt, which has no such argument.
 	var from []attr
-	if in.mod == "dnf" || in.mod == "dnf5" || in.mod == "yum" {
-		if ids := in.list("enablerepo"); len(ids) > 0 {
+	if in.mod == "package" && in.has("enablerepo") && in.family != "RedHat" {
+		in.used["enablerepo"] = true
+		in.fail("sets enablerepo, which only Ansible's dnf and yum take, so the converter reads it on a package task only where the task runs on Red Hat family hosts alone; on Debian and Ubuntu, apt would stop on it")
+	}
+	if in.mod == "dnf" || in.mod == "dnf5" || in.mod == "yum" || (in.mod == "package" && in.family == "RedHat") {
+		if a, why := in.repoDefault(); why != "" {
+			return nil, why
+		} else if a != nil {
+			from = append(from, *a)
+		} else if ids := in.list("enablerepo"); len(ids) > 0 {
 			from = append(from, attr{key: "enable_repositories", val: strList(ids)})
-			if err := (pkg.Desired{Name: "x", State: pkg.Present, EnableRepositories: ids}).Validate(); err != nil && !strings.Contains(strings.Join(ids, ""), "\x00") {
+			if err := (pkg.Desired{Name: "x", State: pkg.Present, EnableRepositories: ids}).Validate(); err != nil && in.problem == "" && !strings.Contains(strings.Join(ids, ""), "\x00") {
 				return nil, "can't be a package step: " + err.Error()
 			}
 		}
