@@ -8,6 +8,8 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -670,6 +672,8 @@ func TestDefaultAlsoSetInVarsForOtherOS(t *testing.T) {
 		main  []string // in main.circuit.hcl
 		vars  []string // in variables.tf
 		not   []string // in neither
+		// review is the task that stays for review, if any.
+		review string
 	}{{
 		name:  "other OS only",
 		files: map[string]string{"vars/Suse.yml": other, "vars/Archlinux.yml": other, "vars/Debian.yml": "x: 1\n", "vars/RedHat.yml": "x: 1\n"},
@@ -682,6 +686,19 @@ func TestDefaultAlsoSetInVarsForOtherOS(t *testing.T) {
 		main:  []string{`{ debian = "deb-pkg", redhat = "generic" }[local.os_family[each.key]]`},
 		vars:  []string{`Default "pkg" (defaults/main.yml line 1) is also set in vars/Debian.yml, which wins in Ansible once an include_vars loads it`},
 		not:   []string{`variable "pkg"`, `which no Debian or Red Hat family release Conn3x configures loads`},
+	}, {
+		// CentOS Stream is a Red Hat family host Conn3x configures.
+		name:  "CentOS Stream",
+		files: map[string]string{"vars/CentOS.yml": "pkg: centos-pkg\n", "vars/RedHat.yml": "x: 1\n", "vars/Debian.yml": "x: 1\n"},
+		main:  []string{`"centos-pkg"`, `"generic"`, `[local.vars_file[each.key]]`},
+		not:   []string{`var.pkg`, `which no Debian or Red Hat family release Conn3x configures loads`},
+	}, {
+		// Oracle Linux is Red Hat family to Conn3x through ID_LIKE, but
+		// the converter doesn't list it, so its file can't be ruled out.
+		name:   "unlisted distribution",
+		files:  map[string]string{"vars/OracleLinux.yml": "pkg: ol-pkg\n", "vars/RedHat.yml": "x: 1\n", "vars/Debian.yml": "x: 1\n"},
+		not:    []string{`var.pkg`, `which no Debian or Red Hat family release Conn3x configures loads`},
+		review: "Install",
 	}, {
 		name:  "both",
 		files: map[string]string{"vars/Debian.yml": "pkg: deb-pkg\n", "vars/RedHat.yml": "x: 1\n", "vars/Suse.yml": other},
@@ -714,7 +731,11 @@ func TestDefaultAlsoSetInVarsForOtherOS(t *testing.T) {
 					t.Errorf("%s in output:\n%s\n%s", w, main, vars)
 				}
 			}
-			if len(res.Review) != 0 {
+			if tc.review != "" {
+				if len(res.Review) != 1 || res.Review[0].Task != tc.review {
+					t.Errorf("review %+v, want only %s", res.Review, tc.review)
+				}
+			} else if len(res.Review) != 0 {
 				t.Errorf("review %+v", res.Review)
 			}
 		})
@@ -1532,5 +1553,40 @@ func TestRoleLayeredVars(t *testing.T) {
 	}
 	if res.Converted != 4 || len(res.Review) != 0 {
 		t.Errorf("per family: converted %d, review %+v", res.Converted, res.Review)
+	}
+}
+
+// Each os-release ID the facts module puts in a family Conn3x configures is
+// a distribution whose vars files the converter reads, so a file named for
+// it isn't taken as one no host loads.
+func TestOSVersionsCoverFactsFamilies(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "modules", "facts", "facts.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`case ("[a-z]+"(?:, "[a-z]+")*):\s*f\.Family =`).FindAllStringSubmatch(string(src), -1)
+	if len(m) == 0 {
+		t.Fatal("found no family cases in facts.go")
+	}
+	byID := map[string]string{}
+	for d, id := range distributionIDs {
+		byID[id] = d
+	}
+	for _, c := range m {
+		for _, q := range strings.Split(c[1], ", ") {
+			id := strings.Trim(q, `"`)
+			d, ok := byID[id]
+			if !ok || len(osVersions[d]) == 0 {
+				t.Errorf("facts.go puts %s in a family, but osVersions has no releases for it", id)
+				continue
+			}
+			found := false
+			for _, ds := range familyDistributions {
+				found = found || slices.Contains(ds, d)
+			}
+			if !found {
+				t.Errorf("facts.go puts %s in a family, but familyDistributions doesn't list %s", id, d)
+			}
+		}
 	}
 }

@@ -283,8 +283,13 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	}
 	for _, kv := range later {
 		k := kv[0].Value
-		files, ignored := r.loadableVarFiles(k)
+		files, ignored, unmodeled := r.loadableVarFiles(k)
 		classify(kv, files)
+		if unmodeled {
+			// A host the axis doesn't list could load one, so the default
+			// can't be assumed where the axis has no value.
+			delete(r.shadowDefault, k)
+		}
 		_, list := r.lists[k]
 		_, isMap := r.maps[k]
 		if len(ignored) > 0 && (r.defaults[k] != nil || list || isMap) {
@@ -520,13 +525,21 @@ func templateMatches(segs []namePart, file string) bool {
 	return err == nil && re.MatchString(strings.TrimPrefix(file, "vars/"))
 }
 
+// otherFamilyFile matches a vars file named for an OS family, perhaps with
+// a release, such as vars/Suse.yml or vars/FreeBSD-14.yml.
+var otherFamilyFile = regexp.MustCompile(`^vars/(` + factPattern["family"] + `)(?:-[0-9][0-9.]*)?\.ya?ml$`)
+
 // loadableVarFiles splits the files under vars/ that set name into those a
-// Debian or Red Hat family host could load and those none could, such as
-// vars/Suse.yml. When the converter doesn't follow every include_vars, any
-// file could load, so all are in the first.
-func (r *role) loadableVarFiles(name string) (loadable, ignored []string) {
+// Debian or Red Hat family host could load and those none could. A file is
+// in the second only when no axis entry loads it and it's named for a
+// family other than those two, such as vars/Suse.yml: a host Conn3x
+// configures can be a distribution the axis doesn't list, as Oracle Linux,
+// whose vars/OracleLinux.yml would load. unmodeled is set when such a file
+// is among the first. When the converter doesn't follow every include_vars,
+// any file could load, so all are in the first.
+func (r *role) loadableVarFiles(name string) (loadable, ignored []string, unmodeled bool) {
 	if r.varsIncludes == nil || !r.varsComplete {
-		return r.varFiles[name], nil
+		return r.varFiles[name], nil, true
 	}
 	loads := map[string]bool{}
 	for _, a := range r.axis {
@@ -535,13 +548,17 @@ func (r *role) loadableVarFiles(name string) (loadable, ignored []string) {
 		}
 	}
 	for _, f := range r.varFiles[name] {
-		if loads[path.Clean(f)] {
+		m := otherFamilyFile.FindStringSubmatch(path.Clean(f))
+		switch {
+		case loads[path.Clean(f)]:
 			loadable = append(loadable, f)
-		} else {
+		case m != nil && m[1] != "Debian" && m[1] != "RedHat":
 			ignored = append(ignored, f)
+		default:
+			loadable, unmodeled = append(loadable, f), true
 		}
 	}
-	return loadable, ignored
+	return loadable, ignored, unmodeled
 }
 
 // otherVarFiles reads the top-level names set in vars/*.yml besides main,
