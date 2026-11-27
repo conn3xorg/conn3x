@@ -215,6 +215,11 @@ func Start(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "start")
 }
 
+// Stop stops the unit. A unit that isn't installed has nothing to stop.
+func Stop(ctx context.Context, r modules.Runner, name string) error {
+	return act(ctx, r, name, "stop")
+}
+
 // Reload asks the unit to reload its configuration, or starts it when it
 // isn't running.
 func Reload(ctx context.Context, r modules.Runner, name string) error {
@@ -276,6 +281,20 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 	// "only if running" means there's nothing to do.
 	if strings.HasPrefix(verb, "try-") && !a.Exists {
 		return nil
+	}
+	// A unit whose file was removed while it ran, by a package removal or a
+	// rename in an upgrade, reads as not-found but is still running, and
+	// systemctl can stop it. Only one that isn't running is skipped.
+	if verb == "stop" && !a.Exists {
+		res, err := systemctl(ctx, r, "systemctl show -p ActiveState --value -- "+ssh.Quote(Unit(name)))
+		if err != nil {
+			return err
+		}
+		switch strings.TrimSpace(string(res.Stdout)) {
+		case "active", "activating", "reloading", "deactivating":
+		default:
+			return nil
+		}
 	}
 	if a.NeedsReload {
 		if err := run(ctx, r, "systemctl daemon-reload"); err != nil {

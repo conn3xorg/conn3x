@@ -92,3 +92,37 @@ func TestServiceActionResetFailedNeverStarted(t *testing.T) {
 		t.Fatalf("conn3x-limited is %q after its first restart with reset_failed", got)
 	}
 }
+
+type serviceActionStopVars struct{ Port, KeyFile, KnownHosts, N string }
+
+// stop stops a running unit when its triggers change, and leaves a unit
+// that isn't installed alone.
+func TestServiceActionStop(t *testing.T) {
+	h := startHost(t, "rocky10")
+	w := newWorkdir(t, "service_action_stop")
+	state := func() string {
+		return strings.TrimSpace(h.exec("", "sh", "-c", "systemctl is-active conn3x-busy || true"))
+	}
+	w.writeAs("main.circuit.hcl", serviceActionStopVars{h.port, h.keyFile, h.knownHosts, "1"})
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	h.exec("", "systemctl", "start", "conn3x-busy")
+	if got := state(); got != "active" {
+		t.Fatalf("conn3x-busy is %q after starting it by hand", got)
+	}
+	h.exec("", "sh", "-c", `printf '[Service]\nExecStart=/bin/sleep infinity\n' > /etc/systemd/system/conn3x-orphan.service && systemctl daemon-reload && systemctl start conn3x-orphan && rm /etc/systemd/system/conn3x-orphan.service && systemctl daemon-reload`)
+	orphan := func() string {
+		return strings.TrimSpace(h.exec("", "sh", "-c", "systemctl show -p LoadState,ActiveState --value conn3x-orphan | tr '\\n' ' '"))
+	}
+	if got := orphan(); got != "not-found active" {
+		t.Fatalf("conn3x-orphan reads %q, want not-found and active", got)
+	}
+	w.writeAs("main.circuit.hcl", serviceActionStopVars{h.port, h.keyFile, h.knownHosts, "2"})
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := state(); got != "inactive" {
+		t.Fatalf("conn3x-busy is %q after a stop", got)
+	}
+	if got := orphan(); got != "not-found inactive" {
+		t.Fatalf("conn3x-orphan reads %q after a stop, want not-found and inactive", got)
+	}
+}

@@ -250,6 +250,7 @@ func TestHandlerReloadsSystemdWhenUnitChanged(t *testing.T) {
 		{func(c context.Context, h *host, n string) error { return Restart(c, h, n) }, "restart"},
 		{func(c context.Context, h *host, n string) error { return Reload(c, h, n) }, "reload"},
 		{func(c context.Context, h *host, n string) error { return Start(c, h, n) }, "start"},
+		{func(c context.Context, h *host, n string) error { return Stop(c, h, n) }, "stop"},
 		{func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) }, "try-restart"},
 		{func(c context.Context, h *host, n string) error { return TryReload(c, h, n) }, "try-reload-or-restart"},
 	} {
@@ -426,6 +427,21 @@ func TestStartRerunsActiveOneshot(t *testing.T) {
 	}
 }
 
+// stop skips a unit that isn't installed and isn't running, and stops one
+// whose unit file was removed while it ran.
+func TestStopNotFound(t *testing.T) {
+	for active, want := range map[string]bool{"active": true, "inactive": false} {
+		h := &host{show: show("not-found", "inactive", "", "no"), fail: map[string]ssh.Result{"-p ActiveState": {Stdout: []byte(active + "\n")}}}
+		if err := Stop(ctx, h, "orphan"); err != nil {
+			t.Fatal(err)
+		}
+		all := strings.Join(h.ran, "\n")
+		if got := strings.HasSuffix(all, "systemctl stop -- 'orphan.service'"); got != want {
+			t.Errorf("not-found, ActiveState=%s: stopped = %v, want %v, ran:\n%s", active, got, want, all)
+		}
+	}
+}
+
 func TestDaemonReload(t *testing.T) {
 	h := &host{show: show("loaded", "active", "enabled", "no")}
 	if err := DaemonReload(ctx, h); err != nil {
@@ -442,12 +458,13 @@ func TestTryActionsSkipMissingUnit(t *testing.T) {
 	for _, fn := range []func(context.Context, *host, string) error{
 		func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) },
 		func(c context.Context, h *host, n string) error { return TryReload(c, h, n) },
+		func(c context.Context, h *host, n string) error { return Stop(c, h, n) },
 	} {
 		h := &host{show: show("not-found", "inactive", "", "no")}
 		if err := fn(ctx, h, "systemd-resolved"); err != nil {
 			t.Fatal(err)
 		}
-		if all := strings.Join(h.ran, "\n"); strings.Contains(all, "try-") {
+		if all := strings.Join(h.ran, "\n"); strings.Contains(all, "try-") || strings.Contains(all, "systemctl stop") {
 			t.Errorf("ran a try- action on a missing unit:\n%s", all)
 		}
 	}
