@@ -1591,6 +1591,8 @@ func omitDefault(s string) (string, bool) {
 	return name, true
 }
 
+var rpmVersioned = regexp.MustCompile(`-[0-9]`)
+
 func packageModule(in *input) ([]step, string) {
 	names := in.list("name")
 	if len(names) == 0 {
@@ -1630,6 +1632,17 @@ func packageModule(in *input) ([]step, string) {
 	if in.has("update_cache") {
 		in.ignore("update_cache", "cache_valid_time")
 		notes = append(notes, "update_cache dropped: Conn3x refreshes the package lists when a package isn't found.")
+	}
+	// Ansible's dnf and dnf5 read allow_downgrade only for a name with a
+	// version, and apt's --allow-downgrades only matters when apt would
+	// install an older version than the one there. Without a version that
+	// takes a pin of 1000 or more, where the step stops with apt's error.
+	downgrade := false
+	if in.mod != "apk" && in.mod != "zypper" && in.has("allow_downgrade") {
+		downgrade = in.bool("allow_downgrade", false) && st != "absent"
+		if downgrade && ((in.mod == "apt" && !in.has("deb")) || (in.mod == "package" && in.family != "RedHat")) {
+			notes = append(notes, "allow_downgrade dropped: with no version in the name, Ansible downgrades only when apt preferences pin an older version at priority 1000 or more, and the step then stops with apt's downgrade error. A version in the name can't downgrade on apt yet (#1476).")
+		}
 	}
 	// A package file: apt's deb, or an .rpm path or URL in place of a name.
 	var files []string
@@ -1699,6 +1712,11 @@ func packageModule(in *input) ([]step, string) {
 				return nil, "upgrades every package, which Conn3x leaves to a scheduled job rather than a step"
 			}
 			return nil, "package name " + strconv.Quote(n) + " cannot be a package step"
+		}
+		// shortcut: a dash then a digit reads as dnf's name-version, which
+		// also keeps a few real names, such as foo-2, for review.
+		if downgrade && in.mod != "apt" && i >= len(files) && !strings.Contains(n, "\x00") && rpmVersioned.MatchString(n) {
+			return nil, "sets allow_downgrade with " + strconv.Quote(n) + ", which looks like a name with a version, and the package step isn't known to downgrade to a version on every family yet (#1476)"
 		}
 		attrs := []attr{s("name", n)}
 		// The files went in at the front of names.
