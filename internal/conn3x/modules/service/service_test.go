@@ -392,6 +392,17 @@ func TestResetFailed(t *testing.T) {
 	if all := strings.Join(h.ran, "\n"); strings.Contains(all, "reset-failed") {
 		t.Errorf("reset-failed ran on a missing unit:\n%s", all)
 	}
+	// Installed but never started: systemd has nothing in memory to clear.
+	notLoaded := ssh.Result{ExitCode: 1, Stderr: []byte("Failed to reset failed state of unit jenkins.service: Unit jenkins.service not loaded.\n")}
+	h = &host{show: show("loaded", "inactive", "disabled", "no"), fail: map[string]ssh.Result{"reset-failed": notLoaded}}
+	if err := ResetFailed(ctx, h, "jenkins"); err != nil {
+		t.Errorf("a unit systemd hasn't loaded: %v", err)
+	}
+	other := ssh.Result{ExitCode: 1, Stderr: []byte("Access denied\n")}
+	h = &host{show: show("loaded", "failed", "enabled", "no"), fail: map[string]ssh.Result{"reset-failed": other}}
+	if err := ResetFailed(ctx, h, "jenkins"); err == nil || !strings.Contains(err.Error(), "Access denied") {
+		t.Errorf("another failure: err = %v", err)
+	}
 }
 
 // A oneshot that RemainAfterExit keeps active is restarted, so it runs

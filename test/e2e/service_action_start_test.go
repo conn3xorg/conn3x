@@ -78,3 +78,17 @@ func TestServiceActionResetFailed(t *testing.T) {
 		t.Fatalf("conn3x-limited is %q after the reset_failed restart", got)
 	}
 }
+
+// reset_failed on a unit that's installed but was never started, as
+// Jenkins is after its package on Rocky: systemd says "not loaded", and
+// there's nothing to clear, so the start goes ahead.
+func TestServiceActionResetFailedNeverStarted(t *testing.T) {
+	h := startHost(t, "rocky10")
+	w := newWorkdir(t, "service_action_reset_failed")
+	w.writeAs("main.circuit.hcl", serviceActionResetVars{h.port, h.keyFile, h.knownHosts, "1", "true"})
+	w.mustConn3x("init", "-no-color")
+	w.mustConn3x("apply", "-auto-approve", "-no-color")
+	if got := strings.TrimSpace(h.exec("", "systemctl", "is-active", "conn3x-limited")); got != "active" {
+		t.Fatalf("conn3x-limited is %q after its first restart with reset_failed", got)
+	}
+}
