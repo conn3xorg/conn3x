@@ -27,6 +27,14 @@ func refMark(expr string) string { return "\x00" + expr + "\x00" }
 
 var marks = regexp.MustCompile("\x00([^\x00]*)\x00")
 
+// readableReason displays references in diagnostic text without leaking the
+// converter's internal markers into summaries or TODO comments.
+func readableReason(reason string) string {
+	return marks.ReplaceAllStringFunc(reason, func(mark string) string {
+		return "${" + mark[1:len(mark)-1] + "}"
+	})
+}
+
 // literalLoop reads loop: [a, b, ...]. It returns the reason when the loop
 // isn't a list of plain values written in the playbook.
 func literalLoop(n *yaml.Node) ([]string, string) {

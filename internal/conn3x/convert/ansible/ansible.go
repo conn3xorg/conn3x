@@ -414,7 +414,7 @@ func (c *converter) steps(cb *hclwrite.Body, taskNodes []taskAt, handlerNodes []
 			why := "only runs systemctl daemon-reload, which Conn3x does itself before a service step or handler acts on a unit whose file changed, so it has no handler here. If it was for a unit nothing restarts, such as a timer, add a command step that runs systemctl daemon-reload"
 			cb.AppendNewline()
 			comment(cb, fmt.Sprintf("TODO(convert): Handler %q (%s line %d) %s.", hname, c.file, h.Line, why))
-			c.res.Notes = append(c.res.Notes, Issue{Task: hname, File: c.file, Line: h.Line, Reason: why})
+			c.res.Notes = append(c.res.Notes, Issue{Task: hname, File: c.file, Line: h.Line, Reason: readableReason(why)})
 			continue
 		}
 		attrs, hname, when := c.handler(cb, h, vars)
@@ -1523,7 +1523,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			for _, note := range s.notes[1:] {
 				comment(body, note)
 				if r, ok := strings.CutPrefix(note, "TODO(convert): "); ok {
-					c.res.Notes = append(c.res.Notes, Issue{Task: firstNonEmpty(name, mod), File: c.file, Line: node.Line, Reason: r})
+					c.res.Notes = append(c.res.Notes, Issue{Task: firstNonEmpty(name, mod), File: c.file, Line: node.Line, Reason: readableReason(r)})
 				}
 			}
 			continue
@@ -1541,7 +1541,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		for _, note := range s.notes {
 			comment(body, note)
 			if r, ok := strings.CutPrefix(note, "TODO(convert): "); ok {
-				c.res.Notes = append(c.res.Notes, Issue{Task: firstNonEmpty(name, mod), File: c.file, Line: node.Line, Reason: r})
+				c.res.Notes = append(c.res.Notes, Issue{Task: firstNonEmpty(name, mod), File: c.file, Line: node.Line, Reason: readableReason(r)})
 			}
 		}
 		if delegate == "controller" {
@@ -1652,12 +1652,14 @@ func delegateHost(n *yaml.Node) (string, string) {
 // playIssue records something about a whole play for review, as a comment
 // at the top of its circuit.
 func (c *converter) playIssue(body *hclwrite.Body, play string, node *yaml.Node, reason string) {
+	reason = readableReason(reason)
 	c.res.Review = append(c.res.Review, Issue{Task: "play " + play, File: c.file, Line: node.Line, Reason: reason})
 	comment(body, fmt.Sprintf("TODO(convert): Play %q (%s line %d) %s.", play, c.file, node.Line, reason))
 }
 
 // issue records a task for review and leaves it in the output as comments.
 func (c *converter) issue(body *hclwrite.Body, name string, node *yaml.Node, reason string) {
+	reason = readableReason(reason)
 	c.res.Review = append(c.res.Review, Issue{Task: name, File: c.file, Line: node.Line, Reason: reason})
 	body.AppendNewline()
 	what := "This task"

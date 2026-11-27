@@ -25,6 +25,13 @@ func goldenRole(t *testing.T, name string) Result {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, issues := range [][]Issue{res.Review, res.Notes} {
+		for _, issue := range issues {
+			if strings.ContainsRune(issue.Reason, '\x00') {
+				t.Errorf("reason contains internal reference marks: %q", issue.Reason)
+			}
+		}
+	}
 	dir := filepath.Join("testdata", "role", name+".circuit")
 	if *update {
 		os.RemoveAll(dir)
