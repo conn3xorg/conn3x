@@ -210,7 +210,8 @@ container, in about five.
   The roles a playbook runs convert too, each into a circuit directory of its own, and
   `-role` converts a single role. Database tasks and `win_updates` come across as well.
   A `command` with shell characters, a Vault value or anything tagged `never` is left
-  for you, with the reason.
+  for you, with the reason. References in those reasons use circuit notation, such as
+  `${var.port}` or `${item.value}`, so you can identify the value that needs review.
 - **Borrows what others have written.** [conn3x.org/circuits](https://conn3x.org/circuits)
   lists shared circuits, such as nginx, users and a hardened baseline, that you add with
   one `module` block. Written one worth sharing? List it there.

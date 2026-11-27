@@ -837,6 +837,7 @@ func (c *converter) meta(body *hclwrite.Body) {
 // note records something about the whole role for review, as a comment at
 // the top of main.circuit.hcl.
 func (c *converter) note(body *hclwrite.Body, what, file string, line int, reason string) {
+	reason = readableReason(reason)
 	c.res.Review = append(c.res.Review, Issue{Task: what, File: file, Line: line, Reason: reason})
 	where := file
 	if line > 0 {
