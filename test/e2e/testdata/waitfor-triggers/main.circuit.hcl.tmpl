@@ -1,0 +1,26 @@
+circuit "boot" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  # Stands in for a restart: the file goes, and comes back 3 seconds later.
+  step "bounce" {
+    command {
+      command  = "rm -f /run/conn3x-ready; (sleep 3; touch /run/conn3x-ready) >/dev/null 2>&1 &"
+      triggers = { n = "{{.N}}" }
+    }
+  }
+
+  step "ready" {
+    wait_for {
+      path     = "/run/conn3x-ready"
+      timeout  = "30s"
+      triggers = { bounce = conn3x_command.boot__bounce[each.key].revision }
+    }
+  }
+}

@@ -56,6 +56,31 @@ step "app_started" {
   }
 }
 ```
+Restart an app when its configuration changes, then wait for it to listen again before the next step:
+
+```hcl
+step "config" {
+  file {
+    path    = "/etc/myapp/config.yaml"
+    content = "port: 3000\n"
+  }
+}
+
+step "restart" {
+  service_action {
+    name     = "myapp"
+    triggers = { config = conn3x_file.docs__config[each.key].revision }
+  }
+}
+
+step "listening" {
+  wait_for {
+    port     = 3000
+    triggers = { restart = conn3x_service_action.docs__restart[each.key].revision }
+  }
+}
+```
+
 <!-- reference -->
 ## How it works
 
@@ -70,6 +95,8 @@ step "app_started" {
 **URLs.** Conn3x sends a `GET` to `url` once a second until the answer's status is in `status_codes`, `200` unless you say otherwise, and, with `body_contains`, its body holds that text. Redirects are followed first. The request is the host's, not this machine's: it goes through the SSH connection as a forwarded TCP connection that sshd opens on the host, so `127.0.0.1` is the host's loopback, a name resolves through the host's DNS, and the host needs no `curl` or `wget`. The host's sshd has to allow TCP forwarding, which it does by default; with `AllowTcpForwarding no`, the step fails with sshd's refusal instead of waiting. `https://` checks the certificate against this machine's trusted roots unless `skip_tls_verify` is true. A timeout says what the last answer was, such as `answered 503 Service Unavailable, not 200`. A proxy set on this machine isn't used.
 
 **Reading.** Every plan checks again. If the path is gone, nothing listens on the port any more, or the URL stops answering as it should, the plan shows the step out of sync and the next apply waits again.
+
+**Waiting again.** A check that passed at plan time isn't run again in the same apply. So a wait after a restart, which takes the port away only during the apply, needs `triggers`: set it to the restart step's revision, and the step waits again whenever that step runs.
 
 **Validation.** Set exactly one of `path`, `port` and `url`. `path` must be absolute, `port` must be between 1 and 65535, and `state` is `"present"` (the default) or `"absent"`, and `"absent"` goes only with `path` or `port`, without `contains`. `contains` goes only with `path`, and `url` must start with `http://` or `https://` and name a host. A URL with a user or password in it is refused, since it would land in state. Changing `url` or its settings changes the step in place, and the next apply waits on the new ones.
 

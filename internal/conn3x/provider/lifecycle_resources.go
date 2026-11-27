@@ -47,6 +47,7 @@ func waitForSchema() providers.Schema {
 			"skip_tls_verify": {Type: cty.Bool, Optional: true, Description: "true accepts any certificate for an https:// url, such as a self-signed one on a new host. Defaults to false."},
 			"state":           {Type: cty.String, Optional: true, Description: "\"present\" (default) waits for path to exist or port to listen. \"absent\" waits the other way: for path to be gone, such as a lock file, or for nothing to listen on port, such as before an upgrade."},
 			"timeout":         {Type: cty.String, Optional: true, Description: "How long to wait. Defaults to \"5m\"."},
+			"triggers":        {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value, such as the revision of a step that restarts the service; whenever it changes, the apply waits again, even if the check passed at plan time."},
 			"in_sync":         {Type: cty.Bool, Computed: true, Description: "Whether it was ready at the last refresh."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
@@ -104,7 +105,7 @@ func validateWaitFor(cfg cty.Value) tfdiags.Diagnostics {
 
 func planWaitFor(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	// url and its settings change in place, so existing steps keep their ids.
-	return planSynced(req, "wait_for", []string{"path", "port"}, []string{"state", "contains", "url", "status_codes", "body_contains", "skip_tls_verify"})
+	return planSynced(req, "wait_for", []string{"path", "port"}, []string{"state", "contains", "url", "status_codes", "body_contains", "skip_tls_verify", "triggers"})
 }
 
 func readWaitFor(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
