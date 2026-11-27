@@ -135,6 +135,9 @@ func winCopyModule(in *input) ([]step, string) {
 	case in.has("src"):
 		if p := in.local("files", in.str("src")); p != "" {
 			attrs = append(attrs, attr{key: "content", raw: "file(" + moduleFile(p) + ")"})
+			if in.role != nil {
+				in.copy(p)
+			}
 		}
 	default:
 		return nil, "has neither content nor src"
