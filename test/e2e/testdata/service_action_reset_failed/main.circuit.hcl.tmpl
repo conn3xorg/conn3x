@@ -1,0 +1,25 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "unit" {
+    file {
+      path    = "/etc/systemd/system/conn3x-limited.service"
+      content = "[Unit]\nStartLimitIntervalSec=1h\nStartLimitBurst=1\n[Service]\nExecStart=/bin/sleep infinity\n"
+    }
+  }
+
+  step "restart" {
+    service_action {
+      name         = "conn3x-limited"
+      reset_failed = {{.Reset}}
+      triggers     = { n = "{{.N}}" }
+    }
+  }
+}

@@ -232,6 +232,17 @@ func TryReload(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "try-reload-or-restart")
 }
 
+// ResetFailed clears the unit's failed state and its start limit, so a
+// unit that hit StartLimitBurst can be started again. A unit that isn't
+// installed has nothing to clear.
+func ResetFailed(ctx context.Context, r modules.Runner, name string) error {
+	a, err := Read(ctx, r, name)
+	if err != nil || !a.Exists {
+		return err
+	}
+	return run(ctx, r, "systemctl reset-failed -- "+ssh.Quote(Unit(name)))
+}
+
 // DaemonReload has systemd reread its unit files, for a change that a
 // unit picks up at its next start.
 func DaemonReload(ctx context.Context, r modules.Runner) error {
