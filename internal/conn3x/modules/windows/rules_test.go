@@ -84,8 +84,8 @@ func TestScriptsAreOnlyEmbeddedFiles(t *testing.T) {
 						return true
 					}
 					file, _ := strconv.Unquote(name.Value)
-					if _, err := scripts.ReadFile(file); err != nil {
-						t.Errorf("%s: %s: %v", path, fd.Name.Name, err)
+					if _, ok := scripts()[file]; !ok {
+						t.Errorf("%s: %s: no embedded script %s", path, fd.Name.Name, file)
 					}
 				}
 				if pkg != "ps" {

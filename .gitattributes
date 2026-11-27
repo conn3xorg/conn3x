@@ -2,3 +2,6 @@ internal/**/*.tf text eol=lf
 internal/**/*.tofu text eol=lf
 internal/**/*.json text eol=lf
 internal/**/*.tmpl text eol=lf
+
+# windows/pack_test.go checks scripts.tar.gz against these byte for byte.
+internal/conn3x/modules/windows/**/*.ps1 text eol=lf
