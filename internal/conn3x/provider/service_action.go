@@ -18,19 +18,19 @@ import (
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
-// conn3x_service_action restarts or reloads a unit whenever its triggers
-// change. Circuit handlers lower to it, with the notifying steps as
-// triggers, so the action runs only when one of them changed.
+// conn3x_service_action restarts, reloads, starts or stops a unit whenever
+// its triggers change. Circuit handlers lower to it, with the notifying
+// steps as triggers, so the action runs only when one of them changed.
 
 func serviceActionSchema() providers.Schema {
 	return providers.Schema{
 		Block: &configschema.Block{
-			Description: "Restarts or reloads a systemd unit when its triggers change.",
+			Description: "Restarts, reloads, starts or stops a systemd unit when its triggers change.",
 			Attributes: map[string]*configschema.Attribute{
 				"id":           {Type: cty.String, Computed: true},
 				"revision":     revisionAttr(),
 				"name":         {Type: cty.String, Optional: true, Description: "Unit name. Required, except with action = \"daemon-reload\", which takes none."},
-				"action":       {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"start\", \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". start runs a oneshot unit, even one RemainAfterExit keeps active, and waits for it to finish. A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
+				"action":       {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"start\", \"stop\", \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". start runs a oneshot unit, even one RemainAfterExit keeps active, and waits for it to finish; stop leaves a unit that isn't installed alone. A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
 				"triggers":     {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the action runs again whenever it changes."},
 				"serial":       {Type: cty.Bool, Optional: true, Description: "Act on one host at a time, waiting for systemctl to return before the next."},
 				"reset_failed": {Type: cty.Bool, Optional: true, Description: "With action = \"restart\" or \"start\": clear the unit's failed state and start limit first, so a unit that systemd refuses with \"start request repeated too quickly\" starts."},
@@ -137,6 +137,8 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 	switch action {
 	case "start":
 		err = service.Start(ctx, host, name)
+	case "stop":
+		err = service.Stop(ctx, host, name)
 	case "reload":
 		err = service.Reload(ctx, host, name)
 	case "try-restart":
@@ -153,7 +155,7 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 }
 
 // serviceActions are the actions a service_action step takes.
-var serviceActions = []string{"restart", "start", "reload", "try-restart", "try-reload", "daemon-reload"}
+var serviceActions = []string{"restart", "start", "stop", "reload", "try-restart", "try-reload", "daemon-reload"}
 
 var serialLocks sync.Map // unit name => *sync.Mutex
 

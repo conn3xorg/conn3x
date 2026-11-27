@@ -250,6 +250,7 @@ func TestHandlerReloadsSystemdWhenUnitChanged(t *testing.T) {
 		{func(c context.Context, h *host, n string) error { return Restart(c, h, n) }, "restart"},
 		{func(c context.Context, h *host, n string) error { return Reload(c, h, n) }, "reload"},
 		{func(c context.Context, h *host, n string) error { return Start(c, h, n) }, "start"},
+		{func(c context.Context, h *host, n string) error { return Stop(c, h, n) }, "stop"},
 		{func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) }, "try-restart"},
 		{func(c context.Context, h *host, n string) error { return TryReload(c, h, n) }, "try-reload-or-restart"},
 	} {
@@ -442,12 +443,13 @@ func TestTryActionsSkipMissingUnit(t *testing.T) {
 	for _, fn := range []func(context.Context, *host, string) error{
 		func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) },
 		func(c context.Context, h *host, n string) error { return TryReload(c, h, n) },
+		func(c context.Context, h *host, n string) error { return Stop(c, h, n) },
 	} {
 		h := &host{show: show("not-found", "inactive", "", "no")}
 		if err := fn(ctx, h, "systemd-resolved"); err != nil {
 			t.Fatal(err)
 		}
-		if all := strings.Join(h.ran, "\n"); strings.Contains(all, "try-") {
+		if all := strings.Join(h.ran, "\n"); strings.Contains(all, "try-") || strings.Contains(all, "systemctl stop") {
 			t.Errorf("ran a try- action on a missing unit:\n%s", all)
 		}
 	}

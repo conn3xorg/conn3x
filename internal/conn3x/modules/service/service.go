@@ -215,6 +215,11 @@ func Start(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "start")
 }
 
+// Stop stops the unit. A unit that isn't installed has nothing to stop.
+func Stop(ctx context.Context, r modules.Runner, name string) error {
+	return act(ctx, r, name, "stop")
+}
+
 // Reload asks the unit to reload its configuration, or starts it when it
 // isn't running.
 func Reload(ctx context.Context, r modules.Runner, name string) error {
@@ -272,9 +277,9 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 	if err != nil {
 		return err
 	}
-	// systemctl refuses try-restart on a unit that isn't installed, but
-	// "only if running" means there's nothing to do.
-	if strings.HasPrefix(verb, "try-") && !a.Exists {
+	// systemctl refuses try-restart and stop on a unit that isn't
+	// installed, but "only if running" and "stopped" are already true.
+	if (strings.HasPrefix(verb, "try-") || verb == "stop") && !a.Exists {
 		return nil
 	}
 	if a.NeedsReload {
