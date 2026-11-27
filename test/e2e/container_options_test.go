@@ -25,10 +25,12 @@ func TestContainerOptions(t *testing.T) {
 			if c.engine == "podman" {
 				// As in TestContainerStep: Podman in a container needs vfs.
 				box.exec("", "sh", "-c", "mkdir -p /etc/containers/storage.conf.d && printf '[storage]\\ndriver = \"vfs\"\\n' | tee /etc/containers/storage.conf > /etc/containers/storage.conf.d/99-vfs.conf")
+				pullThroughMirror(box)
 			} else {
 				// Overlay can't mount on the host container's overlay either, so
-				// dockerd gets vfs, which needs the classic image store.
-				box.exec("", "sh", "-c", `mkdir -p /etc/docker && echo '{"storage-driver":"vfs","features":{"containerd-snapshotter":false}}' > /etc/docker/daemon.json`)
+				// dockerd gets vfs, which needs the classic image store. The
+				// mirror is pullThroughMirror's, for dockerd.
+				box.exec("", "sh", "-c", `mkdir -p /etc/docker && echo '{"storage-driver":"vfs","features":{"containerd-snapshotter":false},"registry-mirrors":["https://mirror.gcr.io"]}' > /etc/docker/daemon.json`)
 			}
 			knownFile := shareKey(t, box)
 			w := newWorkdir(t, "container_options")
