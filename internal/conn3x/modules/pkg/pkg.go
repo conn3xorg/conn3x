@@ -440,14 +440,17 @@ func Apply(ctx context.Context, r modules.Runner, family Family, d Desired) erro
 			return Run(ctx, r, "dnf -y"+d.recommends(family)+d.repoOptions(family)+" install "+ssh.Quote(spec))
 		}
 	case Deb:
-		spec := d.Name
+		spec, old := d.Name, ""
 		if d.Version != "" {
-			spec += "=" + d.Version
+			// version is what the host should end up with, so a pin below
+			// the installed version downgrades, as dnf, zypper and apk do.
+			// Without the flag apt-get -y stops with exit 100.
+			spec, old = spec+"="+d.Version, " --allow-downgrades"
 		}
 		if d.State == Absent {
 			return Run(ctx, r, exactDeb(d.Name, `dpkg-query -W -f '${Package}\n' --`)+aptGet+" remove "+ssh.Quote(d.Name))
 		}
-		install := exactDeb(d.Name, "apt-cache pkgnames --") + aptGet + d.recommends(family) + d.repoOptions(family) + " install " + ssh.Quote(spec)
+		install := exactDeb(d.Name, "apt-cache pkgnames --") + aptGet + d.recommends(family) + d.repoOptions(family) + old + " install " + ssh.Quote(spec)
 		err := Run(ctx, r, install)
 		if err != nil && staleLists(err) {
 			// Fresh hosts often have no package lists yet, and an image a few

@@ -1591,7 +1591,13 @@ func omitDefault(s string) (string, bool) {
 	return name, true
 }
 
-var rpmVersioned = regexp.MustCompile(`-[0-9]`)
+var (
+	rpmVersioned = regexp.MustCompile(`-[0-9]`)
+	// rpmNameVersion splits dnf's NAME-VERSION or NAME-VERSION-RELEASE,
+	// where the version and the release start with a digit, so a name
+	// such as java-17-openjdk stays whole.
+	rpmNameVersion = regexp.MustCompile(`^(.+?)-((?:[0-9]+:)?[0-9][^-]*(?:-[0-9][^-]*)?)$`)
+)
 
 func packageModule(in *input) ([]step, string) {
 	names := in.list("name")
@@ -1640,10 +1646,16 @@ func packageModule(in *input) ([]step, string) {
 	downgrade := false
 	if in.mod != "apk" && in.mod != "zypper" && in.has("allow_downgrade") {
 		downgrade = in.bool("allow_downgrade", false) && st != "absent"
-		if downgrade && ((in.mod == "apt" && !in.has("deb")) || (in.mod == "package" && in.family != "RedHat")) {
-			notes = append(notes, "allow_downgrade dropped: with no version in the name, Ansible downgrades only when apt preferences pin an older version at priority 1000 or more, and the step then stops with apt's downgrade error. A version in the name can't downgrade on apt yet (#1476).")
+		pinned := slices.ContainsFunc(names, func(n string) bool { return strings.Contains(n, "=") })
+		if downgrade && !pinned && ((in.mod == "apt" && !in.has("deb")) || (in.mod == "package" && in.family != "RedHat")) {
+			notes = append(notes, "allow_downgrade dropped: with no version in the name, Ansible downgrades only when apt preferences pin an older version at priority 1000 or more, and the step then stops with apt's downgrade error.")
 		}
 	}
+	// Which way the task writes a name with a version: apt's NAME=VERSION
+	// or dnf's NAME-VERSION. A package task that can run on either family
+	// is neither, since each reads the other's form as part of the name.
+	rpmStyle := in.mod == "dnf" || in.mod == "dnf5" || in.mod == "yum" || (in.mod == "package" && in.family == "RedHat")
+	aptStyle := in.mod == "apt" || (in.mod == "package" && in.family == "Debian")
 	// A package file: apt's deb, or an .rpm path or URL in place of a name.
 	var files []string
 	if in.mod == "apt" && in.has("deb") {
@@ -1702,6 +1714,17 @@ func packageModule(in *input) ([]step, string) {
 	}
 	var steps []step
 	for i, n := range names {
+		// With allow_downgrade, a name with a version becomes the step's
+		// version, which the host ends up with, older or newer, as
+		// Ansible's allow_downgrade does (#1476).
+		var version string
+		if downgrade && i >= len(files) && !strings.Contains(n, "\x00") {
+			if b, a, ok := strings.Cut(n, "="); ok && aptStyle {
+				n, version = b, a
+			} else if m := rpmNameVersion.FindStringSubmatch(n); m != nil && rpmStyle {
+				n, version = m[1], m[2]
+			}
+		}
 		// A glob or '*' names no single package and cannot validate as a
 		// package step. Leave the whole task for review, not a partial list.
 		// Names holding \x00 are marks for variables and loop items, filled in
@@ -1715,10 +1738,25 @@ func packageModule(in *input) ([]step, string) {
 		}
 		// shortcut: a dash then a digit reads as dnf's name-version, which
 		// also keeps a few real names, such as foo-2, for review.
-		if downgrade && in.mod != "apt" && i >= len(files) && !strings.Contains(n, "\x00") && rpmVersioned.MatchString(n) {
-			return nil, "sets allow_downgrade with " + strconv.Quote(n) + ", which looks like a name with a version, and the package step isn't known to downgrade to a version on every family yet (#1476)"
+		if downgrade && !rpmStyle && !aptStyle && i >= len(files) && !strings.Contains(n, "\x00") && rpmVersioned.MatchString(n) {
+			return nil, "sets allow_downgrade with " + strconv.Quote(n) + ", which looks like a name with a version on the Red Hat family but is a package name on Debian and Ubuntu; limit the task to one family, or write a package step with name and version"
 		}
 		attrs := []attr{s("name", n)}
+		if version != "" {
+			if stVar != nil {
+				return nil, "takes its state from a role default with a version in the name, and a package step's version only applies with state \"present\""
+			}
+			if err := (pkg.Desired{Name: n, State: pkg.State(st), Version: version}).Validate(); err != nil {
+				return nil, "can't be a package step: " + err.Error()
+			}
+			attrs = append(attrs, s("version", version))
+			if rpmStyle {
+				notes = append(notes, "version: the converter read the name "+n+" and the version "+version+" from "+n+"-"+version+".")
+			}
+		} else if !downgrade && rpmStyle && st != "absent" && i >= len(files) && !strings.Contains(n, "\x00") && rpmNameVersion.MatchString(n) {
+			// The name stays whole, which dnf installs as it would.
+			notes = append(notes, "Conn3x installs "+n+" even where a newer version is there, downgrading it; without allow_downgrade, Ansible keeps the newer one.")
+		}
 		// The files went in at the front of names.
 		if i < len(files) {
 			f := files[i]
