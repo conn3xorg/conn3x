@@ -1,0 +1,25 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "unit" {
+    file {
+      path    = "/etc/systemd/system/conn3x-once.service"
+      content = "[Service]\nType=oneshot\nRemainAfterExit={{.Remain}}\nExecStart=/bin/sh -c 'echo run >> /root/once.log; exit {{.Exit}}'\n"
+    }
+  }
+
+  step "run" {
+    service_action {
+      name     = "conn3x-once"
+      action   = "start"
+      triggers = { n = "{{.N}}" }
+    }
+  }
+}

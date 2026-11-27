@@ -249,6 +249,7 @@ func TestHandlerReloadsSystemdWhenUnitChanged(t *testing.T) {
 	}{
 		{func(c context.Context, h *host, n string) error { return Restart(c, h, n) }, "restart"},
 		{func(c context.Context, h *host, n string) error { return Reload(c, h, n) }, "reload"},
+		{func(c context.Context, h *host, n string) error { return Start(c, h, n) }, "start"},
 		{func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) }, "try-restart"},
 		{func(c context.Context, h *host, n string) error { return TryReload(c, h, n) }, "try-reload-or-restart"},
 	} {
@@ -371,6 +372,46 @@ func TestTryActionsLeaveStoppedUnitStopped(t *testing.T) {
 		if !strings.HasSuffix(all, "systemctl "+verb+" -- 'web.service'") || strings.Contains(all, "systemctl start") {
 			t.Errorf("%s on a stopped unit ran:\n%s", verb, all)
 		}
+	}
+}
+
+// reset-failed runs on an installed unit and is skipped for a missing one,
+// where systemctl would fail with "Unit not loaded".
+func TestResetFailed(t *testing.T) {
+	h := &host{show: show("loaded", "failed", "enabled", "no")}
+	if err := ResetFailed(ctx, h, "jenkins"); err != nil {
+		t.Fatal(err)
+	}
+	if all := strings.Join(h.ran, "\n"); !strings.HasSuffix(all, "systemctl reset-failed -- 'jenkins.service'") {
+		t.Errorf("ran:\n%s", all)
+	}
+	h = &host{show: show("not-found", "inactive", "", "no")}
+	if err := ResetFailed(ctx, h, "jenkins"); err != nil {
+		t.Fatal(err)
+	}
+	if all := strings.Join(h.ran, "\n"); strings.Contains(all, "reset-failed") {
+		t.Errorf("reset-failed ran on a missing unit:\n%s", all)
+	}
+}
+
+// A oneshot that RemainAfterExit keeps active is restarted, so it runs
+// again; a running service of any other type is only started, a no-op.
+func TestStartRerunsActiveOneshot(t *testing.T) {
+	for typ, want := range map[string]string{"oneshot": "restart", "simple": "start"} {
+		h := &host{show: show("loaded", "active", "static", "no"), fail: map[string]ssh.Result{"-p Type": {Stdout: []byte(typ + "\n")}}}
+		if err := Start(ctx, h, "converge"); err != nil {
+			t.Fatal(err)
+		}
+		if all := strings.Join(h.ran, "\n"); !strings.HasSuffix(all, "systemctl "+want+" -- 'converge.service'") {
+			t.Errorf("Type=%s, active: ran\n%s", typ, all)
+		}
+	}
+	h := &host{show: show("loaded", "inactive", "static", "no")}
+	if err := Start(ctx, h, "converge"); err != nil {
+		t.Fatal(err)
+	}
+	if all := strings.Join(h.ran, "\n"); strings.Contains(all, "-p Type") || !strings.HasSuffix(all, "systemctl start -- 'converge.service'") {
+		t.Errorf("inactive unit: ran\n%s", all)
 	}
 }
 

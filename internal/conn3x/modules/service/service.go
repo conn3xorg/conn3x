@@ -208,6 +208,13 @@ func Restart(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "restart")
 }
 
+// Start starts the unit, and waits for a oneshot unit to finish, failing
+// if it fails. A running service is left as it is, but a oneshot runs again
+// even with RemainAfterExit=yes, which keeps it active after its first run.
+func Start(ctx context.Context, r modules.Runner, name string) error {
+	return act(ctx, r, name, "start")
+}
+
 // Reload asks the unit to reload its configuration, or starts it when it
 // isn't running.
 func Reload(ctx context.Context, r modules.Runner, name string) error {
@@ -224,6 +231,17 @@ func TryRestart(ctx context.Context, r modules.Runner, name string) error {
 // it's running.
 func TryReload(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "try-reload-or-restart")
+}
+
+// ResetFailed clears the unit's failed state and its start limit, so a
+// unit that hit StartLimitBurst can be started again. A unit that isn't
+// installed has nothing to clear.
+func ResetFailed(ctx context.Context, r modules.Runner, name string) error {
+	a, err := Read(ctx, r, name)
+	if err != nil || !a.Exists {
+		return err
+	}
+	return run(ctx, r, "systemctl reset-failed -- "+ssh.Quote(Unit(name)))
 }
 
 // DaemonReload has systemd reread its unit files, for a change that a
@@ -257,6 +275,18 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 	if verb == "reload" && !a.Running {
 		verb = "start"
 	}
+	// systemctl start does nothing to a oneshot that RemainAfterExit keeps
+	// active, so the run the step asked for wouldn't happen. A restart of a
+	// oneshot runs it and waits the same way.
+	if verb == "start" && a.Running {
+		res, err := systemctl(ctx, r, "systemctl show -p Type --value -- "+ssh.Quote(Unit(name)))
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(res.Stdout)) == "oneshot" {
+			verb = "restart"
+		}
+	}
 	return run(ctx, r, "systemctl "+verb+" -- "+ssh.Quote(Unit(name)))
 }
 
@@ -267,6 +297,7 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 // here is safe to repeat: show, start, stop, enable and daemon-reload end in
 // the same state however often they run. restart and reload could run twice,
 // which for a service is a second restart or reload, not a different result.
+// A start of a oneshot unit that had already finished runs it once more.
 var (
 	busError   = regexp.MustCompile(`Failed to connect to .*bus|Transport endpoint is not connected|Connection reset by peer`)
 	busRetries = 30
