@@ -1517,7 +1517,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 	}
 	if noLog {
-		if why := c.protectSecrets(steps, args); why != "" {
+		if why := c.protectSecrets(steps, args, t["when"]); why != "" {
 			c.issue(body, name, node, why)
 			return
 		}

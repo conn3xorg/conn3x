@@ -71,6 +71,18 @@ func TestNoLogRoleTask(t *testing.T) {
 			task:   "copy: {dest: \"/root/{{ item }}\", content: \"{{ mysql_root_password }}\"}\n  loop: [a, b]",
 			reason: "write them to this file",
 		},
+		"when reads the secret": {
+			task:   "copy: {dest: /root/.pw, content: \"{{ mysql_root_password }}\"}\n  when: mysql_root_password != \"changeme\"",
+			reason: "tests var.mysql_root_password in when, which runs at plan time",
+		},
+		"when in a list reads the secret": {
+			task:   "copy: {dest: /root/.pw, content: \"{{ mysql_root_password }}\"}\n  when:\n    - ansible_facts.os_family == \"Debian\"\n    - mysql_root_password | length > 0",
+			reason: "tests var.mysql_root_password in when",
+		},
+		"when that doesn't read it": {
+			task: "copy: {dest: /root/.pw, content: \"{{ mysql_root_password }}\", mode: \"0600\"}\n  when: ansible_facts.os_family == \"Debian\"",
+			want: []string{"content_wo = var.mysql_root_password"}, ephemeral: true,
+		},
 		"nothing secret": {
 			task:   "file: {path: /root/.pw, state: absent}",
 			reason: "write them to this file",

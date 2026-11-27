@@ -58,7 +58,7 @@ func (c *converter) noLogFirst(node *yaml.Node, t map[string]*yaml.Node) string 
 // step's write-only argument, or says why it can't: a value with no
 // write-only form, one written into the role, or one that isn't a role
 // variable. It counts each variable's uses for the ephemeral check.
-func (c *converter) protectSecrets(steps []step, args map[string]*yaml.Node) string {
+func (c *converter) protectSecrets(steps []step, args map[string]*yaml.Node, when *yaml.Node) string {
 	total := map[string]int{}
 	var uses map[string]int // the current step's
 	// check reads a write-only value: every reference a role variable.
@@ -140,6 +140,22 @@ func (c *converter) protectSecrets(steps []step, args map[string]*yaml.Node) str
 	}
 	if len(total) == 0 {
 		return noLogReason
+	}
+	// A when that reads a secret runs at plan time and lowers to for_each,
+	// which refuses a sensitive value, and the value couldn't stay out of
+	// the plan anyway.
+	if when != nil {
+		text, _ := yaml.Marshal(when)
+		names := make([]string, 0, len(total))
+		for n := range total {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			if regexp.MustCompile(`\b` + regexp.QuoteMeta(n) + `\b`).Match(text) {
+				return fmt.Sprintf("sets no_log and tests var.%s in when, which runs at plan time, so the value can't stay out of the plan", n)
+			}
+		}
 	}
 	for n, k := range total {
 		c.role.secrets[n] += k
