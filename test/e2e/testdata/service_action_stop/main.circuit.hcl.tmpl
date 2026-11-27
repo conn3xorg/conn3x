@@ -31,4 +31,13 @@ circuit "app" {
       triggers = { n = "{{.N}}" }
     }
   }
+
+  # Its unit file is removed while it runs: not-found, but still active.
+  step "stop_orphan" {
+    service_action {
+      name     = "conn3x-orphan"
+      action   = "stop"
+      triggers = { n = "{{.N}}" }
+    }
+  }
 }

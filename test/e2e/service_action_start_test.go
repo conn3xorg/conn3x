@@ -110,9 +110,19 @@ func TestServiceActionStop(t *testing.T) {
 	if got := state(); got != "active" {
 		t.Fatalf("conn3x-busy is %q after starting it by hand", got)
 	}
+	h.exec("", "sh", "-c", `printf '[Service]\nExecStart=/bin/sleep infinity\n' > /etc/systemd/system/conn3x-orphan.service && systemctl daemon-reload && systemctl start conn3x-orphan && rm /etc/systemd/system/conn3x-orphan.service && systemctl daemon-reload`)
+	orphan := func() string {
+		return strings.TrimSpace(h.exec("", "sh", "-c", "systemctl show -p LoadState,ActiveState --value conn3x-orphan | tr '\\n' ' '"))
+	}
+	if got := orphan(); got != "not-found active" {
+		t.Fatalf("conn3x-orphan reads %q, want not-found and active", got)
+	}
 	w.writeAs("main.circuit.hcl", serviceActionStopVars{h.port, h.keyFile, h.knownHosts, "2"})
 	w.mustConn3x("apply", "-auto-approve", "-no-color")
 	if got := state(); got != "inactive" {
 		t.Fatalf("conn3x-busy is %q after a stop", got)
+	}
+	if got := orphan(); got != "not-found inactive" {
+		t.Fatalf("conn3x-orphan reads %q after a stop, want not-found and inactive", got)
 	}
 }

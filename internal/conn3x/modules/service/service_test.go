@@ -427,6 +427,21 @@ func TestStartRerunsActiveOneshot(t *testing.T) {
 	}
 }
 
+// stop skips a unit that isn't installed and isn't running, and stops one
+// whose unit file was removed while it ran.
+func TestStopNotFound(t *testing.T) {
+	for active, want := range map[string]bool{"active": true, "inactive": false} {
+		h := &host{show: show("not-found", "inactive", "", "no"), fail: map[string]ssh.Result{"-p ActiveState": {Stdout: []byte(active + "\n")}}}
+		if err := Stop(ctx, h, "orphan"); err != nil {
+			t.Fatal(err)
+		}
+		all := strings.Join(h.ran, "\n")
+		if got := strings.HasSuffix(all, "systemctl stop -- 'orphan.service'"); got != want {
+			t.Errorf("not-found, ActiveState=%s: stopped = %v, want %v, ran:\n%s", active, got, want, all)
+		}
+	}
+}
+
 func TestDaemonReload(t *testing.T) {
 	h := &host{show: show("loaded", "active", "enabled", "no")}
 	if err := DaemonReload(ctx, h); err != nil {
