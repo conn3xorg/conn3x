@@ -27,12 +27,13 @@ func serviceActionSchema() providers.Schema {
 		Block: &configschema.Block{
 			Description: "Restarts or reloads a systemd unit when its triggers change.",
 			Attributes: map[string]*configschema.Attribute{
-				"id":       {Type: cty.String, Computed: true},
-				"revision": revisionAttr(),
-				"name":     {Type: cty.String, Optional: true, Description: "Unit name. Required, except with action = \"daemon-reload\", which takes none."},
-				"action":   {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"start\", \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". start runs a oneshot unit and waits for it to finish. A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
-				"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the action runs again whenever it changes."},
-				"serial":   {Type: cty.Bool, Optional: true, Description: "Act on one host at a time, waiting for systemctl to return before the next."},
+				"id":           {Type: cty.String, Computed: true},
+				"revision":     revisionAttr(),
+				"name":         {Type: cty.String, Optional: true, Description: "Unit name. Required, except with action = \"daemon-reload\", which takes none."},
+				"action":       {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"start\", \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". start runs a oneshot unit and waits for it to finish. A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
+				"triggers":     {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the action runs again whenever it changes."},
+				"serial":       {Type: cty.Bool, Optional: true, Description: "Act on one host at a time, waiting for systemctl to return before the next."},
+				"reset_failed": {Type: cty.Bool, Optional: true, Description: "With action = \"restart\" or \"start\": clear the unit's failed state and start limit first, so a unit that systemd refuses with \"start request repeated too quickly\" starts."},
 			},
 			BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
 		},
@@ -54,6 +55,11 @@ func validateServiceAction(cfg cty.Value) tfdiags.Diagnostics {
 		diags = diags.Append(attrError("name", "daemon-reload acts on systemd itself, not a unit, so it takes no name"))
 	case !daemonReload && a.IsKnown() && n.IsNull():
 		diags = diags.Append(attrError("name", "name is required, except with action = \"daemon-reload\""))
+	}
+	// A failed unit isn't running, so only a restart or a start would act on
+	// what reset_failed clears.
+	if rf := cfg.GetAttr("reset_failed"); known(rf) && rf.True() && known(a) && a.AsString() != "restart" && a.AsString() != "start" {
+		diags = diags.Append(attrError("reset_failed", fmt.Sprintf("reset_failed works with action = \"restart\" or \"start\", not %q", a.AsString())))
 	}
 	if known(n) {
 		if err := (service.Desired{Name: n.AsString()}).Validate(); err != nil {
@@ -121,6 +127,12 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 		mu := serialLock(name)
 		mu.Lock()
 		defer mu.Unlock()
+	}
+	if rf := req.PlannedState.GetAttr("reset_failed"); !rf.IsNull() && rf.True() {
+		if err := service.ResetFailed(ctx, host, name); err != nil {
+			resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("service %s: %w", service.Unit(name), err))
+			return resp
+		}
 	}
 	switch action {
 	case "start":

@@ -375,6 +375,25 @@ func TestTryActionsLeaveStoppedUnitStopped(t *testing.T) {
 	}
 }
 
+// reset-failed runs on an installed unit and is skipped for a missing one,
+// where systemctl would fail with "Unit not loaded".
+func TestResetFailed(t *testing.T) {
+	h := &host{show: show("loaded", "failed", "enabled", "no")}
+	if err := ResetFailed(ctx, h, "jenkins"); err != nil {
+		t.Fatal(err)
+	}
+	if all := strings.Join(h.ran, "\n"); !strings.HasSuffix(all, "systemctl reset-failed -- 'jenkins.service'") {
+		t.Errorf("ran:\n%s", all)
+	}
+	h = &host{show: show("not-found", "inactive", "", "no")}
+	if err := ResetFailed(ctx, h, "jenkins"); err != nil {
+		t.Fatal(err)
+	}
+	if all := strings.Join(h.ran, "\n"); strings.Contains(all, "reset-failed") {
+		t.Errorf("reset-failed ran on a missing unit:\n%s", all)
+	}
+}
+
 func TestDaemonReload(t *testing.T) {
 	h := &host{show: show("loaded", "active", "enabled", "no")}
 	if err := DaemonReload(ctx, h); err != nil {

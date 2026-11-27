@@ -72,13 +72,17 @@ func TestServiceActionValidate(t *testing.T) {
 		vals map[string]cty.Value
 		bad  bool
 	}{
-		"bad action":            {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("bounce")}, true},
-		"start":                 {map[string]cty.Value{"name": cty.StringVal("backup"), "action": cty.StringVal("start")}, false},
-		"try-restart":           {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("try-restart")}, false},
-		"try-reload":            {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("try-reload")}, false},
-		"daemon-reload":         {map[string]cty.Value{"action": cty.StringVal("daemon-reload")}, false},
-		"daemon-reload, a name": {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("daemon-reload")}, true},
-		"restart, no name":      {map[string]cty.Value{}, true},
+		"bad action":              {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("bounce")}, true},
+		"start":                   {map[string]cty.Value{"name": cty.StringVal("backup"), "action": cty.StringVal("start")}, false},
+		"try-restart":             {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("try-restart")}, false},
+		"try-reload":              {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("try-reload")}, false},
+		"daemon-reload":           {map[string]cty.Value{"action": cty.StringVal("daemon-reload")}, false},
+		"daemon-reload, a name":   {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("daemon-reload")}, true},
+		"restart, no name":        {map[string]cty.Value{}, true},
+		"reset_failed, restart":   {map[string]cty.Value{"name": cty.StringVal("jenkins"), "reset_failed": cty.True}, false},
+		"reset_failed, start":     {map[string]cty.Value{"name": cty.StringVal("jenkins"), "action": cty.StringVal("start"), "reset_failed": cty.True}, false},
+		"reset_failed, reload":    {map[string]cty.Value{"name": cty.StringVal("jenkins"), "action": cty.StringVal("reload"), "reset_failed": cty.True}, true},
+		"reset_failed false, any": {map[string]cty.Value{"name": cty.StringVal("jenkins"), "action": cty.StringVal("reload"), "reset_failed": cty.False}, false},
 	} {
 		if got := validateServiceAction(actionObj(c.vals)).HasErrors(); got != c.bad {
 			t.Errorf("%s: errors = %v, want %v", name, got, c.bad)

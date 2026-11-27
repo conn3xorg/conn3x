@@ -44,3 +44,31 @@ func TestServiceActionStartOneshot(t *testing.T) {
 		t.Fatalf("failing oneshot ran %d times in all, want 3", runs())
 	}
 }
+
+type serviceActionResetVars struct{ Port, KeyFile, KnownHosts, N, Reset string }
+
+// A unit with StartLimitBurst=1 refuses a second restart within the hour;
+// reset_failed clears the limit so the restart goes through.
+func TestServiceActionResetFailed(t *testing.T) {
+	h := startHost(t, "rocky10")
+	w := newWorkdir(t, "service_action_reset_failed")
+	apply := func(n, reset string) (string, int) {
+		w.writeAs("main.circuit.hcl", serviceActionResetVars{h.port, h.keyFile, h.knownHosts, n, reset})
+		return w.conn3x("apply", "-auto-approve", "-no-color")
+	}
+
+	w.writeAs("main.circuit.hcl", serviceActionResetVars{h.port, h.keyFile, h.knownHosts, "1", "false"})
+	w.mustConn3x("init", "-no-color")
+	if out, code := apply("1", "false"); code != 0 {
+		t.Fatalf("first apply exited %d:\n%s", code, out)
+	}
+	if out, code := apply("2", "false"); code == 0 {
+		t.Fatalf("a second restart inside the start limit succeeded, so the test proves nothing:\n%s", out)
+	}
+	if out, code := apply("3", "true"); code != 0 {
+		t.Fatalf("restart with reset_failed exited %d:\n%s", code, out)
+	}
+	if got := strings.TrimSpace(h.exec("", "systemctl", "is-active", "conn3x-limited")); got != "active" {
+		t.Fatalf("conn3x-limited is %q after the reset_failed restart", got)
+	}
+}
