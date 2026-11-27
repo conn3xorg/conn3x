@@ -6,6 +6,7 @@ package ansible
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -314,6 +315,56 @@ var (
 	releaseCompare      = regexp.MustCompile(`^` + releaseFact + `\s*(==|!=)\s*["']([\w.-]+)["']$`)
 	serviceMgrCompare   = regexp.MustCompile(`^` + serviceMgrFact + `\s*(==|!=)\s*["']([\w.-]+)["']$`)
 )
+
+// hostFacts are the facts a role task's argument can read, by Ansible's
+// name, as the HCL that reads the same value for the step's host. A fact
+// conn3x_host spells differently from Ansible maps to its reason instead.
+// The family is only ever debian or redhat, which os_family_name spells
+// Ansible's way.
+var hostFacts = map[string]struct{ expr, why string }{
+	"ansible_distribution_release": {expr: "data.conn3x_host.facts[each.key].os_codename"},
+	"ansible_service_mgr":          {expr: "data.conn3x_host.facts[each.key].service_manager"},
+	"ansible_architecture":         {expr: "data.conn3x_host.facts[each.key].arch"},
+	"ansible_os_family":            {expr: `local.os_family[each.key] == "redhat" ? "RedHat" : "Debian"`},
+	"ansible_distribution":         {why: "which Ansible spells as a name, such as Ubuntu, and conn3x_host's os_id as an os-release ID, such as ubuntu"},
+	"ansible_distribution_version": {why: "which on Debian Ansible reads with the point release, such as 12.5, and conn3x_host's os_version without it"},
+}
+
+// factSpelling matches {{ ansible_facts.x }} and {{ ansible_facts['x'] }},
+// which render reads as {{ ansible_x }}.
+var factSpelling = regexp.MustCompile(`\{\{\s*ansible_facts(?:\.(\w+)|\[["'](\w+)["']\])\s*\}\}`)
+
+// factArgs lists, by module, the arguments a fact can go in on top of
+// verbatim's: the module checks each with the fact's mark as a plain word,
+// which conn3x_host makes sure a fact is.
+var factArgs = map[string][]string{"deb822_repository": {"name", "suites"}}
+
+// hostFact is the mark for the fact name in argument key, or "" and why
+// it can't be read there.
+func (in *input) hostFact(key, name string, inPath bool) (string, string) {
+	f := hostFacts[name]
+	switch {
+	case f.why != "":
+		return "", fmt.Sprintf("%s reads the host fact %q, %s", key, name, f.why)
+	case inPath:
+		return "", fmt.Sprintf("%s reads the host fact %q in a path, which the converter can't check", key, name)
+	case !slices.Contains(verbatim[in.mod], key) && !slices.Contains(factArgs[in.mod], key):
+		return "", fmt.Sprintf("%s reads the host fact %q, and the converter keeps a fact only where Conn3x uses its value exactly as Ansible does; here it would have to check the value first", key, name)
+	case name == "ansible_distribution_release" && in.family != "Debian":
+		return "", fmt.Sprintf("%s reads the release codename, which conn3x_host leaves empty on hosts without one, such as Rocky Linux; limit the task to Debian-family hosts with when: ansible_facts.os_family == 'Debian'", key)
+	}
+	return refMark(f.expr), ""
+}
+
+// factWord is s with each fact's mark as a word, for a module's checks.
+func factWord(s string) string {
+	return marks.ReplaceAllStringFunc(s, func(m string) string {
+		if strings.HasPrefix(m, "\x00data.conn3x_host.") || strings.HasPrefix(m, "\x00local.os_family[") {
+			return "x"
+		}
+		return m
+	})
+}
 
 // hostID and hostMajor are a host's os-release ID, from its host object's
 // os when given, as for a host this plan creates, and its major version.

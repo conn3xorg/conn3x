@@ -384,6 +384,13 @@ var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\
 
 func (in *input) render(key, s string) string {
 	s = in.role.expandFacts(s)
+	s = factSpelling.ReplaceAllStringFunc(s, func(m string) string {
+		sub := factSpelling.FindStringSubmatch(m)
+		if _, ok := hostFacts["ansible_"+sub[1]+sub[2]]; ok && in.role != nil {
+			return "{{ ansible_" + sub[1] + sub[2] + " }}"
+		}
+		return m
+	})
 	inPath := in.role != nil && slices.Contains(pathArgs[in.mod], key)
 	if in.loop && (in.itemVar != "" || in.itemMaps != nil) {
 		fieldRefs, fieldRef := itemField.FindAllStringIndex(s, -1), -1
@@ -460,6 +467,14 @@ func (in *input) render(key, s string) string {
 		}
 		if v, ok := in.vars[name]; ok {
 			return v
+		}
+		if _, ok := hostFacts[name]; ok && in.role != nil {
+			mark, why := in.hostFact(key, name, inPath)
+			if why != "" {
+				in.fail(why)
+				return m
+			}
+			return mark
 		}
 		if d := in.role.defaultOrNil(name); d != nil && inPath && !d.boolean {
 			if in.role.computed[name] != "" {

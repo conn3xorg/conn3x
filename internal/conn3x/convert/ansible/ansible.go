@@ -786,6 +786,11 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 	if when != "" {
 		c.role.whenUses(when)
 	}
+	for _, a := range svc[0].attrs {
+		if c.role != nil {
+			c.role.whenUses(a.raw)
+		}
+	}
 	return svc[0].attrs, hname, when
 }
 
@@ -1595,6 +1600,9 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		mb := sb.AppendNewBlock(s.module, nil).Body()
 		for _, a := range s.attrs {
+			if a.raw != "" && c.role != nil {
+				c.role.whenUses(a.raw) // a fact in an argument reads conn3x_host too
+			}
 			if a.raw != "" {
 				mb.SetAttributeRaw(a.key, rawTokens(a.raw))
 			} else {
