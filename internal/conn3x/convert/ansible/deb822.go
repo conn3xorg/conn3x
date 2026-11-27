@@ -2,11 +2,16 @@ package ansible
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/pkg"
 	"github.com/opentofu/opentofu/internal/conn3x/modules/repo"
 )
+
+// keyFingerprints is one or more hex fingerprints, spaced or not, which
+// Ansible's docs say name keys already in apt's trusted keyrings.
+var keyFingerprints = regexp.MustCompile(`^[0-9A-Fa-f][0-9A-Fa-f\s,!]{6,}[0-9A-Fa-f!]$`)
 
 // deb822Options are deb822_repository's arguments a repository step has
 // no counterpart for; each keeps the task for review.
@@ -62,8 +67,13 @@ func deb822RepositoryModule(in *input) ([]step, string) {
 		signedBy = key
 		keyAttr = attr{key: "key", raw: "file(" + moduleFile(file) + ")"}
 		note = fmt.Sprintf("Check that %s is the key at %s.", file, in.str("signed_by"))
+	case keyFingerprints.MatchString(signedBy):
+		return nil, "names its key by fingerprint; a repository step needs the armored key itself, so save it as files/NAME.asc and set signed_by to the path it has on the host, such as /etc/apt/keyrings/NAME.asc"
 	default:
-		return nil, "names its key by fingerprint; a repository step needs the armored key itself, so save it under files/ and point signed_by at it"
+		// Ansible's deb822_repository uses a file only if os.path.isfile finds
+		// it on the host; otherwise, with no URL scheme, it writes the value
+		// into Signed-By as it stands. It never reads the role's files/.
+		return nil, fmt.Sprintf("has signed_by %q, which isn't a URL, an absolute path, an armored key or a fingerprint; Ansible doesn't look for it in the role's files/, so set signed_by to the key's absolute path on the host, its URL or the armored key itself", signedBy)
 	}
 	r := repo.Repo{Name: factWord(name), URL: uris[0], Key: signedBy, Suites: []string{factWord(suites[0])}, Components: components}
 	if err := r.Validate(pkg.Deb); err != nil {

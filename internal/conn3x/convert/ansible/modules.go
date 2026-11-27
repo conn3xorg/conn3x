@@ -4092,6 +4092,9 @@ func (in *input) repoKey(from, base string) (key, file, reason string) {
 	if err != nil {
 		return "", "", fmt.Sprintf("can't read the signing key %s: %v", file, err)
 	}
+	if in.role != nil {
+		in.copy(file)
+	}
 	return string(data), file, ""
 }
 
