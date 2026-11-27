@@ -707,7 +707,7 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 	// follows the variable, which is checked to stay one of the two.
 	stateVar := ""
 	if m := jinja.FindStringSubmatch(scalar(args["state"])); action == "" && m != nil && m[0] == strings.TrimSpace(scalar(args["state"])) {
-		if d := c.roleDefault(m[1]); d != nil && (d.value == "restarted" || d.value == "reloaded") {
+		if d := c.roleDefault(m[1]); d != nil && (d.value == "restarted" || d.value == "reloaded") && c.role.computed[m[1]] == "" {
 			stateVar, action = m[1], "var"
 		}
 	}
@@ -1309,7 +1309,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				if !ok {
 					v = *d
 				}
-				put = append(put, refMark("item.value."+f), markRefs(v, vars))
+				put = append(put, refMark("item.value."+f), markRefs(v, vars, c.role))
 			}
 			switch {
 			case why != "":
@@ -1565,11 +1565,11 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			key := c.role.useMapLoop(listVar, in.itemFields)
 			sb.SetAttributeRaw("for_each", rawTokens(fmt.Sprintf("{ for i in var.%s : i.%s => i }", listVar, key)))
 		} else if listVar != "" {
-			sb.SetAttributeRaw("for_each", rawTokens("var."+listVar))
+			sb.SetAttributeRaw("for_each", rawTokens(c.role.ref(listVar)))
 			c.role.listUsed[listVar] = true
 		} else if itemMaps != nil {
 			key, _ := mapLoopKey(itemMaps, in.itemFields)
-			if v, raw := mapLoopObject(itemMaps, in.itemFields, key, vars); raw != "" {
+			if v, raw := mapLoopObject(itemMaps, in.itemFields, key, vars, c.role); raw != "" {
 				sb.SetAttributeRaw("for_each", rawTokens(raw))
 			} else {
 				sb.SetAttributeValue("for_each", v)

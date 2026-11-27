@@ -143,11 +143,11 @@ func (r *role) lengthWhen(n *yaml.Node) string {
 	if !list && !text {
 		return ""
 	}
-	return fmt.Sprintf("length(var.%s) %s %s", name, m[2], m[3])
+	return fmt.Sprintf("length(%s) %s %s", r.ref(name), m[2], m[3])
 }
 
 // whenListRe finds the lists a converted step's when reads the length of.
-var whenListRe = regexp.MustCompile(`length\(var\.([A-Za-z_][A-Za-z0-9_]*)\)`)
+var whenListRe = regexp.MustCompile(`length\((?:var|local)\.([A-Za-z_][A-Za-z0-9_]*)\)`)
 
 // checkModeReason is why a task that runs only in check mode stays for
 // review.

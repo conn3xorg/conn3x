@@ -78,14 +78,14 @@ func mapLoop(n *yaml.Node) ([]map[string]string, bool) {
 }
 
 // markRefs is an item's value with each {{ name }} as the mark the steps
-// use for it: a play variable's value, or var.name for a role default.
-func markRefs(v string, vars map[string]string) string {
+// use for it: a play variable's value, or r.ref(name) for a role default.
+func markRefs(v string, vars map[string]string, r *role) string {
 	return jinja.ReplaceAllStringFunc(v, func(m string) string {
 		name := jinja.FindStringSubmatch(m)[1]
 		if val, ok := vars[name]; ok {
 			return val
 		}
-		return refMark("var." + name)
+		return refMark(r.ref(name))
 	})
 }
 
@@ -149,7 +149,7 @@ func mapLoopKey(items []map[string]string, fields map[string]*string) (key, why 
 // key field, with the fields the steps read, a missing one at its default.
 // Plain values are written as they are; any with Jinja make it an HCL
 // expression, each {{ name }} a reference.
-func mapLoopObject(items []map[string]string, fields map[string]*string, key string, vars map[string]string) (cty.Value, string) {
+func mapLoopObject(items []map[string]string, fields map[string]*string, key string, vars map[string]string, r *role) (cty.Value, string) {
 	byKey := map[string]cty.Value{}
 	var raw []string
 	templated := false
@@ -162,7 +162,7 @@ func mapLoopObject(items []map[string]string, fields map[string]*string, key str
 				v = *fields[f]
 			}
 			obj[f] = cty.StringVal(v)
-			m := markRefs(v, vars)
+			m := markRefs(v, vars, r)
 			templated = templated || m != v
 			parts = append(parts, f+" = "+markTemplate(m))
 		}

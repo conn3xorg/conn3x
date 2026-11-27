@@ -88,6 +88,11 @@ type role struct {
 	shadowDefault map[string]string
 	// defaultWhy is why classify didn't keep a default, for tasks using it.
 	defaultWhy map[string]string
+	// computed are the defaults built from others with {{ name }}, each
+	// the HCL its local takes when the caller leaves the variable null,
+	// and computedRefs the defaults each reads.
+	computed     map[string]string
+	computedRefs map[string][]string
 	// lists are the defaults that are lists of plain values, kept apart
 	// so only a loop over one uses them; listUsed are those a loop reads,
 	// which become variables.
@@ -110,6 +115,86 @@ type roleDefault struct {
 	value   string
 	number  bool
 	boolean bool // yes, no, true, false, on or off, as YAML 1.1 reads them
+}
+
+// pendingDefault is a default with Jinja that waits until every default
+// it could be built from is known. ignored is the comment for vars files
+// no targeted host loads, written once it's kept.
+type pendingDefault struct {
+	kv         [2]*yaml.Node
+	where, why string
+	ignored    string
+}
+
+// circuitLocals are the locals a circuit already has, which a computed
+// default's local can't take the name of.
+var circuitLocals = map[string]bool{"os_family": true, "os_families": true, "os_family_name": true, "os_distribution": true, "os_version": true, "vars_file": true, "vars_files": true}
+
+// interpolate reads a default k's items as Ansible prints them, when each
+// is plain or uses only {{ name }} of another text default kept as a
+// variable, not loopVar: the values with the role's defaults, each item
+// as HCL, and the names read. ok is false for anything else.
+func (r *role) interpolate(k, loopVar string, items []*yaml.Node) (vals, exprs, refs []string, ok bool) {
+	if circuitLocals[k] {
+		return nil, nil, nil, false
+	}
+	for _, e := range items {
+		v, _, why := plainValue(e)
+		if why == "" {
+			vals, exprs = append(vals, v), append(exprs, hclString(v))
+			continue
+		}
+		// A comma could split a package name.
+		lit := jinja.ReplaceAllString(e.Value, "")
+		if why != "a Jinja expression" || strings.Contains(lit, "{{") || strings.Contains(lit, "{%") || strings.Contains(lit, "{#") || strings.Contains(lit, ",") {
+			return nil, nil, nil, false
+		}
+		for _, m := range jinja.FindAllStringSubmatch(e.Value, -1) {
+			d := r.defaults[m[1]]
+			if m[1] == k || m[1] == loopVar || d == nil || d.boolean || d.number {
+				return nil, nil, nil, false
+			}
+			if !slices.Contains(refs, m[1]) {
+				refs = append(refs, m[1])
+			}
+		}
+		name := func(m string) string { return jinja.FindStringSubmatch(m)[1] }
+		v = jinja.ReplaceAllStringFunc(e.Value, func(m string) string { return r.defaults[name(m)].value })
+		// Ansible could read text like [x] back as a list.
+		if t := strings.TrimSpace(v); strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{") {
+			return nil, nil, nil, false
+		}
+		vals = append(vals, v)
+		exprs = append(exprs, markTemplate(jinja.ReplaceAllStringFunc(e.Value, func(m string) string { return refMark(r.ref(name(m))) })))
+	}
+	return vals, exprs, refs, true
+}
+
+// computedNote ends the description of a variable whose default is
+// built from others; "" for any other.
+func (r *role) computedNote(k string) string {
+	if r.computed[k] == "" {
+		return ""
+	}
+	return " Left null, it's built from " + joinAnd(r.computedRefs[k]) + " as the role builds it, in local." + k + "."
+}
+
+// computedLocal writes the local a default built from others is read
+// through, after its variable.
+func (r *role) computedLocal(vb *hclwrite.Body, k string) {
+	if expr := r.computed[k]; expr != "" {
+		vb.AppendNewline()
+		vb.AppendNewBlock("locals", nil).Body().SetAttributeRaw(k, rawTokens(fmt.Sprintf("var.%s != null ? var.%s : %s", k, k, expr)))
+	}
+}
+
+// ref is the HCL for the role default name: its local when it's built
+// from others, otherwise its variable.
+func (r *role) ref(name string) string {
+	if r != nil && r.computed[name] != "" {
+		return "local." + name
+	}
+	return "var." + name
 }
 
 // defaultOrNil is the role default called name, or nil, also on a nil role.
@@ -147,7 +232,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, shadowDefault: map[string]string{}, defaultWhy: map[string]string{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, shadowDefault: map[string]string{}, defaultWhy: map[string]string{}, computed: map[string]string{}, computedRefs: map[string][]string{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 
@@ -180,6 +265,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	defaultsNode, defaultsFile := c.main(body, "defaults")
 	var order, listOrder []string
 	listWhere := map[string]string{}
+	var pending []pendingDefault
 	// classify keeps a default as a variable, or says why not. files are
 	// the files under vars/ that set it and a host Conn3x configures could
 	// load.
@@ -227,6 +313,11 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			why = "has a name the circuit can't use for a variable"
 		case why != "":
 			why = "is " + why + ", which the converter can't carry over as a variable yet"
+		}
+		if why != "" && strings.Contains(why, "Jinja") && !has(vars, k) && len(files) == 0 && !reserved[k] && identifier.MatchString(k) && k != loopVar {
+			// It may be built from other defaults; see interpolate.
+			pending = append(pending, pendingDefault{kv: kv, where: where, why: why})
+			return
 		}
 		if why != "" {
 			r.defaultWhy[k] = why
@@ -305,9 +396,55 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		}
 		_, list := r.lists[k]
 		_, isMap := r.maps[k]
-		if len(ignored) > 0 && (r.defaults[k] != nil || list || isMap) {
+		msg := fmt.Sprintf("Default %q (%s line %d) is also set in %s, which no Debian or Red Hat family release Conn3x configures loads, so the circuit keeps the default. Check it if you run the role on other hosts too.", k, defaultsFile, kv[0].Line, joinAnd(ignored))
+		if len(ignored) > 0 && len(pending) > 0 && pending[len(pending)-1].kv[0] == kv[0] {
+			pending[len(pending)-1].ignored = msg
+		} else if len(ignored) > 0 && (r.defaults[k] != nil || list || isMap) {
 			vb.AppendNewline()
-			comment(vb, fmt.Sprintf("Default %q (%s line %d) is also set in %s, which no Debian or Red Hat family release Conn3x configures loads, so the circuit keeps the default. Check it if you run the role on other hosts too.", k, defaultsFile, kv[0].Line, joinAnd(ignored)))
+			comment(vb, msg)
+		}
+	}
+	// Each pending default whose Jinja is only {{ name }} of a text default
+	// kept as a variable is kept too, in turn, so a chain resolves and a
+	// cycle or a self-reference never does.
+	for changed := true; changed; {
+		changed = false
+		for _, p := range pending {
+			k := p.kv[0].Value
+			if _, done := r.computed[k]; done {
+				continue
+			}
+			items, list := []*yaml.Node{p.kv[1]}, p.kv[1].Kind == yaml.SequenceNode
+			if list {
+				items = p.kv[1].Content
+			}
+			vals, exprs, refs, ok := r.interpolate(k, loopVar, items)
+			if !ok || list && len(slices.Compact(slices.Sorted(slices.Values(vals)))) != len(vals) {
+				continue
+			}
+			changed = true
+			r.computedRefs[k] = refs
+			if p.ignored != "" {
+				vb.AppendNewline()
+				comment(vb, p.ignored)
+			}
+			if list {
+				r.computed[k] = "[\n" + strings.Join(exprs, ",\n") + ",\n]"
+				r.lists[k] = vals
+				listOrder = append(listOrder, k)
+				listWhere[k] = p.where
+				continue
+			}
+			r.computed[k] = exprs[0]
+			r.defaults[k] = &roleDefault{value: vals[0]}
+			order = append(order, k)
+		}
+	}
+	for _, p := range pending {
+		if _, done := r.computed[p.kv[0].Value]; !done {
+			r.defaultWhy[p.kv[0].Value] = p.why
+			vb.AppendNewline()
+			comment(vb, p.where+" "+p.why+". Tasks that use it are marked TODO(convert).")
 		}
 	}
 	r.defaultTasks, r.defaultOf, r.defaultMissing = c.familyDefaults(flat, vars)
@@ -331,10 +468,27 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		body.AppendUnstructuredTokens(rawTokens(packagesBlocks))
 	}
 
+	// A comma in a default a package's name is built from is one in the
+	// name.
+	for changed := true; changed; {
+		changed = false
+		for k, refs := range r.computedRefs {
+			for _, x := range refs {
+				if r.commaFree[k] && !r.commaFree[x] {
+					r.commaFree[x], changed = true, true
+				}
+			}
+		}
+	}
 	for _, k := range order {
 		d := r.defaults[k]
 		b := hclwrite.NewBlock("variable", []string{k})
+		guard := ""
 		switch {
+		case r.computed[k] != "":
+			b.Body().SetAttributeRaw("type", rawTokens("string"))
+			b.Body().SetAttributeRaw("default", rawTokens("null"))
+			guard = "var." + k + " == null || "
 		case d.boolean:
 			b.Body().SetAttributeRaw("type", rawTokens("bool"))
 			b.Body().SetAttributeRaw("default", rawTokens(d.value))
@@ -345,10 +499,10 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			b.Body().SetAttributeRaw("type", rawTokens("string"))
 			b.Body().SetAttributeValue("default", cty.StringVal(d.value))
 		}
-		b.Body().SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+"."))
+		b.Body().SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+"."+r.computedNote(k)))
 		if r.commaFree[k] {
 			v := b.Body().AppendNewBlock("validation", nil).Body()
-			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`!strcontains(var.%s, ",")`, k)))
+			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(guard+`!strcontains(var.%s, ",")`, k)))
 			v.SetAttributeValue("error_message", cty.StringVal(k+" names one package, so it can't have a comma; Ansible would read one as a list."))
 		}
 		if r.handlerState[k] {
@@ -368,6 +522,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		pathValidations(b.Body(), k, "", r.pathRules[k], false)
 		vb.AppendNewline()
 		vb.AppendBlock(b)
+		r.computedLocal(vb, k)
 	}
 
 	for _, k := range listOrder {
@@ -386,18 +541,24 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 		}
 		b := vb.AppendNewBlock("variable", []string{k}).Body()
 		b.SetAttributeRaw("type", rawTokens("list(string)"))
-		if len(vals) == 0 {
+		guard := ""
+		switch {
+		case r.computed[k] != "":
+			b.SetAttributeRaw("default", rawTokens("null"))
+			guard = "var." + k + " == null || "
+		case len(vals) == 0:
 			b.SetAttributeRaw("default", rawTokens("[]"))
-		} else {
+		default:
 			b.SetAttributeValue("default", cty.ListVal(vals))
 		}
-		b.SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+". Each item is one pass of the loop that uses it, so the list can't hold the same value twice."))
+		b.SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+". Each item is one pass of the loop that uses it, so the list can't hold the same value twice."+r.computedNote(k)))
 		if r.commaFree[k] {
 			v := b.AppendNewBlock("validation", nil).Body()
-			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(`alltrue([for p in var.%s : !strcontains(p, ",")])`, k)))
+			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(guard+`alltrue([for p in var.%s : !strcontains(p, ",")])`, k)))
 			v.SetAttributeValue("error_message", cty.StringVal("Each item of "+k+" names one package, so it can't have a comma; Ansible would read one as a list."))
 		}
 		pathValidations(b, k, "", r.pathRules[k], true)
+		r.computedLocal(vb, k)
 	}
 
 	var looped []string
@@ -454,7 +615,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	}
 	files["variables.tf"] = append([]byte(variables), hclwrite.Format(vf.Bytes())...)
 	files["outputs.tf"] = []byte("# An Ansible role has no outputs. Add any you want callers to read here.\n")
-	files["README.md"] = readme(base, name, len(c.res.Review), order, r.defaults)
+	files["README.md"] = readme(base, name, len(c.res.Review), order, r.defaults, r.computed)
 	if len(used) > 0 {
 		var b strings.Builder
 		axis := c.axisFor(osFamilies)
@@ -933,7 +1094,7 @@ func (in *input) template(p string) (source, vars, why string) {
 			// Ansible prints a boolean the Python way, True or False.
 			return "", "", fmt.Sprintf("prints %q, a true-or-false default that Ansible writes as True or False and Conn3x as true or false", name)
 		case in.role.defaults[name] != nil:
-			lines = append(lines, name+" = var."+name)
+			lines = append(lines, name+" = "+in.role.ref(name))
 		default:
 			return "", "", fmt.Sprintf("refers to %q, which isn't a role variable the converter can fill in", name)
 		}
@@ -975,7 +1136,7 @@ func sortedSet(m map[string]bool) []string {
 	return keys
 }
 
-func readme(base, name string, review int, order []string, defaults map[string]*roleDefault) []byte {
+func readme(base, name string, review int, order []string, defaults map[string]*roleDefault, computed map[string]string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# circuit-%s\n\nA [Conn3x](https://conn3x.org) circuit converted from the Ansible role `%s` by `conn3x convert ansible -role`.\n\n", name, base)
 	switch review {
@@ -998,6 +1159,10 @@ func readme(base, name string, review int, order []string, defaults map[string]*
 		v := d.value
 		if !d.number && !d.boolean {
 			v = string(hclwrite.TokensForValue(cty.StringVal(v)).Bytes())
+		}
+		if computed[k] != "" {
+			// Built from other defaults, as local.k.
+			v = computed[k]
 		}
 		fmt.Fprintf(&b, "| `%s` | `%s` |\n", k, strings.ReplaceAll(v, "|", `\|`))
 	}
@@ -1083,7 +1248,7 @@ func (r *role) boolWhen(n *yaml.Node) string {
 		if d, ok := r.defaults[m[1]]; !ok || d.boolean || d.number {
 			return ""
 		}
-		return fmt.Sprintf("var.%s %s \"%s\"", m[1], m[2], quoted(m[3]+m[4]))
+		return fmt.Sprintf("%s %s \"%s\"", r.ref(m[1]), m[2], quoted(m[3]+m[4]))
 	}
 	// x | bool == true is x | bool, as the filter binds before ==.
 	eq := boolEqRe.FindStringSubmatch(cond)
