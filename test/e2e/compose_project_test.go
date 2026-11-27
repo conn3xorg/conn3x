@@ -19,6 +19,7 @@ func TestComposeProject(t *testing.T) {
 	// Podman inside a container keeps its images with the vfs driver; see
 	// TestContainerStep.
 	box.exec("", "sh", "-c", "mkdir -p /etc/containers/storage.conf.d && printf '[storage]\\ndriver = \"vfs\"\\n' | tee /etc/containers/storage.conf > /etc/containers/storage.conf.d/99-vfs.conf")
+	pullThroughMirror(box)
 	knownFile := shareKey(t, box)
 	w := newWorkdir(t, "compose_project")
 	w.writeAs("main.circuit.hcl", chainVars{PortA: box.port, Key: box.keyFile, KnownHosts: knownFile})

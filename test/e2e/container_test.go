@@ -18,6 +18,7 @@ func TestContainerStep(t *testing.T) {
 	// reads a vendor drop-in that picks overlay after storage.conf, so the
 	// setting goes in a drop-in too; Podman 5 reads only storage.conf.
 	box.exec("", "sh", "-c", "mkdir -p /etc/containers/storage.conf.d /srv/c3 && printf '[storage]\\ndriver = \"vfs\"\\n' | tee /etc/containers/storage.conf > /etc/containers/storage.conf.d/99-vfs.conf")
+	pullThroughMirror(box)
 	knownFile := shareKey(t, box)
 	w := newWorkdir(t, "container")
 	w.writeAs("main.circuit.hcl", chainVars{PortA: box.port, Key: box.keyFile, KnownHosts: knownFile})
@@ -62,4 +63,12 @@ func TestContainerStep(t *testing.T) {
 	if got := strings.TrimSpace(box.exec("", "sh", "-c", "podman ps -a --format '{{.Names}}'")); got != "" {
 		t.Errorf("on_remove = delete should remove it, still have %q", got)
 	}
+}
+
+// pullThroughMirror has Podman on box fetch docker.io images through
+// Google's mirror of Docker Hub, which CI reaches without Docker Hub's
+// unauthenticated pull limit ("toomanyrequests", 27 Nov). Image names
+// stay docker.io/..., so what the tests check doesn't change.
+func pullThroughMirror(box *host) {
+	box.exec("", "sh", "-c", "mkdir -p /etc/containers/registries.conf.d && printf '[[registry]]\\nprefix = \"docker.io\"\\nlocation = \"docker.io\"\\n\\n[[registry.mirror]]\\nlocation = \"mirror.gcr.io\"\\n' > /etc/containers/registries.conf.d/99-mirror.conf")
 }
