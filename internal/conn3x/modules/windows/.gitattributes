@@ -1,0 +1,3 @@
+# pack_test.go checks scripts.tar.gz against these byte for byte, so a
+# Windows checkout must not turn them into CRLF.
+*.ps1 text eol=lf

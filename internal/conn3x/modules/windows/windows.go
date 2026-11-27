@@ -13,21 +13,53 @@
 package windows
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
-	"embed"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opentofu/opentofu/internal/conn3x/modules/windows/ps"
 )
 
-//go:embed *.ps1 lib/*.ps1
-var scripts embed.FS
+// scripts.tar.gz holds every *.ps1 and lib/*.ps1 here, gzipped to save about
+// 100 KB of binary. pack_test.go fails when it no longer matches the sources;
+// rewrite it with go test -run TestScriptsPack -update.
+//
+//go:embed scripts.tar.gz
+var packed []byte
+
+// scripts unpacks the embedded scripts once, on first use.
+var scripts = sync.OnceValue(func() map[string]string {
+	zr, err := gzip.NewReader(bytes.NewReader(packed))
+	if err != nil {
+		panic(err)
+	}
+	out := map[string]string{}
+	tr := tar.NewReader(zr)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return out
+		}
+		if err != nil {
+			panic(err)
+		}
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			panic(err)
+		}
+		out[h.Name] = string(b)
+	}
+})
 
 var includeLine = regexp.MustCompile(`(?m)^#include ([a-z]+)\r?$`)
 
@@ -35,16 +67,17 @@ var includeLine = regexp.MustCompile(`(?m)^#include ([a-z]+)\r?$`)
 // #include NAME line. A missing one is a bug in this package, and a test reads
 // every name passed here.
 func script(name string) ps.Script {
-	b, err := scripts.ReadFile(name)
-	if err != nil {
-		panic(err)
+	b, ok := scripts()[name]
+	if !ok {
+		panic("no embedded script " + name)
 	}
-	body := includeLine.ReplaceAllStringFunc(string(b), func(line string) string {
-		lib, err := scripts.ReadFile("lib/" + includeLine.FindStringSubmatch(line)[1] + ".ps1")
-		if err != nil {
-			panic(err)
+	body := includeLine.ReplaceAllStringFunc(b, func(line string) string {
+		lib := "lib/" + includeLine.FindStringSubmatch(line)[1] + ".ps1"
+		b, ok := scripts()[lib]
+		if !ok {
+			panic("no embedded script " + lib)
 		}
-		return string(lib)
+		return b
 	})
 	return ps.Script{Name: name, Body: body}
 }
