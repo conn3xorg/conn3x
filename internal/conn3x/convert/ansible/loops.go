@@ -208,6 +208,19 @@ func resolveMarks(steps []step) string {
 				}
 				continue
 			}
+			// A list holding facts, and no other marks, is written item by item.
+			if a.val.Type().Equals(cty.List(cty.String)) {
+				var items []string
+				all := ""
+				for _, e := range a.val.AsValueSlice() {
+					items = append(items, markTemplate(e.AsString()))
+					all += e.AsString()
+				}
+				if strings.Contains(all, "\x00") && !strings.Contains(factWord(all), "\x00") {
+					s.attrs[i] = attr{key: a.key, raw: "[" + strings.Join(items, ", ") + "]"}
+					continue
+				}
+			}
 			if !a.val.Type().Equals(cty.String) {
 				if v := a.val.GoString(); strings.Contains(v, `\x00`) {
 					return refused(v, a.key, "inside")

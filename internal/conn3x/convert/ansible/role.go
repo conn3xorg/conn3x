@@ -1212,7 +1212,7 @@ variable "ssh_become" {
 }
 `
 
-// whenUses notes what a converted when reads, so the circuit declares it:
+// whenUses notes what a converted when or argument reads, so the circuit declares it:
 // the installed packages, the family, or a list default.
 func (r *role) whenUses(cond string) {
 	if strings.Contains(cond, "data.conn3x_packages.") {

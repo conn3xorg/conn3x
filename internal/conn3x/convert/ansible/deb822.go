@@ -65,7 +65,7 @@ func deb822RepositoryModule(in *input) ([]step, string) {
 	default:
 		return nil, "names its key by fingerprint; a repository step needs the armored key itself, so save it under files/ and point signed_by at it"
 	}
-	r := repo.Repo{Name: name, URL: uris[0], Key: signedBy, Suites: suites, Components: components}
+	r := repo.Repo{Name: factWord(name), URL: uris[0], Key: signedBy, Suites: []string{factWord(suites[0])}, Components: components}
 	if err := r.Validate(pkg.Deb); err != nil {
 		return nil, "can't be a repository step: " + err.Error()
 	}
