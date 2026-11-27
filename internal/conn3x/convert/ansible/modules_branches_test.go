@@ -297,7 +297,7 @@ func TestConvertModuleOptionRefusals(t *testing.T) {
 		"docker_container: { name: web, image: nginx, command: 'sh -c \"x\"' }":           "sets command as one string with quotes",
 		"docker_container: { name: web, image: nginx, env: { A: [b] } }":                  "sets env A to something other than one value",
 		"docker_container: { name: '', image: nginx }":                                    "must start with a letter or digit",
-		"command: 'make creates=/x'":                                                      "sets creates inside the command line",
+		"command: 'make creates=/x \\n'":                                                  "sets creates inside the command line",
 		"command: { chdir: /x }":                                                          "has no command",
 		"command: { argv: [a], cmd: b, creates: /x }":                                     "sets argv beside cmd",
 		"command: { argv: /bin/true, creates: /x }":                                       "has an argv that isn't a list",

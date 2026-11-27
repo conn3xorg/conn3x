@@ -5,8 +5,11 @@ package ansible
 
 import (
 	"regexp"
+	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
 )
 
 // argEscape matches a backslash Ansible reads as an escape in a free-form
@@ -78,4 +81,51 @@ func unquoteArg(s string) string {
 		return s[1 : len(s)-1]
 	}
 	return s
+}
+
+// commandWords splits a command or shell line as Ansible's parse_kv does,
+// or reports false for a line splitArgs refuses or with whitespace other
+// than spaces and newlines, which Ansible doesn't split at and splitArgs
+// does.
+func commandWords(s string) ([]string, bool) {
+	if strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) && r != ' ' && r != '\n' }) >= 0 {
+		return nil, false
+	}
+	return splitArgs(s)
+}
+
+// commandArgs takes the options Ansible's parse_kv pulls out of a command or
+// shell line, the inlineArgs, and returns the line left and the options. As
+// in Ansible, a word goes with the whitespace after it, and any other k=v
+// word stays in the command. A line commandWords can't split comes back as
+// it is.
+func commandArgs(v *yaml.Node) (*yaml.Node, map[string]*yaml.Node) {
+	words, ok := commandWords(v.Value)
+	if !ok {
+		return v, nil
+	}
+	opts := map[string]*yaml.Node{}
+	var rest strings.Builder
+	s := v.Value
+	for _, w := range words {
+		i := strings.Index(s, w)
+		k, val, _ := strings.Cut(w, "=")
+		if !inlineArgs[k] {
+			rest.WriteString(s[:i+len(w)])
+			s = s[i+len(w):]
+			continue
+		}
+		opts[k] = &yaml.Node{Kind: yaml.ScalarNode, Value: unquoteArg(strings.TrimSpace(val)), Line: v.Line}
+		rest.WriteString(s[:i])
+		s = strings.TrimLeft(s[i+len(w):], " \n")
+	}
+	if len(opts) == 0 {
+		return v, nil
+	}
+	rest.WriteString(s)
+	raw := *v
+	raw.Value = strings.TrimSpace(rest.String())
+	// What's left is text to Ansible, never retyped as YAML 1.1.
+	raw.Style = yaml.DoubleQuotedStyle
+	return &raw, opts
 }

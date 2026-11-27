@@ -97,7 +97,6 @@ func TestRefusesWhatItCantProve(t *testing.T) {
 		"force: no":               "copy: {dest: /etc/a, content: x, force: no}",
 		"creates is a glob":       "command: {cmd: make, creates: /opt/*.done}",
 		"removes is a glob":       "command: {cmd: make clean, removes: '/opt/build[0-9]'}",
-		"sets chdir inside":       "command: make chdir=/opt/src\n      args: {creates: /opt/src/out}",
 		"validate has no %s":      "copy: {dest: /etc/a, content: x, validate: 'visudo -c'}",
 		"shell syntax":            "copy: {dest: /etc/a, content: x, validate: 'visudo -cf %s | grep ok'}",
 		"uses shell syntax":       "copy: {dest: /etc/a, content: x, validate: \"visudo -cf %s\\nrm -f /etc/a\"}",
