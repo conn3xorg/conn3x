@@ -249,6 +249,7 @@ func TestHandlerReloadsSystemdWhenUnitChanged(t *testing.T) {
 	}{
 		{func(c context.Context, h *host, n string) error { return Restart(c, h, n) }, "restart"},
 		{func(c context.Context, h *host, n string) error { return Reload(c, h, n) }, "reload"},
+		{func(c context.Context, h *host, n string) error { return Start(c, h, n) }, "start"},
 		{func(c context.Context, h *host, n string) error { return TryRestart(c, h, n) }, "try-restart"},
 		{func(c context.Context, h *host, n string) error { return TryReload(c, h, n) }, "try-reload-or-restart"},
 	} {

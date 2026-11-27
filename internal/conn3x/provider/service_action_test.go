@@ -73,6 +73,7 @@ func TestServiceActionValidate(t *testing.T) {
 		bad  bool
 	}{
 		"bad action":            {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("bounce")}, true},
+		"start":                 {map[string]cty.Value{"name": cty.StringVal("backup"), "action": cty.StringVal("start")}, false},
 		"try-restart":           {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("try-restart")}, false},
 		"try-reload":            {map[string]cty.Value{"name": cty.StringVal("nginx"), "action": cty.StringVal("try-reload")}, false},
 		"daemon-reload":         {map[string]cty.Value{"action": cty.StringVal("daemon-reload")}, false},

@@ -30,7 +30,7 @@ func serviceActionSchema() providers.Schema {
 				"id":       {Type: cty.String, Computed: true},
 				"revision": revisionAttr(),
 				"name":     {Type: cty.String, Optional: true, Description: "Unit name. Required, except with action = \"daemon-reload\", which takes none."},
-				"action":   {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
+				"action":   {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"start\", \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". start runs a oneshot unit and waits for it to finish. A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
 				"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the action runs again whenever it changes."},
 				"serial":   {Type: cty.Bool, Optional: true, Description: "Act on one host at a time, waiting for systemctl to return before the next."},
 			},
@@ -123,6 +123,8 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 		defer mu.Unlock()
 	}
 	switch action {
+	case "start":
+		err = service.Start(ctx, host, name)
 	case "reload":
 		err = service.Reload(ctx, host, name)
 	case "try-restart":
@@ -139,7 +141,7 @@ func applyServiceAction(ctx context.Context, req providers.ApplyResourceChangeRe
 }
 
 // serviceActions are the actions a service_action step takes.
-var serviceActions = []string{"restart", "reload", "try-restart", "try-reload", "daemon-reload"}
+var serviceActions = []string{"restart", "start", "reload", "try-restart", "try-reload", "daemon-reload"}
 
 var serialLocks sync.Map // unit name => *sync.Mutex
 

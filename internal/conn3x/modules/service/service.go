@@ -208,6 +208,12 @@ func Restart(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "restart")
 }
 
+// Start starts the unit, and waits for a oneshot unit to finish, failing
+// if it fails. A running unit is left as it is.
+func Start(ctx context.Context, r modules.Runner, name string) error {
+	return act(ctx, r, name, "start")
+}
+
 // Reload asks the unit to reload its configuration, or starts it when it
 // isn't running.
 func Reload(ctx context.Context, r modules.Runner, name string) error {
@@ -267,6 +273,7 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 // here is safe to repeat: show, start, stop, enable and daemon-reload end in
 // the same state however often they run. restart and reload could run twice,
 // which for a service is a second restart or reload, not a different result.
+// A start of a oneshot unit that had already finished runs it once more.
 var (
 	busError   = regexp.MustCompile(`Failed to connect to .*bus|Transport endpoint is not connected|Connection reset by peer`)
 	busRetries = 30

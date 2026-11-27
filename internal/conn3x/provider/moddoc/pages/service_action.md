@@ -58,14 +58,34 @@ step "reread" {
   }
 }
 ```
+Run a oneshot unit whenever its script changes, and fail the apply if the run fails:
+
+```hcl
+step "script" {
+  file {
+    path    = "/usr/local/bin/backup.sh"
+    mode    = "0755"
+    content = "#!/bin/sh\nrestic backup /srv\n"
+  }
+}
+
+step "backup_now" {
+  service_action {
+    name     = "backup"
+    action   = "start"
+    triggers = { script = conn3x_file.docs__script[each.key].revision }
+  }
+}
+```
+
 <!-- reference -->
 ## How it works
 
 **When it runs.** The step runs its action when it's created, and again whenever `triggers` changes, which replaces it. A plan that changes nothing else leaves it alone. Refresh never finds drift: an action leaves nothing on the host to compare.
 
-**Applying.** `action = "restart"`, the default, runs `systemctl restart`. `"reload"` runs `systemctl reload`, and starts the unit instead when it isn't running, since a reload asks for the new configuration to be in use. `"try-restart"` and `"try-reload"` act only on a unit that's running, and leave a stopped one, or one that isn't installed, alone: they run `systemctl try-restart` and `systemctl try-reload-or-restart`, which restarts a unit that can't reload. If the unit file changed since systemd last loaded it, Conn3x runs `systemctl daemon-reload` first. `"daemon-reload"` runs only that, with no `name`, for a unit file or drop-in a unit picks up at its next start. `serial = true` acts on one host at a time.
+**Applying.** `action = "restart"`, the default, runs `systemctl restart`. `"start"` runs `systemctl start`, which leaves a running unit alone and, for a oneshot unit, waits until it finishes and fails the step if it fails: the way to run a scan or a converge whenever its script changes. `"reload"` runs `systemctl reload`, and starts the unit instead when it isn't running, since a reload asks for the new configuration to be in use. `"try-restart"` and `"try-reload"` act only on a unit that's running, and leave a stopped one, or one that isn't installed, alone: they run `systemctl try-restart` and `systemctl try-reload-or-restart`, which restarts a unit that can't reload. If the unit file changed since systemd last loaded it, Conn3x runs `systemctl daemon-reload` first. `"daemon-reload"` runs only that, with no `name`, for a unit file or drop-in a unit picks up at its next start. `serial = true` acts on one host at a time.
 
-**When systemd re-executes.** An upgrade of libc6 or systemd makes systemd re-execute itself, and while it does, `systemctl` can't reach it for a moment. A `service_action` step tries again for up to 30 seconds when that happens. A `command` step that runs `systemctl restart` fails instead, which is why [`conn3x lint`](/reference/cli/lint) warns about one (C3X103).
+**When systemd re-executes.** An upgrade of libc6 or systemd makes systemd re-execute itself, and while it does, `systemctl` can't reach it for a moment. A `service_action` step tries again for up to 30 seconds when that happens. A `start` of a oneshot unit that systemd had already finished when the connection dropped runs it once more, so keep what it runs safe to repeat. A `command` step that runs `systemctl restart` fails instead, which is why [`conn3x lint`](/reference/cli/lint) warns about one (C3X103).
 
 **Names.** A `name` without a dot gets `.service` added, so `"mysql"` means `mysql.service`.
 
