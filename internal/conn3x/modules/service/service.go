@@ -235,13 +235,26 @@ func TryReload(ctx context.Context, r modules.Runner, name string) error {
 
 // ResetFailed clears the unit's failed state and its start limit, so a
 // unit that hit StartLimitBurst can be started again. A unit that isn't
-// installed has nothing to clear.
+// installed, or that systemd hasn't loaded, has nothing to clear.
 func ResetFailed(ctx context.Context, r modules.Runner, name string) error {
 	a, err := Read(ctx, r, name)
 	if err != nil || !a.Exists {
 		return err
 	}
-	return run(ctx, r, "systemctl reset-failed -- "+ssh.Quote(Unit(name)))
+	// systemd keeps a failed state and start counters only for units it has
+	// in memory, and refuses the others as "not loaded": a unit installed
+	// but never started, as Jenkins is after its package on Rocky. Such a
+	// unit has nothing to clear.
+	cmd := "systemctl reset-failed -- " + ssh.Quote(Unit(name))
+	res, err := systemctl(ctx, r, cmd)
+	if err != nil || res.ExitCode == 0 || strings.Contains(string(res.Stderr), "not loaded") {
+		return err
+	}
+	msg := strings.TrimSpace(string(res.Stderr))
+	if msg == "" {
+		msg = fmt.Sprintf("exit status %d", res.ExitCode)
+	}
+	return fmt.Errorf("%s: %s", cmd, msg)
 }
 
 // DaemonReload has systemd reread its unit files, for a change that a
