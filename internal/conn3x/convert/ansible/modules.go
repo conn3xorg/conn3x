@@ -3730,9 +3730,12 @@ func commandLine(in *input) (string, string) {
 	}
 	cmd := in.str("cmd")
 	if n, ok := in.args["_raw"]; ok {
-		for _, f := range strings.Fields(n.Value) {
-			if k, _, ok := strings.Cut(f, "="); ok && inlineArgs[k] {
-				return "", "sets " + k + " inside the command line; move it under args so the converter can read it"
+		// moduleOf has taken the options out of a line commandWords splits.
+		if _, split := commandWords(n.Value); !split {
+			for _, f := range strings.Fields(n.Value) {
+				if k, _, ok := strings.Cut(f, "="); ok && inlineArgs[k] {
+					return "", "sets " + k + " inside the command line; move it under args so the converter can read it"
+				}
 			}
 		}
 		cmd = in.render("command", n.Value)

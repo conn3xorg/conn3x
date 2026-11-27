@@ -1918,12 +1918,16 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 			}
 		}
 		args := map[string]*yaml.Node{}
+		var inline map[string]*yaml.Node
 		switch v := t[k]; v.Kind {
 		case yaml.MappingNode:
 			args = mapping(v)
 		case yaml.ScalarNode:
 			if mod == "command" || mod == "shell" || mod == "script" || mod == "raw" {
 				args["_raw"] = v
+				if mod == "command" || mod == "shell" {
+					args["_raw"], inline = commandArgs(v)
+				}
 			} else {
 				words, split := splitArgs(v.Value)
 				if !split {
@@ -1950,6 +1954,8 @@ func moduleOf(t map[string]*yaml.Node) (string, map[string]*yaml.Node) {
 		for ak, av := range mapping(t["args"]) {
 			args[ak] = av
 		}
+		// Ansible lets an option written in the line win over args:.
+		maps.Copy(args, inline)
 		return mod, args
 	}
 	return "", nil
