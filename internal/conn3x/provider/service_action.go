@@ -30,7 +30,7 @@ func serviceActionSchema() providers.Schema {
 				"id":           {Type: cty.String, Computed: true},
 				"revision":     revisionAttr(),
 				"name":         {Type: cty.String, Optional: true, Description: "Unit name. Required, except with action = \"daemon-reload\", which takes none."},
-				"action":       {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"start\", \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". start runs a oneshot unit and waits for it to finish. A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
+				"action":       {Type: cty.String, Optional: true, Computed: true, Description: "\"restart\" (default), \"start\", \"reload\", \"try-restart\", \"try-reload\" or \"daemon-reload\". start runs a oneshot unit, even one RemainAfterExit keeps active, and waits for it to finish. A reload of a unit that isn't running starts it; the try- actions leave a stopped unit stopped."},
 				"triggers":     {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value; the action runs again whenever it changes."},
 				"serial":       {Type: cty.Bool, Optional: true, Description: "Act on one host at a time, waiting for systemctl to return before the next."},
 				"reset_failed": {Type: cty.Bool, Optional: true, Description: "With action = \"restart\" or \"start\": clear the unit's failed state and start limit first, so a unit that systemd refuses with \"start request repeated too quickly\" starts."},

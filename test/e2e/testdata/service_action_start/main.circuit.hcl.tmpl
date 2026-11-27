@@ -11,7 +11,7 @@ circuit "app" {
   step "unit" {
     file {
       path    = "/etc/systemd/system/conn3x-once.service"
-      content = "[Service]\nType=oneshot\nExecStart=/bin/sh -c 'echo run >> /root/once.log; exit {{.Exit}}'\n"
+      content = "[Service]\nType=oneshot\nRemainAfterExit={{.Remain}}\nExecStart=/bin/sh -c 'echo run >> /root/once.log; exit {{.Exit}}'\n"
     }
   }
 

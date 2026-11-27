@@ -209,7 +209,8 @@ func Restart(ctx context.Context, r modules.Runner, name string) error {
 }
 
 // Start starts the unit, and waits for a oneshot unit to finish, failing
-// if it fails. A running unit is left as it is.
+// if it fails. A running service is left as it is, but a oneshot runs again
+// even with RemainAfterExit=yes, which keeps it active after its first run.
 func Start(ctx context.Context, r modules.Runner, name string) error {
 	return act(ctx, r, name, "start")
 }
@@ -273,6 +274,18 @@ func act(ctx context.Context, r modules.Runner, name, verb string) error {
 	// to be in use, and a start does that.
 	if verb == "reload" && !a.Running {
 		verb = "start"
+	}
+	// systemctl start does nothing to a oneshot that RemainAfterExit keeps
+	// active, so the run the step asked for wouldn't happen. A restart of a
+	// oneshot runs it and waits the same way.
+	if verb == "start" && a.Running {
+		res, err := systemctl(ctx, r, "systemctl show -p Type --value -- "+ssh.Quote(Unit(name)))
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(res.Stdout)) == "oneshot" {
+			verb = "restart"
+		}
 	}
 	return run(ctx, r, "systemctl "+verb+" -- "+ssh.Quote(Unit(name)))
 }

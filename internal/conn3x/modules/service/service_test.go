@@ -394,6 +394,27 @@ func TestResetFailed(t *testing.T) {
 	}
 }
 
+// A oneshot that RemainAfterExit keeps active is restarted, so it runs
+// again; a running service of any other type is only started, a no-op.
+func TestStartRerunsActiveOneshot(t *testing.T) {
+	for typ, want := range map[string]string{"oneshot": "restart", "simple": "start"} {
+		h := &host{show: show("loaded", "active", "static", "no"), fail: map[string]ssh.Result{"-p Type": {Stdout: []byte(typ + "\n")}}}
+		if err := Start(ctx, h, "converge"); err != nil {
+			t.Fatal(err)
+		}
+		if all := strings.Join(h.ran, "\n"); !strings.HasSuffix(all, "systemctl "+want+" -- 'converge.service'") {
+			t.Errorf("Type=%s, active: ran\n%s", typ, all)
+		}
+	}
+	h := &host{show: show("loaded", "inactive", "static", "no")}
+	if err := Start(ctx, h, "converge"); err != nil {
+		t.Fatal(err)
+	}
+	if all := strings.Join(h.ran, "\n"); strings.Contains(all, "-p Type") || !strings.HasSuffix(all, "systemctl start -- 'converge.service'") {
+		t.Errorf("inactive unit: ran\n%s", all)
+	}
+}
+
 func TestDaemonReload(t *testing.T) {
 	h := &host{show: show("loaded", "active", "enabled", "no")}
 	if err := DaemonReload(ctx, h); err != nil {
