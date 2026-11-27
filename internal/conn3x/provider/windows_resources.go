@@ -94,6 +94,7 @@ func winWaitForSchema() providers.Schema {
 			"service":  {Type: cty.String, Optional: true, Description: "Name of a service to wait for until it is running. Set exactly one of path, service and port."},
 			"port":     {Type: cty.Number, Optional: true, Description: "TCP port to wait for a listener on. Set exactly one of path, service and port."},
 			"timeout":  {Type: cty.String, Optional: true, Description: "How long to wait. Defaults to \"5m\"."},
+			"triggers": {Type: cty.DynamicPseudoType, Optional: true, Description: "Any value, such as the revision of a step that restarts the service; whenever it changes, the apply waits again, even if the check passed at plan time."},
 			"in_sync":  {Type: cty.Bool, Computed: true, Description: "Whether it was ready at the last refresh."},
 		},
 		BlockTypes: map[string]*configschema.NestedBlock{"ssh": connectionBlock()},
@@ -127,7 +128,7 @@ func validateWinWaitFor(cfg cty.Value) tfdiags.Diagnostics {
 }
 
 func planWinWaitFor(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-	return planSynced(req, "windows_wait_for", []string{"path", "service", "port"}, nil)
+	return planSynced(req, "windows_wait_for", []string{"path", "service", "port"}, []string{"triggers"})
 }
 
 func readWinWaitFor(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {

@@ -34,6 +34,8 @@ step "app_ready" {
 
 **Reading.** Every plan checks again. If the path is gone, the service stopped or nothing listens on the port any more, the plan shows the step out of sync and the next apply waits again.
 
+**Waiting again.** A check that passed at plan time isn't run again in the same apply. So a wait after a restart, which takes the port away only during the apply, needs `triggers`: set it to the restart step's revision, and the step waits again whenever that step runs.
+
 **Validation.** Set exactly one of `path`, `service` and `port`. `path` must be a drive-letter or UNC path.
 
 ## Removal
