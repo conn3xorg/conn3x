@@ -173,6 +173,34 @@ func TestApplyCommands(t *testing.T) {
 	}
 }
 
+// A version is what the host should end up with, so every family's
+// install of a pin also downgrades (#1476): dnf and apk do it with their
+// plain install, zypper with --oldpackage, apt with --allow-downgrades.
+// Without a version, apt keeps refusing a downgrade.
+func TestApplyVersionDowngrades(t *testing.T) {
+	for _, tc := range []struct {
+		family    Family
+		d         Desired
+		want, not string
+	}{
+		{Deb, Desired{Name: "tzdata", State: Present, Version: "2025b-0+deb12u1"}, "--allow-downgrades install 'tzdata=2025b-0+deb12u1'", ""},
+		{Deb, Desired{Name: "tzdata", State: Present}, "install 'tzdata'", "--allow-downgrades"},
+		{Deb, Desired{Name: "tzdata", State: Latest}, "install 'tzdata'", "--allow-downgrades"},
+		{RPM, Desired{Name: "tzdata", State: Present, Version: "2025b"}, "dnf -y install 'tzdata-2025b'", "downgrade"},
+		{SUSE, Desired{Name: "tzdata", State: Present, Version: "2025b"}, "install --oldpackage", ""},
+		{APK, Desired{Name: "tzdata", State: Present, Version: "2025b-r0"}, "apk add -q --no-cache 'tzdata=2025b-r0'", ""},
+	} {
+		h := &scriptedHost{answers: []answer{{"", ok("")}}}
+		if err := Apply(ctx, h, tc.family, tc.d); err != nil {
+			t.Fatalf("Apply(%v, %+v): %v", tc.family, tc.d, err)
+		}
+		all := strings.Join(h.ran, "\n")
+		if !strings.Contains(all, tc.want) || (tc.not != "" && strings.Contains(all, tc.not)) {
+			t.Errorf("Apply(%v, %+v) ran %q, want %q and not %q", tc.family, tc.d, all, tc.want, tc.not)
+		}
+	}
+}
+
 func TestApplyDebRefreshesListsWhenPackageUnknown(t *testing.T) {
 	calls := 0
 	h := &fnHost{fn: func(cmd string) ssh.Result {
