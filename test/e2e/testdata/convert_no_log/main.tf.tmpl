@@ -1,0 +1,15 @@
+variable "nolog_password" {
+  type      = string
+  ephemeral = true
+}
+
+module "nolog" {
+  source = "./circuit-nolog"
+
+  hosts = {
+    h = { address = "127.0.0.1", port = {{.Port}} }
+  }
+  ssh_private_key_file = "{{.KeyFile}}"
+  ssh_known_hosts_file = "{{.KnownHosts}}"
+  nolog_password       = var.nolog_password
+}

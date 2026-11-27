@@ -109,6 +109,11 @@ type role struct {
 	// and probeBlocks those blocks, written after the circuit.
 	probes      map[string]*probe
 	probeBlocks []string
+	// carried are the defaults kept as plain variables, which a no_log
+	// task's secrets may come from; secrets counts each one's write-only
+	// uses, and those become sensitive variables.
+	carried map[string]bool
+	secrets map[string]int
 }
 
 type roleDefault struct {
@@ -454,6 +459,10 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	r.listDefaults, r.listDefaultUsed = c.listDefaults(flat, vars), map[string]bool{}
 	r.facts = c.plainFacts()
 	r.defaultUsed = map[string]bool{}
+	r.carried, r.secrets = map[string]bool{}, map[string]int{}
+	for _, k := range order {
+		r.carried[k] = r.computed[k] == ""
+	}
 	c.steps(cb, at(seq(tasks), c.file), seq(handlers), handlersFile, false, vars)
 	if r.familyUsed {
 		body.AppendUnstructuredTokens(rawTokens(familyBlocks))
@@ -500,6 +509,13 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 			b.Body().SetAttributeValue("default", cty.StringVal(d.value))
 		}
 		b.Body().SetAttributeValue("description", cty.StringVal("From the role's "+defaultsFile+"."+r.computedNote(k)))
+		if r.secrets[k] > 0 {
+			// A no_log task passes it to a write-only argument.
+			b.Body().SetAttributeRaw("sensitive", rawTokens("true"))
+			if r.ephemeralOK(k, f.Bytes()) {
+				b.Body().SetAttributeRaw("ephemeral", rawTokens("true"))
+			}
+		}
 		if r.commaFree[k] {
 			v := b.Body().AppendNewBlock("validation", nil).Body()
 			v.SetAttributeRaw("condition", rawTokens(fmt.Sprintf(guard+`!strcontains(var.%s, ",")`, k)))

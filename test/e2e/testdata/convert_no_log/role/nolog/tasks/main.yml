@@ -1,0 +1,14 @@
+---
+- name: Write the password file.
+  ansible.builtin.copy:
+    dest: /root/nolog.secret
+    content: "{{ nolog_password }}"
+    mode: "0600"
+  no_log: true
+
+- name: Write the client config.
+  ansible.builtin.template:
+    src: client.cnf.j2
+    dest: /root/.nolog.cnf
+    mode: "0600"
+  no_log: true

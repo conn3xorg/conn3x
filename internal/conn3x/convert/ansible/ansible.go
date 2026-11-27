@@ -1024,8 +1024,9 @@ var harmless = map[string]bool{"name": true, "notify": true, "args": true, "tags
 func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, vars, handlers map[string]string, used map[string]int) {
 	t := mapping(node)
 	name := scalar(t["name"])
-	if c.hidesValues(node) {
-		c.issue(body, name, node, noLogReason)
+	noLog := c.hidesValues(node)
+	if why := c.noLogFirst(node, t); noLog && why != "" {
+		c.issue(body, name, node, why)
 		return
 	}
 	if c.playNever || neverTagged(t["tags"]) {
@@ -1515,6 +1516,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			}
 		}
 	}
+	if noLog {
+		if why := c.protectSecrets(steps, args, t["when"]); why != "" {
+			c.issue(body, name, node, why)
+			return
+		}
+	}
 	base := slug(firstNonEmpty(name, mod))
 	for i, s := range steps {
 		if s.module == "" {
@@ -1658,6 +1665,10 @@ func (c *converter) playIssue(body *hclwrite.Body, play string, node *yaml.Node,
 
 // issue records a task for review and leaves it in the output as comments.
 func (c *converter) issue(body *hclwrite.Body, name string, node *yaml.Node, reason string) {
+	// Another reason could quote one of the values no_log hides.
+	if c.hidesValues(node) && !strings.HasPrefix(reason, "sets no_log") {
+		reason = noLogReason
+	}
 	c.res.Review = append(c.res.Review, Issue{Task: name, File: c.file, Line: node.Line, Reason: reason})
 	body.AppendNewline()
 	what := "This task"
