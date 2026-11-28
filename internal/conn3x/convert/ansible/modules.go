@@ -950,6 +950,7 @@ var modules = map[string]func(*input) ([]step, string){
 	"win_iis_webapppool":    winIISAppPoolModule,
 	"win_iis_website":       winIISWebsiteModule,
 	"win_package":           winPackageModule,
+	"win_path":              winPathModule,
 	"win_powershell":        winPowershellModule,
 	"win_reboot":            winRebootModule,
 	"win_updates":           winUpdatesModule,

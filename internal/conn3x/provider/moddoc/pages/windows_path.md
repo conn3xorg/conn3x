@@ -37,3 +37,9 @@ step "old_tool_gone" {
 ## Removal
 
 `on_remove = "forget"`, the default, leaves the folder on `Path`. `on_remove = "delete"` takes it out.
+
+## From Ansible
+
+`conn3x convert ansible` turns `ansible.windows.win_path` tasks into `windows_path` steps, a step for each folder in `elements`, in the same order. `scope` and `state` carry across. A task whose `name` is a variable other than `Path`, or that loops, is left for you, as is a folder with `;` or `"` in it.
+
+Three things differ. Ansible also moves folders already on `Path` so that they follow the order of `elements`, where a step leaves them in place. With `state: absent`, Ansible takes out the first copy of a folder and a step takes out every copy. And Ansible sees through quotes around a folder already on `Path`, where a step treats `"C:\Tools"` in quotes as a different folder from `C:\Tools`.
