@@ -54,9 +54,6 @@ func ComputeDiffForBlock(change structured.Change, block *jsonprovider.Block) co
 	// attributes. If the [current] action is NoOp, then none of the write-only attributes will be included,
 	// otherwise, will include all the write-only attributes.
 	for _, key := range writeOnlyAttributes {
-		if key == "only_if" && conn3xUngated(block, blockValue) { // CONN3X: see conn3x_only_if.go
-			continue
-		}
 		attr := block.Attributes[key]
 		attrChange := blockValue.GetChild(key)
 		childChange := diffChildAttribute(attrChange, attr, current)
