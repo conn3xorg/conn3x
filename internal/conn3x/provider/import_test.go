@@ -179,7 +179,7 @@ func TestImportFileThenPlanHasNoChange(t *testing.T) {
 	if resp.Diagnostics.HasErrors() {
 		t.Fatal(resp.Diagnostics.Err())
 	}
-	state := f.read(resp.ImportedResources[0].State)
+	state := f.read(stripGate(resp.ImportedResources[0].State)) // the helpers build configs in the type's own shape
 	if got := state.GetAttr("content"); !got.RawEquals(cty.StringVal("Welcome\n")) {
 		t.Fatalf("content = %#v", got)
 	}
@@ -203,7 +203,7 @@ func TestImportWriteOnlyFileKeepsContentOutOfState(t *testing.T) {
 	if resp.Diagnostics.HasErrors() {
 		t.Fatal(resp.Diagnostics.Err())
 	}
-	state := f.read(resp.ImportedResources[0].State)
+	state := f.read(stripGate(resp.ImportedResources[0].State)) // the helpers build configs in the type's own shape
 	if strings.Contains(fmt.Sprintf("%#v", state), "s3cret") {
 		t.Fatal("the secret reached state")
 	}

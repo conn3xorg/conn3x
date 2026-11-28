@@ -29,6 +29,10 @@ type Provider struct {
 	stopped context.Context
 	stop    context.CancelFunc
 	closed  atomic.Bool
+
+	// ran holds what this apply did, for a handler to tell whether a step
+	// it watches ran; see onlySkipped.
+	ran applyLog
 }
 
 // resourceType is everything the provider needs to serve one resource type.
@@ -256,7 +260,12 @@ func (p *Provider) ValidateProviderConfig(_ context.Context, req providers.Valid
 
 func (p *Provider) ValidateResourceConfig(_ context.Context, req providers.ValidateResourceConfigRequest) providers.ValidateResourceConfigResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
-		diags := validateReadOnly(req.TypeName, rt.schema().Block, req.Config)
+		block := rt.schema().Block
+		if gatedType(req.TypeName) && hasGate(req.Config) {
+			block = withOnlyIf(rt.schema()).Block
+		}
+		diags := validateReadOnly(req.TypeName, block, req.Config)
+		req.Config = stripGate(req.Config) // the type's own checks see only its own arguments
 		diags = diags.Append(rt.validate(req.Config))
 		diags = diags.Append(validateSSH(req.Config))
 		if strings.HasPrefix(req.TypeName, windowsTypePrefix) {
@@ -399,6 +408,9 @@ func (p *Provider) Stop(context.Context) error {
 
 func (p *Provider) UpgradeResourceState(_ context.Context, req providers.UpgradeResourceStateRequest) providers.UpgradeResourceStateResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
+		if gatedType(req.TypeName) {
+			return upgradeGated(rt, req)
+		}
 		return rt.upgrade(req)
 	}
 	return providers.UpgradeResourceStateResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
@@ -410,20 +422,27 @@ func (p *Provider) UpgradeResourceIdentity(context.Context, providers.UpgradeRes
 
 func (p *Provider) ReadResource(ctx context.Context, req providers.ReadResourceRequest) providers.ReadResourceResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
-		ctx, done := p.withStop(ctx)
-		defer done()
-		if conn := priorSSH(req.PriorState); !conn.IsNull() {
-			if diags := reachable(ctx, conn); len(diags) > 0 {
-				return providers.ReadResourceResponse{NewState: req.PriorState, Private: req.Private, Diagnostics: diags}
-			}
+		if gatedType(req.TypeName) && hasGate(req.PriorState) {
+			return p.readGated(ctx, rt, req)
 		}
-		start := time.Now()
-		defer lockForReboot(req.TypeName, priorSSH(req.PriorState))()
-		locked := time.Now()
-		defer logStep("read", req.TypeName, req.PriorState, start, locked)
-		return rt.read(ctx, req)
+		return p.readStep(ctx, rt, req)
 	}
 	return providers.ReadResourceResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
+}
+
+func (p *Provider) readStep(ctx context.Context, rt resourceType, req providers.ReadResourceRequest) providers.ReadResourceResponse {
+	ctx, done := p.withStop(ctx)
+	defer done()
+	if conn := priorSSH(req.PriorState); !conn.IsNull() {
+		if diags := reachable(ctx, conn); len(diags) > 0 {
+			return providers.ReadResourceResponse{NewState: req.PriorState, Private: req.Private, Diagnostics: diags}
+		}
+	}
+	start := time.Now()
+	defer lockForReboot(req.TypeName, priorSSH(req.PriorState))()
+	locked := time.Now()
+	defer logStep("read", req.TypeName, req.PriorState, start, locked)
+	return rt.read(ctx, req)
 }
 
 // logStep logs, at debug, how long a step took on its host, and how much
@@ -467,41 +486,65 @@ var planReads = map[string]func(context.Context, providers.PlanResourceChangeReq
 
 func (p *Provider) PlanResourceChange(ctx context.Context, req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
-		resp := rt.plan(req)
-		if read, ok := planReads[req.TypeName]; ok && !resp.Diagnostics.HasErrors() {
-			ctx, done := p.withStop(ctx)
-			read(ctx, req, &resp)
-			done()
+		if gatedType(req.TypeName) && hasGate(req.ProposedNewState) {
+			return p.planGated(ctx, rt, req)
 		}
-		resp.PlannedState = planBackupFile(req.PriorState, resp.PlannedState)
-		resp.PlannedState = planRevision(req.PriorState, resp.PlannedState)
-		if anotherMachine(req.PriorState, resp.PlannedState) {
-			resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("port"))
-		}
-		return resp
+		return p.planStep(ctx, rt, req)
 	}
 	return providers.PlanResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
 }
 
+// planStep plans a step as its resource type does, with the revision and
+// the other settings every step shares.
+func (p *Provider) planStep(ctx context.Context, rt resourceType, req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	resp := rt.plan(req)
+	if read, ok := planReads[req.TypeName]; ok && !resp.Diagnostics.HasErrors() {
+		ctx, done := p.withStop(ctx)
+		read(ctx, req, &resp)
+		done()
+	}
+	resp.PlannedState = planBackupFile(req.PriorState, resp.PlannedState)
+	resp.PlannedState = planRevision(req.PriorState, resp.PlannedState)
+	if anotherMachine(req.PriorState, resp.PlannedState) {
+		resp.RequiresReplace = append(resp.RequiresReplace, cty.GetAttrPath("ssh").GetAttr("port"))
+	}
+	return resp
+}
+
 func (p *Provider) ApplyResourceChange(ctx context.Context, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
 	if rt, ok := resourceTypes[req.TypeName]; ok {
-		ctx, done := p.withStop(ctx)
-		defer done()
-		start := time.Now()
-		defer lockForReboot(req.TypeName, priorSSH(req.PlannedState))()
-		locked := time.Now()
-		named := req.PlannedState
-		if named.IsNull() {
-			named = req.PriorState // a destroy
+		if gatedType(req.TypeName) && (hasGate(req.PlannedState) || hasGate(req.PriorState)) {
+			return p.applyGated(ctx, rt, req)
 		}
-		defer logStep("apply", req.TypeName, named, start, locked)
-		resp := rt.apply(ctx, req)
-		resp.NewState = applyRevision(req.PlannedState, resp.NewState)
-		resp.NewState = applyBackupFile(req.PriorState, resp.NewState)
-		resp.Diagnostics = locateApplyErrors(rt.schema().Block, resp.Diagnostics)
-		return resp
+		return p.applyStep(ctx, rt, req)
 	}
 	return providers.ApplyResourceChangeResponse{Diagnostics: unsupported("resource type " + req.TypeName)}
+}
+
+// applyStep applies a step as its resource type does, giving it a new
+// revision when it changed the host.
+func (p *Provider) applyStep(ctx context.Context, rt resourceType, req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+	ctx, done := p.withStop(ctx)
+	defer done()
+	start := time.Now()
+	defer lockForReboot(req.TypeName, priorSSH(req.PlannedState))()
+	locked := time.Now()
+	named := req.PlannedState
+	if named.IsNull() {
+		named = req.PriorState // a destroy
+	}
+	defer logStep("apply", req.TypeName, named, start, locked)
+	var resp providers.ApplyResourceChangeResponse
+	if req.TypeName == "conn3x_service_action" && p.onlySkipped(req) {
+		resp.NewState = req.PlannedState // see onlySkipped: nothing it watches ran
+	} else {
+		resp = rt.apply(ctx, req)
+	}
+	resp.NewState = applyRevision(req.PlannedState, resp.NewState)
+	p.minted(req.PlannedState, resp.NewState)
+	resp.NewState = applyBackupFile(req.PriorState, resp.NewState)
+	resp.Diagnostics = locateApplyErrors(rt.schema().Block, resp.Diagnostics)
+	return resp
 }
 
 // locateApplyErrors points each apply error that has no place in the
@@ -573,6 +616,9 @@ func resourceSchemas() map[string]providers.Schema {
 	out := make(map[string]providers.Schema, len(resourceTypes))
 	for name, rt := range resourceTypes {
 		out[name] = rt.schema()
+		if gatedType(name) {
+			out[name] = withOnlyIf(out[name])
+		}
 	}
 	return out
 }

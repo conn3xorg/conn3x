@@ -370,6 +370,9 @@ func (p *Provider) ImportResourceState(ctx context.Context, req providers.Import
 	if resp.Diagnostics.HasErrors() {
 		return resp
 	}
+	if gatedType(req.TypeName) {
+		state = dressGate(state, cty.NullVal(cty.Bool), withOnlyIf(resourceTypes[req.TypeName].schema()).Block.ImpliedType())
+	}
 	resp.ImportedResources = []providers.ImportedResource{{TypeName: req.TypeName, State: state}}
 	return resp
 }
