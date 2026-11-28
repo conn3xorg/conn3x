@@ -8,6 +8,7 @@ package configs
 import (
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/opentofu/opentofu/internal/addrs"
 	"github.com/opentofu/opentofu/internal/configs/symlib"
 	"github.com/opentofu/opentofu/internal/encryption/config"
 	"github.com/opentofu/opentofu/version"
@@ -109,7 +110,13 @@ func loadConfigFileBody(body hcl.Body, _ string, override bool) (*File, hcl.Diag
 		case "circuit":
 			resources, imports, circuitDiags := decodeCircuitBlock(block, circuits)
 			diags = append(diags, circuitDiags...)
-			file.ManagedResources = append(file.ManagedResources, resources...)
+			for _, r := range resources {
+				if r.Mode == addrs.DataResourceMode { // a probe
+					file.DataResources = append(file.DataResources, r)
+				} else {
+					file.ManagedResources = append(file.ManagedResources, r)
+				}
+			}
 			file.Import = append(file.Import, imports...)
 
 		case "language":

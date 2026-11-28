@@ -70,7 +70,8 @@ func (w *whenFilter) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 		if !got.IsKnown() {
 			return bad("when isn't known yet",
 				fmt.Sprintf("when decides whether the step runs on %s, so it has to be known when planning, but on %s it depends on something only the apply will know. "+
-					"A host that doesn't exist yet has no facts: give its entry in hosts the value when needs, such as os = \"ubuntu\", and read that first, as in try(each.value.os, ...).", k.AsString(), k.AsString()))
+					"A host that doesn't exist yet has no facts: give its entry in hosts the value when needs, such as os = \"ubuntu\", and read that first, as in try(each.value.os, ...). "+
+					"To decide at apply instead, as for a probe that reads the host after earlier steps, use only_if.", k.AsString(), k.AsString()))
 		}
 		b, err := convert.Convert(got, cty.Bool)
 		if err != nil || b.IsNull() {

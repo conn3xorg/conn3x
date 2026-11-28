@@ -208,6 +208,7 @@ var circuitSchema = &hcl.BodySchema{
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "ssh"},
 		{Type: "step", LabelNames: []string{"name"}},
+		{Type: "probe", LabelNames: []string{"name"}},
 		{Type: "handler", LabelNames: []string{"name"}},
 		{Type: "rescue", LabelNames: []string{"name"}},
 		{Type: "always", LabelNames: []string{"name"}},
@@ -238,7 +239,8 @@ func CircuitSourceFiles(dir string) ([]string, hcl.Diagnostics) {
 	return out, diags
 }
 
-// decodeCircuitBlock lowers one circuit block to managed resources. seen
+// decodeCircuitBlock lowers one circuit block to managed resources, and
+// its probes to data sources. seen
 // tracks circuit names already declared in the same file.
 func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resource, []*Import, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
@@ -343,8 +345,40 @@ func decodeCircuitBlock(block *hcl.Block, seen map[string]hcl.Range) ([]*Resourc
 	var earlier []*Resource               // every step so far, for a reboot that watches them
 	notifiers := map[string][]*Resource{} // handler name => steps that notify it
 	notifyRefs := map[string][]hcl.Range{}
+	probes := map[string]hcl.Range{}
 	diags = append(diags, exclusiveKeyClash(content.Blocks.OfType("step"))...)
-	for _, step := range content.Blocks.OfType("step") {
+	for _, step := range content.Blocks {
+		if step.Type == "probe" {
+			pName := step.Labels[0]
+			if !validCircuitName(pName) {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Invalid probe name",
+					Detail:   "A probe name must be a valid identifier without a double underscore.",
+					Subject:  &step.LabelRanges[0],
+				})
+				continue
+			}
+			if prev, dup := probes[pName]; dup {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Duplicate probe",
+					Detail:   fmt.Sprintf("Circuit %q already has a probe named %q, declared at %s.", name, pName, prev),
+					Subject:  &step.DefRange,
+				})
+				continue
+			}
+			probes[pName] = step.DefRange
+			r, probeDiags := lowerProbe(name, step, hosts, sshAttrs, sshRange, earlier, perHost)
+			diags = append(diags, probeDiags...)
+			if r != nil {
+				resources = append(resources, r)
+			}
+			continue
+		}
+		if step.Type != "step" {
+			continue
+		}
 		stepName := step.Labels[0]
 		if !validCircuitName(stepName) {
 			diags = append(diags, &hcl.Diagnostic{
@@ -521,12 +555,12 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		return nil, nil, append(diags, nativeSyntaxRequired(step.DefRange))
 	}
 	for attrName, attr := range body.Attributes {
-		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" && attrName != "import" && attrName != "when" && attrName != "run_once" && attrName != "on" {
+		if attrName != "depends_on" && attrName != "notify" && attrName != "for_each" && attrName != "import" && attrName != "when" && attrName != "only_if" && attrName != "run_once" && attrName != "on" {
 			rng := attr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported argument in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, when, run_once, on, depends_on, notify, import, one module block and a lifecycle block, not %q.", attrName),
+				Detail:   fmt.Sprintf("A step takes only for_each, when, only_if, run_once, on, depends_on, notify, import, one module block and a lifecycle block, not %q.", attrName),
 				Subject:  &rng,
 			})
 		}
@@ -550,7 +584,7 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unsupported block in step",
-				Detail:   fmt.Sprintf("A step takes only for_each, when, run_once, on, depends_on, notify, import, one module block and a lifecycle block, not %q.", block.Type),
+				Detail:   fmt.Sprintf("A step takes only for_each, when, only_if, run_once, on, depends_on, notify, import, one module block and a lifecycle block, not %q.", block.Type),
 				Subject:  &rng,
 			})
 		}
@@ -636,8 +670,30 @@ func lowerStep(circuit string, step *hcl.Block, hosts hcl.Expression, sshAttrs h
 		}
 		ssh = block
 	}
+	if a, ok := moduleAttrs["only_if"]; ok {
+		return nil, nil, append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "only_if belongs on the step",
+			Detail:   fmt.Sprintf("Set only_if on the step, beside when, not inside its %s block.", module.Type),
+			Subject:  a.SrcRange.Ptr(),
+		})
+	}
+	configAttrs := moduleAttrs
+	if cond, ok := body.Attributes["only_if"]; ok {
+		onlyIfDiags := stepOnlyIf(cond, module, resourceType, looping)
+		diags = append(diags, onlyIfDiags...)
+		if onlyIfDiags.HasErrors() {
+			return nil, nil, diags
+		}
+		// only_if goes to the resource as an argument, so unlike when it may
+		// wait for the apply. The import ID is built from moduleAttrs alone.
+		configAttrs = hclsyntax.Attributes{"only_if": cond}
+		for k, v := range moduleAttrs {
+			configAttrs[k] = v
+		}
+	}
 	config := &hclsyntax.Body{
-		Attributes: moduleAttrs,
+		Attributes: configAttrs,
 		Blocks:     append(append(hclsyntax.Blocks{}, module.Body.Blocks...), ssh),
 		SrcRange:   module.Body.SrcRange,
 		EndRange:   module.Body.EndRange,
