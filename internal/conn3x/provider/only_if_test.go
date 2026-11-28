@@ -86,7 +86,7 @@ func TestOnlyIfFalseSkipsAndTouchesNothing(t *testing.T) {
 	cfg := cfgWith(f.config(map[string]cty.Value{"content": cty.StringVal("hi\n")}), cty.False)
 	null := cty.NullVal(gatedFile.ImpliedType())
 	planned := f.gatedPlan(null, cfg).PlannedState
-	if !planned.GetAttr("skipped").RawEquals(cty.True) || !planned.GetAttr("revision").RawEquals(cty.StringVal("")) {
+	if !planned.GetAttr("skipped").RawEquals(cty.True) || planned.GetAttr("revision").IsKnown() {
 		t.Fatalf("planned skipped = %#v, revision = %#v", planned.GetAttr("skipped"), planned.GetAttr("revision"))
 	}
 	state := f.gatedApply(null, planned, cfg)
@@ -306,4 +306,25 @@ func (f *fileTest) connFor(v cty.Value) cty.Value {
 		vals[k] = c
 	}
 	return cty.ObjectVal(vals)
+}
+
+// A step skipped before it ever ran keeps a revision of its own, so a
+// handler whose triggers hold "" (as try(x.revision, "") gives) isn't
+// held back by an unrelated skip in the same apply.
+func TestOnlyIfNeverRanSkipHasOwnRevision(t *testing.T) {
+	planned := cty.ObjectVal(map[string]cty.Value{"revision": cty.UnknownVal(cty.String)})
+	a, b := skipMark(planned).GetAttr("revision"), skipMark(planned).GetAttr("revision")
+	if !strings.HasPrefix(a.AsString(), "skip:") || a.RawEquals(b) {
+		t.Fatalf("never-ran skip revisions %q and %q", a.AsString(), b.AsString())
+	}
+	p := &Provider{}
+	p.ran.skip(a)
+	handler := cty.ObjectVal(map[string]cty.Value{"triggers": cty.MapVal(map[string]cty.Value{"cert": cty.StringVal("")})})
+	if p.onlySkipped(providers.ApplyResourceChangeRequest{PriorState: cty.NullVal(handler.Type()), PlannedState: handler}) {
+		t.Fatal("a handler whose triggers hold \"\" was held back by an unrelated skip")
+	}
+	watching := cty.ObjectVal(map[string]cty.Value{"triggers": cty.MapVal(map[string]cty.Value{"step": a})})
+	if !p.onlySkipped(providers.ApplyResourceChangeRequest{PriorState: cty.NullVal(watching.Type()), PlannedState: watching}) {
+		t.Fatal("a handler watching only the skipped step acted")
+	}
 }

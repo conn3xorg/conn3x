@@ -5,6 +5,8 @@ package provider
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"maps"
 	"strings"
@@ -154,23 +156,37 @@ func skippedState(block *configschema.Block, planned, rev cty.Value) cty.Value {
 			vals[name] = cty.NullVal(attr.Type)
 		}
 	}
+	out := cty.UnknownAsNull(cty.ObjectVal(vals)).AsValueMap()
 	if _, ok := block.Attributes["revision"]; ok {
-		vals["revision"] = rev
+		out["revision"] = rev // unknown for a step that never ran: apply marks it
 	}
-	return cty.UnknownAsNull(cty.ObjectVal(vals))
+	return cty.ObjectVal(out)
 }
 
-// skipRevision is the revision a skipped step keeps: the one it had, or ""
-// for a step that never ran, which tells it apart from steps recorded
-// before revisions existed.
+// skipRevision is the revision a skipped step keeps: the one it had, or,
+// for a step that never ran, unknown at plan; apply then gives it one of
+// its own, marked skip:. The apply log matches handlers' triggers against
+// skipped revisions, so a shared value such as "" would hold back any
+// handler whose triggers held that value, as try(x.revision, "") does.
 func skipRevision(prior cty.Value) cty.Value {
-	if prior.IsNull() || !prior.Type().HasAttribute("revision") {
-		return cty.StringVal("")
+	if !prior.IsNull() && prior.Type().HasAttribute("revision") {
+		if r := prior.GetAttr("revision"); r.IsKnown() && !r.IsNull() && r.AsString() != "" {
+			return r
+		}
 	}
-	if r := prior.GetAttr("revision"); r.IsKnown() && !r.IsNull() {
-		return r
+	return cty.UnknownVal(cty.String)
+}
+
+// skipMark is the revision apply gives a step skipped before it ever ran.
+func skipMark(planned cty.Value) cty.Value {
+	if planned.IsNull() || !planned.Type().HasAttribute("revision") || planned.GetAttr("revision").IsKnown() {
+		return planned
 	}
-	return cty.StringVal("")
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	vals := planned.AsValueMap()
+	vals["revision"] = cty.StringVal("skip:" + hex.EncodeToString(b))
+	return cty.ObjectVal(vals)
 }
 
 // mayRun is planned for a step whose only_if isn't known: what it reads
@@ -239,8 +255,9 @@ func (p *Provider) applyGated(ctx context.Context, rt resourceType, req provider
 	if wasSkipped(req.PlannedState) {
 		// OpenTofu plans again at apply, with only_if known, so a planned
 		// skip is the final word.
-		p.ran.skip(req.PlannedState.GetAttr("revision"))
-		return providers.ApplyResourceChangeResponse{NewState: req.PlannedState}
+		state := skipMark(req.PlannedState)
+		p.ran.skip(state.GetAttr("revision"))
+		return providers.ApplyResourceChangeResponse{NewState: state}
 	}
 	base := req
 	base.Config, base.PriorState, base.PlannedState = stripGate(req.Config), stripGate(req.PriorState), stripGate(req.PlannedState)
