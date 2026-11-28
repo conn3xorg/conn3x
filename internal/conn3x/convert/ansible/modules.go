@@ -378,7 +378,7 @@ var jinja = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 
 // itemField matches {{ item.name }}, or with | default('text'),
 // default(omit), default(true), default(false) or default(N).
-var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\(\s*(?:'([^'\\]*)'|"([^"\\]*)"|(omit|true|True|false|False|-?[0-9]+))\s*\)\s*)?\}\}`)
+var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\(\s*(?:'([^'\\]*)'|"([^"\\]*)"|(omit|true|True|false|False|-?(?:0|[1-9][0-9]*)))\s*\)\s*)?\}\}`)
 
 // omitted is the default of a field read with default(omit): the argument
 // is left out when an item doesn't have the field.

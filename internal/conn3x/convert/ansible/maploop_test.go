@@ -137,14 +137,17 @@ func TestRoleLoopItemDefaults(t *testing.T) {
 			typ: `shell = optional(string, "False")`},
 		{name: "False", read: "default(False)", defaults: "[{name: a}]",
 			typ: `shell = optional(string, "False")`},
-		{name: "number", read: "default(007)", defaults: "[{name: a}]",
+		{name: "number", read: "default(7)", defaults: "[{name: a}]",
 			typ: `shell = optional(string, "7")`},
+		// Jinja refuses a leading zero, so Ansible never ran such a task.
+		{name: "leading zero", read: "default(0644)", defaults: "[{name: a}]",
+			review: "uses a Jinja expression the converter can't translate"},
 		{name: "omit in part of the value", read: "default(omit) }}/x{{ ''", defaults: "[{name: a}]",
 			review: "with default(omit) as part of its value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			shell := "{{ item.shell | " + tc.read + " }}"
-			if tc.review != "" {
+			if strings.HasPrefix(tc.read, "default(omit) }}") {
 				shell = "{{ item.shell | default(omit) }}/x"
 			}
 			res, err := ConvertRole(writeRole(t, map[string]string{
