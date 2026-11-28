@@ -41,9 +41,12 @@ func cacheOnly(t map[string]*yaml.Node) bool {
 // findUnreadRegisters records the tasks whose register nothing in the role
 // reads: no task, handler or template names it, other than a cacheOnly
 // task's when, which is dropped. register then changes nothing a circuit
-// would do, so it doesn't stop the task converting.
+// would do, so it doesn't stop the task converting. It records too the
+// names that are read only as R is changed or R.changed, which
+// applyTimeWhen turns into triggers on the registering task's step.
 func (c *converter) findUnreadRegisters(tasks []taskAt) {
 	c.unreadRegister = map[*yaml.Node]bool{}
+	c.changedOnly = map[string]bool{}
 	if c.role == nil {
 		return
 	}
@@ -69,8 +72,10 @@ func (c *converter) findUnreadRegisters(tasks []taskAt) {
 			continue
 		}
 		word := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)
-		reads := len(word.FindAllStringIndex(all, -1)) -
-			len(regexp.MustCompile(`register:\s*["']?`+regexp.QuoteMeta(name)+`\b`).FindAllStringIndex(all, -1))
+		registers := len(regexp.MustCompile(`register:\s*["']?`+regexp.QuoteMeta(name)+`\b`).FindAllStringIndex(all, -1))
+		reads := len(word.FindAllStringIndex(all, -1)) - registers
+		changedRead := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `(?: is changed\b|\.changed\b)`)
+		changed := len(changedRead.FindAllStringIndex(all, -1))
 		// A file imported twice is in tasks twice; its text is in all once.
 		seen := map[string]bool{}
 		for _, o := range tasks {
@@ -78,10 +83,13 @@ func (c *converter) findUnreadRegisters(tasks []taskAt) {
 			if om := mapping(o.node); cacheOnly(om) && om["when"] != nil && !seen[at] {
 				seen[at] = true
 				reads -= len(word.FindAllStringIndex(nodeText(om["when"]), -1))
+				changed -= len(changedRead.FindAllStringIndex(nodeText(om["when"]), -1))
 			}
 		}
 		if reads <= 0 {
 			c.unreadRegister[t.node] = true
+		} else if reads == changed && registers == 1 && !probeShaped(m) {
+			c.changedOnly[name] = true
 		}
 	}
 }

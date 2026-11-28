@@ -59,6 +59,16 @@ type step struct {
 	blocks []stepBlock
 }
 
+// has reports whether the step sets any of keys.
+func (s step) has(keys ...string) bool {
+	for _, a := range s.attrs {
+		if slices.Contains(keys, a.key) {
+			return true
+		}
+	}
+	return false
+}
+
 // stepBlock is a block inside a step's module, such as a rule's entry.
 type stepBlock struct {
 	name  string
@@ -103,6 +113,11 @@ type input struct {
 	out map[string][]byte
 	// wait is set for a uri task that retries until a status answers.
 	wait *uriWait
+	// triggers are revisions a command's triggers follow, for a when on
+	// R is changed; see applyTimeWhen. gated is set when the step has
+	// only_if, which says when a command without a guard should run.
+	triggers string
+	gated    bool
 	// retypedVars are the converter's, for checkFreeText.
 	retypedVars map[string]string
 	// jsonEdits are a copy's json_patch chain on the slurp before it, or
@@ -3848,7 +3863,9 @@ func commandModule(in *input) ([]step, string) {
 			return nil, k + " is a glob pattern; Conn3x tests the path as written"
 		}
 	}
-	if !in.has("creates") && !in.has("removes") {
+	if in.triggers != "" {
+		attrs = append(attrs, attr{key: "triggers", raw: "[" + in.triggers + "]"})
+	} else if !in.has("creates") && !in.has("removes") && !in.gated {
 		return nil, "runs on every play; give it a creates, removes or unless guard, or triggers, so Conn3x knows when it's done"
 	}
 	// Ansible adds a newline to stdin unless stdin_add_newline is false.

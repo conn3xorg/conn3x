@@ -74,8 +74,9 @@ func TestRoleStatExistsForms(t *testing.T) {
 
 // What stays of a stat probe, each with a reason naming what it can't
 // carry: follow: true, any argument but path, a path the converter can't
-// fill in or Ansible would expand, a when on any field but exists, a
-// command probe's field on a stat probe, and a probe after a change.
+// fill in or Ansible would expand, a when on any field but exists, and a
+// command probe's field on a stat probe. One with a when, or after a
+// change, converts; see TestRoleProbeAfterChanges.
 func TestRoleStatProbeStays(t *testing.T) {
 	for _, c := range []struct{ tasks, want string }{
 		{"- stat: { path: /etc/x, follow: true }\n  register: x\n", "sets follow: true"},
@@ -89,11 +90,9 @@ func TestRoleStatProbeStays(t *testing.T) {
 		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.stat.exists is True\n", "uses when"},
 		{"- stat: { path: \"{{ app_conf }}\" }\n  register: x\n", `path refers to the role default "app_conf"`},
 		{"- stat: { path: ~/.bashrc }\n  register: x\n", "sets a path starting with ~"},
-		{"- stat: { path: /etc/x }\n  register: x\n  when: app_conf == '/etc/x'\n", "has a when"},
 		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.stat.isdir\n", "reads x.stat.isdir, and the converted stat probe only tests whether the path exists"},
 		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.stat.exists and x.stat.mode == '0644'\n", "reads x.stat.mode"},
 		{"- stat: { path: /etc/x }\n  register: x\n- file: { path: /etc/y, state: directory }\n  when: x.rc == 0\n", "uses when, which the converter can't translate yet"},
-		{"- package: { name: curl }\n- stat: { path: /etc/x }\n  register: x\n", "probes the host after tasks that change it"},
 	} {
 		res, err := ConvertRole(writeRole(t, map[string]string{"tasks/main.yml": c.tasks, "defaults/main.yml": "app_conf: /etc/app.conf\n"}))
 		if err != nil {

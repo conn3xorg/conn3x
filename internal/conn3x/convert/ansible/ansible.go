@@ -141,9 +141,11 @@ type converter struct {
 	// probeWhy holds the role's probes, by task: "" for one converted to a
 	// data source, else why it stays.
 	probeWhy map[*yaml.Node]string
-	// unreadRegister holds the tasks whose register nothing reads; see
+	// unreadRegister holds the tasks whose register nothing reads, and
+	// changedOnly the names only R is changed reads; see
 	// findUnreadRegisters.
 	unreadRegister map[*yaml.Node]bool
+	changedOnly    map[string]bool
 	// block is the task being converted's place in a block with rescue or
 	// always, if it has one.
 	block taskAt
@@ -796,23 +798,25 @@ func (c *converter) handler(cb *hclwrite.Body, h *yaml.Node, vars map[string]str
 
 // handlerWhen is a role handler's when as a Conn3x handler's: one
 // condition, or a list whose every condition whenExpr reads. "" for any
-// other, including a when on the family alone, which only tasks narrow by.
+// other, including a when on the family alone, which only tasks narrow by,
+// and one on a late probe, which a handler can't wait for the apply to read.
 func (c *converter) handlerWhen(w *yaml.Node) string {
 	if c.role == nil {
 		return ""
 	}
-	if w.Kind != yaml.SequenceNode {
-		return c.role.whenExpr(w)
+	conds := []*yaml.Node{w}
+	if w.Kind == yaml.SequenceNode {
+		conds = w.Content
 	}
-	var conds []string
-	for _, e := range w.Content {
+	var out []string
+	for _, e := range conds {
 		b := c.role.whenExpr(e)
-		if b == "" {
+		if b == "" || c.role.lateRef(b) {
 			return ""
 		}
-		conds = append(conds, b)
+		out = append(out, b)
 	}
-	return andAll(conds)
+	return andAll(out)
 }
 
 // andAll joins conditions with &&. One with an || goes in parentheses,
@@ -1023,6 +1027,11 @@ var harmless = map[string]bool{"name": true, "notify": true, "args": true, "tags
 
 func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, vars, handlers map[string]string, used map[string]int) {
 	t := mapping(node)
+	if c.role != nil {
+		for _, p := range c.role.probes {
+			p.passed = p.passed || p.shadowedBy == node
+		}
+	}
 	name := scalar(t["name"])
 	noLog := c.hidesValues(node)
 	if why := c.noLogFirst(node, t); noLog && why != "" {
@@ -1066,6 +1075,15 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		reg := scalar(t["register"])
 		body.AppendNewline()
+		if p := c.role.probes[reg]; p.late {
+			comment(body, fmt.Sprintf("Task %q (%s line %d) probes each host after the steps above it: probe %q reads during the apply when one of them has a change pending, and the steps whose when read %s test its result in only_if.", name, c.file, node.Line, reg, reg))
+			if p.guarded {
+				comment(body, "It only reads, so it reads every host, where Ansible ran it only where its when held.")
+			}
+			body.AppendNewBlock("probe", []string{reg}).Body().SetAttributeRaw("command", rawTokens(`"`+quoted(p.cmd)+`"`))
+			c.res.Converted++
+			return
+		}
 		comment(body, fmt.Sprintf("Task %q (%s line %d) probes each host: data.conn3x_command.%s, after the circuit, runs it at plan time, and the steps whose when read %s test its result.", name, c.file, node.Line, reg, reg))
 		c.res.Converted++
 		return
@@ -1132,6 +1150,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 	// task converts for the families it allows.
 	// A list of conditions, which Ansible ANDs, splits into the ones that
 	// switch a role default and the rest, which must all test the family.
+	// What only the apply knows leaves the when for only_if and triggers.
+	onlyIf, triggers, why := c.applyTimeWhen(t)
+	if why != "" {
+		c.issue(body, name, node, why)
+		return
+	}
 	famWhen := t["when"]
 	var switches []string
 	if w := t["when"]; w != nil && c.role != nil && w.Kind == yaml.SequenceNode {
@@ -1201,7 +1225,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		if k == "become_user" && scalar(t[k]) == "postgres" && runsAsPostgres(t) {
 			continue
 		}
-		if k == "register" && c.unreadRegister[node] {
+		if k == "register" && (c.unreadRegister[node] || c.changedOnly[scalar(t[k])]) {
 			continue
 		}
 		// A command or shell task's environment becomes the step's own.
@@ -1255,7 +1279,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			in.family = fams[0].ansible
 		}
 		in.factsLater = c.factsAfter[node]
-		in.wait = wait
+		in.wait, in.triggers, in.gated = wait, triggers, onlyIf != ""
 		in.jsonEdits, in.jsonWhy = c.jsonEdits[node], c.jsonWhy[node]
 		in.csrs = c.csrs
 		in.keyFrom = c.keyFrom[node]
@@ -1275,7 +1299,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			fv := maps.Clone(vars)
 			fv["item"] = it
 			one := c.input(mod, args, fv, nil)
-			one.factsLater, one.wait = in.factsLater, in.wait
+			one.factsLater, one.wait, one.triggers, one.gated = in.factsLater, in.wait, in.triggers, in.gated
 			one.jsonEdits, one.jsonWhy = in.jsonEdits, in.jsonWhy
 			got, why := m(one)
 			if why == "" {
@@ -1303,7 +1327,7 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 				break
 			}
 			one := c.input(mod, a, vars, nil)
-			one.factsLater, one.wait = in.factsLater, in.wait
+			one.factsLater, one.wait, one.triggers, one.gated = in.factsLater, in.wait, in.triggers, in.gated
 			one.jsonEdits, one.jsonWhy = in.jsonEdits, in.jsonWhy
 			got, why := m(one)
 			if why == "" {
@@ -1522,6 +1546,10 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 			return
 		}
 	}
+	if triggers != "" && (len(steps) != 1 || steps[0].module != "command") {
+		c.issue(body, name, node, "reads whether a task changed, which a circuit follows only in one command step's triggers, and this task becomes something else")
+		return
+	}
 	base := slug(firstNonEmpty(name, mod))
 	for i, s := range steps {
 		if s.module == "" {
@@ -1543,6 +1571,12 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		// A rescue or always block can't share a handler's name.
 		for c.block.kind != "" && slices.Contains(slices.Collect(maps.Values(handlers)), stepName) {
 			stepName = unique(stepName, used)
+		}
+		if onlyIf != "" && s.module == "command" && !s.has("creates", "removes", "unless") {
+			s.notes = append(s.notes, "TODO(convert): only_if gates this command, and a command that already ran doesn't run again when only_if turns true again; give it creates or removes if it should.")
+		}
+		if triggers != "" {
+			s.notes = append(s.notes, "TODO(convert): triggers runs this command when the step it reads changes, as Ansible's is changed does, and also on the first apply, as every new step does, where Ansible would skip it on a host already set up; check that's safe.")
 		}
 		body.AppendNewline()
 		for _, note := range s.notes {
@@ -1604,6 +1638,16 @@ func (c *converter) task(body *hclwrite.Body, node *yaml.Node, playBecome bool, 
 		}
 		if len(conds) > 0 {
 			sb.SetAttributeRaw("when", rawTokens(strings.Join(conds, " && ")))
+		}
+		if onlyIf != "" {
+			sb.SetAttributeRaw("only_if", rawTokens(onlyIf))
+			c.role.whenUses(onlyIf)
+		}
+		// Its revision is what a later R is changed follows; see
+		// applyTimeWhen. A step that's on some hosts only, or loops, has
+		// no one instance per host to read.
+		if reg := scalar(t["register"]); c.changedOnly[reg] && len(steps) == 1 && len(conds) == 0 && onlyIf == "" && c.block.kind == "" && c.block.group == nil && delegate == "" && sb.GetAttribute("for_each") == nil {
+			c.role.changedStep[reg] = fmt.Sprintf("%s.%s__%s[each.key].revision", configs.Conn3xStepModules()[s.module], c.role.circuit, stepName)
 		}
 		mb := sb.AppendNewBlock(s.module, nil).Body()
 		for _, a := range s.attrs {

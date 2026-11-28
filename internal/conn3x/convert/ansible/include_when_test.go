@@ -32,7 +32,7 @@ func TestIncludeTasksWhen(t *testing.T) {
 		"unreadable":    {when: "a is version('1', '>')"},
 		"set_fact":      {when: "a | bool", inner: "- set_fact: {a: false}\n"},
 		"probe":         {when: "p.rc != 0", before: probe, want: "when = data.conn3x_command.p[each.key].exit_code != 0"},
-		"probe late":    {when: "p.rc != 0", before: "- package: {name: curl}\n" + probe},
+		"probe late":    {when: "p.rc != 0", before: "- package: {name: curl}\n" + probe, want: "__p[each.key].exit_code != 0"}, // only_if on the circuit's probe
 		// A probe the include reads, registered again inside it.
 		"register":     {when: "out.stat.exists", before: stat, first: stat},
 		"no probe yet": {when: "out.stat.exists", first: stat},

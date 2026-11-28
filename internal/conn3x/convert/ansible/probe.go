@@ -27,9 +27,20 @@ import (
 // probes are known, so the include can read the probe's name.
 // A data source reads before any step runs, where Ansible ran the probe
 // after the tasks above it; the two agree only when nothing before the
-// probe could change what it reads. So a probe converts only when every
-// task before it, in Ansible's run order, is another probe, a fact read or
-// a set_fact. Any later probe stays for review, with that reason.
+// probe could change what it reads. So a probe becomes that data source
+// only when every task before it, in Ansible's run order, is another
+// probe, a fact read or a set_fact. A later probe becomes the circuit's
+// probe "name" block instead, which reads after every step above it, during
+// the apply when one of them has a change pending, and the steps that read
+// it test it in only_if, which waits for the apply too. A circuit probe
+// hands its exit code over and never fails, so a command probe after
+// changes converts only with failed_when: false or ignore_errors: true.
+//
+// A probe with a when reads every host, as it only reads. Ansible skipped
+// it where the when was false, and a later when on its rc, stdout or stat
+// there would have stopped the play, so the readers are the same where it
+// ran; "is failed" and "is succeeded" aren't, as a skipped task is
+// succeeded, and stay.
 //
 // A stat probe, stat: path=X with register, converts the same way, to
 // [ -e X ] || [ -L X ]: stat doesn't follow a link by default, so a
@@ -43,6 +54,22 @@ import (
 // Ansible never marked it failed and "is failed" was always false.
 type probe struct {
 	mayFail, stat bool
+	// late is a probe after tasks that change the host: the circuit's
+	// probe block, running cmd, which its readers test in only_if.
+	late    bool
+	guarded bool // the task has a when
+	cmd     string
+	// shadowedBy is a later task registering the same name: a when after
+	// it reads that task's result, not this probe's. passed is set once
+	// steps has reached it.
+	shadowedBy *yaml.Node
+	passed     bool
+}
+
+// stale reports whether a when read now would read a later task's result
+// under a converted probe's name.
+func (r *role) stale(name string) bool {
+	return r.probes[name].passed
 }
 
 // probeKeys are what a probe may set besides its command.
@@ -87,10 +114,13 @@ func (c *converter) findProbes(tasks []taskAt, vars map[string]string) {
 	clean := true
 	for _, t := range tasks {
 		m := mapping(t.node)
+		if p := c.role.probes[scalar(m["register"])]; p != nil && p.shadowedBy == nil {
+			p.shadowedBy = t.node
+		}
 		if t.reason == "" && probeShaped(m) && !c.hidesValues(t.node) && !neverTagged(m["tags"]) {
-			why := "probes the host after tasks that change it, and a data source reads at plan time, before any step runs, so it would read the host before they do"
-			if clean {
-				why = c.probe(t, m, vars)
+			why := "probes the host after tasks that change it inside a block with rescue or always, where a circuit has no place for a probe"
+			if clean || t.kind == "" && t.group == nil {
+				why = c.probe(t, m, vars, !clean)
 			}
 			c.probeWhy[t.node] = why
 		}
@@ -99,12 +129,12 @@ func (c *converter) findProbes(tasks []taskAt, vars map[string]string) {
 }
 
 // probe converts one probe into a data source, appended to the role's
-// probeBlocks, or says why it can't.
-func (c *converter) probe(t taskAt, m map[string]*yaml.Node, vars map[string]string) string {
+// probeBlocks, or, late, into the circuit's probe block, or says why it
+// can't.
+func (c *converter) probe(t taskAt, m map[string]*yaml.Node, vars map[string]string, late bool) string {
 	for _, k := range sortedKeys(m) {
 		switch {
 		case k == "when":
-			return "has a when, which the converter can't put on a probe yet: a data source reads on every host"
 		case keywords[k] && !probeKeys[k] || strings.HasPrefix(k, "with_"):
 			return "sets " + k + " on a probe, which the converter can't carry to a data source yet"
 		}
@@ -119,14 +149,21 @@ func (c *converter) probe(t taskAt, m map[string]*yaml.Node, vars map[string]str
 			return "sets ignore_errors to something other than true, which the converter can't translate yet"
 		}
 	}
+	mod, args := moduleOf(m)
+	quiet := mod == "stat" || m["failed_when"] != nil || m["ignore_errors"] != nil
+	switch {
+	case late && !quiet:
+		return "probes the host after tasks that change it, and Ansible stops the play when it exits non-zero, where a circuit probe hands the exit code to the steps that read it; add failed_when: false if the exit code is the answer"
+	case m["when"] != nil && !quiet:
+		return "has a when, and Ansible stops the play when it exits non-zero, which a data source reading every host would do where the when is false; add failed_when: false if the exit code is the answer"
+	}
 	name := scalar(m["register"])
-	if !identifier.MatchString(name) {
+	if !identifier.MatchString(name) || late && strings.Contains(name, "__") {
 		return fmt.Sprintf("registers %q, which isn't a name a data source can have", name)
 	}
 	if c.role.probes[name] != nil {
 		return fmt.Sprintf("registers %s, which an earlier probe already registers, so the two would be one data source", name)
 	}
-	mod, args := moduleOf(m)
 	if len(c.familyNames(args, vars)) > 0 {
 		what := "command"
 		if mod == "stat" {
@@ -150,6 +187,11 @@ func (c *converter) probe(t taskAt, m map[string]*yaml.Node, vars map[string]str
 	if why != "" {
 		return why
 	}
+	p := &probe{mayFail: m["failed_when"] != nil, stat: mod == "stat", late: late, guarded: m["when"] != nil, cmd: cmd}
+	c.role.probes[name] = p
+	if late {
+		return ""
+	}
 	// Ansible stops the play on a non-zero exit unless the task says
 	// otherwise; the data source doesn't, so a postcondition does.
 	// A stat probe's test exits 1 for a missing path, which isn't a failure.
@@ -164,7 +206,6 @@ func (c *converter) probe(t taskAt, m map[string]*yaml.Node, vars map[string]str
   }
 `, name)
 	}
-	c.role.probes[name] = &probe{mayFail: m["failed_when"] != nil, stat: mod == "stat"}
 	c.role.probeBlocks = append(c.role.probeBlocks, fmt.Sprintf(`
 # Task %q (%s line %d) probes each host at plan time,
 # as Ansible ran it before any task had changed the host. The steps whose
@@ -246,12 +287,12 @@ func (r *role) statWhy(n *yaml.Node) string {
 // marked failed, whatever its exit code.
 func (r *role) probeWhen(cond string) string {
 	ref := func(name string) string {
-		if r.probes[name] == nil || r.probes[name].stat {
+		if r.probes[name] == nil || r.probes[name].stat || r.stale(name) {
 			return ""
 		}
-		return fmt.Sprintf("data.conn3x_command.%s[each.key]", name)
+		return r.probeRef(name)
 	}
-	if m := probeExists.FindStringSubmatch(cond); m != nil && r.probes[m[1]] != nil && r.probes[m[1]].stat {
+	if m := probeExists.FindStringSubmatch(cond); m != nil && r.probes[m[1]] != nil && r.probes[m[1]].stat && !r.stale(m[1]) {
 		want := (m[2] == "!=") == strings.EqualFold(m[3], "false")
 		if m[5] != "" {
 			want = (m[4] == "") == (m[5] == "true")
@@ -260,7 +301,7 @@ func (r *role) probeWhen(cond string) string {
 		if !want {
 			op = "!="
 		}
-		return fmt.Sprintf("data.conn3x_command.%s[each.key].exit_code %s 0", m[1], op)
+		return fmt.Sprintf("%s.exit_code %s 0", r.probeRef(m[1]), op)
 	}
 	if m := probeRC.FindStringSubmatch(cond); m != nil {
 		if d := ref(m[1]); d != "" {
@@ -268,7 +309,7 @@ func (r *role) probeWhen(cond string) string {
 		}
 	}
 	if m := probeStatus.FindStringSubmatch(cond); m != nil {
-		if d := ref(m[1]); d != "" && !r.probes[m[1]].mayFail {
+		if d := ref(m[1]); d != "" && !r.probes[m[1]].mayFail && !r.probes[m[1]].guarded {
 			op := "=="
 			if strings.HasPrefix(m[2], "fail") {
 				op = "!="
@@ -293,4 +334,81 @@ func (r *role) probeWhen(cond string) string {
 		}
 	}
 	return ""
+}
+
+// probeRef is a converted probe's data source for the step's host: a late
+// one is the circuit's probe block, lowered to <circuit>__<name>.
+func (r *role) probeRef(name string) string {
+	if r.probes[name].late {
+		return fmt.Sprintf("data.conn3x_command.%s__%s[each.key]", r.circuit, name)
+	}
+	return fmt.Sprintf("data.conn3x_command.%s[each.key]", name)
+}
+
+// lateRef reports whether a converted when reads a late probe, which only
+// the apply may know.
+func (r *role) lateRef(expr string) bool {
+	return strings.Contains(expr, "data.conn3x_command."+r.circuit+"__")
+}
+
+var changedRe = regexp.MustCompile(`^` + probeName + `(?: is changed|\.changed(?: ?\| ?bool)?)$`)
+
+// applyTimeWhen takes out of a role task's when the conditions only the
+// apply answers, ANDed at the top: one on a late probe goes to only_if, and
+// R is changed, for a task whose register only that reads, becomes
+// triggers on R's step's revision, which changes exactly when that step
+// changes the host. Only a command step has triggers. The rest stays in t's
+// when for the step's when. why is set when R is changed can't convert.
+func (c *converter) applyTimeWhen(t map[string]*yaml.Node) (onlyIf, triggers, why string) {
+	w := deref(t["when"])
+	if c.role == nil || w == nil {
+		return "", "", ""
+	}
+	conds := []*yaml.Node{w}
+	if w.Kind == yaml.SequenceNode {
+		conds = w.Content
+	}
+	mod, _ := moduleOf(t)
+	var kept []*yaml.Node
+	var gates, trig []string
+	for _, cn := range conds {
+		if cn.Kind != yaml.ScalarNode {
+			kept = append(kept, cn)
+			continue
+		}
+		for _, p := range splitTop(strings.Join(strings.Fields(cn.Value), " "), " and ") {
+			p = strings.TrimSpace(p)
+			if m := changedRe.FindStringSubmatch(p); m != nil && c.changedOnly[m[1]] {
+				rev, ok := c.role.changedStep[m[1]]
+				switch {
+				case mod != "command" && mod != "shell":
+					return "", "", fmt.Sprintf("reads whether %s changed, which a circuit follows only in a command step's triggers, on that step's revision; for a restart or reload, notify a handler from the task that registers %s", m[1], m[1])
+				case !ok:
+					return "", "", fmt.Sprintf("reads whether %s changed, and the task that registers it didn't become one step on every host, whose revision triggers could read", m[1])
+				}
+				trig = append(trig, rev)
+				continue
+			}
+			if e := c.role.whenExpr(&yaml.Node{Kind: yaml.ScalarNode, Value: p}); e != "" && c.role.lateRef(e) {
+				gates = append(gates, e)
+				continue
+			}
+			kept = append(kept, &yaml.Node{Kind: yaml.ScalarNode, Value: p, Line: cn.Line, Column: cn.Column})
+		}
+	}
+	if len(gates) == 0 && len(trig) == 0 {
+		return "", "", ""
+	}
+	switch len(kept) {
+	case 0:
+		delete(t, "when")
+	case 1:
+		t["when"] = kept[0]
+	default:
+		t["when"] = &yaml.Node{Kind: yaml.SequenceNode, Content: kept}
+	}
+	if len(gates) > 0 {
+		onlyIf = andAll(gates)
+	}
+	return onlyIf, strings.Join(trig, ", "), ""
 }

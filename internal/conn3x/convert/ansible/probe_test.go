@@ -4,6 +4,7 @@
 package ansible
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -19,10 +20,11 @@ func TestConvertRoleProbeGolden(t *testing.T) {
 	}
 }
 
-// What stays: a probe after a task that changes the host, one with a when,
-// a shell probe, a second probe registering the same name, "is failed" on
-// a probe with failed_when: false, and a when the converter can't read. A
-// looped step's when still indexes the data source by the host.
+// What stays: a probe that can fail after a task that changes the host,
+// one with a when, a shell probe, a second probe registering the same name
+// and the whens after it, though not those before, "is failed" on a probe with failed_when: false,
+// and a when the converter can't read. A looped step's when still indexes
+// the data source by the host.
 func TestRoleProbeRefusals(t *testing.T) {
 	res, err := ConvertRole(writeRole(t, map[string]string{
 		"tasks/main.yml": `- name: Which php
@@ -38,10 +40,6 @@ func TestRoleProbeRefusals(t *testing.T) {
   command: which nginx
   changed_when: false
   ignore_errors: true
-  register: nginx
-- name: Same name
-  command: which nginx
-  changed_when: false
   register: nginx
 - name: Conditional probe
   command: which apache2
@@ -66,6 +64,22 @@ func TestRoleProbeRefusals(t *testing.T) {
 - name: Unreadable
   file: { path: /etc/unread, state: directory }
   when: php.stdout_lines | length > 0
+- name: Where is git
+  command: which git
+  changed_when: false
+  failed_when: false
+  register: dup
+- name: Before the second
+  file: { path: /etc/git-first, state: directory }
+  when: dup.rc != 0
+- name: Same name
+  command: which git
+  changed_when: false
+  failed_when: false
+  register: dup
+- name: Reads the second
+  file: { path: /etc/git-missing, state: directory }
+  when: dup.rc != 0
 - name: Changes the host
   package: { name: curl }
 - name: Late probe
@@ -97,17 +111,21 @@ func TestRoleProbeRefusals(t *testing.T) {
 	}
 	for i, want := range []string{
 		"Shell probe: uses changed_when",
-		"Same name: registers nginx, which an earlier probe already registers",
-		"Conditional probe: has a when, which the converter can't put on a probe yet",
+		"Conditional probe: has a when, and Ansible stops the play when it exits non-zero",
 		"Not for failed_when false: uses when",
 		"Unreadable: uses when",
-		"Late probe: probes the host after tasks that change it",
+		"Same name: registers dup, which an earlier probe already registers",
+		"Reads the second: uses when",
+		"Late probe: probes the host after tasks that change it, and Ansible stops the play when it exits non-zero",
 	} {
 		if i >= len(got) || !strings.Contains(got[i], want) {
 			t.Errorf("review %d: want %q in %q", i, want, got)
 		}
 	}
-	if res.Converted != 6 || len(res.Review) != 6 {
+	if !strings.Contains(hcl, "only_if = data.conn3x_command.n_") || strings.Count(hcl, "__dup[each.key].exit_code != 0") != 1 {
+		t.Errorf("the when before the second dup reads the first, and none after it:\n%s", hcl)
+	}
+	if res.Converted != 8 || len(res.Review) != 7 {
 		t.Errorf("converted %d, review %+v", res.Converted, res.Review)
 	}
 }
@@ -157,5 +175,88 @@ func TestRoleProbeStays(t *testing.T) {
 		if i >= len(got) || !strings.Contains(got[i], want) {
 			t.Errorf("review %d: want %q in %q", i, want, got)
 		}
+	}
+}
+
+// A probe after a task that changes the host becomes the circuit's probe
+// block, and a when on it only_if, beside the when on what the plan knows.
+// R is changed, where only that reads R, becomes triggers on R's step's
+// revision in a command step. Each gated or triggered command gets a note.
+func TestRoleProbeAfterChanges(t *testing.T) {
+	res, err := ConvertRole(writeRole(t, map[string]string{
+		"defaults/main.yml": "flag: true\n",
+		"tasks/main.yml": `- name: Changes the host
+  package: { name: curl }
+- name: Which php
+  command: which php
+  changed_when: false
+  failed_when: false
+  register: php
+  when: flag | bool
+- name: Has conf
+  stat: { path: /etc/app.conf }
+  register: conf
+- name: Gated build
+  command: /usr/local/bin/build
+  when:
+    - php.rc != 0
+    - flag | bool
+- name: Guarded build
+  command: /usr/local/bin/build
+  args: { creates: /usr/local/bin/php }
+  when: php.rc != 0 and ansible_facts.os_family == 'Debian'
+- name: Either
+  file: { path: /etc/either, state: directory }
+  when: not conf.stat.exists or flag | bool
+- name: Succeeded on a guarded probe
+  file: { path: /etc/ok, state: directory }
+  when: php is succeeded
+- name: Make it
+  shell: fallocate -l 1M /swapfile
+  args: { creates: /swapfile }
+  register: made
+- name: Format it
+  command: mkswap /swapfile
+  when: made is changed
+- name: Touch it
+  file: { path: /swapfile, state: touch }
+  when: made.changed
+`,
+		"handlers/main.yml": `- name: restart app
+  service: { name: app, state: restarted }
+  when: php.rc == 0
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcl := string(res.Files["main.circuit.hcl"])
+	for _, want := range []*regexp.Regexp{
+		regexp.MustCompile(`probe "php" \{\n    command = "which php"\n  \}`),
+		regexp.MustCompile(`probe "conf" \{\n    command = "\[ -e '/etc/app.conf' \] \|\| \[ -L '/etc/app.conf' \]"\n  \}`),
+		regexp.MustCompile(`only_if gates this command.*\n  step "gated_build" \{\n    when    = var.flag\n    only_if = data.conn3x_command.n_\d+__php\[each.key\].exit_code != 0\n    command \{\n      command = "/usr/local/bin/build"\n    \}`),
+		regexp.MustCompile(`step "guarded_build" \{\n    when    = local.os_family\[each.key\] == "debian"\n    only_if = data.conn3x_command.n_\d+__php\[each.key\].exit_code != 0\n`),
+		regexp.MustCompile(`only_if = \(!\(data.conn3x_command.n_\d+__conf\[each.key\].exit_code == 0\)\) \|\| \(var.flag\)`),
+		regexp.MustCompile(`triggers runs this command.*\n  step "format_it" \{\n    command \{\n      command  = "mkswap /swapfile"\n      triggers = \[conn3x_command.n_\d+__make_it\[each.key\].revision\]`),
+	} {
+		if !want.MatchString(hcl) {
+			t.Errorf("missing %s:\n%s", want, hcl)
+		}
+	}
+	if strings.Contains(hcl, "data \"conn3x_command\"") || strings.Count(hcl, "TODO(convert): only_if gates") != 1 {
+		t.Errorf("a late probe became a data source, or the guarded build got a note:\n%s", hcl)
+	}
+	got := reasons(res)
+	for _, want := range []string{
+		"is a handler with a when the converter can't translate yet",
+		"uses when, which the converter can't translate yet",
+		"reads whether made changed, which a circuit follows only in a command step's triggers",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("review: want %q in %q", want, got)
+		}
+	}
+	if len(res.Review) != 3 {
+		t.Errorf("review %+v", res.Review)
 	}
 }
