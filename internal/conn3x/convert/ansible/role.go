@@ -109,6 +109,11 @@ type role struct {
 	// and probeBlocks those blocks, written after the circuit.
 	probes      map[string]*probe
 	probeBlocks []string
+	// circuit is the circuit's name, which a probe block's data source
+	// starts with; changedStep is the revision of the step each register
+	// R is changed reads, once it has converted.
+	circuit     string
+	changedStep map[string]string
 	// carried are the defaults kept as plain variables, which a no_log
 	// task's secrets may come from; secrets counts each one's write-only
 	// uses, and those become sensitive variables.
@@ -237,7 +242,7 @@ func convertRoleDir(dir string, depsCalled bool, entry map[string]string, loopVa
 	base := filepath.Base(abs)
 	// A Galaxy role installs as namespace.name.
 	name := slug(base[strings.LastIndex(base, ".")+1:])
-	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, shadowDefault: map[string]string{}, defaultWhy: map[string]string{}, computed: map[string]string{}, computedRefs: map[string][]string{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
+	r := &role{defaults: map[string]*roleDefault{}, files: map[string][]byte{}, commaFree: map[string]bool{}, shadowed: map[string]bool{}, shadowDefault: map[string]string{}, defaultWhy: map[string]string{}, computed: map[string]string{}, computedRefs: map[string][]string{}, lists: map[string][]string{}, listUsed: map[string]bool{}, maps: map[string][]map[string]string{}, mapFields: map[string]map[string]*string{}, mapKeys: map[string][]string{}, probes: map[string]*probe{}, circuit: name, changedStep: map[string]string{}, pathRules: map[string][]string{}, stateRules: map[string][]string{}, handlerState: map[string]bool{}}
 	c := &converter{dir: dir, role: r, depsCalled: depsCalled, entry: entry}
 	r.varFiles = c.otherVarFiles()
 

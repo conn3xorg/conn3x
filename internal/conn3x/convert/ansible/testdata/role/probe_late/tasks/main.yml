@@ -1,0 +1,47 @@
+---
+- name: Write the config.
+  copy:
+    dest: /etc/late.conf
+    content: "on\n"
+    mode: "0644"
+
+- name: Check for the config.
+  stat:
+    path: /etc/late.conf
+  register: conf
+
+- name: Check for the tool.
+  command: test -x /usr/local/bin/late-tool
+  changed_when: false
+  failed_when: false
+  register: tool
+
+- name: Say the config is there.
+  copy:
+    dest: /etc/late-found
+    content: "found\n"
+    mode: "0644"
+  when: conf.stat.exists
+
+- name: Say the config is missing.
+  copy:
+    dest: /etc/late-missing
+    content: "missing\n"
+    mode: "0644"
+  when: not conf.stat.exists
+
+- name: Install the tool.
+  shell: echo x >> /var/log/late.installs && touch /usr/local/bin/late-tool && chmod 755 /usr/local/bin/late-tool
+  args:
+    creates: /usr/local/bin/late-tool
+  when: tool.rc != 0
+
+- name: Make the data file.
+  shell: echo data > /var/lib/late.data
+  args:
+    creates: /var/lib/late.data
+  register: made
+
+- name: Format the data file.
+  shell: echo x >> /var/log/late.formats
+  when: made is changed
