@@ -29,6 +29,18 @@ func TestWritesAPagePerModule(t *testing.T) {
 			t.Errorf("sysctl.md is missing %q:\n%s", want, got)
 		}
 	}
+	for page, gated := range map[string]bool{"sysctl.md": true, "windows_file.md": true, "eos_vlan.md": false} {
+		got, err := os.ReadFile(filepath.Join(dir, page))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(got), "## Deciding at apply") != gated {
+			t.Errorf("%s: only_if section = %v, want %v", page, !gated, gated)
+		}
+		if strings.Contains(string(got), "| `only_if` |") {
+			t.Errorf("%s lists only_if as the module's argument; it's the step's", page)
+		}
+	}
 	pages, _ := filepath.Glob(filepath.Join(dir, "*.md"))
 	// script's page is written by hand, as template's is.
 	if want := len(configs.Conn3xStepModules()) - 1; len(pages) != want {

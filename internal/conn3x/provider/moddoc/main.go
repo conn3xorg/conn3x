@@ -100,7 +100,7 @@ func page(name, rt string, b *configschema.Block) string {
 	var args, readOnly []string
 	for _, a := range sortedAttrs(b) {
 		at := b.Attributes[a]
-		if a == "id" || a == "circuit" { // circuit: the lowering sets it on eos steps
+		if a == "id" || a == "circuit" || a == "only_if" { // circuit: the lowering sets it on eos steps; only_if: set on the step, see onlyIfSection
 			continue
 		}
 		desc := escape(at.Description)
@@ -136,9 +136,22 @@ func page(name, rt string, b *configschema.Block) string {
 	if len(readOnly) > 0 {
 		fmt.Fprintf(&out, "## Read-only attributes\n\nConn3x sets these; reference them as `conn3x_%s.<circuit>__<step>[\"<host>\"].<name>`.\n\n| Name | Type | Description |\n| --- | --- | --- |\n%s\n\n", strings.TrimPrefix(rt, "conn3x_"), strings.Join(readOnly, "\n"))
 	}
+	if _, gated := b.Attributes["only_if"]; gated {
+		fmt.Fprintf(&out, onlyIfSection, name)
+	}
 	fmt.Fprintf(&out, "A step lowers to the `%s` resource, one instance per host, and connects with its circuit's `ssh` block.\n", rt)
 	return out.String()
 }
+
+// onlyIfSection is on the page of every module whose step takes only_if:
+// it's set on the step, beside when, not in the module's block.
+const onlyIfSection = "## Deciding at apply\n\n" +
+	"A `%s` step takes `only_if` beside `when`. Use it when whether the step should run depends on something the plan can't know yet, " +
+	"such as the exit code of a probe that reads the host after an earlier step has changed it. " +
+	"When `only_if` is true the step runs as usual. When it's false the step does nothing on the host, " +
+	"records `skipped = true` and manages nothing until `only_if` is true again. " +
+	"While the answer isn't known, the plan shows the step as one that may change. " +
+	"See [Steps that depend on what an earlier step found](/reference/circuits/steps#steps-that-depend-on-what-an-earlier-step-found).\n\n"
 
 func sortedAttrs(b *configschema.Block) []string {
 	names := make([]string, 0, len(b.Attributes))
