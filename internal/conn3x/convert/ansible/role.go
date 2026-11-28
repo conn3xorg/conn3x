@@ -899,7 +899,7 @@ func (r *role) checkLoop(k string, fields map[string]*string) string {
 	}
 	for f, d := range fields {
 		if old, seen := r.mapFields[k][f]; seen && old != nil && d != nil && *old != *d {
-			return fmt.Sprintf("reads item.%s with the default %q, where another task gives it %q", f, *d, *old)
+			return fmt.Sprintf("reads item.%s with the default %q, where another task gives it %q", f, strings.ReplaceAll(*d, omitted, "omit"), strings.ReplaceAll(*old, omitted, "omit"))
 		}
 		if d != nil {
 			continue
@@ -962,7 +962,9 @@ func (r *role) mapVariable(vb *hclwrite.Body, k, defaultsFile string) {
 	fields := slices.Sorted(maps.Keys(r.mapFields[k]))
 	var typ []string
 	for _, f := range fields {
-		if d := r.mapFields[k][f]; d != nil {
+		if d := r.mapFields[k][f]; d != nil && *d == omitted {
+			typ = append(typ, f+" = optional(string)")
+		} else if d != nil {
 			typ = append(typ, fmt.Sprintf("%s = optional(string, \"%s\")", f, quoted(*d)))
 		} else {
 			typ = append(typ, f+" = string")

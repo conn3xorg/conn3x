@@ -115,3 +115,82 @@ func TestLiteralMapLoopTemplated(t *testing.T) {
 		t.Errorf("no variable for the default:\n%s", res.Files["variables.tf"])
 	}
 }
+
+// A field read with default(omit) is left out when an item doesn't have
+// it, which is null in HCL, so the argument is unset. default(true),
+// default(false) and default(N) are the text Ansible writes into the
+// argument: True, False and the number.
+func TestRoleLoopItemDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name, read, defaults string
+		typ, item, review    string
+	}{
+		{name: "omit, item has it", read: "default(omit)", defaults: "[{name: a, shell: /bin/zsh}]",
+			typ: "shell = optional(string)", item: `shell = "/bin/zsh"`},
+		{name: "omit, item lacks it", read: "default(omit)", defaults: "[{name: a}]",
+			typ: "shell = optional(string)", item: `{ name = "a" }`},
+		{name: "true, item has it", read: "default(true)", defaults: "[{name: a, shell: /bin/zsh}]",
+			typ: `shell = optional(string, "True")`, item: `shell = "/bin/zsh"`},
+		{name: "true, item lacks it", read: "default(True)", defaults: "[{name: a}]",
+			typ: `shell = optional(string, "True")`, item: `{ name = "a" }`},
+		{name: "false", read: "default(false)", defaults: "[{name: a}]",
+			typ: `shell = optional(string, "False")`},
+		{name: "False", read: "default(False)", defaults: "[{name: a}]",
+			typ: `shell = optional(string, "False")`},
+		{name: "number", read: "default(007)", defaults: "[{name: a}]",
+			typ: `shell = optional(string, "7")`},
+		{name: "omit in part of the value", read: "default(omit) }}/x{{ ''", defaults: "[{name: a}]",
+			review: "with default(omit) as part of its value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shell := "{{ item.shell | " + tc.read + " }}"
+			if tc.review != "" {
+				shell = "{{ item.shell | default(omit) }}/x"
+			}
+			res, err := ConvertRole(writeRole(t, map[string]string{
+				"defaults/main.yml": "admins: " + tc.defaults + "\n",
+				"tasks/main.yml":    "- name: Admins\n  user: {name: \"{{ item.name }}\", shell: \"" + shell + "\"}\n  loop: \"{{ admins }}\"\n",
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.review != "" {
+				if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, tc.review) {
+					t.Fatalf("converted %d, review %+v", res.Converted, res.Review)
+				}
+				return
+			}
+			flat := func(b []byte) string { return strings.Join(strings.Fields(string(b)), " ") }
+			main, vars := flat(res.Files["main.circuit.hcl"]), flat(res.Files["variables.tf"])
+			if res.Converted != 1 || !strings.Contains(main, "shell = item.value.shell") {
+				t.Fatalf("converted %d, review %+v\n%s", res.Converted, res.Review, main)
+			}
+			for _, want := range []string{"type = list(object({ name = string, " + tc.typ + " }))", tc.item} {
+				if !strings.Contains(vars, want) {
+					t.Errorf("variables.tf has no %q:\n%s", want, vars)
+				}
+			}
+		})
+	}
+}
+
+// In a loop written in the task, an item with a default(omit) field
+// converts, and one without it stays for review.
+func TestLiteralMapLoopOmit(t *testing.T) {
+	for _, tc := range []struct {
+		name, loop, review string
+	}{
+		{name: "has it", loop: "[{name: a, shell: /bin/zsh}]"},
+		{name: "lacks it", loop: "[{name: a}]", review: "item 1 doesn't have shell, which default(omit) leaves out"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := convertString(t, "- hosts: all\n  become: true\n  tasks:\n    - user: {name: \"{{ item.name }}\", shell: \"{{ item.shell | default(omit) }}\"}\n      loop: "+tc.loop+"\n")
+			if tc.review == "" && (res.Converted != 1 || !strings.Contains(string(res.HCL), "item.value.shell")) {
+				t.Fatalf("converted %d, review %+v\n%s", res.Converted, res.Review, res.HCL)
+			}
+			if tc.review != "" && (len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, tc.review)) {
+				t.Fatalf("review %+v", res.Review)
+			}
+		})
+	}
+}
