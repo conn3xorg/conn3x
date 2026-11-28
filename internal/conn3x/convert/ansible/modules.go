@@ -349,11 +349,8 @@ func (in *input) fail(reason string) {
 // the mark for item.value.name.
 func (in *input) field(key, m string, sub []string) string {
 	var d *string
-	if strings.Contains(m, "default(") {
-		d = &sub[2]
-		if sub[3] != "" {
-			d = &sub[3]
-		}
+	if v, ok := itemDefault(sub); ok {
+		d = &v
 	}
 	if old, seen := in.itemFields[sub[1]]; seen && (old == nil) != (d == nil) || seen && old != nil && d != nil && *old != *d {
 		in.fail(fmt.Sprintf("%s reads item.%s with a different default from elsewhere in the task", key, sub[1]))
@@ -379,8 +376,34 @@ func (in *input) unused() []string {
 
 var jinja = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 
-// itemField matches {{ item.name }}, or with | default('text').
-var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\(\s*(?:'([^'\\]*)'|"([^"\\]*)")\s*\)\s*)?\}\}`)
+// itemField matches {{ item.name }}, or with | default('text'),
+// default(omit), default(true), default(false) or default(N).
+var itemField = regexp.MustCompile(`\{\{\s*item\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\(\s*(?:'([^'\\]*)'|"([^"\\]*)"|(omit|true|True|false|False|-?(?:0|[1-9][0-9]*)))\s*\)\s*)?\}\}`)
+
+// omitted is the default of a field read with default(omit): the argument
+// is left out when an item doesn't have the field.
+const omitted = "\x00omit"
+
+// itemDefault is the value an itemField match sub gives a field its item
+// doesn't have, as Ansible writes it into an argument's text, and whether
+// it has a default.
+func itemDefault(sub []string) (string, bool) {
+	switch b := sub[4]; {
+	case b == "omit":
+		return omitted, true
+	case b == "true" || b == "True":
+		return "True", true
+	case b == "false" || b == "False":
+		return "False", true
+	case b != "":
+		n, err := strconv.Atoi(b)
+		if err != nil {
+			return b, true
+		}
+		return strconv.Itoa(n), true
+	}
+	return sub[2] + sub[3], strings.Contains(sub[0], "default(") // one of them is empty
+}
 
 func (in *input) render(key, s string) string {
 	s = in.role.expandFacts(s)
@@ -399,7 +422,10 @@ func (in *input) render(key, s string) string {
 			fieldRef++
 			sub := itemField.FindStringSubmatch(m)
 			in.itemUsed = true
+			d, _ := itemDefault(sub)
 			switch {
+			case d == omitted && (inPath || strings.TrimSpace(orig) != m):
+				in.fail(fmt.Sprintf("%s reads item.%s with default(omit) as part of its value, or in a path, where Ansible can't leave it out", key, sub[1]))
 			case in.itemMaps != nil:
 				return in.field(key, m, sub)
 			case len(in.role.lists[in.itemVar]) > 0:
@@ -414,8 +440,8 @@ func (in *input) render(key, s string) string {
 						values = append(values, v)
 					}
 				}
-				if strings.Contains(m, "default(") {
-					values = append(values, sub[2]+sub[3]) // one of them is empty
+				if d, ok := itemDefault(sub); ok {
+					values = append(values, d)
 				}
 				if why := in.pathRef(orig, fieldRefs, fieldRef, in.itemVar+"."+sub[1], values); why != "" {
 					in.fail(fmt.Sprintf("%s uses item.%s from the role default %q and %s", key, sub[1], in.itemVar, why))

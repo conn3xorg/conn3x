@@ -101,8 +101,11 @@ func withItem(args map[string]*yaml.Node, it map[string]string) (out map[string]
 				if v, ok := it[sub[1]]; ok {
 					return v
 				}
-				if strings.Contains(m, "default(") {
-					return sub[2] + sub[3]
+				if d, ok := itemDefault(sub); ok && d != omitted {
+					return d
+				} else if ok {
+					why = "doesn't have " + sub[1] + ", which default(omit) leaves out, and the converter checks only items that have it"
+					return m
 				}
 				why = "doesn't have " + sub[1]
 				return m
