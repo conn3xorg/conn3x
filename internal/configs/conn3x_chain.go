@@ -24,9 +24,13 @@ func Conn3xHostEdge(r *Resource, rng hcl.Range) bool {
 }
 
 // Conn3xCircuitResource reports whether r is one a circuit's lowering made:
-// a step, a handler or an EOS commit, each repeated over the hosts.
+// a step, a handler or an EOS commit, each repeated over the hosts, or a
+// probe, the conn3x_command data source a probe block lowers to.
 func Conn3xCircuitResource(r *Resource) bool {
-	return r != nil && r.Mode == addrs.ManagedResourceMode && strings.Contains(r.Name, "__") && strings.HasPrefix(r.Type, "conn3x_")
+	if r == nil || !strings.Contains(r.Name, "__") || !strings.HasPrefix(r.Type, "conn3x_") {
+		return false
+	}
+	return r.Mode == addrs.ManagedResourceMode || r.Mode == addrs.DataResourceMode && r.Type == "conn3x_command"
 }
 
 // Conn3xStepOnHost reports whether instance key of circuit resource r runs

@@ -1,0 +1,63 @@
+circuit "app" {
+  hosts = { box = "127.0.0.1" }
+
+  ssh {
+    port             = {{.Port}}
+    user             = "root"
+    private_key_file = "{{.KeyFile}}"
+    known_hosts_file = "{{.KnownHosts}}"
+  }
+
+  step "unit" {
+    file {
+      path    = "/etc/systemd/system/conn3x-demo.service"
+      content = "[Service]\nExecStart=/bin/sh -c 'echo start >> /var/log/conn3x-demo.starts; exec sleep infinity'\n\n[Install]\nWantedBy=multi-user.target\n"
+    }
+  }
+
+  step "run" {
+    service {
+      name    = "conn3x-demo"
+      state   = "started"
+      enabled = true
+    }
+  }
+
+  # Changes the host: the probe after it has to wait for it.
+  step "conf" {
+    file {
+      path    = "/etc/app.conf"
+{{- if .Absent}}
+      state   = "absent"
+{{- else}}
+      content = "{{.Content}}\n"
+{{- end}}
+    }
+  }
+
+  probe "conf_there" {
+    command = "test -f /etc/app.conf"
+  }
+
+  step "init" {
+    only_if = data.conn3x_command.app__conf_there[each.key].exit_code == 0
+    command {
+      command = "date +%s%N >> /var/log/app.init"
+    }
+  }
+
+  step "fallback" {
+    only_if = data.conn3x_command.app__conf_there[each.key].exit_code != 0
+    notify  = [handler.restart]
+    file {
+      path    = "/etc/app.fallback"
+      content = "no conf\n"
+    }
+  }
+
+  handler "restart" {
+    service {
+      name = "conn3x-demo"
+    }
+  }
+}

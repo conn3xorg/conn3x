@@ -435,6 +435,9 @@ func renderStep(name, module string, block *configschema.Block, state cty.Value,
 		return names[i] < names[j]
 	})
 	for _, n := range names {
+		if !state.Type().HasAttribute(n) {
+			continue // only_if and skipped: the step's, not what the host has
+		}
 		attr := block.Attributes[n]
 		v := state.GetAttr(n)
 		if _, set := given[n]; (generateSkip[n] && !set) || (attr.Computed && !attr.Optional) || v.IsNull() || !v.IsKnown() {

@@ -58,6 +58,35 @@ step "install" {
   }
 }
 ```
+
+Run a command only when an earlier step left the host needing it. The probe reads after `php`, during the apply when `php` has a change pending, so it sees the package that step installed:
+
+```hcl
+circuit "web" {
+  hosts = { web1 = "203.0.113.10" }
+  ssh {
+    user = "root"
+  }
+
+  step "php" {
+    package {
+      name = "php-cli"
+    }
+  }
+
+  probe "has_gmp" {
+    command = "php -m | grep -qx gmp"
+  }
+
+  step "build_gmp" {
+    only_if = data.conn3x_command.web__has_gmp[each.key].exit_code != 0
+    command {
+      command = "/usr/local/src/php-gmp/build.sh"
+      creates = "/usr/local/lib/php/gmp.so"
+    }
+  }
+}
+```
 <!-- reference -->
 ## How it works
 
@@ -70,6 +99,8 @@ step "install" {
 **Without guards.** A command with no guard runs when the step is created, and again only when `command` or `triggers` changes.
 
 **Secrets.** A command line is visible to every user on the host for as long as the command runs, in `ps` and in `/proc`. So a secret doesn't belong in `command`. Put it in `stdin_wo` and have the command read it from standard input, which most tools can do: `--password-stdin`, `--from-file=-`, a trailing `-`, or `read -r token` in a shell script. `stdin_wo` is write-only: state records only `stdin_hmac`, a keyed hash that tells Conn3x when the value changed. If the command prints the value back, Conn3x blanks it from `stdout`, `stderr` and the error. `unless` never gets it, since a plan doesn't have write-only values, and `unless` is itself a command line, so keep secrets out of it too.
+
+**With only_if.** A step's [`only_if`](/reference/circuits/steps#only_if) decides at apply whether the command may run. It doesn't make it run: a command that already ran doesn't run again because `only_if` is true again. It runs when a command step always runs, when it's created, when its guards stop holding, or when `command` or `triggers` changes. So if it should run again once what it did is undone, give it a guard that sees that, such as `creates` above. While `only_if` is false it doesn't run at all, guards or not.
 
 **Changes.** Changing `command`, `stdin_wo`, `creates`, `removes`, `unless` or `triggers` runs the command again, subject to its guards.
 

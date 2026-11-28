@@ -7,5 +7,6 @@ the generated example, and notes after the reference, separated by a line:
 
     <!-- reference -->
 
-Every ```hcl block must be a complete `step` block; the docs examples test
-wraps each one in a circuit and checks it validates.
+Every ```hcl block must be complete `step` and `probe` blocks, which the
+docs examples test wraps in a circuit, or a whole `circuit` block; the test
+checks each one validates.

@@ -30,7 +30,7 @@ type arg struct {
 }
 
 // hidden are set by the circuit or computed, so not something to write.
-var hidden = map[string]bool{"id": true, "revision": true, "in_sync": true, "ssh": true, "circuit": true}
+var hidden = map[string]bool{"id": true, "revision": true, "in_sync": true, "ssh": true, "circuit": true, "only_if": true} // only_if: set on the step, not in its module
 
 // templateDescription is the template step's, which the circuit lowers
 // itself and so has no resource schema of its own.
