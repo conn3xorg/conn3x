@@ -464,3 +464,59 @@ func TestConvertWinCopyRemoteSrc(t *testing.T) {
 		}
 	}
 }
+
+// Each folder in a win_path task becomes a windows_path step, in order.
+func TestWinPath(t *testing.T) {
+	for _, tc := range []struct {
+		task  string
+		steps int
+		wants []string
+		lacks []string
+	}{
+		{`ansible.windows.win_path: {elements: ['C:\tools'], state: present}`, 1, []string{`step "path" {`, `element = "C:\\tools"`}, []string{"scope", "state", "Review:"}},
+		{`win_path: {elements: 'C:\tools'}`, 1, []string{`element = "C:\\tools"`}, nil},
+		{`win_path: {elements: ['C:\tools', '%SystemRoot%\x']}`, 2, []string{`step "path_c_tools" {`, `element = "C:\\tools"`, `element = "%SystemRoot%\\x"`, "Review: Ansible also moved"}, nil},
+		{`win_path: {elements: 'C:\a,C:\b'}`, 2, []string{`element = "C:\\a"`, `element = "C:\\b"`}, nil},
+		{`win_path: {name: path, elements: ['C:\a'], scope: user}`, 1, []string{`scope   = "user"`}, nil},
+		{`win_path: {name: PATH, elements: ['C:\a'], scope: machine}`, 1, []string{`scope   = "machine"`}, nil},
+		{`win_path: {elements: ['C:\a', 'C:\b'], state: absent}`, 2, []string{`state   = "absent"`, "takes out every copy"}, []string{"Review:"}},
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - name: path\n      "+tc.task+"\n")
+		hcl := string(res.HCL)
+		if n := strings.Count(hcl, "windows_path {"); res.Converted != 1 || len(res.Review) != 0 || n != tc.steps {
+			t.Errorf("%s: converted %d into %d steps, want %d, review %+v", tc.task, res.Converted, n, tc.steps, res.Review)
+			continue
+		}
+		for _, w := range tc.wants {
+			if !strings.Contains(hcl, w) {
+				t.Errorf("%s: output lacks %q:\n%s", tc.task, w, hcl)
+			}
+		}
+		for _, l := range tc.lacks {
+			if strings.Contains(hcl, l) {
+				t.Errorf("%s: output has %q:\n%s", tc.task, l, hcl)
+			}
+		}
+	}
+	hcl := string(convertString(t, "- hosts: all\n  tasks:\n    - win_path: {elements: ['C:\\b', 'C:\\a']}\n").HCL)
+	if b, a := strings.Index(hcl, `"C:\\b"`), strings.Index(hcl, `"C:\\a"`); b < 0 || a < b {
+		t.Errorf("the folders lost their order:\n%s", hcl)
+	}
+	for reason, task := range map[string]string{
+		`the variable "PSModulePath"`:   `win_path: {name: PSModulePath, elements: ['C:\a']}`,
+		"lists no elements":             `win_path: {state: present}`,
+		"must be one folder":            `win_path: {elements: ['C:\a;C:\b']}`,
+		`must be one folder: not empty`: `win_path: {elements: ['']}`,
+		`no ; or "`:                     `win_path: {elements: ['"C:\a b"']}`,
+		`scope "process"`:               `win_path: {elements: ['C:\a'], scope: process}`,
+		`state "query"`:                 `win_path: {elements: ['C:\a'], state: query}`,
+		"sets other":                    `win_path: {elements: ['C:\a'], other: x}`,
+		`refers to "tools"`:             `win_path: {elements: ['{{ tools }}']}`,
+		"several times at once":         "win_path: {elements: ['{{ item }}']}\n      loop: ['C:\\a', 'C:\\b']",
+	} {
+		res := convertString(t, "- hosts: all\n  tasks:\n    - "+task+"\n")
+		if res.Converted != 0 || len(res.Review) != 1 || !strings.Contains(res.Review[0].Reason, reason) {
+			t.Errorf("%s: converted %d, review %+v", task, res.Converted, res.Review)
+		}
+	}
+}

@@ -481,6 +481,57 @@ func winOptionalFeatureModule(in *input) ([]step, string) {
 	return steps, ""
 }
 
+// winPathModule converts ansible.windows.win_path, with a step for each
+// folder in elements. Any variable other than Path stays a TODO, as does a
+// loop: its for_each would rewrite one host's Path several times at once.
+func winPathModule(in *input) ([]step, string) {
+	if in.loop {
+		return nil, "loops, and a for_each would change one host's Path several times at once; list the folders in elements"
+	}
+	if in.has("name") {
+		if name := in.str("name"); !strings.EqualFold(name, "Path") {
+			return nil, fmt.Sprintf("changes the variable %q; windows_path only changes Path", name)
+		}
+	}
+	var attrs []attr
+	if in.has("scope") {
+		scope := in.str("scope")
+		if scope != "machine" && scope != "user" {
+			return nil, fmt.Sprintf("has scope %q, which Ansible refuses", scope)
+		}
+		attrs = append(attrs, s("scope", scope))
+	}
+	absent := in.state("present", "present", "absent") == "absent"
+	if absent {
+		attrs = append(attrs, s("state", "absent"))
+	}
+	elements := in.list("elements")
+	if in.problem != "" {
+		return nil, in.problem
+	}
+	if len(elements) == 0 {
+		return nil, "lists no elements"
+	}
+	var steps []step
+	for _, e := range elements {
+		if err := (windows.PathEntry{Element: e}).Validate(); err != nil {
+			return nil, "lists a folder windows_path doesn't take: " + err.Error()
+		}
+		st := step{module: "windows_path", attrs: append([]attr{s("element", e)}, attrs...)}
+		if len(elements) > 1 {
+			st.suffix = e
+		}
+		steps = append(steps, st)
+	}
+	switch {
+	case absent:
+		steps[0].notes = []string{"Ansible took out the first copy of a folder; windows_path takes out every copy."}
+	case len(steps) > 1:
+		steps[0].notes = []string{"Review: Ansible also moved folders already in Path to keep them in the order of elements; windows_path adds a missing folder at the end and leaves the others where they are."}
+	}
+	return steps, ""
+}
+
 // winLineinfileModule converts community.windows.win_lineinfile the way
 // lineModule converts lineinfile, as a windows_line step. That step keeps the
 // file's encoding and line endings, where Ansible's newline rewrites every
